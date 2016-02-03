@@ -1,0 +1,18 @@
+====================
+|                  |
+| GPUdb Python API |
+|                  |
+====================
+
+This is the clien-side Python API for GPUdb.
+
+To install this package, run 'sudo pip install -e .' in the gpudb directory.
+
+There is also an example file in the example directory.
+
+The documentation can be found at http://www.gpudb.com/docs/index.html.  The
+python specific documentation can be found at:
+
+* http://www.gpudb.com/docs/user/python_guide.html
+* http://www.gpudb.com/docs/api/python/index.html
+
