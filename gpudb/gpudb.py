@@ -53,7 +53,7 @@ from tabulate import tabulate
 # GPUdb - Lightweight client class to interact with a GPUdb server.
 # ---------------------------------------------------------------------------
 
-class GPUdb:
+class GPUdb(object):
 
     def __init__(self, host="127.0.0.1", port="9191",
                        encoding="BINARY", connection='HTTP',
@@ -148,6 +148,31 @@ class GPUdb:
     # end __init__
 
 
+    def get_version_info( self ):
+        """Return the version information for this API."""
+        return self.api_version
+    # end get_version_info
+
+
+    def get_host( self ):
+        """Return the host this client is talking to."""
+        return self.host
+    # end get_host
+
+
+    def get_port( self ):
+        """Return the port the host is listening to."""
+        return self.port
+    # end get_host
+
+
+    def get_url( self ):
+        """Return the url of the host this client is listening to."""
+        return "{host}:{port}".format( host = self.host, port = self.port )
+    # end get_host
+
+
+
     # members
     host       = "127.0.0.1" # Input host with port appended if provided.
     gpudb_url_path = ""          # Input /path (if any) that was in the host.
@@ -156,6 +181,7 @@ class GPUdb:
     connection    = "HTTP"      # Input connection type, either 'HTTP' or 'HTTPS'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
+    api_version   = "4.2.0.0"
 
     # constants
     END_OF_SET = -9999
@@ -380,6 +406,15 @@ class GPUdb:
         RSP_SCHEMA = self.gpudb_schemas[base_name]["RSP_SCHEMA"]
         return (REQ_SCHEMA, RSP_SCHEMA)
 
+    def get_endpoint(self, base_name):
+        """
+        Get the endpoint for a given query.
+
+        Parameters:
+            base_name : Schema name, e.g. "base_name"+"_request.json" or "_response.json"
+        """
+        return self.gpudb_schemas[base_name]["ENDPOINT"]
+    # end get_endpoint
 
     def post_then_get(self, REQ_SCHEMA, REP_SCHEMA, datum, endpoint):
         """
@@ -789,19 +824,6 @@ class GPUdb:
         return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/predicatejoin")
 
 
-    # -----------------------------------------------------------------------
-    # register_type_transform -> /registertypetransform
-
-    def register_type_transform(self, type_id, new_type_id, transform_map):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("register_type_transform")
-
-        datum = collections.OrderedDict()
-        datum["type_id"] = type_id
-        datum["new_type_id"] = new_type_id
-        datum["transform_map"] = transform_map
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/registertypetransform")
-
     # ------------- END functions for GPUdb developers -----------------------
 
 
@@ -818,441 +840,658 @@ class GPUdb:
         """
         self.gpudb_schemas = {}
         name = "gpudb_response"
-        RSP_SCHEMA_STR = """{"type":"record","name":"gaia_response","fields":[{"name":"status","type":"string"},{"name":"message","type":"string"},{"name":"data_type","type":"string"},{"name":"data","type":"bytes"},{"name":"data_str","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"gpudb_response","fields":[{"name":"status","type":"string"},{"name":"message","type":"string"},{"name":"data_type","type":"string"},{"name":"data","type":"bytes"},{"name":"data_str","type":"string"}]}"""
         self.gpudb_schemas[ name ] = { "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
         name = "trigger_notification"
         RSP_SCHEMA_STR = """{"type":"record","name":"trigger_notification","fields":[{"name":"trigger_id","type":"string"},{"name":"set_id","type":"string"},{"name":"object_id","type":"string"},{"name":"object_data","type":"bytes"}]}"""
         self.gpudb_schemas[ name ] = { "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+        name = "admin_get_shard_assignments"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_get_shard_assignments_request","fields":[{"name":"dummy","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_get_shard_assignments_response","fields":[{"name":"version","type":"long"},{"name":"shard_assignments_rank","type":{"type":"array","items":"int"}},{"name":"shard_assignments_tom","type":{"type":"array","items":"int"}}]}"""
+        ENDPOINT = "/admin/getshardassignments"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "admin_offline"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_offline_request","fields":[{"name":"offline","type":"boolean"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_offline_response","fields":[{"name":"is_offline","type":"boolean"}]}"""
+        ENDPOINT = "/admin/offline"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "admin_set_shard_assignments"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_set_shard_assignments_request","fields":[{"name":"version","type":"long"},{"name":"partial_reassignment","type":"boolean"},{"name":"shard_assignments_rank","type":{"type":"array","items":"int"}},{"name":"shard_assignments_tom","type":{"type":"array","items":"int"}},{"name":"assignment_index","type":{"type":"array","items":"int"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_set_shard_assignments_response","fields":[{"name":"version","type":"long"}]}"""
+        ENDPOINT = "/admin/setshardassignments"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "admin_shutdown"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_shutdown_request","fields":[{"name":"exit_type","type":"string"},{"name":"authorization","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"admin_shutdown_response","fields":[{"name":"exit_status","type":"string"}]}"""
+        ENDPOINT = "/admin/shutdown"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "aggregate_convex_hull"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_convex_hull_request","fields":[{"name":"table_name","type":"string"},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_convex_hull_response","fields":[{"name":"x_vector","type":{"type":"array","items":"double"}},{"name":"y_vector","type":{"type":"array","items":"double"}},{"name":"count","type":"int"},{"name":"is_valid","type":"boolean"}]}"""
+        ENDPOINT = "/aggregate/convexhull"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "aggregate_group_by"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_group_by_request","fields":[{"name":"table_name","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"offset","type":"long"},{"name":"limit","type":"long"},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_group_by_response","fields":[{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"}]}"""
+        ENDPOINT = "/aggregate/groupby"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "aggregate_histogram"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_histogram_request","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"},{"name":"start","type":"double"},{"name":"end","type":"double"},{"name":"interval","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_histogram_response","fields":[{"name":"counts","type":{"type":"array","items":"double"}},{"name":"start","type":"double"},{"name":"end","type":"double"}]}"""
+        ENDPOINT = "/aggregate/histogram"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "aggregate_k_means"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_k_means_request","fields":[{"name":"table_name","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"k","type":"int"},{"name":"tolerance","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_k_means_response","fields":[{"name":"means","type":{"type":"array","items":{"type":"array","items":"double"}}},{"name":"counts","type":{"type":"array","items":"long"}},{"name":"rms_dists","type":{"type":"array","items":"double"}},{"name":"count","type":"long"},{"name":"rms_dist","type":"double"},{"name":"tolerance","type":"double"},{"name":"num_iters","type":"int"}]}"""
+        ENDPOINT = "/aggregate/kmeans"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "aggregate_min_max"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_min_max_request","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_min_max_response","fields":[{"name":"min","type":"double"},{"name":"max","type":"double"}]}"""
+        ENDPOINT = "/aggregate/minmax"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "aggregate_statistics"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_statistics_request","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"},{"name":"stats","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_statistics_response","fields":[{"name":"stats","type":{"type":"map","values":"double"}}]}"""
+        ENDPOINT = "/aggregate/statistics"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "aggregate_statistics_by_range"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_statistics_by_range_request","fields":[{"name":"table_name","type":"string"},{"name":"select_expression","type":"string"},{"name":"column_name","type":"string"},{"name":"value_column_name","type":"string"},{"name":"stats","type":"string"},{"name":"start","type":"double"},{"name":"end","type":"double"},{"name":"interval","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_statistics_by_range_response","fields":[{"name":"stats","type":{"type":"map","values":{"type":"array","items":"double"}}}]}"""
+        ENDPOINT = "/aggregate/statistics/byrange"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "aggregate_unique"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_unique_request","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"},{"name":"offset","type":"long"},{"name":"limit","type":"long"},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_unique_response","fields":[{"name":"table_name","type":"string"},{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"}]}"""
+        ENDPOINT = "/aggregate/unique"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "alter_system_properties"
         REQ_SCHEMA_STR = """{"type":"record","name":"alter_system_properties_request","fields":[{"name":"property_updates_map","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"alter_system_properties_response","fields":[{"name":"updated_properties_map","type":{"type":"map","values":"string"}}]}"""
+        ENDPOINT = "/alter/system/properties"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "alter_table"
         REQ_SCHEMA_STR = """{"type":"record","name":"alter_table_request","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"},{"name":"action","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"alter_table_response","fields":[{"name":"status","type":"string"}]}"""
+        ENDPOINT = "/alter/table"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "alter_table_metadata"
         REQ_SCHEMA_STR = """{"type":"record","name":"alter_table_metadata_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"metadata_map","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"alter_table_metadata_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"metadata_map","type":{"type":"map","values":"string"}}]}"""
+        ENDPOINT = "/alter/table/metadata"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "alter_table_properties"
         REQ_SCHEMA_STR = """{"type":"record","name":"alter_table_properties_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"properties_map","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"alter_table_properties_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"properties_map","type":{"type":"map","values":"string"}}]}"""
+        ENDPOINT = "/alter/table/properties"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "clear_table"
         REQ_SCHEMA_STR = """{"type":"record","name":"clear_table_request","fields":[{"name":"table_name","type":"string"},{"name":"authorization","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"clear_table_response","fields":[{"name":"status","type":"string"},{"name":"table_name","type":"string"}]}"""
+        ENDPOINT = "/clear/table"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "clear_table_monitor"
         REQ_SCHEMA_STR = """{"type":"record","name":"clear_table_monitor_request","fields":[{"name":"topic_id","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"clear_table_monitor_response","fields":[{"name":"topic_id","type":"string"}]}"""
+        ENDPOINT = "/clear/tablemonitor"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "clear_trigger"
         REQ_SCHEMA_STR = """{"type":"record","name":"clear_trigger_request","fields":[{"name":"trigger_id","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"clear_trigger_response","fields":[{"name":"trigger_id","type":"string"}]}"""
+        ENDPOINT = "/clear/trigger"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "create_join_table"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_join_table_request","fields":[{"name":"join_table_name","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"aliases","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"create_join_table_response","fields":[{"name":"join_table_name","type":"string"}]}"""
+        ENDPOINT = "/create/jointable"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "create_table"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_table_request","fields":[{"name":"table_name","type":"string"},{"name":"type_id","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"create_table_response","fields":[{"name":"table_name","type":"string"},{"name":"type_id","type":"string"},{"name":"is_collection","type":"boolean"}]}"""
+        ENDPOINT = "/create/table"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "create_table_monitor"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_table_monitor_request","fields":[{"name":"table_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"create_table_monitor_response","fields":[{"name":"topic_id","type":"string"},{"name":"table_name","type":"string"},{"name":"type_schema","type":"string"}]}"""
+        ENDPOINT = "/create/tablemonitor"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "create_trigger_by_area"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_trigger_by_area_request","fields":[{"name":"request_id","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"x_vector","type":{"type":"array","items":"double"}},{"name":"y_column_name","type":"string"},{"name":"y_vector","type":{"type":"array","items":"double"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"create_trigger_by_area_response","fields":[{"name":"trigger_id","type":"string"}]}"""
+        ENDPOINT = "/create/trigger/byarea"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "create_trigger_by_range"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_trigger_by_range_request","fields":[{"name":"request_id","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"column_name","type":"string"},{"name":"min","type":"double"},{"name":"max","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"create_trigger_by_range_response","fields":[{"name":"trigger_id","type":"string"}]}"""
+        ENDPOINT = "/create/trigger/byrange"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "create_type"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_type_request","fields":[{"name":"type_definition","type":"string"},{"name":"label","type":"string"},{"name":"properties","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"create_type_response","fields":[{"name":"type_id","type":"string"},{"name":"type_definition","type":"string"},{"name":"label","type":"string"},{"name":"properties","type":{"type":"map","values":{"type":"array","items":"string"}}}]}"""
+        ENDPOINT = "/create/type"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "delete_records"
         REQ_SCHEMA_STR = """{"type":"record","name":"delete_records_request","fields":[{"name":"table_name","type":"string"},{"name":"expressions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"delete_records_response","fields":[{"name":"count_deleted","type":"long"},{"name":"counts_deleted","type":{"type":"array","items":"long"}}]}"""
+        ENDPOINT = "/delete/records"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "execute_proc"
+        REQ_SCHEMA_STR = """{"type":"record","name":"execute_proc_request","fields":[{"name":"name","type":"string"},{"name":"params","type":{"type":"map","values":"string"}},{"name":"bin_params","type":{"type":"map","values":"bytes"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"execute_proc_response","fields":[{"name":"results","type":{"type":"map","values":"string"}},{"name":"bin_results","type":{"type":"map","values":"bytes"}}]}"""
+        ENDPOINT = "/execute/proc"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "filter"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"expression","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"filter_response","fields":[{"name":"count","type":"long"}]}"""
+        ENDPOINT = "/filter"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "filter_by_area"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_area_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"x_column_name","type":"string"},{"name":"x_vector","type":{"type":"array","items":"double"}},{"name":"y_column_name","type":"string"},{"name":"y_vector","type":{"type":"array","items":"double"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_area_response","fields":[{"name":"count","type":"long"}]}"""
+        ENDPOINT = "/filter/byarea"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "filter_by_box"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_box_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"x_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"y_column_name","type":"string"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_box_response","fields":[{"name":"count","type":"long"}]}"""
+        ENDPOINT = "/filter/bybox"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "filter_by_geometry"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_geometry_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"column_name","type":"string"},{"name":"input_wkt","type":"string"},{"name":"operation","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_geometry_response","fields":[{"name":"count","type":"long"}]}"""
+        ENDPOINT = "/filter/bygeometry"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "filter_by_list"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_list_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"column_values_map","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_list_response","fields":[{"name":"count","type":"long"}]}"""
+        ENDPOINT = "/filter/bylist"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "filter_by_radius"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_radius_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"x_column_name","type":"string"},{"name":"x_center","type":"double"},{"name":"y_column_name","type":"string"},{"name":"y_center","type":"double"},{"name":"radius","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_radius_response","fields":[{"name":"count","type":"long"}]}"""
+        ENDPOINT = "/filter/byradius"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "filter_by_range"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_range_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"column_name","type":"string"},{"name":"lower_bound","type":"double"},{"name":"upper_bound","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_range_response","fields":[{"name":"count","type":"long"}]}"""
+        ENDPOINT = "/filter/byrange"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "filter_by_series"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_series_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"track_id","type":"string"},{"name":"target_track_ids","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_series_response","fields":[{"name":"count","type":"long"}]}"""
+        ENDPOINT = "/filter/byseries"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "filter_by_string"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_string_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"expression","type":"string"},{"name":"mode","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_string_response","fields":[{"name":"count","type":"long"}]}"""
+        ENDPOINT = "/filter/bystring"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "filter_by_table"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_table_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"column_name","type":"string"},{"name":"source_table_name","type":"string"},{"name":"source_table_column_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_table_response","fields":[{"name":"count","type":"long"}]}"""
+        ENDPOINT = "/filter/bytable"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "filter_by_value"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_value_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"is_string","type":"boolean"},{"name":"value","type":"double"},{"name":"value_str","type":"string"},{"name":"column_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_value_response","fields":[{"name":"count","type":"long"}]}"""
+        ENDPOINT = "/filter/byvalue"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "get_records"
         REQ_SCHEMA_STR = """{"type":"record","name":"get_records_request","fields":[{"name":"table_name","type":"string"},{"name":"offset","type":"long"},{"name":"limit","type":"long"},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"get_records_response","fields":[{"name":"table_name","type":"string"},{"name":"type_name","type":"string"},{"name":"type_schema","type":"string"},{"name":"records_binary","type":{"type":"array","items":"bytes"}},{"name":"records_json","type":{"type":"array","items":"string"}}]}"""
+        ENDPOINT = "/get/records"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "get_records_by_column"
         REQ_SCHEMA_STR = """{"type":"record","name":"get_records_by_column_request","fields":[{"name":"table_name","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"offset","type":"long"},{"name":"limit","type":"long"},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"get_records_by_column_response","fields":[{"name":"table_name","type":"string"},{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"}]}"""
+        ENDPOINT = "/get/records/bycolumn"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "get_records_by_series"
         REQ_SCHEMA_STR = """{"type":"record","name":"get_records_by_series_request","fields":[{"name":"table_name","type":"string"},{"name":"world_table_name","type":"string"},{"name":"offset","type":"int"},{"name":"limit","type":"int"},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"get_records_by_series_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"type_names","type":{"type":"array","items":"string"}},{"name":"type_schemas","type":{"type":"array","items":"string"}},{"name":"list_records_binary","type":{"type":"array","items":{"type":"array","items":"bytes"}}},{"name":"list_records_json","type":{"type":"array","items":{"type":"array","items":"string"}}}]}"""
+        ENDPOINT = "/get/records/byseries"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "get_records_from_collection"
         REQ_SCHEMA_STR = """{"type":"record","name":"get_records_from_collection_request","fields":[{"name":"table_name","type":"string"},{"name":"offset","type":"long"},{"name":"limit","type":"long"},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"get_records_from_collection_response","fields":[{"name":"table_name","type":"string"},{"name":"type_names","type":{"type":"array","items":"string"}},{"name":"records_binary","type":{"type":"array","items":"bytes"}},{"name":"records_json","type":{"type":"array","items":"string"}},{"name":"record_ids","type":{"type":"array","items":"string"}}]}"""
+        ENDPOINT = "/get/records/fromcollection"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "has_table"
         REQ_SCHEMA_STR = """{"type":"record","name":"has_table_request","fields":[{"name":"table_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"has_table_response","fields":[{"name":"table_name","type":"string"},{"name":"table_exists","type":"boolean"}]}"""
+        ENDPOINT = "/has/table"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "has_type"
         REQ_SCHEMA_STR = """{"type":"record","name":"has_type_request","fields":[{"name":"type_id","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"has_type_response","fields":[{"name":"type_id","type":"string"},{"name":"type_exists","type":"boolean"}]}"""
+        ENDPOINT = "/has/type"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "insert_records"
         REQ_SCHEMA_STR = """{"type":"record","name":"insert_records_request","fields":[{"name":"table_name","type":"string"},{"name":"list","type":{"type":"array","items":"bytes"}},{"name":"list_str","type":{"type":"array","items":"string"}},{"name":"list_encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"insert_records_response","fields":[{"name":"record_ids","type":{"type":"array","items":"string"}},{"name":"count_inserted","type":"int"},{"name":"count_updated","type":"int"}]}"""
+        ENDPOINT = "/insert/records"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "insert_records_random"
         REQ_SCHEMA_STR = """{"type":"record","name":"insert_records_random_request","fields":[{"name":"table_name","type":"string"},{"name":"count","type":"long"},{"name":"options","type":{"type":"map","values":{"type":"map","values":"double"}}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"insert_records_random_response","fields":[{"name":"table_name","type":"string"},{"name":"count","type":"long"}]}"""
+        ENDPOINT = "/insert/records/random"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "insert_symbol"
         REQ_SCHEMA_STR = """{"type":"record","name":"insert_symbol_request","fields":[{"name":"symbol_id","type":"string"},{"name":"symbol_format","type":"string"},{"name":"symbol_data","type":"bytes"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"insert_symbol_response","fields":[{"name":"symbol_id","type":"string"}]}"""
+        ENDPOINT = "/insert/symbol"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "lock_table"
+        REQ_SCHEMA_STR = """{"type":"record","name":"lock_table_request","fields":[{"name":"table_name","type":"string"},{"name":"lock_type","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"lock_table_response","fields":[{"name":"lock_type","type":"string"}]}"""
+        ENDPOINT = "/lock/table"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "show_system_properties"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_system_properties_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"show_system_properties_response","fields":[{"name":"property_map","type":{"type":"map","values":"string"}}]}"""
+        ENDPOINT = "/show/system/properties"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "show_system_status"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_system_status_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"show_system_status_response","fields":[{"name":"status_map","type":{"type":"map","values":"string"}}]}"""
+        ENDPOINT = "/show/system/status"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "show_system_timing"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_system_timing_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"show_system_timing_response","fields":[{"name":"endpoints","type":{"type":"array","items":"string"}},{"name":"time_in_ms","type":{"type":"array","items":"float"}},{"name":"jobIds","type":{"type":"array","items":"string"}}]}"""
+        ENDPOINT = "/show/system/timing"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "show_table"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_table_request","fields":[{"name":"table_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"show_table_response","fields":[{"name":"table_name","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"is_collection","type":{"type":"array","items":"boolean"}},{"name":"is_view","type":{"type":"array","items":"boolean"}},{"name":"type_ids","type":{"type":"array","items":"string"}},{"name":"type_schemas","type":{"type":"array","items":"string"}},{"name":"type_labels","type":{"type":"array","items":"string"}},{"name":"properties","type":{"type":"array","items":{"type":"map","values":{"type":"array","items":"string"}}}},{"name":"ttls","type":{"type":"array","items":"int"}},{"name":"sizes","type":{"type":"array","items":"long"}},{"name":"full_sizes","type":{"type":"array","items":"long"}},{"name":"total_size","type":"long"},{"name":"total_full_size","type":"long"}]}"""
+        ENDPOINT = "/show/table"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "show_table_metadata"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_table_metadata_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"show_table_metadata_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"metadata_maps","type":{"type":"array","items":{"type":"map","values":"string"}}}]}"""
+        ENDPOINT = "/show/table/metadata"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "show_table_properties"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_table_properties_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"show_table_properties_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"properties_maps","type":{"type":"array","items":{"type":"map","values":"string"}}}]}"""
+        ENDPOINT = "/show/table/properties"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "show_tables_by_type"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_tables_by_type_request","fields":[{"name":"type_id","type":"string"},{"name":"label","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"show_tables_by_type_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}}]}"""
+        ENDPOINT = "/show/tables/bytype"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "show_triggers"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_triggers_request","fields":[{"name":"trigger_ids","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"show_triggers_response","fields":[{"name":"trigger_map","type":{"type":"map","values":{"type":"map","values":"string"}}}]}"""
+        ENDPOINT = "/show/triggers"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "show_types"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_types_request","fields":[{"name":"type_id","type":"string"},{"name":"label","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"show_types_response","fields":[{"name":"type_ids","type":{"type":"array","items":"string"}},{"name":"type_schemas","type":{"type":"array","items":"string"}},{"name":"labels","type":{"type":"array","items":"string"}},{"name":"properties","type":{"type":"array","items":{"type":"map","values":{"type":"array","items":"string"}}}}]}"""
+        ENDPOINT = "/show/types"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "update_records"
         REQ_SCHEMA_STR = """{"type":"record","name":"update_records_request","fields":[{"name":"table_name","type":"string"},{"name":"expressions","type":{"type":"array","items":"string"}},{"name":"new_values_maps","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"records_to_insert","type":{"type":"array","items":"bytes"}},{"name":"records_to_insert_str","type":{"type":"array","items":"string"}},{"name":"record_encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"update_records_response","fields":[{"name":"count_updated","type":"long"},{"name":"counts_updated","type":{"type":"array","items":"long"}},{"name":"count_inserted","type":"long"},{"name":"counts_inserted","type":{"type":"array","items":"long"}}]}"""
+        ENDPOINT = "/update/records"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "update_records_by_series"
         REQ_SCHEMA_STR = """{"type":"record","name":"update_records_by_series_request","fields":[{"name":"table_name","type":"string"},{"name":"world_table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"reserved","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"update_records_by_series_response","fields":[{"name":"count","type":"int"}]}"""
+        ENDPOINT = "/update/records/byseries"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "visualize_image"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"do_points","type":{"type":"array","items":"boolean"}},{"name":"do_shapes","type":{"type":"array","items":"boolean"}},{"name":"do_tracks","type":{"type":"array","items":"boolean"}},{"name":"do_symbology","type":{"type":"array","items":"boolean"}},{"name":"pointcolors","type":{"type":"array","items":"long"}},{"name":"pointsizes","type":{"type":"array","items":"int"}},{"name":"pointshapes","type":{"type":"array","items":"string"}},{"name":"shapelinewidths","type":{"type":"array","items":"int"}},{"name":"shapelinecolors","type":{"type":"array","items":"long"}},{"name":"shapefillcolors","type":{"type":"array","items":"long"}},{"name":"tracklinewidths","type":{"type":"array","items":"int"}},{"name":"tracklinecolors","type":{"type":"array","items":"long"}},{"name":"trackmarkersizes","type":{"type":"array","items":"int"}},{"name":"trackmarkercolors","type":{"type":"array","items":"long"}},{"name":"trackmarkershapes","type":{"type":"array","items":"string"}},{"name":"trackheadcolors","type":{"type":"array","items":"long"}},{"name":"trackheadsizes","type":{"type":"array","items":"int"}},{"name":"trackheadshapes","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"}]}"""
+        ENDPOINT = "/visualize/image"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "visualize_image_classbreak"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"cb_column_name1","type":"string"},{"name":"cb_vals1","type":{"type":"array","items":"string"}},{"name":"cb_column_name2","type":{"type":"array","items":"string"}},{"name":"cb_vals2","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"do_points","type":{"type":"array","items":"boolean"}},{"name":"do_shapes","type":{"type":"array","items":"boolean"}},{"name":"do_tracks","type":{"type":"array","items":"boolean"}},{"name":"do_symbology","type":{"type":"array","items":"boolean"}},{"name":"pointcolors","type":{"type":"array","items":"long"}},{"name":"pointsizes","type":{"type":"array","items":"int"}},{"name":"pointshapes","type":{"type":"array","items":"string"}},{"name":"shapelinewidths","type":{"type":"array","items":"int"}},{"name":"shapelinecolors","type":{"type":"array","items":"long"}},{"name":"shapefillcolors","type":{"type":"array","items":"long"}},{"name":"tracklinewidths","type":{"type":"array","items":"int"}},{"name":"tracklinecolors","type":{"type":"array","items":"long"}},{"name":"trackmarkersizes","type":{"type":"array","items":"int"}},{"name":"trackmarkercolors","type":{"type":"array","items":"long"}},{"name":"trackmarkershapes","type":{"type":"array","items":"string"}},{"name":"trackheadcolors","type":{"type":"array","items":"long"}},{"name":"trackheadsizes","type":{"type":"array","items":"int"}},{"name":"trackheadshapes","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"cb_column_name1","type":"string"},{"name":"cb_vals1","type":{"type":"array","items":"string"}},{"name":"cb_column_name2","type":{"type":"array","items":"string"}},{"name":"cb_vals2","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"}]}"""
+        ENDPOINT = "/visualize/image/classbreak"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "visualize_image_heatmap"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_heatmap_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"value_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"colormap","type":"string"},{"name":"blur_radius","type":"int"},{"name":"bg_color","type":"long"},{"name":"gradient_start_color","type":"long"},{"name":"gradient_end_color","type":"long"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_heatmap_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"value_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"style_options","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_heatmap_response","fields":[{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"}]}"""
+        ENDPOINT = "/visualize/image/heatmap"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
-        name = "visualize_image_heatmap_classbreak"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_heatmap_classbreak_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"cb_column_name","type":"string"},{"name":"cb_vals","type":{"type":"array","items":"string"}},{"name":"cb_ranges","type":{"type":"array","items":"string"}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"colormaps","type":{"type":"array","items":"string"}},{"name":"blur_radii","type":{"type":"array","items":"int"}},{"name":"bg_color","type":"long"},{"name":"gradient_start_colors","type":{"type":"array","items":"long"}},{"name":"gradient_end_colors","type":{"type":"array","items":"long"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_heatmap_classbreak_response","fields":[{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"}]}"""
-        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
-                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
-                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "visualize_image_labels"
         REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_labels_request","fields":[{"name":"table_name","type":"string"},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"x_offset","type":"string"},{"name":"y_offset","type":"string"},{"name":"text_string","type":"string"},{"name":"font","type":"string"},{"name":"text_color","type":"string"},{"name":"text_angle","type":"string"},{"name":"text_scale","type":"string"},{"name":"draw_box","type":"string"},{"name":"draw_leader","type":"string"},{"name":"line_width","type":"string"},{"name":"line_color","type":"string"},{"name":"fill_color","type":"string"},{"name":"leader_x_column_name","type":"string"},{"name":"leader_y_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_labels_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"}]}"""
+        ENDPOINT = "/visualize/image/labels"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "visualize_video"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_video_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"do_points","type":{"type":"array","items":"boolean"}},{"name":"do_shapes","type":{"type":"array","items":"boolean"}},{"name":"do_tracks","type":{"type":"array","items":"boolean"}},{"name":"pointcolors","type":{"type":"array","items":"long"}},{"name":"pointsizes","type":{"type":"array","items":"int"}},{"name":"pointshapes","type":{"type":"array","items":"string"}},{"name":"shapelinewidths","type":{"type":"array","items":"int"}},{"name":"shapelinecolors","type":{"type":"array","items":"long"}},{"name":"shapefillcolors","type":{"type":"array","items":"long"}},{"name":"tracklinewidths","type":{"type":"array","items":"int"}},{"name":"tracklinecolors","type":{"type":"array","items":"long"}},{"name":"trackmarkersizes","type":{"type":"array","items":"int"}},{"name":"trackmarkercolors","type":{"type":"array","items":"long"}},{"name":"trackmarkershapes","type":{"type":"array","items":"string"}},{"name":"trackheadcolors","type":{"type":"array","items":"long"}},{"name":"trackheadsizes","type":{"type":"array","items":"int"}},{"name":"trackheadshapes","type":{"type":"array","items":"string"}},{"name":"time_intervals","type":{"type":"array","items":{"type":"array","items":"double"}}},{"name":"video_style","type":"string"},{"name":"session_key","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_video_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"time_intervals","type":{"type":"array","items":{"type":"array","items":"double"}}},{"name":"video_style","type":"string"},{"name":"session_key","type":"string"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_video_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"num_frames","type":"int"},{"name":"session_key","type":"string"},{"name":"data","type":{"type":"array","items":"bytes"}}]}"""
+        ENDPOINT = "/visualize/video"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "visualize_video_heatmap"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_video_heatmap_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"time_intervals","type":{"type":"array","items":{"type":"array","items":"double"}}},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"colormap","type":"string"},{"name":"blur_radius","type":"int"},{"name":"gradient_start_color","type":"long"},{"name":"gradient_end_color","type":"long"},{"name":"video_style","type":"string"},{"name":"session_key","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_video_heatmap_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"time_intervals","type":{"type":"array","items":{"type":"array","items":"double"}}},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"video_style","type":"string"},{"name":"session_key","type":"string"},{"name":"style_options","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_video_heatmap_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"num_frames","type":"int"},{"name":"session_key","type":"string"},{"name":"data","type":{"type":"array","items":"bytes"}}]}"""
+        ENDPOINT = "/visualize/video/heatmap"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
     # end load_gpudb_schemas
+
+    # begin admin_get_shard_assignments
+    def admin_get_shard_assignments( self, dummy = [] ):
+        """"""
+
+        assert isinstance( dummy, (str, unicode)), "admin_get_shard_assignments(): Argument 'dummy' must be (one) of type(s) '(str, unicode)'; given %s" % type( dummy ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "admin_get_shard_assignments" )
+
+        obj = collections.OrderedDict()
+        obj['dummy'] = dummy
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/getshardassignments' )
+    # end admin_get_shard_assignments
+
+
+    # begin admin_offline
+    def admin_offline( self, offline = None, options = {} ):
+        """Take the system offline. When the system is offline, no user operations can
+        be performed with the exception of a system shutdown."""
+
+        assert isinstance( offline, (bool)), "admin_offline(): Argument 'offline' must be (one) of type(s) '(bool)'; given %s" % type( offline ).__name__
+        assert isinstance( options, (dict)), "admin_offline(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "admin_offline" )
+
+        obj = collections.OrderedDict()
+        obj['offline'] = offline
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/offline' )
+    # end admin_offline
+
+
+    # begin admin_set_shard_assignments
+    def admin_set_shard_assignments( self, version = None, partial_reassignment =
+                                     None, shard_assignments_rank = None,
+                                     shard_assignments_tom = None,
+                                     assignment_index = None ):
+        """"""
+
+        assert isinstance( version, (int, long, float)), "admin_set_shard_assignments(): Argument 'version' must be (one) of type(s) '(int, long, float)'; given %s" % type( version ).__name__
+        assert isinstance( partial_reassignment, (bool)), "admin_set_shard_assignments(): Argument 'partial_reassignment' must be (one) of type(s) '(bool)'; given %s" % type( partial_reassignment ).__name__
+        assert isinstance( shard_assignments_rank, (list)), "admin_set_shard_assignments(): Argument 'shard_assignments_rank' must be (one) of type(s) '(list)'; given %s" % type( shard_assignments_rank ).__name__
+        assert isinstance( shard_assignments_tom, (list)), "admin_set_shard_assignments(): Argument 'shard_assignments_tom' must be (one) of type(s) '(list)'; given %s" % type( shard_assignments_tom ).__name__
+        assert isinstance( assignment_index, (list)), "admin_set_shard_assignments(): Argument 'assignment_index' must be (one) of type(s) '(list)'; given %s" % type( assignment_index ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "admin_set_shard_assignments" )
+
+        obj = collections.OrderedDict()
+        obj['version'] = version
+        obj['partial_reassignment'] = partial_reassignment
+        obj['shard_assignments_rank'] = shard_assignments_rank
+        obj['shard_assignments_tom'] = shard_assignments_tom
+        obj['assignment_index'] = assignment_index
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/setshardassignments' )
+    # end admin_set_shard_assignments
+
 
     # begin admin_shutdown
     def admin_shutdown( self, exit_type = None, authorization = None, options = {}
@@ -1319,8 +1558,8 @@ class GPUdb:
         aggregation functions are: 'count(*)', 'sum', 'min', 'max', 'avg',
         'mean', 'stddev', 'stddev_pop', 'stddev_samp', 'var', 'var_pop' and
         'var_samp'.  The response is returned as a dynamic schema. For details
-        see: {dynamic schemas documentation}@{link ../../concepts/index.html
-        #dynamic-schemas}."""
+        see: `dynamic schemas documentation <../../concepts/index.html#dynamic-
+        schemas>`_."""
 
         assert isinstance( table_name, (str, unicode)), "aggregate_group_by(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( column_names, (list)), "aggregate_group_by(): Argument 'column_names' must be (one) of type(s) '(list)'; given %s" % type( column_names ).__name__
@@ -1531,8 +1770,8 @@ class GPUdb:
         results if there are large numbers of unique values. To get the first 10
         unique values sorted in descending order input parameter *options* would
         be::   {"limit":"10","sort_order":"descending"}.  The response is
-        returned as a dynamic schema. For details see: {dynamic schemas
-        documentation}@{link ../../concepts/index.html#dynamic-schemas}."""
+        returned as a dynamic schema. For details see: `dynamic schemas
+        documentation <../../concepts/index.html#dynamic-schemas>`_."""
 
         assert isinstance( table_name, (str, unicode)), "aggregate_unique(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( column_name, (str, unicode)), "aggregate_unique(): Argument 'column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( column_name ).__name__
@@ -1872,30 +2111,20 @@ class GPUdb:
         the type. Each field consists of a name and a data type. Supported data
         types are: double, float, int, long, string, and bytes. In addition one
         or more properties can be specified for each column which customize the
-        memory usage and query availability of that column.      Described below
-        are some viable configurations of properties for various types of
-        columns:      .. csv-table::         :header: "column Type", "Permitted
-        Properties Combination"         :widths: 15, 60          "Numeric",
-        "'data' (default if no property is provided for a numeric column)"
-        "Numeric", "'store_only'"         "String", "'data' (default if no
-        property is provided for a string column)"         "String",
-        "'text_search' (persists the data and disables all queries except the
-        filter by string query (with the 'search' mode); i.e. implied
-        'store_only')"         "String", "'store_only'"         "String",
-        "'data', 'text_search'"         "String", "'text_search', 'store_only'"
-        "String", "'data', 'disk_optimized'"         "String", "'data',
-        'text_search', 'disk_optimized'"         "bytes", "'store_only'"      To
-        set a *primary key* on one or more columns include the property
-        'primary_key' on the desired column_names. If a primary key is specified
-        then GPUdb enforces a uniqueness constraint in that only a single object
-        can exist with a given primary key. When :ref:`inserting
-        <insert_records_python>` data into a table with a primary key, depending
-        on the parameters in the request, incoming objects with primary keys
-        that match existing objects will either overwrite (i.e. update) the
-        existing object or will be skipped and not added into the set.
-        Examples of a type definition with some of the parameters:      Type
-        definition::          {"type":"record",         "name":"point",
-        "fields":[{"name":"msg_id","type":"string"},
+        memory usage and query availability of that column.  Note that some
+        properties are mutually exclusive--i.e. they cannot be specified for any
+        given column simultaneously.  One example of mutually exclusive
+        properties are *data* and *store_only*.  To set a *primary key* on one
+        or more columns include the property 'primary_key' on the desired
+        column_names. If a primary key is specified then GPUdb enforces a
+        uniqueness constraint in that only a single object can exist with a
+        given primary key. When :ref:`inserting <insert_records_python>` data
+        into a table with a primary key, depending on the parameters in the
+        request, incoming objects with primary keys that match existing objects
+        will either overwrite (i.e. update) the existing object or will be
+        skipped and not added into the set.  Example of a type definition with
+        some of the parameters::          {"type":"record",
+        "name":"point",         "fields":[{"name":"msg_id","type":"string"},
         {"name":"x","type":"double"},
         {"name":"y","type":"double"},
         {"name":"TIMESTAMP","type":"double"},
@@ -1946,6 +2175,28 @@ class GPUdb:
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/delete/records' )
     # end delete_records
+
+
+    # begin execute_proc
+    def execute_proc( self, name = None, params = None, bin_params = None, options =
+                      {} ):
+        """Exectues a proc in the GPUdb Node.js proc server."""
+
+        assert isinstance( name, (str, unicode)), "execute_proc(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
+        assert isinstance( params, (dict)), "execute_proc(): Argument 'params' must be (one) of type(s) '(dict)'; given %s" % type( params ).__name__
+        assert isinstance( bin_params, (dict)), "execute_proc(): Argument 'bin_params' must be (one) of type(s) '(dict)'; given %s" % type( bin_params ).__name__
+        assert isinstance( options, (dict)), "execute_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "execute_proc" )
+
+        obj = collections.OrderedDict()
+        obj['name'] = name
+        obj['params'] = params
+        obj['bin_params'] = bin_params
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/execute/proc' )
+    # end execute_proc
 
 
     # begin filter
@@ -2090,7 +2341,8 @@ class GPUdb:
         'y', then a filter by list query with the column map {"x":["10.1",
         "2.3"], "y":["0.0", "-31.5", "42.0"]} will return the count of all data
         points whose x and y values match one of the values in the respective x-
-        and y-lists."""
+        and y-lists. If the filter_mode option is set to 'not_in_list' then the
+        filter will match all items that are not in the provided list(s)."""
 
         assert isinstance( table_name, (str, unicode)), "filter_by_list(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (str, unicode)), "filter_by_list(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
@@ -2381,8 +2633,8 @@ class GPUdb:
         (records are inserted, deleted or modified) the records or values
         retrieved may differ between calls (discontiguous or overlap) based on
         the type of the update.  The response is returned as a dynamic schema.
-        For details see: {dynamic schemas documentation}@{link
-        ../../concepts/index.html#dynamic-schemas}."""
+        For details see: `dynamic schemas documentation
+        <../../concepts/index.html#dynamic-schemas>`_."""
 
         assert isinstance( table_name, (str, unicode)), "get_records_by_column(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( column_names, (list)), "get_records_by_column(): Argument 'column_names' must be (one) of type(s) '(list)'; given %s" % type( column_names ).__name__
@@ -2504,8 +2756,8 @@ class GPUdb:
 
 
     # begin insert_records
-    def insert_records( self, table_name = None, objects = None, list_encoding =
-                        None, options = {} ):
+    def insert_records( self, table_name = None, data = None, list_encoding = None,
+                        options = {} ):
         """Adds multiple records to the specified table. The operation is synchronous
         meaning that GPUdb will not return a response until all the records are
         fully inserted and available. The response payload provides unique
@@ -2526,7 +2778,7 @@ class GPUdb:
         then the *update_on_existing_pk* option is ignored."""
 
         assert isinstance( table_name, (str, unicode)), "insert_records(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( objects, (list)), "insert_records(): Argument 'objects' must be (one) of type(s) '(list)'; given %s" % type( objects ).__name__
+        assert isinstance( data, (list)), "insert_records(): Argument 'data' must be (one) of type(s) '(list)'; given %s" % type( data ).__name__
         assert isinstance( list_encoding, (str, unicode, type( None ))), "insert_records(): Argument 'list_encoding' must be (one) of type(s) '(str, unicode, type( None ))'; given %s" % type( list_encoding ).__name__
         assert isinstance( options, (dict)), "insert_records(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -2537,10 +2789,10 @@ class GPUdb:
         list_encoding = list_encoding if list_encoding else self.client_to_object_encoding()
         obj['list_encoding'] = list_encoding
         if (list_encoding == 'json'):
-            obj['list_str'] = objects
+            obj['list_str'] = data
             obj['list'] = []
         elif (list_encoding == 'binary'):
-            obj['list'] = objects
+            obj['list'] = data
             obj['list_str'] = []
         obj['options'] = options
 
@@ -2552,7 +2804,7 @@ class GPUdb:
     def insert_records_random( self, table_name = None, count = None, options = {}
                                ):
         """Generates a specified number of random records and adds them to the given
-        tble. There is an optional parameter that allows the user to customize
+        table. There is an optional parameter that allows the user to customize
         the ranges of the column values. It also allows the user to specify
         linear profiles for some or all columns in which case linear values are
         generated rather than random ones. Only individual tables are supported
@@ -2603,6 +2855,30 @@ class GPUdb:
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/insert/symbol' )
     # end insert_symbol
+
+
+    # begin lock_table
+    def lock_table( self, table_name = None, lock_type = '', options = {} ):
+        """Locks a table.  By default a table has no locks and all operations are
+        permitted.  A user may request a read-only or a write-only lock, after
+        which only read or write operations are permitted on the table until the
+        next request.  When lock_type is disable then then no operations are
+        permitted on the table.  The lock status can be queried by passing an
+        empty string for input parameter *lock_type*."""
+
+        assert isinstance( table_name, (str, unicode)), "lock_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
+        assert isinstance( lock_type, (str, unicode)), "lock_table(): Argument 'lock_type' must be (one) of type(s) '(str, unicode)'; given %s" % type( lock_type ).__name__
+        assert isinstance( options, (dict)), "lock_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "lock_table" )
+
+        obj = collections.OrderedDict()
+        obj['table_name'] = table_name
+        obj['lock_type'] = lock_type
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/lock/table' )
+    # end lock_table
 
 
     # begin show_system_properties
@@ -2862,15 +3138,7 @@ class GPUdb:
                          x_column_name = None, y_column_name = None, track_ids =
                          None, min_x = None, max_x = None, min_y = None, max_y =
                          None, width = None, height = None, projection =
-                         'PLATE_CARREE', bg_color = None, do_points = 'true',
-                         do_shapes = 'true', do_tracks = 'true', do_symbology =
-                         'false', pointcolors = None, pointsizes = '3',
-                         pointshapes = None, shapelinewidths = '3',
-                         shapelinecolors = 'FFFF00 ', shapefillcolors = '-1',
-                         tracklinewidths = '3', tracklinecolors = 'green',
-                         trackmarkersizes = '3', trackmarkercolors = '0000FF',
-                         trackmarkershapes = 'none', trackheadcolors = 'FFFFFF',
-                         trackheadsizes = '10', trackheadshapes = 'circle',
+                         'PLATE_CARREE', bg_color = None, style_options = None,
                          options = {} ):
         """Generates 'class break' rasterized image tiles for an area of interest using
         the given tables and the provided parameters.  All color values must be
@@ -2889,24 +3157,7 @@ class GPUdb:
         assert isinstance( height, (int, long, float)), "visualize_image(): Argument 'height' must be (one) of type(s) '(int, long, float)'; given %s" % type( height ).__name__
         assert isinstance( projection, (str, unicode)), "visualize_image(): Argument 'projection' must be (one) of type(s) '(str, unicode)'; given %s" % type( projection ).__name__
         assert isinstance( bg_color, (int, long, float)), "visualize_image(): Argument 'bg_color' must be (one) of type(s) '(int, long, float)'; given %s" % type( bg_color ).__name__
-        assert isinstance( do_points, (list)), "visualize_image(): Argument 'do_points' must be (one) of type(s) '(list)'; given %s" % type( do_points ).__name__
-        assert isinstance( do_shapes, (list)), "visualize_image(): Argument 'do_shapes' must be (one) of type(s) '(list)'; given %s" % type( do_shapes ).__name__
-        assert isinstance( do_tracks, (list)), "visualize_image(): Argument 'do_tracks' must be (one) of type(s) '(list)'; given %s" % type( do_tracks ).__name__
-        assert isinstance( do_symbology, (list)), "visualize_image(): Argument 'do_symbology' must be (one) of type(s) '(list)'; given %s" % type( do_symbology ).__name__
-        assert isinstance( pointcolors, (list)), "visualize_image(): Argument 'pointcolors' must be (one) of type(s) '(list)'; given %s" % type( pointcolors ).__name__
-        assert isinstance( pointsizes, (list)), "visualize_image(): Argument 'pointsizes' must be (one) of type(s) '(list)'; given %s" % type( pointsizes ).__name__
-        assert isinstance( pointshapes, (list)), "visualize_image(): Argument 'pointshapes' must be (one) of type(s) '(list)'; given %s" % type( pointshapes ).__name__
-        assert isinstance( shapelinewidths, (list)), "visualize_image(): Argument 'shapelinewidths' must be (one) of type(s) '(list)'; given %s" % type( shapelinewidths ).__name__
-        assert isinstance( shapelinecolors, (list)), "visualize_image(): Argument 'shapelinecolors' must be (one) of type(s) '(list)'; given %s" % type( shapelinecolors ).__name__
-        assert isinstance( shapefillcolors, (list)), "visualize_image(): Argument 'shapefillcolors' must be (one) of type(s) '(list)'; given %s" % type( shapefillcolors ).__name__
-        assert isinstance( tracklinewidths, (list)), "visualize_image(): Argument 'tracklinewidths' must be (one) of type(s) '(list)'; given %s" % type( tracklinewidths ).__name__
-        assert isinstance( tracklinecolors, (list)), "visualize_image(): Argument 'tracklinecolors' must be (one) of type(s) '(list)'; given %s" % type( tracklinecolors ).__name__
-        assert isinstance( trackmarkersizes, (list)), "visualize_image(): Argument 'trackmarkersizes' must be (one) of type(s) '(list)'; given %s" % type( trackmarkersizes ).__name__
-        assert isinstance( trackmarkercolors, (list)), "visualize_image(): Argument 'trackmarkercolors' must be (one) of type(s) '(list)'; given %s" % type( trackmarkercolors ).__name__
-        assert isinstance( trackmarkershapes, (list)), "visualize_image(): Argument 'trackmarkershapes' must be (one) of type(s) '(list)'; given %s" % type( trackmarkershapes ).__name__
-        assert isinstance( trackheadcolors, (list)), "visualize_image(): Argument 'trackheadcolors' must be (one) of type(s) '(list)'; given %s" % type( trackheadcolors ).__name__
-        assert isinstance( trackheadsizes, (list)), "visualize_image(): Argument 'trackheadsizes' must be (one) of type(s) '(list)'; given %s" % type( trackheadsizes ).__name__
-        assert isinstance( trackheadshapes, (list)), "visualize_image(): Argument 'trackheadshapes' must be (one) of type(s) '(list)'; given %s" % type( trackheadshapes ).__name__
+        assert isinstance( style_options, (dict)), "visualize_image(): Argument 'style_options' must be (one) of type(s) '(dict)'; given %s" % type( style_options ).__name__
         assert isinstance( options, (dict)), "visualize_image(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "visualize_image" )
@@ -2925,24 +3176,7 @@ class GPUdb:
         obj['height'] = height
         obj['projection'] = projection
         obj['bg_color'] = bg_color
-        obj['do_points'] = do_points
-        obj['do_shapes'] = do_shapes
-        obj['do_tracks'] = do_tracks
-        obj['do_symbology'] = do_symbology
-        obj['pointcolors'] = pointcolors
-        obj['pointsizes'] = pointsizes
-        obj['pointshapes'] = pointshapes
-        obj['shapelinewidths'] = shapelinewidths
-        obj['shapelinecolors'] = shapelinecolors
-        obj['shapefillcolors'] = shapefillcolors
-        obj['tracklinewidths'] = tracklinewidths
-        obj['tracklinecolors'] = tracklinecolors
-        obj['trackmarkersizes'] = trackmarkersizes
-        obj['trackmarkercolors'] = trackmarkercolors
-        obj['trackmarkershapes'] = trackmarkershapes
-        obj['trackheadcolors'] = trackheadcolors
-        obj['trackheadsizes'] = trackheadsizes
-        obj['trackheadshapes'] = trackheadshapes
+        obj['style_options'] = style_options
         obj['options'] = options
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/image' )
@@ -2957,18 +3191,8 @@ class GPUdb:
                                     None, cb_vals2 = None, min_x = None, max_x =
                                     None, min_y = None, max_y = None, width =
                                     None, height = None, projection =
-                                    'PLATE_CARREE', bg_color = None, do_points =
-                                    'true', do_shapes = 'true', do_tracks =
-                                    'true', do_symbology = 'false', pointcolors
-                                    = 'FF0000', pointsizes = '3', pointshapes =
-                                    None, shapelinewidths = '3', shapelinecolors
-                                    = 'FFFF00 ', shapefillcolors = '-1',
-                                    tracklinewidths = '3', tracklinecolors =
-                                    'green', trackmarkersizes = '3',
-                                    trackmarkercolors = 'blue',
-                                    trackmarkershapes = 'none', trackheadcolors
-                                    = 'FFFFFF', trackheadsizes = '10',
-                                    trackheadshapes = 'circle', options = {} ):
+                                    'PLATE_CARREE', bg_color = None,
+                                    style_options = None, options = {} ):
         """Generates 'class break' rasterized image tiles for an area of interest using
         the given tables and the provided parameters.  A class break rendering
         is where data from one or more GPUdb tables is rasterized with styling
@@ -2997,24 +3221,7 @@ class GPUdb:
         assert isinstance( height, (int, long, float)), "visualize_image_classbreak(): Argument 'height' must be (one) of type(s) '(int, long, float)'; given %s" % type( height ).__name__
         assert isinstance( projection, (str, unicode)), "visualize_image_classbreak(): Argument 'projection' must be (one) of type(s) '(str, unicode)'; given %s" % type( projection ).__name__
         assert isinstance( bg_color, (int, long, float)), "visualize_image_classbreak(): Argument 'bg_color' must be (one) of type(s) '(int, long, float)'; given %s" % type( bg_color ).__name__
-        assert isinstance( do_points, (list)), "visualize_image_classbreak(): Argument 'do_points' must be (one) of type(s) '(list)'; given %s" % type( do_points ).__name__
-        assert isinstance( do_shapes, (list)), "visualize_image_classbreak(): Argument 'do_shapes' must be (one) of type(s) '(list)'; given %s" % type( do_shapes ).__name__
-        assert isinstance( do_tracks, (list)), "visualize_image_classbreak(): Argument 'do_tracks' must be (one) of type(s) '(list)'; given %s" % type( do_tracks ).__name__
-        assert isinstance( do_symbology, (list)), "visualize_image_classbreak(): Argument 'do_symbology' must be (one) of type(s) '(list)'; given %s" % type( do_symbology ).__name__
-        assert isinstance( pointcolors, (list)), "visualize_image_classbreak(): Argument 'pointcolors' must be (one) of type(s) '(list)'; given %s" % type( pointcolors ).__name__
-        assert isinstance( pointsizes, (list)), "visualize_image_classbreak(): Argument 'pointsizes' must be (one) of type(s) '(list)'; given %s" % type( pointsizes ).__name__
-        assert isinstance( pointshapes, (list)), "visualize_image_classbreak(): Argument 'pointshapes' must be (one) of type(s) '(list)'; given %s" % type( pointshapes ).__name__
-        assert isinstance( shapelinewidths, (list)), "visualize_image_classbreak(): Argument 'shapelinewidths' must be (one) of type(s) '(list)'; given %s" % type( shapelinewidths ).__name__
-        assert isinstance( shapelinecolors, (list)), "visualize_image_classbreak(): Argument 'shapelinecolors' must be (one) of type(s) '(list)'; given %s" % type( shapelinecolors ).__name__
-        assert isinstance( shapefillcolors, (list)), "visualize_image_classbreak(): Argument 'shapefillcolors' must be (one) of type(s) '(list)'; given %s" % type( shapefillcolors ).__name__
-        assert isinstance( tracklinewidths, (list)), "visualize_image_classbreak(): Argument 'tracklinewidths' must be (one) of type(s) '(list)'; given %s" % type( tracklinewidths ).__name__
-        assert isinstance( tracklinecolors, (list)), "visualize_image_classbreak(): Argument 'tracklinecolors' must be (one) of type(s) '(list)'; given %s" % type( tracklinecolors ).__name__
-        assert isinstance( trackmarkersizes, (list)), "visualize_image_classbreak(): Argument 'trackmarkersizes' must be (one) of type(s) '(list)'; given %s" % type( trackmarkersizes ).__name__
-        assert isinstance( trackmarkercolors, (list)), "visualize_image_classbreak(): Argument 'trackmarkercolors' must be (one) of type(s) '(list)'; given %s" % type( trackmarkercolors ).__name__
-        assert isinstance( trackmarkershapes, (list)), "visualize_image_classbreak(): Argument 'trackmarkershapes' must be (one) of type(s) '(list)'; given %s" % type( trackmarkershapes ).__name__
-        assert isinstance( trackheadcolors, (list)), "visualize_image_classbreak(): Argument 'trackheadcolors' must be (one) of type(s) '(list)'; given %s" % type( trackheadcolors ).__name__
-        assert isinstance( trackheadsizes, (list)), "visualize_image_classbreak(): Argument 'trackheadsizes' must be (one) of type(s) '(list)'; given %s" % type( trackheadsizes ).__name__
-        assert isinstance( trackheadshapes, (list)), "visualize_image_classbreak(): Argument 'trackheadshapes' must be (one) of type(s) '(list)'; given %s" % type( trackheadshapes ).__name__
+        assert isinstance( style_options, (dict)), "visualize_image_classbreak(): Argument 'style_options' must be (one) of type(s) '(dict)'; given %s" % type( style_options ).__name__
         assert isinstance( options, (dict)), "visualize_image_classbreak(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "visualize_image_classbreak" )
@@ -3037,24 +3244,7 @@ class GPUdb:
         obj['height'] = height
         obj['projection'] = projection
         obj['bg_color'] = bg_color
-        obj['do_points'] = do_points
-        obj['do_shapes'] = do_shapes
-        obj['do_tracks'] = do_tracks
-        obj['do_symbology'] = do_symbology
-        obj['pointcolors'] = pointcolors
-        obj['pointsizes'] = pointsizes
-        obj['pointshapes'] = pointshapes
-        obj['shapelinewidths'] = shapelinewidths
-        obj['shapelinecolors'] = shapelinecolors
-        obj['shapefillcolors'] = shapefillcolors
-        obj['tracklinewidths'] = tracklinewidths
-        obj['tracklinecolors'] = tracklinecolors
-        obj['trackmarkersizes'] = trackmarkersizes
-        obj['trackmarkercolors'] = trackmarkercolors
-        obj['trackmarkershapes'] = trackmarkershapes
-        obj['trackheadcolors'] = trackheadcolors
-        obj['trackheadsizes'] = trackheadsizes
-        obj['trackheadshapes'] = trackheadshapes
+        obj['style_options'] = style_options
         obj['options'] = options
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/image/classbreak' )
@@ -3066,15 +3256,12 @@ class GPUdb:
                                  y_column_name = None, value_column_name = None,
                                  min_x = None, max_x = None, min_y = None, max_y
                                  = None, width = None, height = None, projection
-                                 = 'PLATE_CARREE', colormap = 'none',
-                                 blur_radius = '5', bg_color = None,
-                                 gradient_start_color = 'FFFFFF',
-                                 gradient_end_color = 'FF0000', options = {} ):
+                                 = 'PLATE_CARREE', style_options = None, options
+                                 = {} ):
         """Generates rasterized heatmap image tiles for an area of interest using the
         given tables and the provided parameters.  All color values must be in
-        the format RRGGBB or AARRGGBB (to specify the alpha value).   The
-        heatmap image is contained in the output parameter *image_data*
-        field."""
+        the format RRGGBB or AARRGGBB (to specify the alpha value). The heatmap
+        image is contained in the output parameter *image_data* field."""
 
         assert isinstance( table_names, (list)), "visualize_image_heatmap(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
         assert isinstance( x_column_name, (str, unicode)), "visualize_image_heatmap(): Argument 'x_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( x_column_name ).__name__
@@ -3087,11 +3274,7 @@ class GPUdb:
         assert isinstance( width, (int, long, float)), "visualize_image_heatmap(): Argument 'width' must be (one) of type(s) '(int, long, float)'; given %s" % type( width ).__name__
         assert isinstance( height, (int, long, float)), "visualize_image_heatmap(): Argument 'height' must be (one) of type(s) '(int, long, float)'; given %s" % type( height ).__name__
         assert isinstance( projection, (str, unicode)), "visualize_image_heatmap(): Argument 'projection' must be (one) of type(s) '(str, unicode)'; given %s" % type( projection ).__name__
-        assert isinstance( colormap, (str, unicode)), "visualize_image_heatmap(): Argument 'colormap' must be (one) of type(s) '(str, unicode)'; given %s" % type( colormap ).__name__
-        assert isinstance( blur_radius, (int, long, float)), "visualize_image_heatmap(): Argument 'blur_radius' must be (one) of type(s) '(int, long, float)'; given %s" % type( blur_radius ).__name__
-        assert isinstance( bg_color, (int, long, float)), "visualize_image_heatmap(): Argument 'bg_color' must be (one) of type(s) '(int, long, float)'; given %s" % type( bg_color ).__name__
-        assert isinstance( gradient_start_color, (int, long, float)), "visualize_image_heatmap(): Argument 'gradient_start_color' must be (one) of type(s) '(int, long, float)'; given %s" % type( gradient_start_color ).__name__
-        assert isinstance( gradient_end_color, (int, long, float)), "visualize_image_heatmap(): Argument 'gradient_end_color' must be (one) of type(s) '(int, long, float)'; given %s" % type( gradient_end_color ).__name__
+        assert isinstance( style_options, (dict)), "visualize_image_heatmap(): Argument 'style_options' must be (one) of type(s) '(dict)'; given %s" % type( style_options ).__name__
         assert isinstance( options, (dict)), "visualize_image_heatmap(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "visualize_image_heatmap" )
@@ -3108,86 +3291,11 @@ class GPUdb:
         obj['width'] = width
         obj['height'] = height
         obj['projection'] = projection
-        obj['colormap'] = colormap
-        obj['blur_radius'] = blur_radius
-        obj['bg_color'] = bg_color
-        obj['gradient_start_color'] = gradient_start_color
-        obj['gradient_end_color'] = gradient_end_color
+        obj['style_options'] = style_options
         obj['options'] = options
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/image/heatmap' )
     # end visualize_image_heatmap
-
-
-    # begin visualize_image_heatmap_classbreak
-    def visualize_image_heatmap_classbreak( self, table_names = None, x_column_name
-                                            = None, y_column_name = None,
-                                            cb_column_name = None, cb_vals =
-                                            None, cb_ranges = None, min_x =
-                                            None, max_x = None, min_y = None,
-                                            max_y = None, width = None, height =
-                                            None, projection = 'PLATE_CARREE',
-                                            colormaps = 'none', blur_radii =
-                                            '5', bg_color = None,
-                                            gradient_start_colors = 'FFFFFF',
-                                            gradient_end_colors = 'FF0000',
-                                            options = {} ):
-        """Generates 'class break' rasterized heatmap image tiles for an area of
-        interest using the given tables and the provided parameters.  A class
-        break rendering is where data from one or more GPUdb tables is
-        rasterized with styling applied on a per-class basis. GPUdb supports
-        class breaks based on one or more data columns. Distinct values (for
-        strings) or ranges (for numeric attributes) must be provided in the
-        cb_column_name1/cb_vals1 and cb_column_name2/cb_vals2 parameters. The
-        styling parameters must be specified for each class.  All color values
-        must be in the format RRGGBB or AARRGGBB (to specify the alpha
-        value)."""
-
-        assert isinstance( table_names, (list)), "visualize_image_heatmap_classbreak(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
-        assert isinstance( x_column_name, (str, unicode)), "visualize_image_heatmap_classbreak(): Argument 'x_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( x_column_name ).__name__
-        assert isinstance( y_column_name, (str, unicode)), "visualize_image_heatmap_classbreak(): Argument 'y_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( y_column_name ).__name__
-        assert isinstance( cb_column_name, (str, unicode)), "visualize_image_heatmap_classbreak(): Argument 'cb_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( cb_column_name ).__name__
-        assert isinstance( cb_vals, (list)), "visualize_image_heatmap_classbreak(): Argument 'cb_vals' must be (one) of type(s) '(list)'; given %s" % type( cb_vals ).__name__
-        assert isinstance( cb_ranges, (list)), "visualize_image_heatmap_classbreak(): Argument 'cb_ranges' must be (one) of type(s) '(list)'; given %s" % type( cb_ranges ).__name__
-        assert isinstance( min_x, (int, long, float)), "visualize_image_heatmap_classbreak(): Argument 'min_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_x ).__name__
-        assert isinstance( max_x, (int, long, float)), "visualize_image_heatmap_classbreak(): Argument 'max_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_x ).__name__
-        assert isinstance( min_y, (int, long, float)), "visualize_image_heatmap_classbreak(): Argument 'min_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_y ).__name__
-        assert isinstance( max_y, (int, long, float)), "visualize_image_heatmap_classbreak(): Argument 'max_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_y ).__name__
-        assert isinstance( width, (int, long, float)), "visualize_image_heatmap_classbreak(): Argument 'width' must be (one) of type(s) '(int, long, float)'; given %s" % type( width ).__name__
-        assert isinstance( height, (int, long, float)), "visualize_image_heatmap_classbreak(): Argument 'height' must be (one) of type(s) '(int, long, float)'; given %s" % type( height ).__name__
-        assert isinstance( projection, (str, unicode)), "visualize_image_heatmap_classbreak(): Argument 'projection' must be (one) of type(s) '(str, unicode)'; given %s" % type( projection ).__name__
-        assert isinstance( colormaps, (list)), "visualize_image_heatmap_classbreak(): Argument 'colormaps' must be (one) of type(s) '(list)'; given %s" % type( colormaps ).__name__
-        assert isinstance( blur_radii, (list)), "visualize_image_heatmap_classbreak(): Argument 'blur_radii' must be (one) of type(s) '(list)'; given %s" % type( blur_radii ).__name__
-        assert isinstance( bg_color, (int, long, float)), "visualize_image_heatmap_classbreak(): Argument 'bg_color' must be (one) of type(s) '(int, long, float)'; given %s" % type( bg_color ).__name__
-        assert isinstance( gradient_start_colors, (list)), "visualize_image_heatmap_classbreak(): Argument 'gradient_start_colors' must be (one) of type(s) '(list)'; given %s" % type( gradient_start_colors ).__name__
-        assert isinstance( gradient_end_colors, (list)), "visualize_image_heatmap_classbreak(): Argument 'gradient_end_colors' must be (one) of type(s) '(list)'; given %s" % type( gradient_end_colors ).__name__
-        assert isinstance( options, (dict)), "visualize_image_heatmap_classbreak(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "visualize_image_heatmap_classbreak" )
-
-        obj = collections.OrderedDict()
-        obj['table_names'] = table_names
-        obj['x_column_name'] = x_column_name
-        obj['y_column_name'] = y_column_name
-        obj['cb_column_name'] = cb_column_name
-        obj['cb_vals'] = cb_vals
-        obj['cb_ranges'] = cb_ranges
-        obj['min_x'] = min_x
-        obj['max_x'] = max_x
-        obj['min_y'] = min_y
-        obj['max_y'] = max_y
-        obj['width'] = width
-        obj['height'] = height
-        obj['projection'] = projection
-        obj['colormaps'] = colormaps
-        obj['blur_radii'] = blur_radii
-        obj['bg_color'] = bg_color
-        obj['gradient_start_colors'] = gradient_start_colors
-        obj['gradient_end_colors'] = gradient_end_colors
-        obj['options'] = options
-
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/image/heatmap/classbreak' )
-    # end visualize_image_heatmap_classbreak
 
 
     # begin visualize_image_labels
@@ -3283,17 +3391,9 @@ class GPUdb:
                          track_ids = None, x_column_name = None, y_column_name =
                          None, min_x = None, max_x = None, min_y = None, max_y =
                          None, width = None, height = None, projection =
-                         'PLATE_CARREE', bg_color = None, do_points = 'true',
-                         do_shapes = 'true', do_tracks = 'true', pointcolors =
-                         'FF0000', pointsizes = '3', pointshapes = None,
-                         shapelinewidths = '3', shapelinecolors = 'FFFF00 ',
-                         shapefillcolors = '-1', tracklinewidths = '3',
-                         tracklinecolors = 'green', trackmarkersizes = '3',
-                         trackmarkercolors = '0000FF', trackmarkershapes =
-                         'none', trackheadcolors = 'FFFFFF', trackheadsizes =
-                         '10', trackheadshapes = 'circle', time_intervals =
-                         None, video_style = None, session_key = None, options =
-                         {} ):
+                         'PLATE_CARREE', bg_color = None, time_intervals = None,
+                         video_style = None, session_key = None, style_options =
+                         None, options = {} ):
         """Creates raster images of data in the given table based on provided input
         parameters. Numerous parameters are required to call this function. Some
         of the important parameters are the attributes of the generated images
@@ -3331,26 +3431,10 @@ class GPUdb:
         assert isinstance( height, (int, long, float)), "visualize_video(): Argument 'height' must be (one) of type(s) '(int, long, float)'; given %s" % type( height ).__name__
         assert isinstance( projection, (str, unicode)), "visualize_video(): Argument 'projection' must be (one) of type(s) '(str, unicode)'; given %s" % type( projection ).__name__
         assert isinstance( bg_color, (int, long, float)), "visualize_video(): Argument 'bg_color' must be (one) of type(s) '(int, long, float)'; given %s" % type( bg_color ).__name__
-        assert isinstance( do_points, (list)), "visualize_video(): Argument 'do_points' must be (one) of type(s) '(list)'; given %s" % type( do_points ).__name__
-        assert isinstance( do_shapes, (list)), "visualize_video(): Argument 'do_shapes' must be (one) of type(s) '(list)'; given %s" % type( do_shapes ).__name__
-        assert isinstance( do_tracks, (list)), "visualize_video(): Argument 'do_tracks' must be (one) of type(s) '(list)'; given %s" % type( do_tracks ).__name__
-        assert isinstance( pointcolors, (list)), "visualize_video(): Argument 'pointcolors' must be (one) of type(s) '(list)'; given %s" % type( pointcolors ).__name__
-        assert isinstance( pointsizes, (list)), "visualize_video(): Argument 'pointsizes' must be (one) of type(s) '(list)'; given %s" % type( pointsizes ).__name__
-        assert isinstance( pointshapes, (list)), "visualize_video(): Argument 'pointshapes' must be (one) of type(s) '(list)'; given %s" % type( pointshapes ).__name__
-        assert isinstance( shapelinewidths, (list)), "visualize_video(): Argument 'shapelinewidths' must be (one) of type(s) '(list)'; given %s" % type( shapelinewidths ).__name__
-        assert isinstance( shapelinecolors, (list)), "visualize_video(): Argument 'shapelinecolors' must be (one) of type(s) '(list)'; given %s" % type( shapelinecolors ).__name__
-        assert isinstance( shapefillcolors, (list)), "visualize_video(): Argument 'shapefillcolors' must be (one) of type(s) '(list)'; given %s" % type( shapefillcolors ).__name__
-        assert isinstance( tracklinewidths, (list)), "visualize_video(): Argument 'tracklinewidths' must be (one) of type(s) '(list)'; given %s" % type( tracklinewidths ).__name__
-        assert isinstance( tracklinecolors, (list)), "visualize_video(): Argument 'tracklinecolors' must be (one) of type(s) '(list)'; given %s" % type( tracklinecolors ).__name__
-        assert isinstance( trackmarkersizes, (list)), "visualize_video(): Argument 'trackmarkersizes' must be (one) of type(s) '(list)'; given %s" % type( trackmarkersizes ).__name__
-        assert isinstance( trackmarkercolors, (list)), "visualize_video(): Argument 'trackmarkercolors' must be (one) of type(s) '(list)'; given %s" % type( trackmarkercolors ).__name__
-        assert isinstance( trackmarkershapes, (list)), "visualize_video(): Argument 'trackmarkershapes' must be (one) of type(s) '(list)'; given %s" % type( trackmarkershapes ).__name__
-        assert isinstance( trackheadcolors, (list)), "visualize_video(): Argument 'trackheadcolors' must be (one) of type(s) '(list)'; given %s" % type( trackheadcolors ).__name__
-        assert isinstance( trackheadsizes, (list)), "visualize_video(): Argument 'trackheadsizes' must be (one) of type(s) '(list)'; given %s" % type( trackheadsizes ).__name__
-        assert isinstance( trackheadshapes, (list)), "visualize_video(): Argument 'trackheadshapes' must be (one) of type(s) '(list)'; given %s" % type( trackheadshapes ).__name__
         assert isinstance( time_intervals, (list)), "visualize_video(): Argument 'time_intervals' must be (one) of type(s) '(list)'; given %s" % type( time_intervals ).__name__
         assert isinstance( video_style, (str, unicode)), "visualize_video(): Argument 'video_style' must be (one) of type(s) '(str, unicode)'; given %s" % type( video_style ).__name__
         assert isinstance( session_key, (str, unicode)), "visualize_video(): Argument 'session_key' must be (one) of type(s) '(str, unicode)'; given %s" % type( session_key ).__name__
+        assert isinstance( style_options, (dict)), "visualize_video(): Argument 'style_options' must be (one) of type(s) '(dict)'; given %s" % type( style_options ).__name__
         assert isinstance( options, (dict)), "visualize_video(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "visualize_video" )
@@ -3369,26 +3453,10 @@ class GPUdb:
         obj['height'] = height
         obj['projection'] = projection
         obj['bg_color'] = bg_color
-        obj['do_points'] = do_points
-        obj['do_shapes'] = do_shapes
-        obj['do_tracks'] = do_tracks
-        obj['pointcolors'] = pointcolors
-        obj['pointsizes'] = pointsizes
-        obj['pointshapes'] = pointshapes
-        obj['shapelinewidths'] = shapelinewidths
-        obj['shapelinecolors'] = shapelinecolors
-        obj['shapefillcolors'] = shapefillcolors
-        obj['tracklinewidths'] = tracklinewidths
-        obj['tracklinecolors'] = tracklinecolors
-        obj['trackmarkersizes'] = trackmarkersizes
-        obj['trackmarkercolors'] = trackmarkercolors
-        obj['trackmarkershapes'] = trackmarkershapes
-        obj['trackheadcolors'] = trackheadcolors
-        obj['trackheadsizes'] = trackheadsizes
-        obj['trackheadshapes'] = trackheadshapes
         obj['time_intervals'] = time_intervals
         obj['video_style'] = video_style
         obj['session_key'] = session_key
+        obj['style_options'] = style_options
         obj['options'] = options
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/video' )
@@ -3400,28 +3468,26 @@ class GPUdb:
                                  y_column_name = None, min_x = None, max_x =
                                  None, min_y = None, max_y = None,
                                  time_intervals = None, width = None, height =
-                                 None, projection = 'PLATE_CARREE', bg_color =
-                                 None, colormap = 'none', blur_radius = '5',
-                                 gradient_start_color = 'FFFFFF',
-                                 gradient_end_color = 'FF0000', video_style =
-                                 None, session_key = None, options = {} ):
+                                 None, projection = 'PLATE_CARREE', video_style
+                                 = None, session_key = None, style_options =
+                                 None, options = {} ):
         """Creates raster heat-map images of table data based on input parameters.
         Numerous parameters are required to call this function. Some of the
-        important parameters are the attributes of the generated images (input
-        parameter *bg_color*, input parameter *width*, input parameter
-        *height*), the collection of GPUdb table names on which this function is
-        to be applied and a user specified session key. This session key is
-        later used to fetch the generated images stored by GPUdb. The operation
-        is synchronous meaning that GPUdb will not return the request until all
-        the images are fully available.  Once the request has been processed
-        then the generated video frames are available for download via WMS using
-        STYLES=cached. In this request the LAYERS parameter should be populated
-        with the session key passed in input parameter *session_key* of the
-        visualize video request and the FRAME parameter indicates which 0-based
-        frame of the video should be returned. All other WMS parameters are
-        ignored for this mode.  For instance, if a 20 frame video with the
-        session key 'MY-SESSION-KEY' was generated, the first frame could be
-        retrieved with the URL::       http://<gpudb-ip-
+        important parameters are the attributes of the generated images
+        (*bg_color*, input parameter *width*, input parameter *height*), the
+        collection of GPUdb table names on which this function is to be applied
+        and a user specified session key. This session key is later used to
+        fetch the generated images stored by GPUdb. The operation is synchronous
+        meaning that GPUdb will not return the request until all the images are
+        fully available.  Once the request has been processed then the generated
+        video frames are available for download via WMS using STYLES=cached. In
+        this request the LAYERS parameter should be populated with the session
+        key passed in input parameter *session_key* of the visualize video
+        request and the FRAME parameter indicates which 0-based frame of the
+        video should be returned. All other WMS parameters are ignored for this
+        mode.  For instance, if a 20 frame video with the session key 'MY-
+        SESSION-KEY' was generated, the first frame could be retrieved with the
+        URL::       http://<gpudb-ip-
         address>:9191/wms?REQUEST=GetMap&STYLES=cached&LAYERS=MY-SESSION-
         KEY&FRAME=0  and the last frame could be retrieved with::      http
         ://gpudb-ip-address:9191/wms?REQUEST=GetMap&STYLES=cached&LAYERS=MY-
@@ -3439,13 +3505,9 @@ class GPUdb:
         assert isinstance( width, (int, long, float)), "visualize_video_heatmap(): Argument 'width' must be (one) of type(s) '(int, long, float)'; given %s" % type( width ).__name__
         assert isinstance( height, (int, long, float)), "visualize_video_heatmap(): Argument 'height' must be (one) of type(s) '(int, long, float)'; given %s" % type( height ).__name__
         assert isinstance( projection, (str, unicode)), "visualize_video_heatmap(): Argument 'projection' must be (one) of type(s) '(str, unicode)'; given %s" % type( projection ).__name__
-        assert isinstance( bg_color, (int, long, float)), "visualize_video_heatmap(): Argument 'bg_color' must be (one) of type(s) '(int, long, float)'; given %s" % type( bg_color ).__name__
-        assert isinstance( colormap, (str, unicode)), "visualize_video_heatmap(): Argument 'colormap' must be (one) of type(s) '(str, unicode)'; given %s" % type( colormap ).__name__
-        assert isinstance( blur_radius, (int, long, float)), "visualize_video_heatmap(): Argument 'blur_radius' must be (one) of type(s) '(int, long, float)'; given %s" % type( blur_radius ).__name__
-        assert isinstance( gradient_start_color, (int, long, float)), "visualize_video_heatmap(): Argument 'gradient_start_color' must be (one) of type(s) '(int, long, float)'; given %s" % type( gradient_start_color ).__name__
-        assert isinstance( gradient_end_color, (int, long, float)), "visualize_video_heatmap(): Argument 'gradient_end_color' must be (one) of type(s) '(int, long, float)'; given %s" % type( gradient_end_color ).__name__
         assert isinstance( video_style, (str, unicode)), "visualize_video_heatmap(): Argument 'video_style' must be (one) of type(s) '(str, unicode)'; given %s" % type( video_style ).__name__
         assert isinstance( session_key, (str, unicode)), "visualize_video_heatmap(): Argument 'session_key' must be (one) of type(s) '(str, unicode)'; given %s" % type( session_key ).__name__
+        assert isinstance( style_options, (dict)), "visualize_video_heatmap(): Argument 'style_options' must be (one) of type(s) '(dict)'; given %s" % type( style_options ).__name__
         assert isinstance( options, (dict)), "visualize_video_heatmap(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "visualize_video_heatmap" )
@@ -3462,13 +3524,9 @@ class GPUdb:
         obj['width'] = width
         obj['height'] = height
         obj['projection'] = projection
-        obj['bg_color'] = bg_color
-        obj['colormap'] = colormap
-        obj['blur_radius'] = blur_radius
-        obj['gradient_start_color'] = gradient_start_color
-        obj['gradient_end_color'] = gradient_end_color
         obj['video_style'] = video_style
         obj['session_key'] = session_key
+        obj['style_options'] = style_options
         obj['options'] = options
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/video/heatmap' )
