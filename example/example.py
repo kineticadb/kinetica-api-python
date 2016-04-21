@@ -59,7 +59,7 @@ def gpudb_example():
 
     # Insert the records into the table
     response = h_db.insert_records( table_name = my_table,
-                                    objects = encoded_obj_list,
+                                    data = encoded_obj_list,
                                     list_encoding = 'binary',
                                     options = options )
     print "Record Ids for %d new records - %s" % (response['count_inserted'], response['record_ids']), new_line
@@ -172,7 +172,7 @@ def gpudb_example():
         datum["group_id"] = 'Group 1'
         encoded_obj_list.append(h_db.encode_datum(my_type, datum))
     h_db.insert_records( table_name = my_table,
-                         objects = encoded_obj_list,
+                         data = encoded_obj_list,
                          list_encoding = 'binary',
                          options = {} )
 
