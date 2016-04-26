@@ -181,7 +181,7 @@ class GPUdb(object):
     connection    = "HTTP"      # Input connection type, either 'HTTP' or 'HTTPS'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "4.2.0.0"
+    api_version   = "5.0.0.0"
 
     # constants
     END_OF_SET = -9999
@@ -847,8 +847,17 @@ class GPUdb(object):
         RSP_SCHEMA_STR = """{"type":"record","name":"trigger_notification","fields":[{"name":"trigger_id","type":"string"},{"name":"set_id","type":"string"},{"name":"object_id","type":"string"},{"name":"object_data","type":"bytes"}]}"""
         self.gpudb_schemas[ name ] = { "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
+        name = "admin_delete_node"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_delete_node_request","fields":[{"name":"rank","type":"int"},{"name":"authorization","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_delete_node_response","fields":[{"name":"rank","type":"int"},{"name":"message","type":{"type":"array","items":"string"}}]}"""
+        ENDPOINT = "/admin/delete/node"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "admin_get_shard_assignments"
-        REQ_SCHEMA_STR = """{"type":"record","name":"admin_get_shard_assignments_request","fields":[{"name":"dummy","type":"string"}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_get_shard_assignments_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"admin_get_shard_assignments_response","fields":[{"name":"version","type":"long"},{"name":"shard_assignments_rank","type":{"type":"array","items":"int"}},{"name":"shard_assignments_tom","type":{"type":"array","items":"int"}}]}"""
         ENDPOINT = "/admin/getshardassignments"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -865,8 +874,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
+        name = "admin_rebalance"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_rebalance_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_rebalance_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"message","type":{"type":"array","items":"string"}}]}"""
+        ENDPOINT = "/admin/rebalance"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "admin_set_shard_assignments"
-        REQ_SCHEMA_STR = """{"type":"record","name":"admin_set_shard_assignments_request","fields":[{"name":"version","type":"long"},{"name":"partial_reassignment","type":"boolean"},{"name":"shard_assignments_rank","type":{"type":"array","items":"int"}},{"name":"shard_assignments_tom","type":{"type":"array","items":"int"}},{"name":"assignment_index","type":{"type":"array","items":"int"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_set_shard_assignments_request","fields":[{"name":"version","type":"long"},{"name":"partial_reassignment","type":"boolean"},{"name":"shard_assignments_rank","type":{"type":"array","items":"int"}},{"name":"shard_assignments_tom","type":{"type":"array","items":"int"}},{"name":"assignment_index","type":{"type":"array","items":"int"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"admin_set_shard_assignments_response","fields":[{"name":"version","type":"long"}]}"""
         ENDPOINT = "/admin/setshardassignments"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -878,6 +896,15 @@ class GPUdb(object):
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_shutdown_request","fields":[{"name":"exit_type","type":"string"},{"name":"authorization","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"admin_shutdown_response","fields":[{"name":"exit_status","type":"string"}]}"""
         ENDPOINT = "/admin/shutdown"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "admin_verify_db"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_verify_db_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_verify_db_response","fields":[{"name":"verified_ok","type":"boolean"},{"name":"error_list","type":{"type":"array","items":"string"}}]}"""
+        ENDPOINT = "/admin/verifydb"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
@@ -993,7 +1020,7 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "clear_table"
         REQ_SCHEMA_STR = """{"type":"record","name":"clear_table_request","fields":[{"name":"table_name","type":"string"},{"name":"authorization","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"clear_table_response","fields":[{"name":"status","type":"string"},{"name":"table_name","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"clear_table_response","fields":[{"name":"table_name","type":"string"}]}"""
         ENDPOINT = "/clear/table"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -1308,7 +1335,7 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "show_table"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_table_request","fields":[{"name":"table_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_table_response","fields":[{"name":"table_name","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"is_collection","type":{"type":"array","items":"boolean"}},{"name":"is_view","type":{"type":"array","items":"boolean"}},{"name":"type_ids","type":{"type":"array","items":"string"}},{"name":"type_schemas","type":{"type":"array","items":"string"}},{"name":"type_labels","type":{"type":"array","items":"string"}},{"name":"properties","type":{"type":"array","items":{"type":"map","values":{"type":"array","items":"string"}}}},{"name":"ttls","type":{"type":"array","items":"int"}},{"name":"sizes","type":{"type":"array","items":"long"}},{"name":"full_sizes","type":{"type":"array","items":"long"}},{"name":"total_size","type":"long"},{"name":"total_full_size","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_table_response","fields":[{"name":"table_name","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"is_collection","type":{"type":"array","items":"boolean"}},{"name":"is_view","type":{"type":"array","items":"boolean"}},{"name":"is_join","type":{"type":"array","items":"boolean"}},{"name":"type_ids","type":{"type":"array","items":"string"}},{"name":"type_schemas","type":{"type":"array","items":"string"}},{"name":"type_labels","type":{"type":"array","items":"string"}},{"name":"properties","type":{"type":"array","items":{"type":"map","values":{"type":"array","items":"string"}}}},{"name":"ttls","type":{"type":"array","items":"int"}},{"name":"sizes","type":{"type":"array","items":"long"}},{"name":"full_sizes","type":{"type":"array","items":"long"}},{"name":"join_sizes","type":{"type":"array","items":"double"}},{"name":"total_size","type":"long"},{"name":"total_full_size","type":"long"}]}"""
         ENDPOINT = "/show/table"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -1434,16 +1461,40 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
     # end load_gpudb_schemas
 
-    # begin admin_get_shard_assignments
-    def admin_get_shard_assignments( self, dummy = [] ):
-        """"""
+    # begin admin_delete_node
+    def admin_delete_node( self, rank = None, authorization = None, options = {} ):
+        """Delete a node from the system.  To delete a node, the data is first
+        distributed from the deleted node to all the other nodes.  Then the node
+        is taken out of service."""
 
-        assert isinstance( dummy, (str, unicode)), "admin_get_shard_assignments(): Argument 'dummy' must be (one) of type(s) '(str, unicode)'; given %s" % type( dummy ).__name__
+        assert isinstance( rank, (int, long, float)), "admin_delete_node(): Argument 'rank' must be (one) of type(s) '(int, long, float)'; given %s" % type( rank ).__name__
+        assert isinstance( authorization, (str, unicode)), "admin_delete_node(): Argument 'authorization' must be (one) of type(s) '(str, unicode)'; given %s" % type( authorization ).__name__
+        assert isinstance( options, (dict)), "admin_delete_node(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "admin_delete_node" )
+
+        obj = collections.OrderedDict()
+        obj['rank'] = rank
+        obj['authorization'] = authorization
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/delete/node' )
+    # end admin_delete_node
+
+
+    # begin admin_get_shard_assignments
+    def admin_get_shard_assignments( self, options = {} ):
+        """Returns the list of shards and the corresponding rank and tom containing the
+        shard.  The response message contains arrays of 16384 (total number of
+        shards in the system) rank and tom numbers corresponding to each
+        shard."""
+
+        assert isinstance( options, (dict)), "admin_get_shard_assignments(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "admin_get_shard_assignments" )
 
         obj = collections.OrderedDict()
-        obj['dummy'] = dummy
+        obj['options'] = options
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/getshardassignments' )
     # end admin_get_shard_assignments
@@ -1467,11 +1518,29 @@ class GPUdb(object):
     # end admin_offline
 
 
+    # begin admin_rebalance
+    def admin_rebalance( self, table_names = None, options = {} ):
+        """Rebalance the database such that all the nodes contain approximately equal
+        number of records."""
+
+        assert isinstance( table_names, (list)), "admin_rebalance(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
+        assert isinstance( options, (dict)), "admin_rebalance(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "admin_rebalance" )
+
+        obj = collections.OrderedDict()
+        obj['table_names'] = table_names
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/rebalance' )
+    # end admin_rebalance
+
+
     # begin admin_set_shard_assignments
     def admin_set_shard_assignments( self, version = None, partial_reassignment =
                                      None, shard_assignments_rank = None,
                                      shard_assignments_tom = None,
-                                     assignment_index = None ):
+                                     assignment_index = None, options = {} ):
         """"""
 
         assert isinstance( version, (int, long, float)), "admin_set_shard_assignments(): Argument 'version' must be (one) of type(s) '(int, long, float)'; given %s" % type( version ).__name__
@@ -1479,6 +1548,7 @@ class GPUdb(object):
         assert isinstance( shard_assignments_rank, (list)), "admin_set_shard_assignments(): Argument 'shard_assignments_rank' must be (one) of type(s) '(list)'; given %s" % type( shard_assignments_rank ).__name__
         assert isinstance( shard_assignments_tom, (list)), "admin_set_shard_assignments(): Argument 'shard_assignments_tom' must be (one) of type(s) '(list)'; given %s" % type( shard_assignments_tom ).__name__
         assert isinstance( assignment_index, (list)), "admin_set_shard_assignments(): Argument 'assignment_index' must be (one) of type(s) '(list)'; given %s" % type( assignment_index ).__name__
+        assert isinstance( options, (dict)), "admin_set_shard_assignments(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "admin_set_shard_assignments" )
 
@@ -1488,6 +1558,7 @@ class GPUdb(object):
         obj['shard_assignments_rank'] = shard_assignments_rank
         obj['shard_assignments_tom'] = shard_assignments_tom
         obj['assignment_index'] = assignment_index
+        obj['options'] = options
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/setshardassignments' )
     # end admin_set_shard_assignments
@@ -1513,6 +1584,23 @@ class GPUdb(object):
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/shutdown' )
     # end admin_shutdown
+
+
+    # begin admin_verify_db
+    def admin_verify_db( self, options = {} ):
+        """Verify database is in a consistent state.  When inconsistencies or errors are
+        found, the verified_ok flag in the response is set to false and the list
+        of errors found is provided in the error_list."""
+
+        assert isinstance( options, (dict)), "admin_verify_db(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "admin_verify_db" )
+
+        obj = collections.OrderedDict()
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/verifydb' )
+    # end admin_verify_db
 
 
     # begin aggregate_convex_hull
@@ -2804,7 +2892,7 @@ class GPUdb(object):
     def insert_records_random( self, table_name = None, count = None, options = {}
                                ):
         """Generates a specified number of random records and adds them to the given
-        table. There is an optional parameter that allows the user to customize
+        tble. There is an optional parameter that allows the user to customize
         the ranges of the column values. It also allows the user to specify
         linear profiles for some or all columns in which case linear values are
         generated rather than random ones. Only individual tables are supported
@@ -3201,8 +3289,8 @@ class GPUdb(object):
         numeric attributes) must be provided in the cb_column_name1/cb_vals1 and
         cb_column_name2/cb_vals2 parameters. The styling parameters must be
         specified for each class.  All color values must be in the format RRGGBB
-        or AARRGGBB (to specify the alpha value).   The image is contained in
-        the output parameter *image_data* field."""
+        or AARRGGBB (to specify the alpha value). The image is contained in the
+        output parameter *image_data* field."""
 
         assert isinstance( table_names, (list)), "visualize_image_classbreak(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
         assert isinstance( world_table_names, (list)), "visualize_image_classbreak(): Argument 'world_table_names' must be (one) of type(s) '(list)'; given %s" % type( world_table_names ).__name__
@@ -3397,12 +3485,12 @@ class GPUdb(object):
         """Creates raster images of data in the given table based on provided input
         parameters. Numerous parameters are required to call this function. Some
         of the important parameters are the attributes of the generated images
-        (input parameter *bg_color*, input parameter *width*, @{input height{),
-        the collection of GPUdb table names on which this function is to be
-        applied, for which shapes (point, polygon, tracks) the images are to be
-        created and a user specified session key. This session key is later used
-        to fetch the generated images stored by GPUdb. The operation is
-        synchronous meaning that GPUdb will not return the request until the
+        (input parameter *bg_color*, input parameter *width*, input parameter
+        *height*), the collection of GPUdb table names on which this function is
+        to be applied, for which shapes (point, polygon, tracks) the images are
+        to be created and a user specified session key. This session key is
+        later used to fetch the generated images stored by GPUdb. The operation
+        is synchronous meaning that GPUdb will not return the request until the
         images for all the frames of the video are fully available.  Once the
         request has been processed then the generated video frames are available
         for download via WMS using STYLES=cached. In this request the LAYERS
@@ -3415,8 +3503,8 @@ class GPUdb(object):
         address>:9191/wms?REQUEST=GetMap&STYLES=cached&LAYERS=MY-SESSION-
         KEY&FRAME=0  and the last frame could be retrieved with::      http
         ://gpudb-ip-address:9191/wms?REQUEST=GetMap&STYLES=cached&LAYERS=MY-
-        SESSION-KEY&FRAME=19     The response payload provides, among other
-        things, the number of frames which were created by GPUdb."""
+        SESSION-KEY&FRAME=19 The response payload provides, among other things,
+        the number of frames which were created by GPUdb."""
 
         assert isinstance( table_names, (list)), "visualize_video(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
         assert isinstance( world_table_names, (list)), "visualize_video(): Argument 'world_table_names' must be (one) of type(s) '(list)'; given %s" % type( world_table_names ).__name__
