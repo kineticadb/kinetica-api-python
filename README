@@ -4,7 +4,7 @@
 |                  |
 ====================
 
-This is the clien-side Python API for GPUdb.
+This is the client-side Python API for GPUdb.
 
 To install this package, run 'sudo pip install -e .' in the gpudb directory.
 
