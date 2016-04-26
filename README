@@ -10,9 +10,9 @@ To install this package, run 'sudo pip install -e .' in the gpudb directory.
 
 There is also an example file in the example directory.
 
-The documentation can be found at http://www.gpudb.com/docs/index.html.  The
+The documentation can be found at http://www.gpudb.com/docs/5/index.html.  The
 python specific documentation can be found at:
 
-* http://www.gpudb.com/docs/user/python_guide.html
-* http://www.gpudb.com/docs/api/python/index.html
+* http://www.gpudb.com/docs/5/user/python_guide.html
+* http://www.gpudb.com/docs/5/api/python/index.html
 
