@@ -181,7 +181,7 @@ class GPUdb(object):
     connection    = "HTTP"      # Input connection type, either 'HTTP' or 'HTTPS'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "5.0.0.0"
+    api_version   = "5.2.0.0"
 
     # constants
     END_OF_SET = -9999
@@ -732,7 +732,8 @@ class GPUdb(object):
             retobj['response'] = collections.OrderedDict()
 
             #note running eval here returns a standard (unordered) dict
-            d_resp = eval(retobj['json_encoded_response'])
+            #d_resp = eval(retobj['json_encoded_response'])
+            d_resp = json.loads(retobj['json_encoded_response'])
 
             #now go through the fields in order according to the schema
             my_schema = schema.parse(retobj['response_schema_str'])
@@ -740,7 +741,18 @@ class GPUdb(object):
             column_lookup = d_resp['column_headers']
 
             for i,column_name in enumerate(column_lookup):
-                retobj['response'][column_name] = d_resp['column_%d'%(i+1)]
+                column_index_name = 'column_%d'%(i+1)
+                
+                #double/float conversion here
+                #get the datatype of the underlying data
+                data_type = my_schema.fields_dict[column_index_name].type.items.type
+
+                if (data_type == 'double' or data_type == 'float'):
+                    retobj['response'][column_name] = [float(x) for x in d_resp[column_index_name]]
+
+                else:
+                    retobj['response'][column_name] = d_resp[column_index_name]
+                    
 
         if (do_print):
             print tabulate(retobj['response'],headers='keys',tablefmt='psql')
@@ -921,7 +933,7 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "aggregate_group_by"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_group_by_request","fields":[{"name":"table_name","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"offset","type":"long"},{"name":"limit","type":"long"},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_group_by_response","fields":[{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_group_by_response","fields":[{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"},{"name":"total_number_of_records","type":"long"},{"name":"has_more_records","type":"boolean"}]}"""
         ENDPOINT = "/aggregate/groupby"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -975,7 +987,7 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "aggregate_unique"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_unique_request","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"},{"name":"offset","type":"long"},{"name":"limit","type":"long"},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_unique_response","fields":[{"name":"table_name","type":"string"},{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_unique_response","fields":[{"name":"table_name","type":"string"},{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"},{"name":"has_more_records","type":"boolean"}]}"""
         ENDPOINT = "/aggregate/unique"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -992,8 +1004,8 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
         name = "alter_table"
-        REQ_SCHEMA_STR = """{"type":"record","name":"alter_table_request","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"},{"name":"action","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"alter_table_response","fields":[{"name":"status","type":"string"}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"alter_table_request","fields":[{"name":"table_name","type":"string"},{"name":"action","type":"string"},{"name":"value","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_table_response","fields":[{"name":"table_name","type":"string"},{"name":"action","type":"string"},{"name":"value","type":"string"}]}"""
         ENDPOINT = "/alter/table"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -1004,15 +1016,6 @@ class GPUdb(object):
         REQ_SCHEMA_STR = """{"type":"record","name":"alter_table_metadata_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"metadata_map","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"alter_table_metadata_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"metadata_map","type":{"type":"map","values":"string"}}]}"""
         ENDPOINT = "/alter/table/metadata"
-        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
-                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
-                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
-                                       "ENDPOINT" : ENDPOINT }
-        name = "alter_table_properties"
-        REQ_SCHEMA_STR = """{"type":"record","name":"alter_table_properties_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"properties_map","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"alter_table_properties_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"properties_map","type":{"type":"map","values":"string"}}]}"""
-        ENDPOINT = "/alter/table/properties"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
@@ -1046,8 +1049,8 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
         name = "create_join_table"
-        REQ_SCHEMA_STR = """{"type":"record","name":"create_join_table_request","fields":[{"name":"join_table_name","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"aliases","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"create_join_table_response","fields":[{"name":"join_table_name","type":"string"}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_join_table_request","fields":[{"name":"join_table_name","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"aliases","type":{"type":"array","items":"string"}},{"name":"expression","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_join_table_response","fields":[{"name":"join_table_name","type":"string"},{"name":"count","type":"long"}]}"""
         ENDPOINT = "/create/jointable"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -1218,7 +1221,7 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "get_records"
         REQ_SCHEMA_STR = """{"type":"record","name":"get_records_request","fields":[{"name":"table_name","type":"string"},{"name":"offset","type":"long"},{"name":"limit","type":"long"},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"get_records_response","fields":[{"name":"table_name","type":"string"},{"name":"type_name","type":"string"},{"name":"type_schema","type":"string"},{"name":"records_binary","type":{"type":"array","items":"bytes"}},{"name":"records_json","type":{"type":"array","items":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"get_records_response","fields":[{"name":"table_name","type":"string"},{"name":"type_name","type":"string"},{"name":"type_schema","type":"string"},{"name":"records_binary","type":{"type":"array","items":"bytes"}},{"name":"records_json","type":{"type":"array","items":"string"}},{"name":"total_number_of_records","type":"long"},{"name":"has_more_records","type":"boolean"}]}"""
         ENDPOINT = "/get/records"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -1227,7 +1230,7 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "get_records_by_column"
         REQ_SCHEMA_STR = """{"type":"record","name":"get_records_by_column_request","fields":[{"name":"table_name","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"offset","type":"long"},{"name":"limit","type":"long"},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"get_records_by_column_response","fields":[{"name":"table_name","type":"string"},{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"get_records_by_column_response","fields":[{"name":"table_name","type":"string"},{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"},{"name":"total_number_of_records","type":"long"},{"name":"has_more_records","type":"boolean"}]}"""
         ENDPOINT = "/get/records/bycolumn"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -1335,7 +1338,7 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "show_table"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_table_request","fields":[{"name":"table_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_table_response","fields":[{"name":"table_name","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"is_collection","type":{"type":"array","items":"boolean"}},{"name":"is_view","type":{"type":"array","items":"boolean"}},{"name":"is_join","type":{"type":"array","items":"boolean"}},{"name":"type_ids","type":{"type":"array","items":"string"}},{"name":"type_schemas","type":{"type":"array","items":"string"}},{"name":"type_labels","type":{"type":"array","items":"string"}},{"name":"properties","type":{"type":"array","items":{"type":"map","values":{"type":"array","items":"string"}}}},{"name":"ttls","type":{"type":"array","items":"int"}},{"name":"sizes","type":{"type":"array","items":"long"}},{"name":"full_sizes","type":{"type":"array","items":"long"}},{"name":"join_sizes","type":{"type":"array","items":"double"}},{"name":"total_size","type":"long"},{"name":"total_full_size","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_table_response","fields":[{"name":"table_name","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"table_descriptions","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"type_ids","type":{"type":"array","items":"string"}},{"name":"type_schemas","type":{"type":"array","items":"string"}},{"name":"type_labels","type":{"type":"array","items":"string"}},{"name":"properties","type":{"type":"array","items":{"type":"map","values":{"type":"array","items":"string"}}}},{"name":"additional_info","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"sizes","type":{"type":"array","items":"long"}},{"name":"full_sizes","type":{"type":"array","items":"long"}},{"name":"join_sizes","type":{"type":"array","items":"double"}},{"name":"total_size","type":"long"},{"name":"total_full_size","type":"long"}]}"""
         ENDPOINT = "/show/table"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -1346,15 +1349,6 @@ class GPUdb(object):
         REQ_SCHEMA_STR = """{"type":"record","name":"show_table_metadata_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"show_table_metadata_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"metadata_maps","type":{"type":"array","items":{"type":"map","values":"string"}}}]}"""
         ENDPOINT = "/show/table/metadata"
-        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
-                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
-                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
-                                       "ENDPOINT" : ENDPOINT }
-        name = "show_table_properties"
-        REQ_SCHEMA_STR = """{"type":"record","name":"show_table_properties_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_table_properties_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"properties_maps","type":{"type":"array","items":{"type":"map","values":"string"}}}]}"""
-        ENDPOINT = "/show/table/properties"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
@@ -1760,16 +1754,21 @@ class GPUdb(object):
     # begin aggregate_statistics
     def aggregate_statistics( self, table_name = None, column_name = None, stats =
                               None, options = {} ):
-        """Calculates the requested statistics of a given column in a given table. The
+        """Calculates the requested statistics of a given column in a given table.   The
         available statistics are count (number of total objects), mean, stdv
         (standard deviation), variance, skew, kurtosis, sum, min, max,
-        weighted_average, cardinality (unique count) and estimated cardinality.
-        Estimated cardinality is calculated by using the hyperloglog
-        approximation technique. The weighted average statistic requires a
+        weighted_average, cardinality (unique count), estimated cardinality,
+        percentile and percentile_rank.   Estimated cardinality is calculated by
+        using the hyperloglog approximation technique.   Percentiles and
+        percentile_ranks are approximate and are calculated using the t-digest
+        algorithm. They must include the desired percentile/percentile_rank. To
+        compute multiple percentiles each value must be specified separately
+        (i.e. 'percentile(75.0),percentile(99.0),percentile_rank(1234.56),percen
+        tile_rank(-5)').   The weighted average statistic requires a
         weight_attribute to be specified in input parameter *options*. The
         weighted average is then defined as the sum of the products of input
         parameter *column_name* times the weight attribute divided by the sum of
-        the weight attribute. The response includes a list of the statistics
+        the weight attribute.   The response includes a list of the statistics
         requested along with the count of the number of items in the given
         set."""
 
@@ -1904,25 +1903,33 @@ class GPUdb(object):
 
 
     # begin alter_table
-    def alter_table( self, table_name = None, column_name = None, action = None,
-                     options = {} ):
-        """Creates or deletes an index on a particular column in a given table. Creating
-        an index can speed up certain search queries (such as :ref:`get_records
+    def alter_table( self, table_name = None, action = None, value = None, options =
+                     {} ):
+        """Apply various modifications to a table or collection. Available modifications
+        include:       Cereating or deleting an index on a particular column.
+        This can speed up certain search queries (such as :ref:`get_records
         <get_records_python>`, :ref:`delete_records <delete_records_python>`,
         :ref:`update_records <update_records_python>`) when using expressions
-        containing equality or relational operators on indexed columns."""
+        containing equality or relational operators on indexed columns. This
+        only applies to child tables.       Making a table protected or not.
+        Protected tables need the admin password to be sent in a
+        :ref:`clear_table <clear_table_python>` to delete the table. This can be
+        applied to child tables or collections or views.       Setting the ttl
+        (time-to-live). This can be applied to child tables or collections or
+        views.       Allowing homogeneous child tables. This only applies to
+        collections."""
 
         assert isinstance( table_name, (str, unicode)), "alter_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( column_name, (str, unicode)), "alter_table(): Argument 'column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( column_name ).__name__
         assert isinstance( action, (str, unicode)), "alter_table(): Argument 'action' must be (one) of type(s) '(str, unicode)'; given %s" % type( action ).__name__
+        assert isinstance( value, (str, unicode)), "alter_table(): Argument 'value' must be (one) of type(s) '(str, unicode)'; given %s" % type( value ).__name__
         assert isinstance( options, (dict)), "alter_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "alter_table" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
-        obj['column_name'] = column_name
         obj['action'] = action
+        obj['value'] = value
         obj['options'] = options
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/alter/table' )
@@ -1950,28 +1957,6 @@ class GPUdb(object):
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/alter/table/metadata' )
     # end alter_table_metadata
-
-
-    # begin alter_table_properties
-    def alter_table_properties( self, table_names = None, properties_map = {},
-                                options = {} ):
-        """Updates properties for a group of specified tables. The user can change the
-        protected-ness of the tables and allow or disallow duplicate child
-        tables if they are all collections."""
-
-        assert isinstance( table_names, (list)), "alter_table_properties(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
-        assert isinstance( properties_map, (dict)), "alter_table_properties(): Argument 'properties_map' must be (one) of type(s) '(dict)'; given %s" % type( properties_map ).__name__
-        assert isinstance( options, (dict)), "alter_table_properties(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "alter_table_properties" )
-
-        obj = collections.OrderedDict()
-        obj['table_names'] = table_names
-        obj['properties_map'] = properties_map
-        obj['options'] = options
-
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/alter/table/properties' )
-    # end alter_table_properties
 
 
     # begin clear_table
@@ -2037,13 +2022,14 @@ class GPUdb(object):
 
     # begin create_join_table
     def create_join_table( self, join_table_name = None, table_names = None, aliases
-                           = None, options = {} ):
+                           = None, expression = '', options = {} ):
         """Creates a joint_table which is a list of tables and aliases for those
         tables."""
 
         assert isinstance( join_table_name, (str, unicode)), "create_join_table(): Argument 'join_table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( join_table_name ).__name__
         assert isinstance( table_names, (list)), "create_join_table(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
         assert isinstance( aliases, (list)), "create_join_table(): Argument 'aliases' must be (one) of type(s) '(list)'; given %s" % type( aliases ).__name__
+        assert isinstance( expression, (str, unicode)), "create_join_table(): Argument 'expression' must be (one) of type(s) '(str, unicode)'; given %s" % type( expression ).__name__
         assert isinstance( options, (dict)), "create_join_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_join_table" )
@@ -2052,6 +2038,7 @@ class GPUdb(object):
         obj['join_table_name'] = join_table_name
         obj['table_names'] = table_names
         obj['aliases'] = aliases
+        obj['expression'] = expression
         obj['options'] = options
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/jointable' )
@@ -2117,7 +2104,7 @@ class GPUdb(object):
                                 x_column_name = None, x_vector = None,
                                 y_column_name = None, y_vector = None, options =
                                 {} ):
-        """Sets up an area  trigger mechanism for two column_names for one or more
+        """Sets up an area trigger mechanism for two column_names for one or more
         tables. (This function is essentially the two-dimensional version of
         :ref:`create_trigger_by_range <create_trigger_byrange_python>`.) Once
         the trigger has been activated, any record added to the listed tables(s)
@@ -2268,7 +2255,7 @@ class GPUdb(object):
     # begin execute_proc
     def execute_proc( self, name = None, params = None, bin_params = None, options =
                       {} ):
-        """Exectues a proc in the GPUdb Node.js proc server."""
+        """Executes a proc in the GPUdb Node.js proc server."""
 
         assert isinstance( name, (str, unicode)), "execute_proc(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
         assert isinstance( params, (dict)), "execute_proc(): Argument 'params' must be (one) of type(s) '(dict)'; given %s" % type( params ).__name__
@@ -2684,7 +2671,9 @@ class GPUdb(object):
         *offset* and input parameter *limit* parameters. Note that when paging
         through a table, if the table (or the underlying table in case of a
         view) is updated (records are inserted, deleted or modified) the records
-        retrieved may differ between calls based on the updates applied."""
+        retrieved may differ between calls based on the updates applied.  Note
+        that when using the Java API, it is not possible to retrieve records
+        from join tables using this operation."""
 
         assert isinstance( table_name, (str, unicode)), "get_records(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( offset, (int, long, float)), "get_records(): Argument 'offset' must be (one) of type(s) '(int, long, float)'; given %s" % type( offset ).__name__
@@ -2788,7 +2777,9 @@ class GPUdb(object):
         record IDs which can be used in certain queries such as
         :ref:`delete_records <delete_records_python>`.   This operation supports
         paging through the data via the input parameter *offset* and input
-        parameter *limit* parameters."""
+        parameter *limit* parameters.  Note that when using the Java API, it is
+        not possible to retrieve records from join tables using this
+        operation."""
 
         assert isinstance( table_name, (str, unicode)), "get_records_from_collection(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( offset, (int, long, float)), "get_records_from_collection(): Argument 'offset' must be (one) of type(s) '(int, long, float)'; given %s" % type( offset ).__name__
@@ -2811,7 +2802,7 @@ class GPUdb(object):
 
     # begin has_table
     def has_table( self, table_name = None, options = {} ):
-        """Checks the existance of a table with the given name in GPUdb."""
+        """Checks the existence of a table with the given name in GPUdb."""
 
         assert isinstance( table_name, (str, unicode)), "has_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( options, (dict)), "has_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -2828,7 +2819,7 @@ class GPUdb(object):
 
     # begin has_type
     def has_type( self, type_id = None, options = {} ):
-        """Check the existance of a type in GPUdb."""
+        """Check the existence of a type in GPUdb."""
 
         assert isinstance( type_id, (str, unicode)), "has_type(): Argument 'type_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( type_id ).__name__
         assert isinstance( options, (dict)), "has_type(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -2892,7 +2883,7 @@ class GPUdb(object):
     def insert_records_random( self, table_name = None, count = None, options = {}
                                ):
         """Generates a specified number of random records and adds them to the given
-        tble. There is an optional parameter that allows the user to customize
+        table. There is an optional parameter that allows the user to customize
         the ranges of the column values. It also allows the user to specify
         linear profiles for some or all columns in which case linear values are
         generated rather than random ones. Only individual tables are supported
@@ -3025,16 +3016,24 @@ class GPUdb(object):
         """Retrieves detailed information about a particular GPUdb table, specified in
         input parameter *table_name*. If the supplied input parameter
         *table_name* is a collection, the call returns a list of tables
-        contained in the collection, and for each table it returns the type ids,
-        type schemas, type labels, semantic types, and ttls. If the option
-        'get_sizes' is set to 'true' then  the sizes (objects and elements) of
+        contained in the collection, and for each table it returns the
+        description, type id, schema, type label, type propertiess, and
+        additional information including TTL. If input parameter *table_name* is
+        empty it will return all top-level tables including all collections and
+        top-level child tables (i.e. tables with no parent).      If the option
+        'get_sizes' is set to 'true' then the sizes (objects and elements) of
         each table are returned (in output parameter *sizes* and output
         parameter *full_sizes*), along with the total number of objects in the
         requested table (in output parameter *total_size* and output parameter
-        *total_full_size*).  If the requested table is blank, then information
-        is returned about all top-level tables including collections. In this
-        case output parameter *is_collection* indicates which of the returned
-        table names are collections."""
+        *total_full_size*).      If the option 'show_children' is set to 'false'
+        then for a collection it only returns information about the collection
+        itself, not about the child tables. If 'show_children' is set to 'true'
+        then it will return information about each of the children.
+        Running with 'show_children' = 'true' on a child table will return an
+        error.       Running with 'show_children' = 'false' with input parameter
+        *table_name* empty will return an error.  If the requested table is
+        blank, then information is returned about all top-level tables including
+        collections."""
 
         assert isinstance( table_name, (str, unicode)), "show_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( options, (dict)), "show_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -3064,25 +3063,6 @@ class GPUdb(object):
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/table/metadata' )
     # end show_table_metadata
-
-
-    # begin show_table_properties
-    def show_table_properties( self, table_names = None, options = {} ):
-        """Retrieves some table properties for each of the specified tables. For each
-        valid table, it returns whether it is a protected table and also if it
-        allows duplicate child tables if it happens to be a collection."""
-
-        assert isinstance( table_names, (list)), "show_table_properties(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
-        assert isinstance( options, (dict)), "show_table_properties(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "show_table_properties" )
-
-        obj = collections.OrderedDict()
-        obj['table_names'] = table_names
-        obj['options'] = options
-
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/table/properties' )
-    # end show_table_properties
 
 
     # begin show_tables_by_type
@@ -3228,9 +3208,9 @@ class GPUdb(object):
                          None, width = None, height = None, projection =
                          'PLATE_CARREE', bg_color = None, style_options = None,
                          options = {} ):
-        """Generates 'class break' rasterized image tiles for an area of interest using
-        the given tables and the provided parameters.  All color values must be
-        in the format RRGGBB or AARRGGBB (to specify the alpha value)."""
+        """Generates rasterized image tiles for an area of interest using the given
+        tables and the provided parameters.  All color values must be in the
+        format RRGGBB or AARRGGBB (to specify the alpha value)."""
 
         assert isinstance( table_names, (list)), "visualize_image(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
         assert isinstance( world_table_names, (list)), "visualize_image(): Argument 'world_table_names' must be (one) of type(s) '(list)'; given %s" % type( world_table_names ).__name__
