@@ -1049,7 +1049,7 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
         name = "create_join_table"
-        REQ_SCHEMA_STR = """{"type":"record","name":"create_join_table_request","fields":[{"name":"join_table_name","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"aliases","type":{"type":"array","items":"string"}},{"name":"expression","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_join_table_request","fields":[{"name":"join_table_name","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"aliases","type":{"type":"array","items":"string"}},{"name":"expression","type":"string"},{"name":"expressions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"create_join_table_response","fields":[{"name":"join_table_name","type":"string"},{"name":"count","type":"long"}]}"""
         ENDPOINT = "/create/jointable"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -1624,22 +1624,22 @@ class GPUdb(object):
     def aggregate_group_by( self, table_name = None, column_names = None, offset =
                             None, limit = 1000, encoding = 'binary', options =
                             {} ):
-        """Calculates unique combinations (i.e. groups) of values for the given columns
-        in a given table/view/collection and computes aggregates on each unique
+        """Calculates unique combinations (groups) of values for the given columns in a
+        given table/view/collection and computes aggregates on each unique
         combination. This is somewhat analogous to an SQL-style SELECT...GROUP
         BY. Any column(s) can be grouped on, but only non-string (i.e. numeric)
-        columns may be used for computing aggregates.  The results can be paged
+        columns may be used for computing aggregates. The results can be paged
         via the input parameter *offset* and input parameter *limit* parameters.
         For example, to get 10 groups with the largest counts the inputs would
         be: limit=10, options={"sort_order":"descending", "sort_by":"value"}.
         Input parameter *options* can be used to customize behavior of this call
-        e.g. filtering or sorting the results.   To group by 'x' and 'y' and
+        e.g. filtering or sorting the results. To group by 'x' and 'y' and
         compute the number of objects within each group, use
         column_names=['x','y','count(*)'].  To also compute the sum of 'z' over
-        each group, use column_names=['x','y','count(*)','sum(z)'].  Available
+        each group, use column_names=['x','y','count(*)','sum(z)']. Available
         aggregation functions are: 'count(*)', 'sum', 'min', 'max', 'avg',
         'mean', 'stddev', 'stddev_pop', 'stddev_samp', 'var', 'var_pop' and
-        'var_samp'.  The response is returned as a dynamic schema. For details
+        'var_samp'. The response is returned as a dynamic schema. For details
         see: `dynamic schemas documentation <../../concepts/index.html#dynamic-
         schemas>`_."""
 
@@ -1884,7 +1884,7 @@ class GPUdb(object):
     # begin alter_system_properties
     def alter_system_properties( self, property_updates_map = None, options = {} ):
         """The alter_system_properties endpoint is primarily used to simplify the
-        testing of gpudb and is not expected to be used during normal execution.
+        testing of GPUdb and is not expected to be used during normal execution.
         Commands are given through the properties_update_map whose keys are
         commands and values are strings representing integer values (for example
         '8000') or boolean values ('true' or 'false')."""
@@ -1906,7 +1906,7 @@ class GPUdb(object):
     def alter_table( self, table_name = None, action = None, value = None, options =
                      {} ):
         """Apply various modifications to a table or collection. Available modifications
-        include:       Cereating or deleting an index on a particular column.
+        include:       Creating or deleting an index on a particular column.
         This can speed up certain search queries (such as :ref:`get_records
         <get_records_python>`, :ref:`delete_records <delete_records_python>`,
         :ref:`update_records <update_records_python>`) when using expressions
@@ -2022,7 +2022,8 @@ class GPUdb(object):
 
     # begin create_join_table
     def create_join_table( self, join_table_name = None, table_names = None, aliases
-                           = None, expression = '', options = {} ):
+                           = None, expression = '', expressions = [], options =
+                           {} ):
         """Creates a joint_table which is a list of tables and aliases for those
         tables."""
 
@@ -2030,6 +2031,7 @@ class GPUdb(object):
         assert isinstance( table_names, (list)), "create_join_table(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
         assert isinstance( aliases, (list)), "create_join_table(): Argument 'aliases' must be (one) of type(s) '(list)'; given %s" % type( aliases ).__name__
         assert isinstance( expression, (str, unicode)), "create_join_table(): Argument 'expression' must be (one) of type(s) '(str, unicode)'; given %s" % type( expression ).__name__
+        assert isinstance( expressions, (list)), "create_join_table(): Argument 'expressions' must be (one) of type(s) '(list)'; given %s" % type( expressions ).__name__
         assert isinstance( options, (dict)), "create_join_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_join_table" )
@@ -2039,6 +2041,7 @@ class GPUdb(object):
         obj['table_names'] = table_names
         obj['aliases'] = aliases
         obj['expression'] = expression
+        obj['expressions'] = expressions
         obj['options'] = options
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/jointable' )
@@ -2231,7 +2234,7 @@ class GPUdb(object):
         """Deletes record(s) matching the provided criteria from the given table. The
         record selection criteria can either be one or more  input parameter
         *expressions* (matching multiple records) or a single record identified
-        by *record_id* optiona.  Note that the two selection criteria are
+        by *record_id* options.  Note that the two selection criteria are
         mutually exclusive.  This operation cannot be run on a collection or a
         view.  The operation is synchronous meaning that a response will not be
         available until the request is completely processed and all the matching
@@ -2739,7 +2742,7 @@ class GPUdb(object):
                                offset = 0, limit = 10000, encoding = 'binary',
                                options = {} ):
         """Retrieves the complete series/track records from the given input parameter
-        *world_table_name* based on the partial track informaton contained in
+        *world_table_name* based on the partial track information contained in
         the input parameter *table_name*.   This operation supports paging
         through the data via the input parameter *offset* and input parameter
         *limit* parameters.  In contrast to :ref:`get_records
@@ -3017,7 +3020,7 @@ class GPUdb(object):
         input parameter *table_name*. If the supplied input parameter
         *table_name* is a collection, the call returns a list of tables
         contained in the collection, and for each table it returns the
-        description, type id, schema, type label, type propertiess, and
+        description, type id, schema, type label, type properties, and
         additional information including TTL. If input parameter *table_name* is
         empty it will return all top-level tables including all collections and
         top-level child tables (i.e. tables with no parent).      If the option
