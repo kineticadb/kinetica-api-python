@@ -1021,6 +1021,15 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
+        name = "alter_user"
+        REQ_SCHEMA_STR = """{"type":"record","name":"alter_user_request","fields":[{"name":"name","type":"string"},{"name":"action","type":"string"},{"name":"value","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_user_response","fields":[{"name":"name","type":"string"}]}"""
+        ENDPOINT = "/alter/user"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "clear_table"
         REQ_SCHEMA_STR = """{"type":"record","name":"clear_table_request","fields":[{"name":"table_name","type":"string"},{"name":"authorization","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"clear_table_response","fields":[{"name":"table_name","type":"string"}]}"""
@@ -1052,6 +1061,15 @@ class GPUdb(object):
         REQ_SCHEMA_STR = """{"type":"record","name":"create_join_table_request","fields":[{"name":"join_table_name","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"aliases","type":{"type":"array","items":"string"}},{"name":"expression","type":"string"},{"name":"expressions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"create_join_table_response","fields":[{"name":"join_table_name","type":"string"},{"name":"count","type":"long"}]}"""
         ENDPOINT = "/create/jointable"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "create_role"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_role_request","fields":[{"name":"name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_role_response","fields":[{"name":"name","type":"string"}]}"""
+        ENDPOINT = "/create/role"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
@@ -1102,10 +1120,55 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
+        name = "create_union"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_union_request","fields":[{"name":"table_name","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"input_column_names","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"output_column_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_union_response","fields":[{"name":"table_name","type":"string"}]}"""
+        ENDPOINT = "/create/union"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "create_user_external"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_user_external_request","fields":[{"name":"name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_user_external_response","fields":[{"name":"name","type":"string"}]}"""
+        ENDPOINT = "/create/user/external"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "create_user_internal"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_user_internal_request","fields":[{"name":"name","type":"string"},{"name":"password","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_user_internal_response","fields":[{"name":"name","type":"string"}]}"""
+        ENDPOINT = "/create/user/internal"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "delete_records"
         REQ_SCHEMA_STR = """{"type":"record","name":"delete_records_request","fields":[{"name":"table_name","type":"string"},{"name":"expressions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"delete_records_response","fields":[{"name":"count_deleted","type":"long"},{"name":"counts_deleted","type":{"type":"array","items":"long"}}]}"""
         ENDPOINT = "/delete/records"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "delete_role"
+        REQ_SCHEMA_STR = """{"type":"record","name":"delete_role_request","fields":[{"name":"name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"delete_role_response","fields":[{"name":"name","type":"string"}]}"""
+        ENDPOINT = "/delete/role"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "delete_user"
+        REQ_SCHEMA_STR = """{"type":"record","name":"delete_user_request","fields":[{"name":"name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"delete_user_response","fields":[{"name":"name","type":"string"}]}"""
+        ENDPOINT = "/delete/user"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
@@ -1255,6 +1318,33 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
+        name = "grant_permission_system"
+        REQ_SCHEMA_STR = """{"type":"record","name":"grant_permission_system_request","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"grant_permission_system_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"}]}"""
+        ENDPOINT = "/grant/permission/system"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "grant_permission_table"
+        REQ_SCHEMA_STR = """{"type":"record","name":"grant_permission_table_request","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"table_name","type":"string"},{"name":"filter_expression","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"grant_permission_table_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"table_name","type":"string"},{"name":"filter_expression","type":"string"}]}"""
+        ENDPOINT = "/grant/permission/table"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "grant_role"
+        REQ_SCHEMA_STR = """{"type":"record","name":"grant_role_request","fields":[{"name":"role","type":"string"},{"name":"member","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"grant_role_response","fields":[{"name":"role","type":"string"},{"name":"member","type":"string"}]}"""
+        ENDPOINT = "/grant/role"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "has_table"
         REQ_SCHEMA_STR = """{"type":"record","name":"has_table_request","fields":[{"name":"table_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"has_table_response","fields":[{"name":"table_name","type":"string"},{"name":"table_exists","type":"boolean"}]}"""
@@ -1304,6 +1394,42 @@ class GPUdb(object):
         REQ_SCHEMA_STR = """{"type":"record","name":"lock_table_request","fields":[{"name":"table_name","type":"string"},{"name":"lock_type","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"lock_table_response","fields":[{"name":"lock_type","type":"string"}]}"""
         ENDPOINT = "/lock/table"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "revoke_permission_system"
+        REQ_SCHEMA_STR = """{"type":"record","name":"revoke_permission_system_request","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"revoke_permission_system_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"}]}"""
+        ENDPOINT = "/revoke/permission/system"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "revoke_permission_table"
+        REQ_SCHEMA_STR = """{"type":"record","name":"revoke_permission_table_request","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"table_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"revoke_permission_table_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"table_name","type":"string"}]}"""
+        ENDPOINT = "/revoke/permission/table"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "revoke_role"
+        REQ_SCHEMA_STR = """{"type":"record","name":"revoke_role_request","fields":[{"name":"role","type":"string"},{"name":"member","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"revoke_role_response","fields":[{"name":"role","type":"string"},{"name":"member","type":"string"}]}"""
+        ENDPOINT = "/revoke/role"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "show_security"
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_security_request","fields":[{"name":"names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_security_response","fields":[{"name":"types","type":{"type":"map","values":"string"}},{"name":"roles","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"permissions","type":{"type":"map","values":{"type":"array","items":{"type":"map","values":"string"}}}}]}"""
+        ENDPOINT = "/show/security"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
@@ -1638,10 +1764,13 @@ class GPUdb(object):
         column_names=['x','y','count(*)'].  To also compute the sum of 'z' over
         each group, use column_names=['x','y','count(*)','sum(z)']. Available
         aggregation functions are: 'count(*)', 'sum', 'min', 'max', 'avg',
-        'mean', 'stddev', 'stddev_pop', 'stddev_samp', 'var', 'var_pop' and
-        'var_samp'. The response is returned as a dynamic schema. For details
-        see: `dynamic schemas documentation <../../concepts/index.html#dynamic-
-        schemas>`_."""
+        'mean', 'stddev', 'stddev_pop', 'stddev_samp', 'var', 'var_pop',
+        'var_samp' and 'count_distinct'. Note that 'count_distinct' can only be
+        used if there are no provided grouping columns. The response is returned
+        as a dynamic schema. For details see: `dynamic schemas documentation
+        <../../concepts/index.html#dynamic-schemas>`_. If the 'result_table'
+        option is provided then the results are stored in a table with the name
+        given in the option and the results are not returned in the response."""
 
         assert isinstance( table_name, (str, unicode)), "aggregate_group_by(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( column_names, (list)), "aggregate_group_by(): Argument 'column_names' must be (one) of type(s) '(list)'; given %s" % type( column_names ).__name__
@@ -1858,7 +1987,10 @@ class GPUdb(object):
         unique values sorted in descending order input parameter *options* would
         be::   {"limit":"10","sort_order":"descending"}.  The response is
         returned as a dynamic schema. For details see: `dynamic schemas
-        documentation <../../concepts/index.html#dynamic-schemas>`_."""
+        documentation <../../concepts/index.html#dynamic-schemas>`_. If the
+        'result_table' option is provided then the results are stored in a table
+        with the name given in the option and the results are not returned in
+        the response."""
 
         assert isinstance( table_name, (str, unicode)), "aggregate_unique(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( column_name, (str, unicode)), "aggregate_unique(): Argument 'column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( column_name ).__name__
@@ -1959,6 +2091,28 @@ class GPUdb(object):
     # end alter_table_metadata
 
 
+    # begin alter_user
+    def alter_user( self, name = None, action = None, value = None, options = None
+                    ):
+        """Alters a user."""
+
+        assert isinstance( name, (str, unicode)), "alter_user(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
+        assert isinstance( action, (str, unicode)), "alter_user(): Argument 'action' must be (one) of type(s) '(str, unicode)'; given %s" % type( action ).__name__
+        assert isinstance( value, (str, unicode)), "alter_user(): Argument 'value' must be (one) of type(s) '(str, unicode)'; given %s" % type( value ).__name__
+        assert isinstance( options, (dict)), "alter_user(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "alter_user" )
+
+        obj = collections.OrderedDict()
+        obj['name'] = name
+        obj['action'] = action
+        obj['value'] = value
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/alter/user' )
+    # end alter_user
+
+
     # begin clear_table
     def clear_table( self, table_name = '', authorization = '', options = {} ):
         """Clears (drops) one or all tables in the GPUdb cluster. The operation is
@@ -2024,8 +2178,8 @@ class GPUdb(object):
     def create_join_table( self, join_table_name = None, table_names = None, aliases
                            = None, expression = '', expressions = [], options =
                            {} ):
-        """Creates a joint_table which is a list of tables and aliases for those
-        tables."""
+        """Creates a table that is the result of a SQL JOIN.  For details see: `join
+        concept documentation <../../concepts/index.html#joins>`_."""
 
         assert isinstance( join_table_name, (str, unicode)), "create_join_table(): Argument 'join_table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( join_table_name ).__name__
         assert isinstance( table_names, (list)), "create_join_table(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
@@ -2046,6 +2200,23 @@ class GPUdb(object):
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/jointable' )
     # end create_join_table
+
+
+    # begin create_role
+    def create_role( self, name = None, options = None ):
+        """Creates a new role."""
+
+        assert isinstance( name, (str, unicode)), "create_role(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
+        assert isinstance( options, (dict)), "create_role(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_role" )
+
+        obj = collections.OrderedDict()
+        obj['name'] = name
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/role' )
+    # end create_role
 
 
     # begin create_table
@@ -2229,6 +2400,69 @@ class GPUdb(object):
     # end create_type
 
 
+    # begin create_union
+    def create_union( self, table_name = None, table_names = None,
+                      input_column_names = None, output_column_names = None,
+                      options = {} ):
+        """Creates a table that is the union of one or more existing tables."""
+
+        assert isinstance( table_name, (str, unicode)), "create_union(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
+        assert isinstance( table_names, (list)), "create_union(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
+        assert isinstance( input_column_names, (list)), "create_union(): Argument 'input_column_names' must be (one) of type(s) '(list)'; given %s" % type( input_column_names ).__name__
+        assert isinstance( output_column_names, (list)), "create_union(): Argument 'output_column_names' must be (one) of type(s) '(list)'; given %s" % type( output_column_names ).__name__
+        assert isinstance( options, (dict)), "create_union(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_union" )
+
+        obj = collections.OrderedDict()
+        obj['table_name'] = table_name
+        obj['table_names'] = table_names
+        obj['input_column_names'] = input_column_names
+        obj['output_column_names'] = output_column_names
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/union' )
+    # end create_union
+
+
+    # begin create_user_external
+    def create_user_external( self, name = None, options = None ):
+        """Creates a new external user (a user whose credentials are managed by an
+        external LDAP)."""
+
+        assert isinstance( name, (str, unicode)), "create_user_external(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
+        assert isinstance( options, (dict)), "create_user_external(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_user_external" )
+
+        obj = collections.OrderedDict()
+        obj['name'] = name
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/user/external' )
+    # end create_user_external
+
+
+    # begin create_user_internal
+    def create_user_internal( self, name = None, password = None, options = None ):
+        """Creates a new internal user (a user whose credentials are managed by
+        GPUdb)."""
+
+        assert isinstance( name, (str, unicode)), "create_user_internal(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
+        assert isinstance( password, (str, unicode)), "create_user_internal(): Argument 'password' must be (one) of type(s) '(str, unicode)'; given %s" % type( password ).__name__
+        assert isinstance( options, (dict)), "create_user_internal(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_user_internal" )
+
+        obj = collections.OrderedDict()
+        obj['name'] = name
+        obj['password'] = password
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/user/internal' )
+    # end create_user_internal
+
+
     # begin delete_records
     def delete_records( self, table_name = None, expressions = None, options = {} ):
         """Deletes record(s) matching the provided criteria from the given table. The
@@ -2253,6 +2487,40 @@ class GPUdb(object):
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/delete/records' )
     # end delete_records
+
+
+    # begin delete_role
+    def delete_role( self, name = None, options = None ):
+        """Deletes an existing role."""
+
+        assert isinstance( name, (str, unicode)), "delete_role(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
+        assert isinstance( options, (dict)), "delete_role(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "delete_role" )
+
+        obj = collections.OrderedDict()
+        obj['name'] = name
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/delete/role' )
+    # end delete_role
+
+
+    # begin delete_user
+    def delete_user( self, name = None, options = None ):
+        """Deletes an existing user."""
+
+        assert isinstance( name, (str, unicode)), "delete_user(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
+        assert isinstance( options, (dict)), "delete_user(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "delete_user" )
+
+        obj = collections.OrderedDict()
+        obj['name'] = name
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/delete/user' )
+    # end delete_user
 
 
     # begin execute_proc
@@ -2803,6 +3071,69 @@ class GPUdb(object):
     # end get_records_from_collection
 
 
+    # begin grant_permission_system
+    def grant_permission_system( self, name = None, permission = None, options =
+                                 None ):
+        """Grants a system-level permission to a user or role."""
+
+        assert isinstance( name, (str, unicode)), "grant_permission_system(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
+        assert isinstance( permission, (str, unicode)), "grant_permission_system(): Argument 'permission' must be (one) of type(s) '(str, unicode)'; given %s" % type( permission ).__name__
+        assert isinstance( options, (dict)), "grant_permission_system(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "grant_permission_system" )
+
+        obj = collections.OrderedDict()
+        obj['name'] = name
+        obj['permission'] = permission
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/grant/permission/system' )
+    # end grant_permission_system
+
+
+    # begin grant_permission_table
+    def grant_permission_table( self, name = None, permission = None, table_name =
+                                None, filter_expression = '', options = None ):
+        """Grants a table-level permission to a user or role."""
+
+        assert isinstance( name, (str, unicode)), "grant_permission_table(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
+        assert isinstance( permission, (str, unicode)), "grant_permission_table(): Argument 'permission' must be (one) of type(s) '(str, unicode)'; given %s" % type( permission ).__name__
+        assert isinstance( table_name, (str, unicode)), "grant_permission_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
+        assert isinstance( filter_expression, (str, unicode)), "grant_permission_table(): Argument 'filter_expression' must be (one) of type(s) '(str, unicode)'; given %s" % type( filter_expression ).__name__
+        assert isinstance( options, (dict)), "grant_permission_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "grant_permission_table" )
+
+        obj = collections.OrderedDict()
+        obj['name'] = name
+        obj['permission'] = permission
+        obj['table_name'] = table_name
+        obj['filter_expression'] = filter_expression
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/grant/permission/table' )
+    # end grant_permission_table
+
+
+    # begin grant_role
+    def grant_role( self, role = None, member = None, options = None ):
+        """Grants membership in a role to a user or role."""
+
+        assert isinstance( role, (str, unicode)), "grant_role(): Argument 'role' must be (one) of type(s) '(str, unicode)'; given %s" % type( role ).__name__
+        assert isinstance( member, (str, unicode)), "grant_role(): Argument 'member' must be (one) of type(s) '(str, unicode)'; given %s" % type( member ).__name__
+        assert isinstance( options, (dict)), "grant_role(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "grant_role" )
+
+        obj = collections.OrderedDict()
+        obj['role'] = role
+        obj['member'] = member
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/grant/role' )
+    # end grant_role
+
+
     # begin has_table
     def has_table( self, table_name = None, options = {} ):
         """Checks the existence of a table with the given name in GPUdb."""
@@ -2961,6 +3292,84 @@ class GPUdb(object):
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/lock/table' )
     # end lock_table
+
+
+    # begin revoke_permission_system
+    def revoke_permission_system( self, name = None, permission = None, options =
+                                  None ):
+        """Revokes a system-level permission from a user or role."""
+
+        assert isinstance( name, (str, unicode)), "revoke_permission_system(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
+        assert isinstance( permission, (str, unicode)), "revoke_permission_system(): Argument 'permission' must be (one) of type(s) '(str, unicode)'; given %s" % type( permission ).__name__
+        assert isinstance( options, (dict)), "revoke_permission_system(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "revoke_permission_system" )
+
+        obj = collections.OrderedDict()
+        obj['name'] = name
+        obj['permission'] = permission
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/revoke/permission/system' )
+    # end revoke_permission_system
+
+
+    # begin revoke_permission_table
+    def revoke_permission_table( self, name = None, permission = None, table_name =
+                                 None, options = None ):
+        """Revokes a table-level permission from a user or role."""
+
+        assert isinstance( name, (str, unicode)), "revoke_permission_table(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
+        assert isinstance( permission, (str, unicode)), "revoke_permission_table(): Argument 'permission' must be (one) of type(s) '(str, unicode)'; given %s" % type( permission ).__name__
+        assert isinstance( table_name, (str, unicode)), "revoke_permission_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
+        assert isinstance( options, (dict)), "revoke_permission_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "revoke_permission_table" )
+
+        obj = collections.OrderedDict()
+        obj['name'] = name
+        obj['permission'] = permission
+        obj['table_name'] = table_name
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/revoke/permission/table' )
+    # end revoke_permission_table
+
+
+    # begin revoke_role
+    def revoke_role( self, role = None, member = None, options = None ):
+        """Revokes membership in a role from a user or role."""
+
+        assert isinstance( role, (str, unicode)), "revoke_role(): Argument 'role' must be (one) of type(s) '(str, unicode)'; given %s" % type( role ).__name__
+        assert isinstance( member, (str, unicode)), "revoke_role(): Argument 'member' must be (one) of type(s) '(str, unicode)'; given %s" % type( member ).__name__
+        assert isinstance( options, (dict)), "revoke_role(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "revoke_role" )
+
+        obj = collections.OrderedDict()
+        obj['role'] = role
+        obj['member'] = member
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/revoke/role' )
+    # end revoke_role
+
+
+    # begin show_security
+    def show_security( self, names = None, options = None ):
+        """Shows security information relating to users and/or roles."""
+
+        assert isinstance( names, (list)), "show_security(): Argument 'names' must be (one) of type(s) '(list)'; given %s" % type( names ).__name__
+        assert isinstance( options, (dict)), "show_security(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "show_security" )
+
+        obj = collections.OrderedDict()
+        obj['names'] = names
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/security' )
+    # end show_security
 
 
     # begin show_system_properties
@@ -3211,9 +3620,10 @@ class GPUdb(object):
                          None, width = None, height = None, projection =
                          'PLATE_CARREE', bg_color = None, style_options = None,
                          options = {} ):
-        """Generates rasterized image tiles for an area of interest using the given
-        tables and the provided parameters.  All color values must be in the
-        format RRGGBB or AARRGGBB (to specify the alpha value)."""
+        """For internal use only.  Generates rasterized image tiles for an area of
+        interest using the given tables and the provided parameters.  All color
+        values must be in the format RRGGBB or AARRGGBB (to specify the alpha
+        value)."""
 
         assert isinstance( table_names, (list)), "visualize_image(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
         assert isinstance( world_table_names, (list)), "visualize_image(): Argument 'world_table_names' must be (one) of type(s) '(list)'; given %s" % type( world_table_names ).__name__
@@ -3264,16 +3674,16 @@ class GPUdb(object):
                                     None, height = None, projection =
                                     'PLATE_CARREE', bg_color = None,
                                     style_options = None, options = {} ):
-        """Generates 'class break' rasterized image tiles for an area of interest using
-        the given tables and the provided parameters.  A class break rendering
-        is where data from one or more GPUdb tables is rasterized with styling
-        applied on a per-class basis. GPUdb supports class breaks based on one
-        or more data columns. Distinct values (for strings) or ranges (for
-        numeric attributes) must be provided in the cb_column_name1/cb_vals1 and
-        cb_column_name2/cb_vals2 parameters. The styling parameters must be
-        specified for each class.  All color values must be in the format RRGGBB
-        or AARRGGBB (to specify the alpha value). The image is contained in the
-        output parameter *image_data* field."""
+        """For internal use only.  Generates 'class break' rasterized image tiles for an
+        area of interest using the given tables and the provided parameters.  A
+        class break rendering is where data from one or more GPUdb tables is
+        rasterized with styling applied on a per-class basis. GPUdb supports
+        class breaks based on one or more data columns. Distinct values (for
+        strings) or ranges (for numeric attributes) must be provided in the
+        cb_column_name1/cb_vals1 and cb_column_name2/cb_vals2 parameters. The
+        styling parameters must be specified for each class.  All color values
+        must be in the format RRGGBB or AARRGGBB (to specify the alpha value).
+        The image is contained in the output parameter *image_data* field."""
 
         assert isinstance( table_names, (list)), "visualize_image_classbreak(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
         assert isinstance( world_table_names, (list)), "visualize_image_classbreak(): Argument 'world_table_names' must be (one) of type(s) '(list)'; given %s" % type( world_table_names ).__name__
@@ -3329,10 +3739,11 @@ class GPUdb(object):
                                  = None, width = None, height = None, projection
                                  = 'PLATE_CARREE', style_options = None, options
                                  = {} ):
-        """Generates rasterized heatmap image tiles for an area of interest using the
-        given tables and the provided parameters.  All color values must be in
-        the format RRGGBB or AARRGGBB (to specify the alpha value). The heatmap
-        image is contained in the output parameter *image_data* field."""
+        """For internal use only.  Generates rasterized heatmap image tiles for an area
+        of interest using the given tables and the provided parameters.  All
+        color values must be in the format RRGGBB or AARRGGBB (to specify the
+        alpha value). The heatmap image is contained in the output parameter
+        *image_data* field."""
 
         assert isinstance( table_names, (list)), "visualize_image_heatmap(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
         assert isinstance( x_column_name, (str, unicode)), "visualize_image_heatmap(): Argument 'x_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( x_column_name ).__name__
@@ -3381,22 +3792,22 @@ class GPUdb(object):
                                 = None, min_y = None, max_y = None, width =
                                 None, height = None, projection =
                                 'PLATE_CARREE', options = {} ):
-        """Generates a rasterized image tile containing text labels defined by data
-        contained in the given table, suitable for overlaying onto a feature
-        image tile covering the same area (for example one generated using
-        :ref:`visualize_image <visualize_image_python>`).  All color values must
-        be integers encoded in the format RRGGBB or AARRGGBB (to specify the
-        alpha value) when represented in hexadecimal; although note that literal
-        color values must be specified in base 10, not hexadecimal.  Fonts are
-        specified as strings of the form 'FAMILY STYLE-OPTIONS SIZE', where
-        FAMILY is the font family, STYLE-OPTIONS is a whitespace separated list
-        of words defining style, variant, weight, stretch, or gravity, and SIZE
-        is a decimal number (size in points) or optionally followed by the unit
-        modifier 'px' for absolute size. All three sub-fields are optional;
-        default values will be used for omitted sub-fields. (For example,
-        'Helvetica Bold Italic 10' specifies Helvetica, Bold and Italic, 10
-        points.) A substitute font will be used if a requested font is not
-        installed."""
+        """For internal use only.  Generates a rasterized image tile containing text
+        labels defined by data contained in the given table, suitable for
+        overlaying onto a feature image tile covering the same area (for example
+        one generated using :ref:`visualize_image <visualize_image_python>`).
+        All color values must be integers encoded in the format RRGGBB or
+        AARRGGBB (to specify the alpha value) when represented in hexadecimal;
+        although note that literal color values must be specified in base 10,
+        not hexadecimal.  Fonts are specified as strings of the form 'FAMILY
+        STYLE-OPTIONS SIZE', where FAMILY is the font family, STYLE-OPTIONS is a
+        whitespace separated list of words defining style, variant, weight,
+        stretch, or gravity, and SIZE is a decimal number (size in points) or
+        optionally followed by the unit modifier 'px' for absolute size. All
+        three sub-fields are optional; default values will be used for omitted
+        sub-fields. (For example, 'Helvetica Bold Italic 10' specifies
+        Helvetica, Bold and Italic, 10 points.) A substitute font will be used
+        if a requested font is not installed."""
 
         assert isinstance( table_name, (str, unicode)), "visualize_image_labels(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( x_column_name, (str, unicode)), "visualize_image_labels(): Argument 'x_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( x_column_name ).__name__
