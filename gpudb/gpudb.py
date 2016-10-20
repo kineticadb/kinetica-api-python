@@ -711,11 +711,20 @@ class GPUdb(object):
             print 'Error: ', retobj['status_info']['message']
             return retobj
 
+        my_schema = schema.parse(retobj['response_schema_str'])
+
+        fields = eval(retobj['response_schema_str'])['fields']
+
+        nullable = [type(x['type']['items']) != str for x in fields]
+
         if len(retobj['binary_encoded_response']) > 0:
   
-            my_schema = schema.parse(retobj['response_schema_str'])
+            bytes = retobj['binary_encoded_response']
+            if type(bytes) == unicode:
+                converted = ''.join([chr(ord(x)) for x in bytes])
+                bytes = converted
             
-            csio = cStringIO.StringIO(retobj['binary_encoded_response'])
+            csio = cStringIO.StringIO(bytes)
             bd = io.BinaryDecoder(csio)
             reader = io.DatumReader(my_schema)
             decoded = reader.read(bd) # read, give a decoder
@@ -724,8 +733,14 @@ class GPUdb(object):
             column_lookup = decoded['column_headers']
 
             translated = collections.OrderedDict()
-            for i,column_name in enumerate(column_lookup):
-                translated[column_name] = decoded['column_%d'%(i+1)]
+            for i,(n,column_name) in enumerate(zip(nullable,column_lookup)):
+
+                if (n): #nullable - replace None with '<NULL>'
+                    col = [x if x is not None else '<NULL>' for x in decoded['column_%d'%(i+1)]]
+                else:
+                    col = decoded['column_%d'%(i+1)]
+                #translated[column_name] = decoded['column_%d'%(i+1)]
+                translated[column_name] = col
 
             retobj['response'] = translated
         else:
@@ -735,12 +750,9 @@ class GPUdb(object):
             #d_resp = eval(retobj['json_encoded_response'])
             d_resp = json.loads(retobj['json_encoded_response'])
 
-            #now go through the fields in order according to the schema
-            my_schema = schema.parse(retobj['response_schema_str'])
-
             column_lookup = d_resp['column_headers']
 
-            for i,column_name in enumerate(column_lookup):
+            for i,(n,column_name) in enumerate(zip(nullable,column_lookup)):
                 column_index_name = 'column_%d'%(i+1)
                 
                 #double/float conversion here
@@ -752,6 +764,9 @@ class GPUdb(object):
 
                 else:
                     retobj['response'][column_name] = d_resp[column_index_name]
+
+                if (n): #nullable
+                    retobj['response'][column_name] = [x if x is not None else '<NULL>' for x in retobj['response'][column_name]]
                     
 
         if (do_print):
@@ -1583,9 +1598,7 @@ class GPUdb(object):
 
     # begin admin_delete_node
     def admin_delete_node( self, rank = None, authorization = None, options = {} ):
-        """Delete a node from the system.  To delete a node, the data is first
-        distributed from the deleted node to all the other nodes.  Then the node
-        is taken out of service."""
+        """"""
 
         assert isinstance( rank, (int, long, float)), "admin_delete_node(): Argument 'rank' must be (one) of type(s) '(int, long, float)'; given %s" % type( rank ).__name__
         assert isinstance( authorization, (str, unicode)), "admin_delete_node(): Argument 'authorization' must be (one) of type(s) '(str, unicode)'; given %s" % type( authorization ).__name__
@@ -1604,10 +1617,7 @@ class GPUdb(object):
 
     # begin admin_get_shard_assignments
     def admin_get_shard_assignments( self, options = {} ):
-        """Returns the list of shards and the corresponding rank and tom containing the
-        shard.  The response message contains arrays of 16384 (total number of
-        shards in the system) rank and tom numbers corresponding to each
-        shard."""
+        """"""
 
         assert isinstance( options, (dict)), "admin_get_shard_assignments(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -1640,8 +1650,7 @@ class GPUdb(object):
 
     # begin admin_rebalance
     def admin_rebalance( self, table_names = None, options = {} ):
-        """Rebalance the database such that all the nodes contain approximately equal
-        number of records."""
+        """"""
 
         assert isinstance( table_names, (list)), "admin_rebalance(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
         assert isinstance( options, (dict)), "admin_rebalance(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -1687,9 +1696,7 @@ class GPUdb(object):
     # begin admin_shutdown
     def admin_shutdown( self, exit_type = None, authorization = None, options = {}
                         ):
-        """Exits the GPUdb server application. A authorization code is required (chosen
-        at the time of GPUdb configuration) to successfully complete this
-        request."""
+        """Exits the GPUdb server application."""
 
         assert isinstance( exit_type, (str, unicode)), "admin_shutdown(): Argument 'exit_type' must be (one) of type(s) '(str, unicode)'; given %s" % type( exit_type ).__name__
         assert isinstance( authorization, (str, unicode)), "admin_shutdown(): Argument 'authorization' must be (one) of type(s) '(str, unicode)'; given %s" % type( authorization ).__name__
@@ -1765,12 +1772,12 @@ class GPUdb(object):
         each group, use column_names=['x','y','count(*)','sum(z)']. Available
         aggregation functions are: 'count(*)', 'sum', 'min', 'max', 'avg',
         'mean', 'stddev', 'stddev_pop', 'stddev_samp', 'var', 'var_pop',
-        'var_samp' and 'count_distinct'. Note that 'count_distinct' can only be
-        used if there are no provided grouping columns. The response is returned
-        as a dynamic schema. For details see: `dynamic schemas documentation
-        <../../concepts/index.html#dynamic-schemas>`_. If the 'result_table'
-        option is provided then the results are stored in a table with the name
-        given in the option and the results are not returned in the response."""
+        'var_samp', 'arg_min', 'arg_max' and 'count_distinct'. The response is
+        returned as a dynamic schema. For details see: `dynamic schemas
+        documentation <../../concepts/index.html#dynamic-schemas>`_. If the
+        'result_table' option is provided then the results are stored in a table
+        with the name given in the option and the results are not returned in
+        the response."""
 
         assert isinstance( table_name, (str, unicode)), "aggregate_group_by(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( column_names, (list)), "aggregate_group_by(): Argument 'column_names' must be (one) of type(s) '(list)'; given %s" % type( column_names ).__name__
@@ -2118,9 +2125,7 @@ class GPUdb(object):
         """Clears (drops) one or all tables in the GPUdb cluster. The operation is
         synchronous meaning that the table will be cleared before the function
         returns. The response payload returns the status of the operation along
-        with the name of the table that was cleared. For protected tables, this
-        function requires an administrator password without which the operation
-        will fail."""
+        with the name of the table that was cleared."""
 
         assert isinstance( table_name, (str, unicode)), "clear_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( authorization, (str, unicode)), "clear_table(): Argument 'authorization' must be (one) of type(s) '(str, unicode)'; given %s" % type( authorization ).__name__
@@ -2825,18 +2830,22 @@ class GPUdb(object):
                           None, mode = None, column_names = None, options = {}
                           ):
         """Calculates which objects from a table, collection or view match a string
-        expression for the given string columns. The 'mode' may be:
-        'search' for full text search query with wildcards and boolean
-        operators, e.g. '(bob* OR sue) AND NOT jane'. Note that for this mode,
-        no column can be specified in input parameter *column_names*; GPUdb will
-        search through all string columns of the table that have text search
-        enabled. Also, the first character of the regular expression cannot be a
-        wildcard (* or ?).  * 'equals' for an exact whole-string match *
-        'contains' for a partial substring match (not accelerated) *
-        'starts_with' to find strings that start with the given expression (not
-        accelerated) * 'regex' - to use a full regular expression search (not
-        accelerated)  The options 'case_sensitive' can be used to modify the
-        behavior for all modes except 'search'"""
+        expression for the given string columns. The 'mode' may be:      *
+        search : full text search query with wildcards and boolean operators,
+        e.g. '(bob* OR sue) AND NOT jane'. Note that for this mode, no column
+        can be specified in input parameter *column_names*; GPUdb will search
+        through all string columns of the table that have text search enabled.
+        Also, the first character of the regular expression cannot be a wildcard
+        (* or ?).   * equals: exact whole-string match (accelerated) * contains:
+        partial substring match (not accelerated).  If the column is a string
+        type (non-charN) and the number of records is too large, it will return
+        0. * starts_with: strings that start with the given expression (not
+        accelerated), If the column is a string type (non-charN) and the number
+        of records is too large, it will return 0. * regex: full regular
+        expression search (not accelerated). If the column is a string type
+        (non-charN) and the number of records is too large, it will return 0.
+        The options 'case_sensitive' can be used to modify the behavior for all
+        modes except 'search'"""
 
         assert isinstance( table_name, (str, unicode)), "filter_by_string(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (str, unicode)), "filter_by_string(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
@@ -3271,13 +3280,15 @@ class GPUdb(object):
 
 
     # begin lock_table
-    def lock_table( self, table_name = None, lock_type = '', options = {} ):
-        """Locks a table.  By default a table has no locks and all operations are
-        permitted.  A user may request a read-only or a write-only lock, after
-        which only read or write operations are permitted on the table until the
-        next request.  When lock_type is disable then then no operations are
-        permitted on the table.  The lock status can be queried by passing an
-        empty string for input parameter *lock_type*."""
+    def lock_table( self, table_name = None, lock_type = 'status', options = {} ):
+        """Manages global access to a table's data.  By default a table has a input
+        parameter *lock_type* of *unlock*, indicating all operations are
+        permitted.  A user may request a *read-only* or a *write-only* lock,
+        after which only read or write operations, respectively, are permitted
+        on the table until the lock is removed.  When input parameter
+        *lock_type* is *disable* then no operations are permitted on the table.
+        The lock status can be queried by setting input parameter *lock_type* to
+        *status*."""
 
         assert isinstance( table_name, (str, unicode)), "lock_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( lock_type, (str, unicode)), "lock_table(): Argument 'lock_type' must be (one) of type(s) '(str, unicode)'; given %s" % type( lock_type ).__name__
@@ -3357,7 +3368,9 @@ class GPUdb(object):
 
     # begin show_security
     def show_security( self, names = None, options = None ):
-        """Shows security information relating to users and/or roles."""
+        """Shows security information relating to users and/or roles. If the caller is
+        not a system administrator, only information relating to the caller and
+        their roles is returned."""
 
         assert isinstance( names, (list)), "show_security(): Argument 'names' must be (one) of type(s) '(list)'; given %s" % type( names ).__name__
         assert isinstance( options, (dict)), "show_security(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -3440,12 +3453,12 @@ class GPUdb(object):
         *total_full_size*).      If the option 'show_children' is set to 'false'
         then for a collection it only returns information about the collection
         itself, not about the child tables. If 'show_children' is set to 'true'
-        then it will return information about each of the children.
-        Running with 'show_children' = 'true' on a child table will return an
-        error.       Running with 'show_children' = 'false' with input parameter
-        *table_name* empty will return an error.  If the requested table is
-        blank, then information is returned about all top-level tables including
-        collections."""
+        then it will return information about each of the children, but not the
+        collection.       Running with 'show_children' = 'true' on a child table
+        will return an error.       Running with 'show_children' = 'false' with
+        input parameter *table_name* empty will return an error.  If the
+        requested table is blank, then information is returned about all top-
+        level tables including collections."""
 
         assert isinstance( table_name, (str, unicode)), "show_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( options, (dict)), "show_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -3620,10 +3633,7 @@ class GPUdb(object):
                          None, width = None, height = None, projection =
                          'PLATE_CARREE', bg_color = None, style_options = None,
                          options = {} ):
-        """For internal use only.  Generates rasterized image tiles for an area of
-        interest using the given tables and the provided parameters.  All color
-        values must be in the format RRGGBB or AARRGGBB (to specify the alpha
-        value)."""
+        """"""
 
         assert isinstance( table_names, (list)), "visualize_image(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
         assert isinstance( world_table_names, (list)), "visualize_image(): Argument 'world_table_names' must be (one) of type(s) '(list)'; given %s" % type( world_table_names ).__name__
@@ -3674,16 +3684,7 @@ class GPUdb(object):
                                     None, height = None, projection =
                                     'PLATE_CARREE', bg_color = None,
                                     style_options = None, options = {} ):
-        """For internal use only.  Generates 'class break' rasterized image tiles for an
-        area of interest using the given tables and the provided parameters.  A
-        class break rendering is where data from one or more GPUdb tables is
-        rasterized with styling applied on a per-class basis. GPUdb supports
-        class breaks based on one or more data columns. Distinct values (for
-        strings) or ranges (for numeric attributes) must be provided in the
-        cb_column_name1/cb_vals1 and cb_column_name2/cb_vals2 parameters. The
-        styling parameters must be specified for each class.  All color values
-        must be in the format RRGGBB or AARRGGBB (to specify the alpha value).
-        The image is contained in the output parameter *image_data* field."""
+        """"""
 
         assert isinstance( table_names, (list)), "visualize_image_classbreak(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
         assert isinstance( world_table_names, (list)), "visualize_image_classbreak(): Argument 'world_table_names' must be (one) of type(s) '(list)'; given %s" % type( world_table_names ).__name__
@@ -3739,11 +3740,7 @@ class GPUdb(object):
                                  = None, width = None, height = None, projection
                                  = 'PLATE_CARREE', style_options = None, options
                                  = {} ):
-        """For internal use only.  Generates rasterized heatmap image tiles for an area
-        of interest using the given tables and the provided parameters.  All
-        color values must be in the format RRGGBB or AARRGGBB (to specify the
-        alpha value). The heatmap image is contained in the output parameter
-        *image_data* field."""
+        """"""
 
         assert isinstance( table_names, (list)), "visualize_image_heatmap(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
         assert isinstance( x_column_name, (str, unicode)), "visualize_image_heatmap(): Argument 'x_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( x_column_name ).__name__
@@ -3792,22 +3789,7 @@ class GPUdb(object):
                                 = None, min_y = None, max_y = None, width =
                                 None, height = None, projection =
                                 'PLATE_CARREE', options = {} ):
-        """For internal use only.  Generates a rasterized image tile containing text
-        labels defined by data contained in the given table, suitable for
-        overlaying onto a feature image tile covering the same area (for example
-        one generated using :ref:`visualize_image <visualize_image_python>`).
-        All color values must be integers encoded in the format RRGGBB or
-        AARRGGBB (to specify the alpha value) when represented in hexadecimal;
-        although note that literal color values must be specified in base 10,
-        not hexadecimal.  Fonts are specified as strings of the form 'FAMILY
-        STYLE-OPTIONS SIZE', where FAMILY is the font family, STYLE-OPTIONS is a
-        whitespace separated list of words defining style, variant, weight,
-        stretch, or gravity, and SIZE is a decimal number (size in points) or
-        optionally followed by the unit modifier 'px' for absolute size. All
-        three sub-fields are optional; default values will be used for omitted
-        sub-fields. (For example, 'Helvetica Bold Italic 10' specifies
-        Helvetica, Bold and Italic, 10 points.) A substitute font will be used
-        if a requested font is not installed."""
+        """"""
 
         assert isinstance( table_name, (str, unicode)), "visualize_image_labels(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( x_column_name, (str, unicode)), "visualize_image_labels(): Argument 'x_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( x_column_name ).__name__
@@ -3953,28 +3935,7 @@ class GPUdb(object):
                                  None, projection = 'PLATE_CARREE', video_style
                                  = None, session_key = None, style_options =
                                  None, options = {} ):
-        """Creates raster heat-map images of table data based on input parameters.
-        Numerous parameters are required to call this function. Some of the
-        important parameters are the attributes of the generated images
-        (*bg_color*, input parameter *width*, input parameter *height*), the
-        collection of GPUdb table names on which this function is to be applied
-        and a user specified session key. This session key is later used to
-        fetch the generated images stored by GPUdb. The operation is synchronous
-        meaning that GPUdb will not return the request until all the images are
-        fully available.  Once the request has been processed then the generated
-        video frames are available for download via WMS using STYLES=cached. In
-        this request the LAYERS parameter should be populated with the session
-        key passed in input parameter *session_key* of the visualize video
-        request and the FRAME parameter indicates which 0-based frame of the
-        video should be returned. All other WMS parameters are ignored for this
-        mode.  For instance, if a 20 frame video with the session key 'MY-
-        SESSION-KEY' was generated, the first frame could be retrieved with the
-        URL::       http://<gpudb-ip-
-        address>:9191/wms?REQUEST=GetMap&STYLES=cached&LAYERS=MY-SESSION-
-        KEY&FRAME=0  and the last frame could be retrieved with::      http
-        ://gpudb-ip-address:9191/wms?REQUEST=GetMap&STYLES=cached&LAYERS=MY-
-        SESSION-KEY&FRAME=19     The response payload provides among other
-        things the number of frames which were created by GPUdb."""
+        """"""
 
         assert isinstance( table_names, (list)), "visualize_video_heatmap(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
         assert isinstance( x_column_name, (str, unicode)), "visualize_video_heatmap(): Argument 'x_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( x_column_name ).__name__
