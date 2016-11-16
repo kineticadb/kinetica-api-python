@@ -1,5 +1,5 @@
 import sys
-# Add the path to the API file so that it can be imported
+
 
 import cStringIO
 import collections
