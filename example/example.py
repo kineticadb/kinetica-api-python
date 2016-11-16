@@ -1,6 +1,5 @@
 import sys
 # Add the path to the API file so that it can be imported
-sys.path.insert(0, '../gpudb'  )
 
 import cStringIO
 import collections
@@ -193,8 +192,7 @@ def gpudb_example():
                                  encoding = 'json', options = {})
     assert (response['status_info']['status'] == "ERROR"), \
         "Problem: View on deleted table found!!!"
-    print ("Response status and message : ", response['status_info']['status'], 
-           ' - ', response['status_info']['message'], new_line)
+
 
 # end example()
 
