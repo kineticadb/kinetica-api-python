@@ -181,7 +181,7 @@ class GPUdb(object):
     connection    = "HTTP"      # Input connection type, either 'HTTP' or 'HTTPS'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "5.2.0.0"
+    api_version   = "5.4.0.0"
 
     # constants
     END_OF_SET = -9999
@@ -1073,7 +1073,7 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
         name = "create_join_table"
-        REQ_SCHEMA_STR = """{"type":"record","name":"create_join_table_request","fields":[{"name":"join_table_name","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"aliases","type":{"type":"array","items":"string"}},{"name":"expression","type":"string"},{"name":"expressions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_join_table_request","fields":[{"name":"join_table_name","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"expressions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"create_join_table_response","fields":[{"name":"join_table_name","type":"string"},{"name":"count","type":"long"}]}"""
         ENDPOINT = "/create/jointable"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -1523,7 +1523,7 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
         name = "update_records"
-        REQ_SCHEMA_STR = """{"type":"record","name":"update_records_request","fields":[{"name":"table_name","type":"string"},{"name":"expressions","type":{"type":"array","items":"string"}},{"name":"new_values_maps","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"records_to_insert","type":{"type":"array","items":"bytes"}},{"name":"records_to_insert_str","type":{"type":"array","items":"string"}},{"name":"record_encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"update_records_request","fields":[{"name":"table_name","type":"string"},{"name":"expressions","type":{"type":"array","items":"string"}},{"name":"new_values_maps","type":{"type":"array","items":{"type":"map","values":["string","null"]}}},{"name":"records_to_insert","type":{"type":"array","items":"bytes"}},{"name":"records_to_insert_str","type":{"type":"array","items":"string"}},{"name":"record_encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"update_records_response","fields":[{"name":"count_updated","type":"long"},{"name":"counts_updated","type":{"type":"array","items":"long"}},{"name":"count_inserted","type":"long"},{"name":"counts_inserted","type":{"type":"array","items":"long"}}]}"""
         ENDPOINT = "/update/records"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -2050,13 +2050,13 @@ class GPUdb(object):
         <get_records_python>`, :ref:`delete_records <delete_records_python>`,
         :ref:`update_records <update_records_python>`) when using expressions
         containing equality or relational operators on indexed columns. This
-        only applies to child tables.       Making a table protected or not.
-        Protected tables need the admin password to be sent in a
-        :ref:`clear_table <clear_table_python>` to delete the table. This can be
-        applied to child tables or collections or views.       Setting the ttl
-        (time-to-live). This can be applied to child tables or collections or
-        views.       Allowing homogeneous child tables. This only applies to
-        collections."""
+        only applies to tables.       Setting the time-to-live (TTL). This can
+        be applied to tables, views, or collections.  When applied to
+        collections, every table & view within the collection will have its TTL
+        set to the given value.       Making a table protected or not. Protected
+        tables have their TTLs set to not automatically expire. This can be
+        applied to tables, views, and collections.       Allowing homogeneous
+        tables within a collection."""
 
         assert isinstance( table_name, (str, unicode)), "alter_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( action, (str, unicode)), "alter_table(): Argument 'action' must be (one) of type(s) '(str, unicode)'; given %s" % type( action ).__name__
@@ -2180,16 +2180,14 @@ class GPUdb(object):
 
 
     # begin create_join_table
-    def create_join_table( self, join_table_name = None, table_names = None, aliases
-                           = None, expression = '', expressions = [], options =
-                           {} ):
+    def create_join_table( self, join_table_name = None, table_names = [],
+                           column_names = [], expressions = [], options = {} ):
         """Creates a table that is the result of a SQL JOIN.  For details see: `join
         concept documentation <../../concepts/index.html#joins>`_."""
 
         assert isinstance( join_table_name, (str, unicode)), "create_join_table(): Argument 'join_table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( join_table_name ).__name__
         assert isinstance( table_names, (list)), "create_join_table(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
-        assert isinstance( aliases, (list)), "create_join_table(): Argument 'aliases' must be (one) of type(s) '(list)'; given %s" % type( aliases ).__name__
-        assert isinstance( expression, (str, unicode)), "create_join_table(): Argument 'expression' must be (one) of type(s) '(str, unicode)'; given %s" % type( expression ).__name__
+        assert isinstance( column_names, (list)), "create_join_table(): Argument 'column_names' must be (one) of type(s) '(list)'; given %s" % type( column_names ).__name__
         assert isinstance( expressions, (list)), "create_join_table(): Argument 'expressions' must be (one) of type(s) '(list)'; given %s" % type( expressions ).__name__
         assert isinstance( options, (dict)), "create_join_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -2198,8 +2196,7 @@ class GPUdb(object):
         obj = collections.OrderedDict()
         obj['join_table_name'] = join_table_name
         obj['table_names'] = table_names
-        obj['aliases'] = aliases
-        obj['expression'] = expression
+        obj['column_names'] = column_names
         obj['expressions'] = expressions
         obj['options'] = options
 
@@ -2654,8 +2651,8 @@ class GPUdb(object):
     def filter_by_geometry( self, table_name = None, view_name = '', column_name =
                             None, input_wkt = '', operation = None, options = {}
                             ):
-        """Applies a geometry filter against a spatial column in a given table,
-        collection or view. The filtering geometry is provided by input
+        """Applies a geometry filter against a spatial column named WKT in a given
+        table, collection or view. The filtering geometry is provided by input
         parameter *input_wkt*."""
 
         assert isinstance( table_name, (str, unicode)), "filter_by_geometry(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
@@ -2944,10 +2941,10 @@ class GPUdb(object):
     def get_records( self, table_name = None, offset = 0, limit = 10000, encoding =
                      'binary', options = {} ):
         """Retrieves records from a given table, optionally filtered by an expression
-        and/or sorted by a column. This operation can only be performed on
-        tables or on homogeneous collection (collections whose children all have
-        the same type). Records can be returned encoded as binary or json.  This
-        operation supports paging through the data via the input parameter
+        and/or sorted by a column. This operation can be performed on tables,
+        views, or on homogeneous collections (collections containing tables of
+        all the same type). Records can be returned encoded as binary or json.
+        This operation supports paging through the data via the input parameter
         *offset* and input parameter *limit* parameters. Note that when paging
         through a table, if the table (or the underlying table in case of a
         view) is updated (records are inserted, deleted or modified) the records

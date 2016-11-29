@@ -1,6 +1,13 @@
 GPUdb Schemas Changelog
 =======================
 
+
+Version 5.4.0 - 2016-11-19
+--------------------------
+
+-   /update/records now supports null values for nullable columns.
+
+
 Version 5.2.0 - 2016-09-21
 --------------------------
 

@@ -192,7 +192,6 @@ def gpudb_example():
     assert (response['status_info']['status'] == "ERROR"), \
         "Problem: View on deleted table found!!!"
 
-
 # end example()
 
 
