@@ -2,10 +2,20 @@ GPUdb Schemas Changelog
 =======================
 
 
-Version 5.4.0 - 2016-11-19
+Version 5.4.0 - 2016-11-30
 --------------------------
 
+-   New endpoint: /create/projection for selecting a subset of columns
+    (including derived columns) from a table into a new result table, including
+    optional sorting.
 -   /update/records now supports null values for nullable columns.
+-   New external proc support endpoints:
+    -   /create/proc
+    -   /delete/proc
+    -   /execute/proc (replaces previous nodejs-based version)
+    -   /kill/proc
+    -   /show/proc
+    -   /show/proc/status
 
 
 Version 5.2.0 - 2016-09-21
@@ -18,7 +28,7 @@ Version 5.2.0 - 2016-09-21
 -   /alter/system/properties can change the max request timeout time.
 -   /filter/bylist supports 'not_in_list' for inverting match.
 -   /visualize/image/heatmap has new 'style_options' and simplify schema.
---   New security system endpoints: 
+-   New security system endpoints:
     -   /alter/user
     -   /create/role
     -   /create/user/external

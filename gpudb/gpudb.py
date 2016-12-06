@@ -1081,6 +1081,24 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
+        name = "create_proc"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_proc_request","fields":[{"name":"proc_name","type":"string"},{"name":"files","type":{"type":"map","values":"bytes"}},{"name":"command","type":"string"},{"name":"args","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_proc_response","fields":[{"name":"proc_name","type":"string"}]}"""
+        ENDPOINT = "/create/proc"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "create_projection"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_projection_request","fields":[{"name":"table_name","type":"string"},{"name":"projection_name","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_projection_response","fields":[{"name":"projection_name","type":"string"}]}"""
+        ENDPOINT = "/create/projection"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "create_role"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_role_request","fields":[{"name":"name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"create_role_response","fields":[{"name":"name","type":"string"}]}"""
@@ -1162,6 +1180,15 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
+        name = "delete_proc"
+        REQ_SCHEMA_STR = """{"type":"record","name":"delete_proc_request","fields":[{"name":"proc_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"delete_proc_response","fields":[{"name":"proc_name","type":"string"}]}"""
+        ENDPOINT = "/delete/proc"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "delete_records"
         REQ_SCHEMA_STR = """{"type":"record","name":"delete_records_request","fields":[{"name":"table_name","type":"string"},{"name":"expressions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"delete_records_response","fields":[{"name":"count_deleted","type":"long"},{"name":"counts_deleted","type":{"type":"array","items":"long"}}]}"""
@@ -1190,8 +1217,8 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
         name = "execute_proc"
-        REQ_SCHEMA_STR = """{"type":"record","name":"execute_proc_request","fields":[{"name":"name","type":"string"},{"name":"params","type":{"type":"map","values":"string"}},{"name":"bin_params","type":{"type":"map","values":"bytes"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"execute_proc_response","fields":[{"name":"results","type":{"type":"map","values":"string"}},{"name":"bin_results","type":{"type":"map","values":"bytes"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"execute_proc_request","fields":[{"name":"proc_name","type":"string"},{"name":"params","type":{"type":"map","values":"string"}},{"name":"bin_params","type":{"type":"map","values":"bytes"}},{"name":"input_table_names","type":{"type":"array","items":"string"}},{"name":"input_column_names","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"output_table_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"execute_proc_response","fields":[{"name":"run_id","type":"string"}]}"""
         ENDPOINT = "/execute/proc"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -1405,6 +1432,15 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
+        name = "kill_proc"
+        REQ_SCHEMA_STR = """{"type":"record","name":"kill_proc_request","fields":[{"name":"run_id","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"kill_proc_response","fields":[{"name":"run_ids","type":{"type":"array","items":"string"}}]}"""
+        ENDPOINT = "/kill/proc"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "lock_table"
         REQ_SCHEMA_STR = """{"type":"record","name":"lock_table_request","fields":[{"name":"table_name","type":"string"},{"name":"lock_type","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"lock_table_response","fields":[{"name":"lock_type","type":"string"}]}"""
@@ -1436,6 +1472,24 @@ class GPUdb(object):
         REQ_SCHEMA_STR = """{"type":"record","name":"revoke_role_request","fields":[{"name":"role","type":"string"},{"name":"member","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"revoke_role_response","fields":[{"name":"role","type":"string"},{"name":"member","type":"string"}]}"""
         ENDPOINT = "/revoke/role"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "show_proc"
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_proc_request","fields":[{"name":"proc_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_proc_response","fields":[{"name":"proc_names","type":{"type":"array","items":"string"}},{"name":"files","type":{"type":"array","items":{"type":"map","values":"bytes"}}},{"name":"commands","type":{"type":"array","items":"string"}},{"name":"args","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"additional_info","type":{"type":"array","items":{"type":"map","values":"string"}}}]}"""
+        ENDPOINT = "/show/proc"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "show_proc_status"
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_proc_status_request","fields":[{"name":"run_id","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_proc_status_response","fields":[{"name":"proc_names","type":{"type":"map","values":"string"}},{"name":"params","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"bin_params","type":{"type":"map","values":{"type":"map","values":"bytes"}}},{"name":"input_table_names","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"input_column_names","type":{"type":"map","values":{"type":"map","values":{"type":"array","items":"string"}}}},{"name":"output_table_names","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"overall_statuses","type":{"type":"map","values":"string"}},{"name":"statuses","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"messages","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"results","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":"string"}}}},{"name":"bin_results","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":"bytes"}}}}]}"""
+        ENDPOINT = "/show/proc/status"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
@@ -2204,6 +2258,52 @@ class GPUdb(object):
     # end create_join_table
 
 
+    # begin create_proc
+    def create_proc( self, proc_name = None, files = {}, command = '', args = [],
+                     options = {} ):
+        """"""
+
+        assert isinstance( proc_name, (str, unicode)), "create_proc(): Argument 'proc_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( proc_name ).__name__
+        assert isinstance( files, (dict)), "create_proc(): Argument 'files' must be (one) of type(s) '(dict)'; given %s" % type( files ).__name__
+        assert isinstance( command, (str, unicode)), "create_proc(): Argument 'command' must be (one) of type(s) '(str, unicode)'; given %s" % type( command ).__name__
+        assert isinstance( args, (list)), "create_proc(): Argument 'args' must be (one) of type(s) '(list)'; given %s" % type( args ).__name__
+        assert isinstance( options, (dict)), "create_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_proc" )
+
+        obj = collections.OrderedDict()
+        obj['proc_name'] = proc_name
+        obj['files'] = files
+        obj['command'] = command
+        obj['args'] = args
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/proc' )
+    # end create_proc
+
+
+    # begin create_projection
+    def create_projection( self, table_name = None, projection_name = None,
+                           column_names = None, options = {} ):
+        """"""
+
+        assert isinstance( table_name, (str, unicode)), "create_projection(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
+        assert isinstance( projection_name, (str, unicode)), "create_projection(): Argument 'projection_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( projection_name ).__name__
+        assert isinstance( column_names, (list)), "create_projection(): Argument 'column_names' must be (one) of type(s) '(list)'; given %s" % type( column_names ).__name__
+        assert isinstance( options, (dict)), "create_projection(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_projection" )
+
+        obj = collections.OrderedDict()
+        obj['table_name'] = table_name
+        obj['projection_name'] = projection_name
+        obj['column_names'] = column_names
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/projection' )
+    # end create_projection
+
+
     # begin create_role
     def create_role( self, name = None, options = None ):
         """Creates a new role."""
@@ -2406,7 +2506,10 @@ class GPUdb(object):
     def create_union( self, table_name = None, table_names = None,
                       input_column_names = None, output_column_names = None,
                       options = {} ):
-        """Creates a table that is the union of one or more existing tables."""
+        """Creates a table that is the concatenation of one or more existing tables. It
+        is equivalent to the SQL UNION ALL operator.  Non-charN 'string' and
+        'bytes' column types cannot be included in a union, neither can columns
+        with the property 'store_only'."""
 
         assert isinstance( table_name, (str, unicode)), "create_union(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( table_names, (list)), "create_union(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
@@ -2463,6 +2566,23 @@ class GPUdb(object):
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/user/internal' )
     # end create_user_internal
+
+
+    # begin delete_proc
+    def delete_proc( self, proc_name = None, options = {} ):
+        """"""
+
+        assert isinstance( proc_name, (str, unicode)), "delete_proc(): Argument 'proc_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( proc_name ).__name__
+        assert isinstance( options, (dict)), "delete_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "delete_proc" )
+
+        obj = collections.OrderedDict()
+        obj['proc_name'] = proc_name
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/delete/proc' )
+    # end delete_proc
 
 
     # begin delete_records
@@ -2526,21 +2646,28 @@ class GPUdb(object):
 
 
     # begin execute_proc
-    def execute_proc( self, name = None, params = None, bin_params = None, options =
-                      {} ):
-        """Executes a proc in the GPUdb Node.js proc server."""
+    def execute_proc( self, proc_name = None, params = {}, bin_params = {},
+                      input_table_names = [], input_column_names = {},
+                      output_table_names = [], options = {} ):
+        """"""
 
-        assert isinstance( name, (str, unicode)), "execute_proc(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
+        assert isinstance( proc_name, (str, unicode)), "execute_proc(): Argument 'proc_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( proc_name ).__name__
         assert isinstance( params, (dict)), "execute_proc(): Argument 'params' must be (one) of type(s) '(dict)'; given %s" % type( params ).__name__
         assert isinstance( bin_params, (dict)), "execute_proc(): Argument 'bin_params' must be (one) of type(s) '(dict)'; given %s" % type( bin_params ).__name__
+        assert isinstance( input_table_names, (list)), "execute_proc(): Argument 'input_table_names' must be (one) of type(s) '(list)'; given %s" % type( input_table_names ).__name__
+        assert isinstance( input_column_names, (dict)), "execute_proc(): Argument 'input_column_names' must be (one) of type(s) '(dict)'; given %s" % type( input_column_names ).__name__
+        assert isinstance( output_table_names, (list)), "execute_proc(): Argument 'output_table_names' must be (one) of type(s) '(list)'; given %s" % type( output_table_names ).__name__
         assert isinstance( options, (dict)), "execute_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "execute_proc" )
 
         obj = collections.OrderedDict()
-        obj['name'] = name
+        obj['proc_name'] = proc_name
         obj['params'] = params
         obj['bin_params'] = bin_params
+        obj['input_table_names'] = input_table_names
+        obj['input_column_names'] = input_column_names
+        obj['output_table_names'] = output_table_names
         obj['options'] = options
 
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/execute/proc' )
@@ -2826,23 +2953,53 @@ class GPUdb(object):
     def filter_by_string( self, table_name = None, view_name = '', expression =
                           None, mode = None, column_names = None, options = {}
                           ):
-        """Calculates which objects from a table, collection or view match a string
+        """Calculates which objects from a table, collection, or view match a string
         expression for the given string columns. The 'mode' may be:      *
         search : full text search query with wildcards and boolean operators,
         e.g. '(bob* OR sue) AND NOT jane'. Note that for this mode, no column
         can be specified in input parameter *column_names*; GPUdb will search
         through all string columns of the table that have text search enabled.
-        Also, the first character of the regular expression cannot be a wildcard
-        (* or ?).   * equals: exact whole-string match (accelerated) * contains:
-        partial substring match (not accelerated).  If the column is a string
-        type (non-charN) and the number of records is too large, it will return
-        0. * starts_with: strings that start with the given expression (not
-        accelerated), If the column is a string type (non-charN) and the number
-        of records is too large, it will return 0. * regex: full regular
-        expression search (not accelerated). If the column is a string type
-        (non-charN) and the number of records is too large, it will return 0.
-        The options 'case_sensitive' can be used to modify the behavior for all
-        modes except 'search'"""
+        Also, the first character of a search term cannot be a wildcard (* or
+        ?), and search terms cannot be any of the following:  "a", "an", "and",
+        "are", "as", "at", "be", "but", "by", "for", "if", "in", "into", "is",
+        "it", "no", "not", "of", "on", "or", "such", "that", "the", "their",
+        "then", "there", "these", "they", "this", "to", "was", "will", "with".
+        Search query types:         * Multiple search terms             ex.
+        perfect union - will match any record containing "perfect", "union", or
+        both.         * Exact phrases              ex. "Perfect Union" - will
+        only match the exact phrase "Perfect Union"         * Boolean (NOT, AND,
+        OR, parentheses. OR assumed if no operator specified)             ex.
+        justice AND tranquility - will match only those records containing both
+        justice and tranquility         * XOR (specified with -)             ex.
+        justice - peace - will match records containing "justice" or "peace",
+        but not both         * Zero or more char wildcard - (specified with *)
+        ex, est*is* - will match any records containing a word that starts with
+        "est" and ends with "sh", such as "establish", "establishable", and
+        "establishment"         * Exactly one char wildcard - (specified with ?)
+        ex. est???is* - will only match strings that start with "est", followed
+        by exactly three letters, followed by "is", followed by one more letter.
+        This would only match "establish"         * Fuzzy search (term~)
+        ex. rear~ will match rear,fear,bear,read,etc.         * Proximity -
+        match two words within a specified distance of eachother             ex.
+        "Union Tranquility"~10 will match any record that has the words Union
+        and Tranquility within 10 words of eachother         * Range - inclusive
+        [<term1> TO <term2>] and exclusive {<term1> TO <term2>}.  Note: This is
+        a string search, so numbers will be seen as a string of numeric
+        characters, not as a number.  Ex. 2 > 123             ex. [100 TO 200]
+        will find all strings between 100 and 200 inclusive.             ex.
+        {alpha to beta} will find all strings between alpha and beta, but not
+        the words alpha or beta                 * escaping special characters -
+        Special characters are escaped with a backslash(\), special characters
+        are: + - && || ! ( ) { } [ ] ^ " ~ * ? : \  * equals: exact whole-string
+        match (accelerated) * contains: partial substring match (not
+        accelerated).  If the column is a string type (non-charN) and the number
+        of records is too large, it will return 0. * starts_with: strings that
+        start with the given expression (not accelerated), If the column is a
+        string type (non-charN) and the number of records is too large, it will
+        return 0. * regex: full regular expression search (not accelerated). If
+        the column is a string type (non-charN) and the number of records is too
+        large, it will return 0.  The options 'case_sensitive' can be used to
+        modify the behavior for all modes except 'search'"""
 
         assert isinstance( table_name, (str, unicode)), "filter_by_string(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (str, unicode)), "filter_by_string(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
@@ -3276,6 +3433,23 @@ class GPUdb(object):
     # end insert_symbol
 
 
+    # begin kill_proc
+    def kill_proc( self, run_id = '', options = {} ):
+        """"""
+
+        assert isinstance( run_id, (str, unicode)), "kill_proc(): Argument 'run_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( run_id ).__name__
+        assert isinstance( options, (dict)), "kill_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "kill_proc" )
+
+        obj = collections.OrderedDict()
+        obj['run_id'] = run_id
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/kill/proc' )
+    # end kill_proc
+
+
     # begin lock_table
     def lock_table( self, table_name = None, lock_type = 'status', options = {} ):
         """Manages global access to a table's data.  By default a table has a input
@@ -3363,6 +3537,40 @@ class GPUdb(object):
     # end revoke_role
 
 
+    # begin show_proc
+    def show_proc( self, proc_name = '', options = {} ):
+        """"""
+
+        assert isinstance( proc_name, (str, unicode)), "show_proc(): Argument 'proc_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( proc_name ).__name__
+        assert isinstance( options, (dict)), "show_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "show_proc" )
+
+        obj = collections.OrderedDict()
+        obj['proc_name'] = proc_name
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/proc' )
+    # end show_proc
+
+
+    # begin show_proc_status
+    def show_proc_status( self, run_id = '', options = {} ):
+        """"""
+
+        assert isinstance( run_id, (str, unicode)), "show_proc_status(): Argument 'run_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( run_id ).__name__
+        assert isinstance( options, (dict)), "show_proc_status(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "show_proc_status" )
+
+        obj = collections.OrderedDict()
+        obj['run_id'] = run_id
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/proc/status' )
+    # end show_proc_status
+
+
     # begin show_security
     def show_security( self, names = None, options = None ):
         """Shows security information relating to users and/or roles. If the caller is
@@ -3435,27 +3643,22 @@ class GPUdb(object):
 
     # begin show_table
     def show_table( self, table_name = None, options = {} ):
-        """Retrieves detailed information about a particular GPUdb table, specified in
-        input parameter *table_name*. If the supplied input parameter
-        *table_name* is a collection, the call returns a list of tables
-        contained in the collection, and for each table it returns the
-        description, type id, schema, type label, type properties, and
-        additional information including TTL. If input parameter *table_name* is
-        empty it will return all top-level tables including all collections and
-        top-level child tables (i.e. tables with no parent).      If the option
-        'get_sizes' is set to 'true' then the sizes (objects and elements) of
+        """Retrieves detailed information about a table, view, or collection, specified
+        in input parameter *table_name*. If the supplied input parameter
+        *table_name* is a collection, the call can return information about
+        either the collection itself or the tables and views it contains. If
+        input parameter *table_name* is empty, information about all collections
+        and top-level tables and views can be returned.  If the option
+        *get_sizes* is set to *true*, then the sizes (objects and elements) of
         each table are returned (in output parameter *sizes* and output
         parameter *full_sizes*), along with the total number of objects in the
         requested table (in output parameter *total_size* and output parameter
-        *total_full_size*).      If the option 'show_children' is set to 'false'
-        then for a collection it only returns information about the collection
-        itself, not about the child tables. If 'show_children' is set to 'true'
-        then it will return information about each of the children, but not the
-        collection.       Running with 'show_children' = 'true' on a child table
-        will return an error.       Running with 'show_children' = 'false' with
-        input parameter *table_name* empty will return an error.  If the
-        requested table is blank, then information is returned about all top-
-        level tables including collections."""
+        *total_full_size*).  For a collection, setting the *show_children*
+        option to *false* returns only information about the collection itself;
+        setting *show_children* to *true* returns a list of tables and views
+        contained in the collection, along with their description, type id,
+        schema, type label, type properties, and additional information
+        including TTL."""
 
         assert isinstance( table_name, (str, unicode)), "show_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( options, (dict)), "show_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
