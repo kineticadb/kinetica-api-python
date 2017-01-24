@@ -181,7 +181,7 @@ class GPUdb(object):
     connection    = "HTTP"      # Input connection type, either 'HTTP' or 'HTTPS'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "5.4.0.0"
+    api_version   = "6.0.0.0"
 
     # constants
     END_OF_SET = -9999
@@ -1082,7 +1082,7 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
         name = "create_proc"
-        REQ_SCHEMA_STR = """{"type":"record","name":"create_proc_request","fields":[{"name":"proc_name","type":"string"},{"name":"files","type":{"type":"map","values":"bytes"}},{"name":"command","type":"string"},{"name":"args","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_proc_request","fields":[{"name":"proc_name","type":"string"},{"name":"execution_mode","type":"string"},{"name":"files","type":{"type":"map","values":"bytes"}},{"name":"command","type":"string"},{"name":"args","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"create_proc_response","fields":[{"name":"proc_name","type":"string"}]}"""
         ENDPOINT = "/create/proc"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -1387,6 +1387,15 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
+        name = "has_proc"
+        REQ_SCHEMA_STR = """{"type":"record","name":"has_proc_request","fields":[{"name":"proc_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"has_proc_response","fields":[{"name":"proc_name","type":"string"},{"name":"proc_exists","type":"boolean"}]}"""
+        ENDPOINT = "/has/proc"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "has_table"
         REQ_SCHEMA_STR = """{"type":"record","name":"has_table_request","fields":[{"name":"table_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"has_table_response","fields":[{"name":"table_name","type":"string"},{"name":"table_exists","type":"boolean"}]}"""
@@ -1479,7 +1488,7 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "show_proc"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_proc_request","fields":[{"name":"proc_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_proc_response","fields":[{"name":"proc_names","type":{"type":"array","items":"string"}},{"name":"files","type":{"type":"array","items":{"type":"map","values":"bytes"}}},{"name":"commands","type":{"type":"array","items":"string"}},{"name":"args","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"additional_info","type":{"type":"array","items":{"type":"map","values":"string"}}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_proc_response","fields":[{"name":"proc_names","type":{"type":"array","items":"string"}},{"name":"execution_modes","type":{"type":"array","items":"string"}},{"name":"files","type":{"type":"array","items":{"type":"map","values":"bytes"}}},{"name":"commands","type":{"type":"array","items":"string"}},{"name":"args","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"array","items":{"type":"map","values":"string"}}}]}"""
         ENDPOINT = "/show/proc"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -1488,7 +1497,7 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "show_proc_status"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_proc_status_request","fields":[{"name":"run_id","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_proc_status_response","fields":[{"name":"proc_names","type":{"type":"map","values":"string"}},{"name":"params","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"bin_params","type":{"type":"map","values":{"type":"map","values":"bytes"}}},{"name":"input_table_names","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"input_column_names","type":{"type":"map","values":{"type":"map","values":{"type":"array","items":"string"}}}},{"name":"output_table_names","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"overall_statuses","type":{"type":"map","values":"string"}},{"name":"statuses","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"messages","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"results","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":"string"}}}},{"name":"bin_results","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":"bytes"}}}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_proc_status_response","fields":[{"name":"proc_names","type":{"type":"map","values":"string"}},{"name":"params","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"bin_params","type":{"type":"map","values":{"type":"map","values":"bytes"}}},{"name":"input_table_names","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"input_column_names","type":{"type":"map","values":{"type":"map","values":{"type":"array","items":"string"}}}},{"name":"output_table_names","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"overall_statuses","type":{"type":"map","values":"string"}},{"name":"statuses","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"messages","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"results","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":"string"}}}},{"name":"bin_results","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":"bytes"}}}},{"name":"timings","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":"long"}}}}]}"""
         ENDPOINT = "/show/proc/status"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -2259,11 +2268,12 @@ class GPUdb(object):
 
 
     # begin create_proc
-    def create_proc( self, proc_name = None, files = {}, command = '', args = [],
-                     options = {} ):
-        """"""
+    def create_proc( self, proc_name = None, execution_mode = 'distributed', files =
+                     {}, command = '', args = [], options = {} ):
+        """Creates a proc."""
 
         assert isinstance( proc_name, (str, unicode)), "create_proc(): Argument 'proc_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( proc_name ).__name__
+        assert isinstance( execution_mode, (str, unicode)), "create_proc(): Argument 'execution_mode' must be (one) of type(s) '(str, unicode)'; given %s" % type( execution_mode ).__name__
         assert isinstance( files, (dict)), "create_proc(): Argument 'files' must be (one) of type(s) '(dict)'; given %s" % type( files ).__name__
         assert isinstance( command, (str, unicode)), "create_proc(): Argument 'command' must be (one) of type(s) '(str, unicode)'; given %s" % type( command ).__name__
         assert isinstance( args, (list)), "create_proc(): Argument 'args' must be (one) of type(s) '(list)'; given %s" % type( args ).__name__
@@ -2273,6 +2283,7 @@ class GPUdb(object):
 
         obj = collections.OrderedDict()
         obj['proc_name'] = proc_name
+        obj['execution_mode'] = execution_mode
         obj['files'] = files
         obj['command'] = command
         obj['args'] = args
@@ -2323,15 +2334,15 @@ class GPUdb(object):
 
     # begin create_table
     def create_table( self, table_name = None, type_id = None, options = {} ):
-        """Creates a new table or collection in GPUdb. If a new table is being created
-        then type of the table is given by input parameter *type_id* which must
-        the be the type id of a currently registered type (i.e. one created via
+        """Creates a new table or collection. If a new table is being created, the type
+        of the table is given by input parameter *type_id*, which must the be
+        the ID of a currently registered type (i.e. one created via
         :ref:`create_type <create_type_python>`). The table will be created
         inside a collection if the option *collection_name* is specified. If
-        that collection does not already exist then it will be created. To
-        create a new, empty collection specify the collection name in input
-        parameter *table_name*, leave input parameter *type_id* blank, and set
-        the *is_collection* option to 'true'."""
+        that collection does not already exist, it will be created.          To
+        create a new collection, specify the name of the collection in input
+        parameter *table_name* and set the *is_collection* option to *true*;
+        input parameter *type_id* will be ignored."""
 
         assert isinstance( table_name, (str, unicode)), "create_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( type_id, (str, unicode)), "create_table(): Argument 'type_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( type_id ).__name__
@@ -2570,7 +2581,8 @@ class GPUdb(object):
 
     # begin delete_proc
     def delete_proc( self, proc_name = None, options = {} ):
-        """"""
+        """Deletes a proc. Any currently running instances of the proc will be
+        killed."""
 
         assert isinstance( proc_name, (str, unicode)), "delete_proc(): Argument 'proc_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( proc_name ).__name__
         assert isinstance( options, (dict)), "delete_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -2649,7 +2661,8 @@ class GPUdb(object):
     def execute_proc( self, proc_name = None, params = {}, bin_params = {},
                       input_table_names = [], input_column_names = {},
                       output_table_names = [], options = {} ):
-        """"""
+        """Executes a proc. This endpoint is asynchronous and does not wait for the proc
+        to complete before returning."""
 
         assert isinstance( proc_name, (str, unicode)), "execute_proc(): Argument 'proc_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( proc_name ).__name__
         assert isinstance( params, (dict)), "execute_proc(): Argument 'params' must be (one) of type(s) '(dict)'; given %s" % type( params ).__name__
@@ -3297,6 +3310,23 @@ class GPUdb(object):
     # end grant_role
 
 
+    # begin has_proc
+    def has_proc( self, proc_name = None, options = {} ):
+        """Checks the existence of a proc with the given name."""
+
+        assert isinstance( proc_name, (str, unicode)), "has_proc(): Argument 'proc_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( proc_name ).__name__
+        assert isinstance( options, (dict)), "has_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "has_proc" )
+
+        obj = collections.OrderedDict()
+        obj['proc_name'] = proc_name
+        obj['options'] = options
+
+        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/has/proc' )
+    # end has_proc
+
+
     # begin has_table
     def has_table( self, table_name = None, options = {} ):
         """Checks the existence of a table with the given name in GPUdb."""
@@ -3336,22 +3366,25 @@ class GPUdb(object):
                         options = {} ):
         """Adds multiple records to the specified table. The operation is synchronous
         meaning that GPUdb will not return a response until all the records are
-        fully inserted and available. The response payload provides unique
-        identifier for each added record along with counts of the number of
-        records actually inserted and/or updated.  Input parameter *options* can
-        be used to customize this function's behavior. The only parameter
-        available is *update_on_existing_pk*. The value can be either 'true' or
-        'false'. If the table has a :ref:`primary key <create_type_python>` and
-        if *update_on_existing_pk* is 'true' then if any of the records being
+        fully inserted and available. The response payload provides the counts
+        of the number of records actually inserted and/or updated, and can
+        provide the unique identifier of each added record.  The input parameter
+        *options* parameter can be used to customize this function's behavior.
+        The *update_on_existing_pk* option specifies the primary-key collision
+        policy.  If the table has a :ref:`primary key <create_type_python>` and
+        if *update_on_existing_pk* is *true*, then if any of the records being
         added have the same primary key as existing records, the existing
-        records are replaced (i.e. *updated*) with the given records. If
-        *update_on_existing_pk* is false and if the records being added have the
-        same primary key as existing records, the given records with existing
-        primary keys are ignored (the existing records are left unchanged). It
-        is quite possible that in this case some of the given records will be
-        inserted and some (those having existing primary keys) will be ignored
-        (or updated). If the specified table does not have a primary key column
-        then the *update_on_existing_pk* option is ignored."""
+        records are replaced (i.e. updated) with the given records.  If
+        *update_on_existing_pk* is *false* and if the records being added have
+        the same primary key as existing records, they are ignored (the existing
+        records are left unchanged).  It is quite possible that in this case
+        some of the given records will be inserted and some (those having
+        existing primary keys) will be ignored (or updated).  If the specified
+        table does not have a primary key column, then the
+        *update_on_existing_pk* option is ignored.  The *return_record_ids*
+        option indicates that the database should return the unique identifiers
+        of inserted records.  The *route_to_address* option directs that
+        inserted records should be targeted for a particular database node."""
 
         assert isinstance( table_name, (str, unicode)), "insert_records(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( data, (list)), "insert_records(): Argument 'data' must be (one) of type(s) '(list)'; given %s" % type( data ).__name__
@@ -3435,7 +3468,7 @@ class GPUdb(object):
 
     # begin kill_proc
     def kill_proc( self, run_id = '', options = {} ):
-        """"""
+        """Kills a running proc instance."""
 
         assert isinstance( run_id, (str, unicode)), "kill_proc(): Argument 'run_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( run_id ).__name__
         assert isinstance( options, (dict)), "kill_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -3539,7 +3572,7 @@ class GPUdb(object):
 
     # begin show_proc
     def show_proc( self, proc_name = '', options = {} ):
-        """"""
+        """Shows information about a proc."""
 
         assert isinstance( proc_name, (str, unicode)), "show_proc(): Argument 'proc_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( proc_name ).__name__
         assert isinstance( options, (dict)), "show_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -3556,7 +3589,10 @@ class GPUdb(object):
 
     # begin show_proc_status
     def show_proc_status( self, run_id = '', options = {} ):
-        """"""
+        """Shows the statuses of running or completed proc instances. Results are
+        grouped by run ID (as returned from :ref:`execute_proc
+        <execute_proc_python>`) and data segment ID (each invocation of the proc
+        command on a data segment is assigned a data segment ID)."""
 
         assert isinstance( run_id, (str, unicode)), "show_proc_status(): Argument 'run_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( run_id ).__name__
         assert isinstance( options, (dict)), "show_proc_status(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__

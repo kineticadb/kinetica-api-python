@@ -13,6 +13,7 @@ Version 5.4.0 - 2016-11-30
     -   /create/proc
     -   /delete/proc
     -   /execute/proc (replaces previous nodejs-based version)
+    -   /has/proc
     -   /kill/proc
     -   /show/proc
     -   /show/proc/status

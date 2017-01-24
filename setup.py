@@ -29,7 +29,7 @@ extra_files = package_files(current_path+'/gpudb')
 
 setup(
     name='gpudb',
-    version='5.4.0',
+    version='6.0.0',
     description='Python client for GPUdb',
     packages=['gpudb'],
     package_data={'gpudb': extra_files},

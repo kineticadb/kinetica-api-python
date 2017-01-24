@@ -1,17 +1,22 @@
 GPUdb Python API Changelog
 ==========================
 
+Version 6.0.0 - 2017-01-24
+--------------------------
+
+-  Releasing version
+
+
 Version 5.4.0 - 2016-11-29
 --------------------------
 
--  Release
+-  Releasing version
 
 
 Version 5.2.0 - 2016-06-25
 --------------------------
 
 -   Maintenance.
--   Added the pymmh3 python package.
 
 
 Version 5.1.0 - 2016-05-06
