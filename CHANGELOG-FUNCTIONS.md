@@ -2,6 +2,43 @@ GPUdb Schemas Changelog
 =======================
 
 
+Version 6.0.0 - 2017-01-24
+--------------------------
+
+-   /alter/table has new actions:
+    -   add_column
+    -   delete_column
+    -   change_column
+    -   rename_table
+-   /alter/table now supports the following additional options:
+    -   column_default_value
+    -   column_properties
+    -   column_type
+    -   validate_change_column
+    -   copy_values_from_column
+    -   rename_column
+-   /create/proc 'execution_mode' is now a top-level parameter
+-   /create/type has new column properties:
+    -   decimal
+    -   date
+    -   time
+-   New /create/union modes:
+    -   union_all (the default mode)
+    -   union
+    -   union_distinct
+    -   except
+    -   intersect
+-   Modified the /execute/proc API
+-   Shuffled /create/projection API parameter order.
+-   Added new options to /create/projection:
+    -   expression
+    -   limit
+-   /show/proc has new output parameter:
+    -   timings
+-   New external proc support endpoint:
+    -   /has/proc
+
+
 Version 5.4.0 - 2016-11-30
 --------------------------
 
@@ -13,7 +50,6 @@ Version 5.4.0 - 2016-11-30
     -   /create/proc
     -   /delete/proc
     -   /execute/proc (replaces previous nodejs-based version)
-    -   /has/proc
     -   /kill/proc
     -   /show/proc
     -   /show/proc/status

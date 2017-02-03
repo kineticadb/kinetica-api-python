@@ -1759,7 +1759,7 @@ class GPUdb(object):
     # begin admin_shutdown
     def admin_shutdown( self, exit_type = None, authorization = None, options = {}
                         ):
-        """Exits the GPUdb server application."""
+        """Exits the database server application."""
 
         assert isinstance( exit_type, (str, unicode)), "admin_shutdown(): Argument 'exit_type' must be (one) of type(s) '(str, unicode)'; given %s" % type( exit_type ).__name__
         assert isinstance( authorization, (str, unicode)), "admin_shutdown(): Argument 'authorization' must be (one) of type(s) '(str, unicode)'; given %s" % type( authorization ).__name__
@@ -2086,10 +2086,10 @@ class GPUdb(object):
     # begin alter_system_properties
     def alter_system_properties( self, property_updates_map = None, options = {} ):
         """The alter_system_properties endpoint is primarily used to simplify the
-        testing of GPUdb and is not expected to be used during normal execution.
-        Commands are given through the properties_update_map whose keys are
-        commands and values are strings representing integer values (for example
-        '8000') or boolean values ('true' or 'false')."""
+        testing of the system and is not expected to be used during normal
+        execution.  Commands are given through the properties_update_map whose
+        keys are commands and values are strings representing integer values
+        (for example '8000') or boolean values ('true' or 'false')."""
 
         assert isinstance( property_updates_map, (dict)), "alter_system_properties(): Argument 'property_updates_map' must be (one) of type(s) '(dict)'; given %s" % type( property_updates_map ).__name__
         assert isinstance( options, (dict)), "alter_system_properties(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -2185,7 +2185,7 @@ class GPUdb(object):
 
     # begin clear_table
     def clear_table( self, table_name = '', authorization = '', options = {} ):
-        """Clears (drops) one or all tables in the GPUdb cluster. The operation is
+        """Clears (drops) one or all tables in the database cluster. The operation is
         synchronous meaning that the table will be cleared before the function
         returns. The response payload returns the status of the operation along
         with the name of the table that was cleared."""
@@ -2270,7 +2270,10 @@ class GPUdb(object):
     # begin create_proc
     def create_proc( self, proc_name = None, execution_mode = 'distributed', files =
                      {}, command = '', args = [], options = {} ):
-        """Creates a proc."""
+        """Creates an instance (proc) of the user-defined function (UDF) specified by
+        the given command, options, and files, and makes it available for
+        execution.  For details on UDFs, see: `User-Defined Functions
+        <../../concepts/index.html#user-defined-functions>`_"""
 
         assert isinstance( proc_name, (str, unicode)), "create_proc(): Argument 'proc_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( proc_name ).__name__
         assert isinstance( execution_mode, (str, unicode)), "create_proc(): Argument 'execution_mode' must be (one) of type(s) '(str, unicode)'; given %s" % type( execution_mode ).__name__
@@ -2296,7 +2299,9 @@ class GPUdb(object):
     # begin create_projection
     def create_projection( self, table_name = None, projection_name = None,
                            column_names = None, options = {} ):
-        """"""
+        """Creates a new projection of an existing table. A projection represents a
+        subset of the columns (potentially including derived columns) of a
+        table."""
 
         assert isinstance( table_name, (str, unicode)), "create_projection(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( projection_name, (str, unicode)), "create_projection(): Argument 'projection_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( projection_name ).__name__
@@ -2364,7 +2369,7 @@ class GPUdb(object):
         """Creates a monitor that watches for new records inserted into a particular
         table (identified by input parameter *table_name*) and forwards copies
         to subscribers via ZMQ. After this call completes, subscribe to the
-        returned output parameter *topic_id* on the GPUdb ZMQ table monitor port
+        returned output parameter *topic_id* on the ZMQ table monitor port
         (default 9002). Each time an insert operation on the table completes, a
         multipart message is published for that topic; the first part contains
         only the topic ID, and each subsequent part contains one binary-encoded
@@ -2397,10 +2402,10 @@ class GPUdb(object):
         the trigger has been activated, any record added to the listed tables(s)
         via :ref:`insert_records <insert_records_python>` with the chosen
         columns' values falling within the specified region will trip the
-        trigger. All such records will be queued at GPUdb's trigger port-by
-        default '9001' but can also be obtained via :ref:`show_system_status
-        <show_system_status_python>`-for any listening client to collect. Active
-        triggers can be cancelled by using the :ref:`clear_trigger
+        trigger. All such records will be queued at the trigger port (by default
+        '9001', but able to be retrieved via :ref:`show_system_status
+        <show_system_status_python>`) for any listening client to collect.
+        Active triggers can be cancelled by using the :ref:`clear_trigger
         <clear_trigger_python>` endpoint or by clearing all relevant tables.
         The output returns the trigger handle as well as indicating success or
         failure of the trigger activation."""
@@ -2436,10 +2441,10 @@ class GPUdb(object):
         the trigger has been activated, any record added to the listed tables(s)
         via :ref:`insert_records <insert_records_python>` with the chosen
         column_name's value falling within the specified range will trip the
-        trigger. All such records will be queued at GPUdb's trigger port-by
-        default '9001' but can also be obtained via :ref:`show_system_status
-        <show_system_status_python>`-for any listening client to collect. Active
-        triggers can be cancelled by using the :ref:`clear_trigger
+        trigger. All such records will be queued at the trigger port (by default
+        '9001', but able to be retrieved via :ref:`show_system_status
+        <show_system_status_python>`) for any listening client to collect.
+        Active triggers can be cancelled by using the :ref:`clear_trigger
         <clear_trigger_python>` endpoint or by clearing all relevant tables.
         The output returns the trigger handle as well as indicating success or
         failure of the trigger activation."""
@@ -2468,9 +2473,9 @@ class GPUdb(object):
     # begin create_type
     def create_type( self, type_definition = None, label = None, properties = {},
                      options = {} ):
-        """Creates a new type in GPUdb describing the layout or schema of a table. The
-        type definition is a JSON string describing the fields (i.e. columns) of
-        the type. Each field consists of a name and a data type. Supported data
+        """Creates a new type describing the layout or schema of a table. The type
+        definition is a JSON string describing the fields (i.e. columns) of the
+        type. Each field consists of a name and a data type. Supported data
         types are: double, float, int, long, string, and bytes. In addition one
         or more properties can be specified for each column which customize the
         memory usage and query availability of that column.  Note that some
@@ -2478,8 +2483,8 @@ class GPUdb(object):
         given column simultaneously.  One example of mutually exclusive
         properties are *data* and *store_only*.  To set a *primary key* on one
         or more columns include the property 'primary_key' on the desired
-        column_names. If a primary key is specified then GPUdb enforces a
-        uniqueness constraint in that only a single object can exist with a
+        column_names. If a primary key is specified, then a uniqueness
+        constraint is enforced, in that only a single object can exist with a
         given primary key. When :ref:`inserting <insert_records_python>` data
         into a table with a primary key, depending on the parameters in the
         request, incoming objects with primary keys that match existing objects
@@ -2561,8 +2566,8 @@ class GPUdb(object):
 
     # begin create_user_internal
     def create_user_internal( self, name = None, password = None, options = None ):
-        """Creates a new internal user (a user whose credentials are managed by
-        GPUdb)."""
+        """Creates a new internal user (a user whose credentials are managed by the
+        database system)."""
 
         assert isinstance( name, (str, unicode)), "create_user_internal(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
         assert isinstance( password, (str, unicode)), "create_user_internal(): Argument 'password' must be (one) of type(s) '(str, unicode)'; given %s" % type( password ).__name__
@@ -2718,8 +2723,8 @@ class GPUdb(object):
                         None, x_vector = None, y_column_name = None, y_vector =
                         None, options = {} ):
         """Calculates which objects from a table are within a named area of interest
-        (NAI/polygon). The operation is synchronous meaning that GPUdb will not
-        return the request until all the matching objects are fully available.
+        (NAI/polygon). The operation is synchronous, meaning that a response
+        will not be returned until all the matching objects are fully available.
         The response payload provides the count of the resulting set. A new
         resultant set (view) which satisfies the input NAI restriction
         specification is created with the name input parameter *view_name*
@@ -2753,8 +2758,8 @@ class GPUdb(object):
                        None, min_x = None, max_x = None, y_column_name = None,
                        min_y = None, max_y = None, options = {} ):
         """Calculates how many objects within the given table lie in a rectangular box.
-        The operation is synchronous meaning that GPUdb will not return the
-        request until all the objects are fully available. The response payload
+        The operation is synchronous, meaning that a response will not be
+        returned until all the objects are fully available. The response payload
         provides the count of the resulting set. A new resultant set which
         satisfies the input NAI restriction specification is also created when a
         input parameter *view_name* is passed in as part of the input
@@ -2820,8 +2825,8 @@ class GPUdb(object):
     def filter_by_list( self, table_name = None, view_name = '', column_values_map =
                         None, options = {} ):
         """Calculates which records from a table have values in the given list for the
-        corresponding column. The operation is synchronous meaning that GPUdb
-        will not return a response until all the objects are fully available.
+        corresponding column. The operation is synchronous, meaning that a
+        response will not be returned until all the objects are fully available.
         The response payload provides the count of the resulting set. A new
         resultant set (view) which satisfies the input filter specification is
         also created if a input parameter *view_name* is passed in as part of
@@ -2855,7 +2860,7 @@ class GPUdb(object):
                           = None, radius = None, options = {} ):
         """Calculates which objects from a table lie within a circle with the given
         radius and center point (i.e. circular NAI). The operation is
-        synchronous meaning that GPUdb will not return a response until all the
+        synchronous, meaning that a response will not be returned until all the
         objects are fully available. The response payload provides the count of
         the resulting set. A new resultant set (view) which satisfies the input
         circular NAI restriction specification is also created if a input
@@ -2939,8 +2944,8 @@ class GPUdb(object):
         (flat geometry) or Great Circle (spherical geometry to approximate the
         Earth's surface distances). The filtered points are stored in a newly
         created result set. The return value of the function is the number of
-        points in the resultant set (view).  This operation is synchronous
-        meaning that GPUdb will not return a response until all the objects are
+        points in the resultant set (view).  This operation is synchronous,
+        meaning that a response will not be returned until all the objects are
         fully available."""
 
         assert isinstance( table_name, (str, unicode)), "filter_by_series(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
@@ -2970,13 +2975,13 @@ class GPUdb(object):
         expression for the given string columns. The 'mode' may be:      *
         search : full text search query with wildcards and boolean operators,
         e.g. '(bob* OR sue) AND NOT jane'. Note that for this mode, no column
-        can be specified in input parameter *column_names*; GPUdb will search
-        through all string columns of the table that have text search enabled.
-        Also, the first character of a search term cannot be a wildcard (* or
-        ?), and search terms cannot be any of the following:  "a", "an", "and",
-        "are", "as", "at", "be", "but", "by", "for", "if", "in", "into", "is",
-        "it", "no", "not", "of", "on", "or", "such", "that", "the", "their",
-        "then", "there", "these", "they", "this", "to", "was", "will", "with".
+        can be specified in input parameter *column_names*; all string columns
+        of the table that have text search enabled will be searched. Also, the
+        first character of a search term cannot be a wildcard (* or ?), and
+        search terms cannot be any of the following:  "a", "an", "and", "are",
+        "as", "at", "be", "but", "by", "for", "if", "in", "into", "is", "it",
+        "no", "not", "of", "on", "or", "such", "that", "the", "their", "then",
+        "there", "these", "they", "this", "to", "was", "will", "with".
         Search query types:         * Multiple search terms             ex.
         perfect union - will match any record containing "perfect", "union", or
         both.         * Exact phrases              ex. "Perfect Union" - will
@@ -3045,9 +3050,9 @@ class GPUdb(object):
         the filter will be created); the column names need not be the same. If a
         input parameter *view_name* is specified, then the filtered objects will
         then be put in a newly created view. The operation is synchronous,
-        meaning that GPUdb will not return until all objects are fully available
-        in the result view. The return value contains the count (i.e. the size)
-        of the resulting view."""
+        meaning that a response will not be returned until all objects are fully
+        available in the result view. The return value contains the count (i.e.
+        the size) of the resulting view."""
 
         assert isinstance( table_name, (str, unicode)), "filter_by_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (str, unicode)), "filter_by_table(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
@@ -3077,8 +3082,8 @@ class GPUdb(object):
         """Calculates which objects from a table has a particular value for a particular
         column. The input parameters provide a way to specify either a String or
         a Double valued column and a desired value for the column on which the
-        filter is performed. The operation is synchronous meaning that GPUdb
-        will not return a response until all the objects are fully available.
+        filter is performed. The operation is synchronous, meaning that a
+        response will not be returned until all the objects are fully available.
         The response payload provides the count of the resulting set. A new
         result view which satisfies the input filter restriction specification
         is also created with a view name passed in as part of the input
@@ -3329,7 +3334,7 @@ class GPUdb(object):
 
     # begin has_table
     def has_table( self, table_name = None, options = {} ):
-        """Checks the existence of a table with the given name in GPUdb."""
+        """Checks for the existence of a table with the given name."""
 
         assert isinstance( table_name, (str, unicode)), "has_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( options, (dict)), "has_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -3346,7 +3351,7 @@ class GPUdb(object):
 
     # begin has_type
     def has_type( self, type_id = None, options = {} ):
-        """Check the existence of a type in GPUdb."""
+        """Check for the existence of a type."""
 
         assert isinstance( type_id, (str, unicode)), "has_type(): Argument 'type_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( type_id ).__name__
         assert isinstance( options, (dict)), "has_type(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -3364,8 +3369,8 @@ class GPUdb(object):
     # begin insert_records
     def insert_records( self, table_name = None, data = None, list_encoding = None,
                         options = {} ):
-        """Adds multiple records to the specified table. The operation is synchronous
-        meaning that GPUdb will not return a response until all the records are
+        """Adds multiple records to the specified table. The operation is synchronous,
+        meaning that a response will not be returned until all the records are
         fully inserted and available. The response payload provides the counts
         of the number of records actually inserted and/or updated, and can
         provide the unique identifier of each added record.  The input parameter
@@ -3417,8 +3422,9 @@ class GPUdb(object):
         the ranges of the column values. It also allows the user to specify
         linear profiles for some or all columns in which case linear values are
         generated rather than random ones. Only individual tables are supported
-        for this operation.  This operation is synchronous, meaning that GPUdb
-        will not return until all random records are fully available."""
+        for this operation.  This operation is synchronous, meaning that a
+        response will not be returned until all random records are fully
+        available."""
 
         assert isinstance( table_name, (str, unicode)), "insert_records_random(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( count, (int, long, float)), "insert_records_random(): Argument 'count' must be (one) of type(s) '(int, long, float)'; given %s" % type( count ).__name__
@@ -3446,7 +3452,7 @@ class GPUdb(object):
         'SYMBOLCODE' (along with 'x' or 'y' for example). Then when the table is
         rendered (via `WMS <../rest/wms_rest.html>`_ or :ref:`visualize_image
         <visualize_image_python>`) if the 'dosymbology' parameter is 'true' then
-        GPUdb uses the value of the 'SYMBOLCODE' column to pick the symbol
+        the value of the 'SYMBOLCODE' column is used to pick the symbol
         displayed for each point."""
 
         assert isinstance( symbol_id, (str, unicode)), "insert_symbol(): Argument 'symbol_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( symbol_id ).__name__
@@ -3629,8 +3635,8 @@ class GPUdb(object):
     # begin show_system_properties
     def show_system_properties( self, options = {} ):
         """Returns server configuration and version related information to the caller.
-        The GPUdb Admin tool uses it to present server related information to
-        the user."""
+        The admin tool uses it to present server related information to the
+        user."""
 
         assert isinstance( options, (dict)), "show_system_properties(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -3646,8 +3652,7 @@ class GPUdb(object):
     # begin show_system_status
     def show_system_status( self, options = {} ):
         """Provides server configuration and health related status to the caller. The
-        GPUdb Admin tool uses it to present server related information to the
-        user."""
+        admin tool uses it to present server related information to the user."""
 
         assert isinstance( options, (dict)), "show_system_status(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -3662,8 +3667,8 @@ class GPUdb(object):
 
     # begin show_system_timing
     def show_system_timing( self, options = {} ):
-        """Returns the last 100 requests made to GPUdb along with the request timing and
-        internal job id. The GPUdb Admin tool uses it to present request timing
+        """Returns the last 100 database requests along with the request timing and
+        internal job id. The admin tool uses it to present request timing
         information to the user."""
 
         assert isinstance( options, (dict)), "show_system_timing(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -3728,10 +3733,10 @@ class GPUdb(object):
 
     # begin show_tables_by_type
     def show_tables_by_type( self, type_id = None, label = None, options = {} ):
-        """Gets names of the tables from GPUdb based on the type information. Each table
-        in GPUdb has a particular type. This type is made out of the type label,
-        schema of the table and the semantic type of the table. This function
-        allows a look up of the existing tables based on full or partial type
+        """Gets names of the tables whose type matches the given criteria. Each table
+        has a particular type. This type is made out of the type label, schema
+        of the table, and the semantic type of the table. This function allows a
+        look up of the existing tables based on full or partial type
         information. The operation is synchronous."""
 
         assert isinstance( type_id, (str, unicode)), "show_tables_by_type(): Argument 'type_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( type_id ).__name__
@@ -3752,7 +3757,7 @@ class GPUdb(object):
     # begin show_triggers
     def show_triggers( self, trigger_ids = None, options = {} ):
         """Retrieves information regarding the specified triggers or all existing
-        triggers currently active within GPUdb."""
+        triggers currently active."""
 
         assert isinstance( trigger_ids, (list)), "show_triggers(): Argument 'trigger_ids' must be (one) of type(s) '(list)'; given %s" % type( trigger_ids ).__name__
         assert isinstance( options, (dict)), "show_triggers(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -3769,11 +3774,11 @@ class GPUdb(object):
 
     # begin show_types
     def show_types( self, type_id = None, label = None, options = {} ):
-        """Retrieves information for the specified data type. Given a type ID, GPUdb
-        returns the data type schema, the label, and the semantic type along
-        with the type ID. If the user provides any combination of label and
-        semantic type, then GPUdb returns the pertinent information for all data
-        types that match the input criteria."""
+        """Retrieves information for the specified data type. Given a type ID, the
+        database returns the data type schema, the label, and the semantic type
+        along with the type ID. If the user provides any combination of label
+        and semantic type, then the database returns the pertinent information
+        for all data types that match the input criteria."""
 
         assert isinstance( type_id, (str, unicode)), "show_types(): Argument 'type_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( type_id ).__name__
         assert isinstance( label, (str, unicode)), "show_types(): Argument 'label' must be (one) of type(s) '(str, unicode)'; given %s" % type( label ).__name__
@@ -4098,25 +4103,25 @@ class GPUdb(object):
         parameters. Numerous parameters are required to call this function. Some
         of the important parameters are the attributes of the generated images
         (input parameter *bg_color*, input parameter *width*, input parameter
-        *height*), the collection of GPUdb table names on which this function is
-        to be applied, for which shapes (point, polygon, tracks) the images are
-        to be created and a user specified session key. This session key is
-        later used to fetch the generated images stored by GPUdb. The operation
-        is synchronous meaning that GPUdb will not return the request until the
-        images for all the frames of the video are fully available.  Once the
-        request has been processed then the generated video frames are available
-        for download via WMS using STYLES=cached. In this request the LAYERS
-        parameter should be populated with the session key passed in input
-        parameter *session_key* of the visualize video request and the FRAME
-        parameter indicates which 0-based frame of the video should be returned.
-        All other WMS parameters are ignored for this mode.  For instance, if a
-        20 frame video with the session key 'MY-SESSION-KEY' was generated, the
-        first frame could be retrieved with the URL::       http://<gpudb-ip-
-        address>:9191/wms?REQUEST=GetMap&STYLES=cached&LAYERS=MY-SESSION-
-        KEY&FRAME=0  and the last frame could be retrieved with::      http
-        ://gpudb-ip-address:9191/wms?REQUEST=GetMap&STYLES=cached&LAYERS=MY-
-        SESSION-KEY&FRAME=19 The response payload provides, among other things,
-        the number of frames which were created by GPUdb."""
+        *height*), the collection of table names on which this function is to be
+        applied, for which shapes (point, polygon, tracks) the images are to be
+        created and a user specified session key. This session key is later used
+        to fetch the generated images. The operation is synchronous, meaning
+        that a response will not be returned until the images for all the frames
+        of the video are fully available.  Once the request has been processed
+        then the generated video frames are available for download via WMS using
+        STYLES=cached. In this request the LAYERS parameter should be populated
+        with the session key passed in input parameter *session_key* of the
+        visualize video request and the FRAME parameter indicates which 0-based
+        frame of the video should be returned. All other WMS parameters are
+        ignored for this mode.  For instance, if a 20 frame video with the
+        session key 'MY-SESSION-KEY' was generated, the first frame could be
+        retrieved with the URL::
+        http://<hostname/ipAddress>:9191/wms?REQUEST=GetMap&STYLES=cached&LAYERS
+        =MY-SESSION-KEY&FRAME=0  and the last frame could be retrieved with::
+        http://<hostname/ipAddress>:9191/wms?REQUEST=GetMap&STYLES=cached&LAYERS
+        =MY-SESSION-KEY&FRAME=19 The response payload provides, among other
+        things, the number of frames which were created."""
 
         assert isinstance( table_names, (list)), "visualize_video(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
         assert isinstance( world_table_names, (list)), "visualize_video(): Argument 'world_table_names' must be (one) of type(s) '(list)'; given %s" % type( world_table_names ).__name__
