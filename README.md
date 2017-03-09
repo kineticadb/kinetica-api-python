@@ -3,7 +3,7 @@ Kinetica Python API
 
 This is the 6.0.0 version of the client-side Python API for Kinetica.
 
-To install this package, run 'sudo pip install -e .' in the 'gpudb' directory.
+To install this package, run 'sudo pip install -e .' in the root directory of the repo.
 
 There is also an example file in the example directory.
 

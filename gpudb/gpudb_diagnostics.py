@@ -23,6 +23,7 @@ helpMessage = """Usage:
         (This is default if neither -l nor -g is specified)
   -g ###.##.##.## -- Run script on server GPUdb @ the IP address provided
   -p #### -- Run script on  the specified port (default is 9191)
+  -v -- Prints verbose messages
   -h -- Print this help message
 """
 
@@ -40,14 +41,15 @@ def diagnose_gpudb( argv ):
         print helpMessage
         sys.exit( 2 )
     try: # Parse the command line arguments
-        opts, args = getopt.getopt( sys.argv[1:], "hlg:p:" )
+        opts, args = getopt.getopt( sys.argv[1:], "hlg:p:v" )
     except getopt.GetoptError:
         print helpMessage
         sys.exit( 2 )
 
     # Some default values
-    GPUdb_IP = '127.0.0.1' # Run locally by default
+    GPUdb_IP   = '127.0.0.1' # Run locally by default
     GPUdb_Port = '9191' # Default port
+    isVerbose  = False
 
     # Parse the arguments
     for opt, arg in opts:
@@ -61,6 +63,8 @@ def diagnose_gpudb( argv ):
             set_id = "TwitterPointText" # Default set ID for server gpudb
         if opt == '-p': # run gpudb on a server gpudb at the specified port
             GPUdb_Port = arg
+        if opt == '-v': # prints verbose messages (only the success message, really)
+            isVerbose = True
 
     # Set up GPUdb with binary encoding
     gpudb = GPUdb( encoding='BINARY', host = GPUdb_IP, port = GPUdb_Port )
@@ -79,92 +83,92 @@ def diagnose_gpudb( argv ):
                             }""".replace(' ','').replace('\n','')
 
     # Register the data type and ensure that it worked
-    # Endpoint: /registertype
-    register_resp = gpudb.register_type ( point_schema_str, "", "point_type", "POINT" )
-    assert register_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to register point data type; error message: " \
-                                              % register_resp['status_info'][ 'message' ]
+    # Endpoint: /create/type
+    create_resp = gpudb.create_type ( point_schema_str, "point_type" )
+    assert create_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to create point data type; error message: " \
+                                              % create_resp['status_info'][ 'message' ]
 
     # Using the registered type's ID, create a new set (and check that worked)
-    # Endpoint: /newset
-    type_id = register_resp[ 'type_id' ]
-    set_id = "diagnostics_point_set_" + datetime.datetime.now().isoformat()
-    new_set_resp = gpudb.new_set( type_id, set_id, "" ) # no parent set ID
-    assert new_set_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to create point set; error message: %s" \
-                                              % new_set_resp['status_info'][ 'message' ]
+    # Endpoint: /create/table
+    type_id = create_resp[ 'type_id' ]
+    table_name = "diagnostics_point_set_" + datetime.datetime.now().isoformat()
+    create_table_resp = gpudb.create_table( table_name, type_id ) # not a part of a collection
+    assert create_table_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to create point table; error message: %s" \
+                                              % create_table_resp['status_info'][ 'message' ]
 
     # Add some data to the set in batches
-    # Endpoint: /random
+    # Endpoint: /insert/records/random
     count_1 = 2000
     param_map_1 = { "x": {"min": 0, "max": 42 }, "y": {"min": 0, "max": 42 } }
-    random_resp = gpudb.random( set_id, count_1, param_map_1 )
+    random_resp = gpudb.insert_records_random( table_name, count_1, param_map_1 )
 
     # Check that the first set of objects were generated successfully
     assert random_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to generate random points; error message: %s" \
                                               % random_resp['status_info'][ 'message' ]
 
     # Add another batch of data points to the same set, but at a different location
-    # Endpoint: /random
+    # Endpoint: /insert/records/random
     count_2 = 2000
     param_map_2 = { "x": {"min": -50, "max": -20 }, "y": {"min": -50, "max": -20 } }
-    random_resp = gpudb.random( set_id, count_2, param_map_2 )
+    random_resp = gpudb.insert_records_random( table_name, count_2, param_map_2 )
 
     # Check that the first set of objects were generated successfully
     assert random_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to generate random points; error message: %s" \
                                               % random_resp['status_info'][ 'message' ]
 
     # Check the total size of the set is as intended
-    # Endpoint: /status
+    # Endpoint: /show/table
     total_size = count_1 + count_2
-    status_resp = gpudb.status( set_id )
-    assert status_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to check status of set; error message: %s" \
-                                              % status_resp['status_info'][ 'message' ]
-    assert status_resp[ 'total_size' ] == total_size, "Error: Total size of set is not as expected. Set size = %s, expected size = %s" % ( status_resp[ 'total_size' ], total_size )
+    show_table_resp = gpudb.show_table( table_name, options = {"get_sizes": "true"} )
+    assert show_table_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to check status of set; error message: %s" \
+                                              % show_table_resp['status_info'][ 'message' ]
+    assert show_table_resp[ 'total_size' ] == total_size, "Error: Total size of set is not as expected. Set size = %s, expected size = %s" % ( show_table_resp[ 'total_size' ], total_size )
 
     # Query chaining: do two filters one after another, get final count
     # Do a similar query with select, check count against the chained queries
 
     # Bounding box: x within [10, 20] and y within [10, 20]
-    # Endpoint: /boundingbox
-    bbox_set_id = "diagnostics_bbox_result_" + datetime.datetime.now().isoformat()
-    bbox_resp = gpudb.bounding_box( 10, 20, 10, 20, "x", "y", set_id, bbox_set_id )
+    # Endpoint: /filter/bybox
+    bbox_view_name = "diagnostics_bbox_result_" + datetime.datetime.now().isoformat()
+    bbox_resp = gpudb.filter_by_box( table_name, bbox_view_name, "x", 10, 20, "y", 10, 20 )
     assert bbox_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to perform bounding box query; error message: %s" \
                                               % bbox_resp['status_info'][ 'message' ]
 
     # Filter by radius: 100km radius around (lon, lat) = (15, 15)
-    # Endpoint: /filterbyradius
-    fradius_set_id = "diagnostics_filter_by_radius_result_" + datetime.datetime.now().isoformat()
-    fradius_resp = gpudb.filter_by_radius( bbox_set_id, "x", "y", 15, 15, 100000, fradius_set_id )
+    # Endpoint: /filter/byradius
+    fradius_view_name = "diagnostics_filter_by_radius_result_" + datetime.datetime.now().isoformat()
+    fradius_resp = gpudb.filter_by_radius( bbox_view_name, fradius_view_name, "x", 15, "y", 15, 100000 )
     assert fradius_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to perform filter by radius query; error message: %s" \
                                               % fradius_resp['status_info'][ 'message' ]
 
     # Do a select query with a predicate that should yield the same result
     # as the above chained queries
     # Select: ( (10 <= x) and (x <= 20) and (10 <= y) and (y <= 20) and (geodist(x, y, 15, 15) < 100000) )
-    # Endpoint: /select
-    select_set_id = "diagnostics_select_result_" + datetime.datetime.now().isoformat()
+    # Endpoint: /filter
+    filter_view_name = "diagnostics_filter_result_" + datetime.datetime.now().isoformat()
     predicate = "( (10 <= x) and (x <= 20) and (10 <= y) and (y <= 20) and (geodist(x, y, 15, 15) < 100000) )"
-    select_resp = gpudb.select( set_id, select_set_id, predicate )
-    assert select_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to perform select query; error message: %s" \
-                                              % select_resp['status_info'][ 'message' ]
-    assert select_resp[ 'count' ] == fradius_resp[ 'count' ], "Error: Mismatch in counts of select (%s) and chained queries (bounding box then filter by radius) (%s)" \
-                                              % ( select_resp[ 'count' ], fradius_resp[ 'count' ] )
+    filter_resp = gpudb.filter( table_name, filter_view_name, predicate )
+    assert filter_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to perform filter query; error message: %s" \
+                                              % filter_resp['status_info'][ 'message' ]
+    assert filter_resp[ 'count' ] == fradius_resp[ 'count' ], "Error: Mismatch in counts of filter (%s) and chained queries (bounding box then filter by radius) (%s)" \
+                                              % ( filter_resp[ 'count' ], fradius_resp[ 'count' ] )
 
 
     # Delete a few objects and check the set size of the original set
     #
     # Delete objects: Delte a few objects given a predicate
-    # Endpoint: /selectdelete
-    delete_predicate = "((15 <= x) and (x <= 18.5))"
-    delete_resp = gpudb.select_delete( set_id, delete_predicate )
-    assert delete_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to perform select delete operation; error message: %s" \
+    # Endpoint: /delete/records
+    delete_expression = ["((15 <= x) and (x <= 18.5))"]
+    delete_resp = gpudb.delete_records( table_name, delete_expression )
+    assert delete_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to perform delete operation; error message: %s" \
                                               % delete_resp['status_info'][ 'message' ]
 
     # Check that the size of the set has gone down
     # Statistics return the count as a default
-    # Endpoint: /statistics
-    new_size = total_size - delete_resp[ 'count' ]
-    statistics_resp = gpudb.statistics( set_id, "x", "sum" )
-    assert statistics_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to perform statistics operation; error message: %s" \
+    # Endpoint: /aggregate/statistics
+    new_size = total_size - delete_resp[ 'count_deleted' ]
+    statistics_resp = gpudb.aggregate_statistics( table_name, "x", "count" )
+    assert statistics_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to perform the statistics operation; error message: %s" \
                                               % statistics_resp['status_info'][ 'message' ]
     assert statistics_resp[ 'stats' ][ 'count' ] == new_size, "Error: Mismatch in counts of set size (%s) and expected size (%s)" \
                                               % ( statistics_resp[ 'count' ], new_size )
@@ -172,47 +176,39 @@ def diagnose_gpudb( argv ):
     # Update a few objects and check the update was successful by doing a select
     #
     # Update objects based on x, change the y value
-    # Endpoing: /selectupdate
+    # Endpoing: /update/records
     update_predicate = "((-35 <= x) and (x <= -33.5))"
-    update_resp = gpudb.select_update( set_id, update_predicate, {'y': "71"} )
-    assert update_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to perform select update operation; error message: %s" \
+    update_resp = gpudb.update_records( table_name, [ update_predicate ], [{'y': "71"}] )
+    assert update_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to perform the update operation; error message: %s" \
                                               % update_resp['status_info'][ 'message' ]
 
     # Check that the selected objects' y values have been changed
     #
     # Obtain the selected objects by performing a select query
-    # Endpoint: /select
-    select_set_id2 = "diagnostics_select_result_2_" + datetime.datetime.now().isoformat()
-    select_resp1 = gpudb.select( set_id, select_set_id2, update_predicate )
-    assert select_resp1['status_info'][ 'status' ] == 'OK', "GPUdb failed to perform select operation; error message: %s" \
-                                              % select_resp1['status_info'][ 'message' ]
+    # Endpoint: /filter
+    filter_view_name2 = "diagnostics_filter_result_2_" + datetime.datetime.now().isoformat()
+    filter_resp1 = gpudb.filter( table_name, filter_view_name2, update_predicate )
+    assert filter_resp1['status_info'][ 'status' ] == 'OK', "GPUdb failed to perform filter operation; error message: %s" \
+                                              % filter_resp1['status_info'][ 'message' ]
 
     # Get all the objects in the resultant set that has the update y value
     # and check that it matches with the above count
-    # Endpont: /select
-    select_predicate = "(y == 71)"
-    select_set_id3 = "diagnostics_select_result_3_" + datetime.datetime.now().isoformat()
-    select_resp2 = gpudb.select( set_id, select_set_id3, select_predicate )
-    assert select_resp2['status_info'][ 'status' ] == 'OK', "GPUdb failed to perform select operation; error message: %s" \
-                                              % select_resp2['status_info'][ 'message' ]
+    # Endpont: /filter
+    filter_expression = "(y == 71)"
+    filter_view_name3 = "diagnostics_filter_result_3_" + datetime.datetime.now().isoformat()
+    filter_resp2 = gpudb.filter( table_name, filter_view_name3, filter_expression )
+    assert filter_resp2['status_info'][ 'status' ] == 'OK', "GPUdb failed to perform filter operation; error message: %s" \
+                                              % filter_resp2['status_info'][ 'message' ]
     # Now check that the counts match
-    assert select_resp1[ 'count' ] == select_resp2[ 'count' ], "GPUdb failed in performing select update correctly; expected count is %s, but given count is %s" \
-                                                              % ( select_resp1[ 'count' ], select_resp2[ 'count' ] )
+    assert filter_resp1[ 'count' ] == filter_resp2[ 'count' ], "GPUdb failed in performing update correctly; expected count is %s, but given count is %s" \
+                                                              % ( filter_resp1[ 'count' ], filter_resp2[ 'count' ] )
 
-    # Clear all the sets
-    clear_resp = gpudb.clear( set_id )
-    assert clear_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed in clearing set %s" % set_id
-    clear_resp = gpudb.clear( bbox_set_id )
-    assert clear_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed in clearing set %s" % bbox_set_id
-    clear_resp = gpudb.clear( fradius_set_id )
-    assert clear_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed in clearing set %s" % fradius_set_id
-    clear_resp = gpudb.clear( select_set_id )
-    assert clear_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed in clearing set %s" % select_set_id
-    clear_resp = gpudb.clear( select_set_id2 )
-    assert clear_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed in clearing set %s" % select_set_id2
-    clear_resp = gpudb.clear( select_set_id3 )
-    assert clear_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed in clearing set %s" % select_set_id3
+    # Clear all the tables (dropping the original table also drops views)
+    clear_resp = gpudb.clear_table( table_name )
+    assert clear_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed in clearing set %s" % table_name
 
+    if isVerbose:
+        print "The diagnostics tests succeeded!"
 # end diagnose_gpudb
 
 
