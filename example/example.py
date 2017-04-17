@@ -15,8 +15,12 @@ def gpudb_example():
 
     new_line = '\n'
 
-    # handle to database
+    # handle to database, one host
     h_db = gpudb.GPUdb(encoding = 'BINARY', host = '127.0.0.1', port = '9191')
+
+    # handle to database, multiple hosts
+    h_ha_db = gpudb.GPUdb(host=['localhost', 'localhost'],
+                          port=['9191', '9192'])
 
     my_table='my_table_1'
 

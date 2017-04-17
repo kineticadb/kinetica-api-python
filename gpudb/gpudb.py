@@ -15,6 +15,7 @@ import cStringIO, StringIO
 import base64, httplib
 import os, sys
 import json
+import random
 import uuid
 
 # ---------------------------------------------------------------------------
@@ -55,86 +56,111 @@ from tabulate import tabulate
 
 class GPUdb(object):
 
+    class _ConnectionToken(object):
+        """Internal wrapper class to handle multiple server logic."""
+        def __init__(self, host, port, connection):
+            assert (type(host) is str), "Expected a string host address, got: '"+str(host)+"'"
+
+            # host may take the form of :
+            #  - "https://user:password@domain.com:port/path/"
+
+            if host.startswith("http://") :    # Allow http://, but remove it.
+                host = host[7:]
+            elif host.startswith("https://") : # Allow https://, but remove it.
+                host = host[8:]
+                connection = "HTTPS" # force it
+
+            # Parse the username and password, if supplied.
+            host_at_sign_pos = host.find('@')
+            if host_at_sign_pos != -1 :
+                user_pass = host[:host_at_sign_pos]
+                host = host[host_at_sign_pos+1:]
+                user_pass_list = user_pass.split(':')
+                username = user_pass_list[0]
+                if len(user_pass_list) > 1 :
+                    password = user_pass_list[1]
+
+            url_path = ""
+            # Find the URL /path/ and remove it to get the ip address.
+            host_path_pos = host.find('/')
+            if host_path_pos != -1:
+                url_path = host[host_path_pos:]
+                if url_path[-1] == '/':
+                    url_path = url_path[:-1]
+                host = host[:host_path_pos]
+
+            # Override default port if specified in ip address
+            host_port_pos = host.find(':')
+            if host_port_pos != -1 :
+                port = host[host_port_pos+1:]
+                host = host[:host_port_pos]
+
+            # Port does not have to be provided if using standard HTTP(S) ports.
+            if (port == None) or len(str(port)) == 0:
+                if connection == 'HTTP' :
+                    port = 80
+                elif connection == 'HTTPS' :
+                    port = 443
+
+            # Validate port
+            try :
+                port = int(port)
+            except :
+                assert False, "Expected a numeric port, got: '" + str(port) + "'"
+
+            assert (port > 0) and (port < 65536), "Expected a valid port (1-65535), got: '"+str(port)+"'"
+            assert (len(host) > 0), "Expected a valid host address, got an empty string."
+            assert (connection in ["HTTP", "HTTPS"]), "Expected connection to be 'HTTP' or 'HTTPS', got: '"+str(connection)+"'"
+
+            self._host       = host
+            self._port       = int(port)
+            self._connection = connection
+            self._gpudb_url_path = url_path
+
     def __init__(self, host="127.0.0.1", port="9191",
                        encoding="BINARY", connection='HTTP',
-                       username="", password=""):
+                       username="", password="", timeout=None):
         """
         Construct a new GPUdb client instance.
 
         Parameters:
-            host    : The IP address of the GPUdb server.
-            port  : The port of the GPUdb server at the given IP address.
+            host    : The IP address of the GPUdb server. May be provided as a list to support HA.
+            port  : The port of the GPUdb server at the given IP address. May be provided as a list in conjunction with host.
             encoding   : Type of Avro encoding to use, "BINARY", "JSON" or "SNAPPY".
-            connection : Connection type, currently only "HTTP" or "HTTPS" supported.
+            connection : Connection type, currently only "HTTP" or "HTTPS" supported. May be provided as a list in conjunction with host.
             username   : An optional http username.
             password   : The http password for the username.
+            timeout    : HTTP request timeout in seconds. Defaults to global socket timeout.
         """
+        if type(host) is list:
+            if not type(port) is list:
+                port = [port]*len(host)
+            if not type(connection) is list:
+                connection = [connection]*len(host)
+            
+            assert len(host) == len(port) == len(connection), \
+                "Host, port and connection list must have the same number of items"
+        else:
+            assert not (type(port) is list) and not (type(connection) is list), \
+                "Host is not a list, port and connection must not be either"
 
-        assert (type(host) is str), "Expected a string host address, got: '"+str(host)+"'"
+            host = [host]
+            port = [port]
+            connection = [connection]
 
-        # host may take the form of :
-        #  - "https://user:password@domain.com:port/path/"
-
-        if host.startswith("http://") :    # Allow http://, but remove it.
-            host = host[7:]
-        elif host.startswith("https://") : # Allow https://, but remove it.
-            host = host[8:]
-            connection = "HTTPS" # force it
-
-        # Parse the username and password, if supplied.
-        host_at_sign_pos = host.find('@')
-        if host_at_sign_pos != -1 :
-            user_pass = host[:host_at_sign_pos]
-            host = host[host_at_sign_pos+1:]
-            user_pass_list = user_pass.split(':')
-            username = user_pass_list[0]
-            if len(user_pass_list) > 1 :
-                password = user_pass_list[1]
-
-        url_path = ""
-        # Find the URL /path/ and remove it to get the ip address.
-        host_path_pos = host.find('/')
-        if host_path_pos != -1:
-            url_path = host[host_path_pos:]
-            if url_path[-1] == '/':
-                url_path = url_path[:-1]
-            host = host[:host_path_pos]
-
-        # Override default port if specified in ip address
-        host_port_pos = host.find(':')
-        if host_port_pos != -1 :
-            port = host[host_port_pos+1:]
-            host = host[:host_port_pos]
-
-        # Port does not have to be provided if using standard HTTP(S) ports.
-        if (port == None) or len(str(port)) == 0:
-            if connection == 'HTTP' :
-                port = 80
-            elif connection == 'HTTPS' :
-                port = 443
-
-        # Validate port
-        try :
-            port = int(port)
-        except :
-            assert False, "Expected a numeric port, got: '" + str(port) + "'"
-
-        assert (port > 0) and (port < 65536), "Expected a valid port (1-65535), got: '"+str(port)+"'"
-        assert (len(host) > 0), "Expected a valid host address, got an empty string."
         assert (encoding in ["BINARY", "JSON", "SNAPPY"]), "Expected encoding to be either 'BINARY', 'JSON' or 'SNAPPY' got: '"+str(encoding)+"'"
-        assert (connection in ["HTTP", "HTTPS"]), "Expected connection to be 'HTTP' or 'HTTPS', got: '"+str(connection)+"'"
-
         if (encoding == 'SNAPPY' and not have_snappy):
             print 'SNAPPY encoding specified but python-snappy is not installed; reverting to BINARY'
             encoding = 'BINARY'
 
-        self.host       = host
-        self.port       = int(port)
+        self._conn_tokens = tuple(GPUdb._ConnectionToken(h, p, c) \
+                               for h, p, c in zip(host, port, connection))
+        self.current_host_index = random.randint(0, len(self._conn_tokens))
+
         self.encoding   = encoding
-        self.connection = connection
         self.username   = username
         self.password   = password
-        self.gpudb_url_path = url_path
+        self.timeout    = timeout
 
 
         self.client_to_object_encoding_map = { \
@@ -147,6 +173,9 @@ class GPUdb(object):
         self.load_gpudb_schemas()
     # end __init__
 
+    def _get_current_conn_token( self ):
+        """Returns the connection information for the current server."""
+        return self._conn_tokens[self._current_conn_token_index]
 
     def get_version_info( self ):
         """Return the version information for this API."""
@@ -156,29 +185,60 @@ class GPUdb(object):
 
     def get_host( self ):
         """Return the host this client is talking to."""
-        return self.host
+        return self._get_current_conn_token()._host
     # end get_host
 
 
     def get_port( self ):
         """Return the port the host is listening to."""
-        return self.port
+        return self._get_current_conn_token()._port
     # end get_host
 
 
     def get_url( self ):
         """Return the url of the host this client is listening to."""
-        return "{host}:{port}".format( host = self.host, port = self.port )
+        return "{host}:{port}".format( host = self.get_host(),
+                                       port = self.get_port() )
     # end get_host
 
+    @property
+    def host(self):
+        return self.get_host()
 
+    @host.setter
+    def host(self, value):
+        self._get_current_conn_token()._host = value
+
+    @property
+    def port(self):
+        return self.get_port()
+
+    @port.setter
+    def port(self, value):
+        self._get_current_conn_token()._port = value
+
+    @property
+    def gpudb_url_path(self):
+        return self._get_current_conn_token()._gpudb_url_path
+
+    @gpudb_url_path.setter
+    def gpudb_url_path(self, value):
+        self._get_current_conn_token()._gpudb_url_path = value
+
+    @property
+    def connection(self):
+        return self._get_current_conn_token()._connection
+
+    @connection.setter
+    def connection(self, value):
+        self._get_current_conn_token()._connection = value
 
     # members
-    host       = "127.0.0.1" # Input host with port appended if provided.
-    gpudb_url_path = ""          # Input /path (if any) that was in the host.
-    port     = "9191"      # Input port, may be empty.
+    _current_conn_token_index = 0
+    _conn_tokens   = ()          # Collection of parsed url entities
+
+    timeout       = None        # HTTP request timeout (None=default socket timeout)
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
-    connection    = "HTTP"      # Input connection type, either 'HTTP' or 'HTTPS'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
     api_version   = "6.0.0.0"
@@ -257,33 +317,56 @@ class GPUdb(object):
         #       fast as reusing a persistent one and has the advantage of
         #       fully retrying from scratch if the connection fails.
 
-        try:
-            if (self.connection == 'HTTP'):
-                conn = httplib.HTTPConnection(host=self.host, port=self.port)
-            elif (self.connection == 'HTTPS'):
-                conn = httplib.HTTPSConnection(host=self.host, port=self.port)
+        initial_index = self._current_conn_token_index
+        cond = True
+        error = None
+        
+        while cond:
+            loop_error = None
+            conn_token = self._get_current_conn_token()
+
+            try:
+                if (conn_token._connection == 'HTTP'):
+                    conn = httplib.HTTPConnection(host=conn_token._host,
+                                                  port=conn_token._port,
+                                                  timeout=self.timeout)
+                elif (conn_token._connection == 'HTTPS'):
+                    conn = httplib.HTTPSConnection(host=conn_token._host,
+                                                   port=conn_token._port,
+                                                   timeout=self.timeout)
+            except:
+                loop_error = "Error connecting to: '%s' on port %d" % (conn_token._host, conn_token._port)
+
+            if not loop_error:
+                try:
+                    conn.request("POST", conn_token._gpudb_url_path+endpoint, body_data, headers)
+                except:
+                    loop_error = "Error posting to: '%s:%d%s'" % (conn_token._host, conn_token._port, conn_token._gpudb_url_path+endpoint)
+
+                try:
+                    resp = conn.getresponse()
+                    resp_data = resp.read()
+                    #print 'data received: ',len(resp_data)
+                    #print 'headers received: ',resp.getheaders()
+                    resp_time = resp.getheader('x-request-time-secs',None)
+                except: # some error occurred; return a message
+                    # TODO: Maybe use a class like GPUdbException
+                    loop_error = ValueError( "Timeout Error: No response received from %s" % conn_token._host )
+                # end except
+            
+            if loop_error:
+                self._current_conn_token_index = \
+                    (self._current_conn_token_index+1) % len(self._conn_tokens)
+            error = loop_error
+
+            cond = error and (self._current_conn_token_index != initial_index)
+
+        if error:
+            if type(error) is Exception:
+                raise error
             else:
-                assert False, "Unknown connection type, should be 'HTTP' or 'HTTPS'"
-        except:
-            print("Error connecting to: '%s' on port %d" % (self.host, self.port))
-            raise
-
-        try:
-            conn.request("POST", self.gpudb_url_path+endpoint, body_data, headers)
-        except:
-            print("Error posting to: '%s:%d%s'" % (self.host, self.port, self.gpudb_url_path+endpoint))
-            raise
-
-        try:
-            resp = conn.getresponse()
-            resp_data = resp.read()
-            #print 'data received: ',len(resp_data)
-            #print 'headers received: ',resp.getheaders()
-            resp_time = resp.getheader('x-request-time-secs',None)
-        except: # some error occurred; return a message
-            # TODO: Maybe use a class like GPUdbException
-            raise ValueError( "Timeout Error: No response received from %s" % self.host )
-        # end except
+                print error
+                raise
 
         # resp = conn.getresponse()
         # #Print resp.status,resp.reason
@@ -1837,7 +1920,7 @@ class GPUdb(object):
         'mean', 'stddev', 'stddev_pop', 'stddev_samp', 'var', 'var_pop',
         'var_samp', 'arg_min', 'arg_max' and 'count_distinct'. The response is
         returned as a dynamic schema. For details see: `dynamic schemas
-        documentation <../../concepts/index.html#dynamic-schemas>`_. If the
+        documentation <../../concepts/dynamic_schemas.html>`_. If the
         'result_table' option is provided then the results are stored in a table
         with the name given in the option and the results are not returned in
         the response."""
@@ -2057,7 +2140,7 @@ class GPUdb(object):
         unique values sorted in descending order input parameter *options* would
         be::   {"limit":"10","sort_order":"descending"}.  The response is
         returned as a dynamic schema. For details see: `dynamic schemas
-        documentation <../../concepts/index.html#dynamic-schemas>`_. If the
+        documentation <../../concepts/dynamic_schemas.html>`_. If the
         'result_table' option is provided then the results are stored in a table
         with the name given in the option and the results are not returned in
         the response."""
@@ -2246,7 +2329,7 @@ class GPUdb(object):
     def create_join_table( self, join_table_name = None, table_names = [],
                            column_names = [], expressions = [], options = {} ):
         """Creates a table that is the result of a SQL JOIN.  For details see: `join
-        concept documentation <../../concepts/index.html#joins>`_."""
+        concept documentation <../../concepts/joins.html>`_."""
 
         assert isinstance( join_table_name, (str, unicode)), "create_join_table(): Argument 'join_table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( join_table_name ).__name__
         assert isinstance( table_names, (list)), "create_join_table(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
@@ -2273,7 +2356,7 @@ class GPUdb(object):
         """Creates an instance (proc) of the user-defined function (UDF) specified by
         the given command, options, and files, and makes it available for
         execution.  For details on UDFs, see: `User-Defined Functions
-        <../../concepts/index.html#user-defined-functions>`_"""
+        <../../concepts/udf.html>`_"""
 
         assert isinstance( proc_name, (str, unicode)), "create_proc(): Argument 'proc_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( proc_name ).__name__
         assert isinstance( execution_mode, (str, unicode)), "create_proc(): Argument 'execution_mode' must be (one) of type(s) '(str, unicode)'; given %s" % type( execution_mode ).__name__
@@ -2697,9 +2780,9 @@ class GPUdb(object):
                 = {} ):
         """Filters data based on the specified expression.  The results are stored in a
         result set with the given input parameter *view_name*.  For details see
-        `concepts <../../concepts/index.html#expressions>`_.  The response
-        message contains the number of points for which the expression evaluated
-        to be true, which is equivalent to the size of the result view."""
+        `concepts <../../concepts/expressions.html>`_.  The response message
+        contains the number of points for which the expression evaluated to be
+        true, which is equivalent to the size of the result view."""
 
         assert isinstance( table_name, (str, unicode)), "filter(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (str, unicode)), "filter(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
@@ -2906,9 +2989,10 @@ class GPUdb(object):
         column is within [input parameter *lower_bound*, input parameter
         *upper_bound*] (inclusive). The operation is synchronous. The response
         provides a count of the number of objects which passed the bound filter.
-        For track objects, the count reflects how many points fall within the
-        given bounds (which may not include all the track points of any given
-        track)."""
+        Although this functionality can also be accomplished with the standard
+        filter function, it is more efficient.  For track objects, the count
+        reflects how many points fall within the given bounds (which may not
+        include all the track points of any given track)."""
 
         assert isinstance( table_name, (str, unicode)), "filter_by_range(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (str, unicode)), "filter_by_range(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
@@ -2988,19 +3072,18 @@ class GPUdb(object):
         only match the exact phrase "Perfect Union"         * Boolean (NOT, AND,
         OR, parentheses. OR assumed if no operator specified)             ex.
         justice AND tranquility - will match only those records containing both
-        justice and tranquility         * XOR (specified with -)             ex.
-        justice - peace - will match records containing "justice" or "peace",
-        but not both         * Zero or more char wildcard - (specified with *)
-        ex, est*is* - will match any records containing a word that starts with
-        "est" and ends with "sh", such as "establish", "establishable", and
-        "establishment"         * Exactly one char wildcard - (specified with ?)
-        ex. est???is* - will only match strings that start with "est", followed
-        by exactly three letters, followed by "is", followed by one more letter.
-        This would only match "establish"         * Fuzzy search (term~)
-        ex. rear~ will match rear,fear,bear,read,etc.         * Proximity -
-        match two words within a specified distance of eachother             ex.
-        "Union Tranquility"~10 will match any record that has the words Union
-        and Tranquility within 10 words of eachother         * Range - inclusive
+        justice and tranquility         * Zero or more char wildcard -
+        (specified with '*')             ex, est*is* - will match any records
+        containing a word that starts with "est" and ends with "sh", such as
+        "establish", "establishable", and "establishment"         * Exactly one
+        char wildcard - (specified with ?)             ex. est???is* - will only
+        match strings that start with "est", followed by exactly three letters,
+        followed by "is", followed by one more letter.  This would only match
+        "establish"         * Fuzzy search (term~)             ex. rear~ will
+        match rear,fear,bear,read,etc.         * Proximity - match two words
+        within a specified distance of eachother             ex. "Union
+        Tranquility"~10 will match any record that has the words Union and
+        Tranquility within 10 words of eachother         * Range - inclusive
         [<term1> TO <term2>] and exclusive {<term1> TO <term2>}.  Note: This is
         a string search, so numbers will be seen as a string of numeric
         characters, not as a number.  Ex. 2 > 123             ex. [100 TO 200]
@@ -3086,8 +3169,9 @@ class GPUdb(object):
         response will not be returned until all the objects are fully available.
         The response payload provides the count of the resulting set. A new
         result view which satisfies the input filter restriction specification
-        is also created with a view name passed in as part of the input
-        payload."""
+        is also created with a view name passed in as part of the input payload.
+        Although this functionality can also be accomplished with the standard
+        filter function, it is more efficient."""
 
         assert isinstance( table_name, (str, unicode)), "filter_by_value(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (str, unicode)), "filter_by_value(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
@@ -3163,7 +3247,7 @@ class GPUdb(object):
         retrieved may differ between calls (discontiguous or overlap) based on
         the type of the update.  The response is returned as a dynamic schema.
         For details see: `dynamic schemas documentation
-        <../../concepts/index.html#dynamic-schemas>`_."""
+        <../../concepts/dynamic_schemas.html>`_."""
 
         assert isinstance( table_name, (str, unicode)), "get_records_by_column(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( column_names, (list)), "get_records_by_column(): Argument 'column_names' must be (one) of type(s) '(list)'; given %s" % type( column_names ).__name__
@@ -3450,10 +3534,9 @@ class GPUdb(object):
         symbol, and any additional optional parameter (e.g. color). To have a
         symbol used for rendering create a table with a string column named
         'SYMBOLCODE' (along with 'x' or 'y' for example). Then when the table is
-        rendered (via `WMS <../rest/wms_rest.html>`_ or :ref:`visualize_image
-        <visualize_image_python>`) if the 'dosymbology' parameter is 'true' then
-        the value of the 'SYMBOLCODE' column is used to pick the symbol
-        displayed for each point."""
+        rendered (via `WMS <../rest/wms_rest.html>`_) if the 'dosymbology'
+        parameter is 'true' then the value of the 'SYMBOLCODE' column is used to
+        pick the symbol displayed for each point."""
 
         assert isinstance( symbol_id, (str, unicode)), "insert_symbol(): Argument 'symbol_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( symbol_id ).__name__
         assert isinstance( symbol_format, (str, unicode)), "insert_symbol(): Argument 'symbol_format' must be (one) of type(s) '(str, unicode)'; given %s" % type( symbol_format ).__name__
@@ -4116,12 +4199,13 @@ class GPUdb(object):
         frame of the video should be returned. All other WMS parameters are
         ignored for this mode.  For instance, if a 20 frame video with the
         session key 'MY-SESSION-KEY' was generated, the first frame could be
-        retrieved with the URL::
-        http://<hostname/ipAddress>:9191/wms?REQUEST=GetMap&STYLES=cached&LAYERS
-        =MY-SESSION-KEY&FRAME=0  and the last frame could be retrieved with::
-        http://<hostname/ipAddress>:9191/wms?REQUEST=GetMap&STYLES=cached&LAYERS
-        =MY-SESSION-KEY&FRAME=19 The response payload provides, among other
-        things, the number of frames which were created."""
+        retrieved with the URL:      `http://<hostname/ipAddress>:9191/wms?REQUE
+        ST=GetMap&STYLES=cached&LAYERS=MY-SESSION-KEY&FRAME=0
+        <../rest/wms_rest.html>`_  and the last frame could be retrieved with:
+        `http://<hostname/ipAddress>:9191/wms?REQUEST=GetMap&STYLES=cached&LAYER
+        S=MY-SESSION-KEY&FRAME=19 <../rest/wms_rest.html>`_  The response
+        payload provides, among other things, the number of frames which were
+        created."""
 
         assert isinstance( table_names, (list)), "visualize_video(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
         assert isinstance( world_table_names, (list)), "visualize_video(): Argument 'world_table_names' must be (one) of type(s) '(list)'; given %s" % type( world_table_names ).__name__
