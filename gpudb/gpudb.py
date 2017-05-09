@@ -51,71 +51,850 @@ except ImportError:
 from tabulate import tabulate
 
 # ---------------------------------------------------------------------------
+# _ConnectionToken - Private wrapper class to manage connection logic
+# ---------------------------------------------------------------------------
+class _ConnectionToken(object):
+    """Internal wrapper class to handle multiple server logic."""
+    def __init__(self, host, port, connection):
+        assert (type(host) is str), "Expected a string host address, got: '"+str(host)+"'"
+
+        # host may take the form of :
+        #  - "https://user:password@domain.com:port/path/"
+
+        if host.startswith("http://") :    # Allow http://, but remove it.
+            host = host[7:]
+        elif host.startswith("https://") : # Allow https://, but remove it.
+            host = host[8:]
+            connection = "HTTPS" # force it
+
+        # Parse the username and password, if supplied.
+        host_at_sign_pos = host.find('@')
+        if host_at_sign_pos != -1 :
+            user_pass = host[:host_at_sign_pos]
+            host = host[host_at_sign_pos+1:]
+            user_pass_list = user_pass.split(':')
+            username = user_pass_list[0]
+            if len(user_pass_list) > 1 :
+                password = user_pass_list[1]
+
+        url_path = ""
+        # Find the URL /path/ and remove it to get the ip address.
+        host_path_pos = host.find('/')
+        if host_path_pos != -1:
+            url_path = host[host_path_pos:]
+            if url_path[-1] == '/':
+                url_path = url_path[:-1]
+            host = host[:host_path_pos]
+
+        # Override default port if specified in ip address
+        host_port_pos = host.find(':')
+        if host_port_pos != -1 :
+            port = host[host_port_pos+1:]
+            host = host[:host_port_pos]
+
+        # Port does not have to be provided if using standard HTTP(S) ports.
+        if (port == None) or len(str(port)) == 0:
+            if connection == 'HTTP' :
+                port = 80
+            elif connection == 'HTTPS' :
+                port = 443
+
+        # Validate port
+        try :
+            port = int(port)
+        except :
+            assert False, "Expected a numeric port, got: '" + str(port) + "'"
+
+        assert (port > 0) and (port < 65536), "Expected a valid port (1-65535), got: '"+str(port)+"'"
+        assert (len(host) > 0), "Expected a valid host address, got an empty string."
+        assert (connection in ["HTTP", "HTTPS"]), "Expected connection to be 'HTTP' or 'HTTPS', got: '"+str(connection)+"'"
+
+        self._host       = host
+        self._port       = int(port)
+        self._connection = connection
+        self._gpudb_url_path = url_path
+# end class _ConnectionToken
+
+
+# ---------------------------------------------------------------------------
+# GPUdbColumnProperty - Class to Handle GPUdb Column Properties
+# ---------------------------------------------------------------------------
+class GPUdbColumnProperty(object):
+    """Column properties used for GPUdb record data types."""
+
+    # Default property for all numeric and string type columns; makes the column
+    # available for GPU queries.
+    DATA = "data"
+
+    # Valid only for 'string' columns. Enables full text search for string
+    # columns. Can be set independently of *data* and *store_only*.
+    TEXT_SEARCH = "text_search"
+
+    # Persist the column value but do not make it available to queries (e.g.
+    # :ref:`filter_by_box <filter_bybox_python>`)-i.e. it is mutually exclusive
+    # to the 'data' property. Any 'bytes' type column must have a 'store_only'
+    # property. This property reduces system memory usage.
+    STORE_ONLY = "store_only"
+
+    # Works in conjunction with the 'data' property for string columns. This
+    # property reduces system disk usage by disabling reverse string lookups.
+    # Queries like :ref:`filter <filter_python>`, :ref:`filter_by_list
+    # <filter_bylist_python>`, and :ref:`filter_by_value
+    # <filter_byvalue_python>` work as usual but :ref:`aggregate_unique
+    # <aggregate_unique_python>`, :ref:`aggregate_group_by
+    # <aggregate_groupby_python>` and :ref:`get_records_by_column
+    # <get_records_bycolumn_python>` are not allowed on columns with this
+    # property.
+    DISK_OPTIMIZED = "disk_optimized"
+
+    # Valid only for 'long' columns. Indicates that this field represents a
+    # timestamp and will be provided in milliseconds since the Unix epoch:
+    # 00:00:00 Jan 1 1970.  Dates represented by a timestamp must fall between
+    # the year 1000 and the year 2900.
+    TIMESTAMP = "timestamp"
+
+    # Valid only for 'string' columns.  It represents a SQL type NUMERIC(19, 4)
+    # data type.  There can be up to 15 digits before the decimal point and up
+    # to four digits in the fractional part.  The value can be positive or
+    # negative (indicated by a minus sign at the beginning).  This property is
+    # mutually exclusive with the 'text_search' property.
+    DECIMAL = "decimal"
+
+    # Valid only for 'string' columns.  Indicates that this field represents a
+    # date and will be provided in the format 'YYYY-MM-DD'.  The allowable range
+    # is 1000-01-01 through 2900-01-01.
+    DATE = "date"
+
+    # Valid only for 'string' columns.  Indicates that this field represents a
+    # time-of-day and will be provided in the format 'HH:MM:SS.mmm'.  The
+    # allowable range is 00:00:00.000 through 23:59:59.999.
+    TIME = "time"
+
+    # This property provides optimized memory, disk and query performance for
+    # string columns. Strings with this property must be no longer than 1
+    # character. This property cannot be combined with *text_search*
+    CHAR1 = "char1"
+
+    # This property provides optimized memory, disk and query performance for
+    # string columns. Strings with this property must be no longer than 2
+    # characters. This property cannot be combined with *text_search*
+    CHAR2 = "char2"
+
+    # This property provides optimized memory, disk and query performance for
+    # string columns. Strings with this property must be no longer than 4
+    # characters. This property cannot be combined with *text_search*
+    CHAR4 = "char4"
+
+    # This property provides optimized memory, disk and query performance for
+    # string columns. Strings with this property must be no longer than 8
+    # characters. This property cannot be combined with *text_search*
+    CHAR8 = "char8"
+
+    # This property provides optimized memory, disk and query performance for
+    # string columns. Strings with this property must be no longer than 16
+    # characters. This property cannot be combined with *text_search*
+    CHAR16 = "char16"
+
+    # This property provides optimized memory, disk and query performance for
+    # string columns. Strings with this property must be no longer than 32
+    # characters. This property cannot be combined with *text_search*
+    CHAR32 = "char32"
+
+    # This property provides optimized memory, disk and query performance for
+    # string columns. Strings with this property must be no longer than 64
+    # characters. This property cannot be combined with *text_search*
+    CHAR64 = "char64"
+
+    # This property provides optimized memory, disk and query performance for
+    # string columns. Strings with this property must be no longer than 128
+    # characters. This property cannot be combined with *text_search*
+    CHAR128 = "char128"
+
+    # This property provides optimized memory, disk and query performance for
+    # string columns. Strings with this property must be no longer than 256
+    # characters. This property cannot be combined with *text_search*
+    CHAR256 = "char256"
+
+    # This property provides optimized memory and query performance for int
+    # columns. Ints with this property must be between -128 and +127 (inclusive)
+    INT8 = "int8"
+
+    # This property provides optimized memory and query performance for int
+    # columns. Ints with this property must be between -32768 and +32767
+    # (inclusive)
+    INT16 = "int16"
+
+    # This property provides optimized memory, disk and query performance for
+    # string columns representing IPv4 addresses (i.e. 192.168.1.1). Strings
+    # with this property must be of the form: A.B.C.D where A, B, C and D are in
+    # the range of 0-255.
+    IPV4 = "ipv4"
+
+    # This property indicates that this column will be part of (or the entire)
+    # primary key.
+    PRIMARY_KEY = "primary_key"
+
+    # This property indicates that this column will be part of (or the entire)
+    # shard key.
+    SHARD_KEY = "shard_key"
+
+    # This property indicates that this column is nullable.  However, setting
+    # this property is insufficient for making the column nullable.  The user
+    # must declare the type of the column as a union between its regular type
+    # and 'null' in the avro schema for the record type in input parameter
+    # *type_definition*.  For example, if a column is of type integer and is
+    # nullable, then the entry for the column in the avro schema must be:
+    # ['int', 'null'].
+    # The Java and C++ APIs have built-in convenience for bypassing setting the
+    # avro schema by hand.  For those two languages, one can use this property
+    # as usual and not have to worry about the avro schema for the record.
+    NULLABLE = "nullable"
+# end class GPUdbColumnProperty
+
+
+# ---------------------------------------------------------------------------
+# GPUdbRecordColumn - Class to Handle GPUdb Record Column Data Types
+# ---------------------------------------------------------------------------
+class GPUdbRecordColumn(object):
+    """Represents a column in a GPUdb record object (GPUdbRecordType).
+    """
+
+    class _ColumnType(object):
+        """A class acting as an enum for the data types allowed for a column."""
+        INT    = "int"
+        LONG   = "long"
+        FLOAT  = "float"
+        DOUBLE = "double"
+        STRING = "string"
+        BYTES  = "bytes"
+    # end class _ColumnType
+
+
+    # The allowe data types
+    _allowed_data_types = [ _ColumnType.INT,
+                            _ColumnType.LONG,
+                            _ColumnType.FLOAT,
+                            _ColumnType.DOUBLE,
+                            _ColumnType.STRING,
+                            _ColumnType.BYTES
+    ]
+
+    # All non-numeric data types
+    _non_numeric_data_types = [ _ColumnType.STRING,
+                                _ColumnType.BYTES
+    ]
+
+    # All allowed numeric data types
+    _numeric_data_types = [ _ColumnType.INT,
+                            _ColumnType.LONG,
+                            _ColumnType.FLOAT,
+                            _ColumnType.DOUBLE
+    ]
+
+    # All allowed integral numeric data types
+    _numeric_integral_data_types = [ _ColumnType.INT,
+                                    _ColumnType.LONG
+    ]
+
+    # All allowed decimal numeric data types
+    _numeric_decimal_data_types = [ _ColumnType.FLOAT,
+                                    _ColumnType.DOUBLE
+    ]
+
+
+    def __init__( self, name, column_type, column_properties = None, is_nullable = False ):
+        """Construct a GPUdbRecordColumn object.
+
+        @param name  The name of the column, must be a non-empty string.
+        @param column_type  The data type of the column.  Must be one of int, long,
+                            float, double, string, bytes.
+        @param column_properties  Optional properties for the column.
+        @param is_nullable  Optional boolean flag indicating whether the column is
+                            nullable.
+        """
+        # Validate and save the name
+        if (not isinstance(name, str) or (not name)):
+            raise ValueError( "The name of the column must be a non-empty string; given " + repr(name) )
+        self._name = name
+
+        # Validate and save the data type
+        if column_type not in self._allowed_data_types:
+            raise ValueError( "Data type must be one of " + str(self._allowed_data_types) +
+                              "; given " + column_type )
+        self._column_type = column_type
+
+        # Validate and save the column properties
+        if not column_properties: # it's ok to not have any
+            column_properties = []
+        if not isinstance( column_properties, list ):
+            raise ValueError( "'column_properties' must be a list; given " + str(type(column_properties)) )
+        self._column_properties = column_properties
+        # Check for nullability
+        self._is_nullable = False # default value
+        if (GPUdbColumnProperty.NULLABLE in self.column_properties):
+            self._is_nullable = True
+
+        # Check the optional 'is_nullable' argument
+        if is_nullable not in [True, False]:
+            raise ValueError( "'is_nullable' must be a boolean value; given " + repr(type(is_nullable)) )
+        if (is_nullable == True):
+            self._is_nullable = True
+            # Enter the 'nullable' property into the list of propertie, even though
+            # GPUdb doesn't actually use it (make sure not to make duplicates)
+            if (GPUdbColumnProperty.NULLABLE not in self._column_properties):
+                self._column_properties.append( GPUdbColumnProperty.NULLABLE )
+            # end inner if
+        # end if
+    # end __init__
+
+
+    @property
+    def name(self):  # read-only name
+        """The name of the column."""
+        return self._name
+    # end name
+
+
+    @property
+    def column_type(self):  # read-only column_type
+        """The data type of the column."""
+        return self._column_type
+    # end column_type
+
+
+    @property
+    def column_properties(self): # read-only column_properties
+        """The properties of the column."""
+        return self._column_properties
+    # end column_properties
+
+
+    @property
+    def is_nullable(self):  # read-only is_nullable
+        """The nullability of the column."""
+        return self._is_nullable
+    # end is_nullable
+
+# end class GPUdbRecordColumn
+
+
+
+# ---------------------------------------------------------------------------
+# GPUdbRecordType - Class to Handle GPUdb Record Data Types
+# ---------------------------------------------------------------------------
+class GPUdbRecordType(object):
+    """Represent the data type for a given record in GPUdb.  Has convenience
+    functions for creating the type in GPUdb (among others).
+    """
+
+    def __init__( self, columns = None, label = "", schema_string = None ):
+        """Create a GPUdbRecordType object which represents the data type for
+        a given record for GPUdb.
+
+        @param columns  A list of GPUdbRecordColumn objects. Either this argument
+                        or the schema_string argument must be given.
+        @param schema_string  The JSON string containing the schema for the type.
+                              Either this argument or the columns argument must
+                              be given.
+        @param label  Optional string label for the column.
+        """
+        # Validate and save the label
+        if not isinstance( label, str ):
+            raise ValueError( "Column label must be a string; given " + str(type( label )) )
+        self._label = label
+
+        # Either columns or schema_string must be given, but not both!
+        if ((columns == None) and (schema_string == None)):
+            raise ValueError( "Either columns or schema_string must be given, but none is in this case!" )
+        elif ((columns != None) and (schema_string != None)):
+            raise ValueError( "Either columns or schema_string must be given, but not both (which is the case here)!" )
+
+
+        # Construct the object from the given columns
+        if (columns != None):
+            self.__initiate_from_columns( columns )
+        else:
+            self.__initiate_from_schema_string( schema_string )
+
+        # The type hasn't been registered with GPUdb yet
+        self._type_id = None
+    # end __init__
+
+
+
+    def __initiate_from_columns( self, columns ):
+        """Private method that constructs the object using the given columns.
+
+        @param columns  A list of GPUdbRecordColumn objects.
+        """
+        # Validate the columns
+        if not columns: # Must NOT be empty
+            raise ValueError( "Non-empty list of columns must be given.  Given none." )
+        if not isinstance( columns, list ): # Must be a list
+            raise ValueError( "Non-empty list of columns must be given.  Given " + str(type( columns )) )
+        self._columns = columns
+
+        # Column property container
+        self._column_properties = {}
+
+        # Avro schema string field container
+        fields = []
+
+        # Validate each column and deduce its properties
+        for col in columns:
+            # Check that each element is a GPUdbRecordColumn object
+            if not isinstance( col, GPUdbRecordColumn ):
+                raise ValueError( "columns must contain only GPUdbRecordColumn objects.  Given " + str(type( col )) )
+
+            # Extract the column's properties, if any
+            if col.column_properties:
+                self._column_properties[ col.name ] = col.column_properties
+
+            # Create the field for the schema string
+            field_type = '"{_type}"'.format( _type = col.column_type )
+            # Handle nullable fields
+            if col.is_nullable:
+                field_type = ('[{_type}, "null"]'.format( _type = field_type ))
+            field = ('{{"name": "{_name}", "type": {_type} }}'.format( _name = col.name, _type = field_type ))
+            fields.append( field )
+        # end for loop
+
+        # Put the fields together
+        fields = ", ".join( fields )
+
+        # Generate the avro schema string
+        self._schema_string = """
+        {{
+            "type" : "record",
+            "name" : "{_label}",
+            "fields" : [ {_fields} ]
+        }}
+        """.format( _label = self._label if self._label else "type_name",
+                    _fields = fields )
+        self._schema_string = self._schema_string.replace( " ", "" ).replace( "\n", "" )
+
+        # Generate the avro schema and save it
+        self._record_schema = schema.parse( self._schema_string )
+
+        return
+    # end __initiate_from_columns
+
+
+    def __initiate_from_schema_string( self, schema_string ):
+        """Private method that constructs the object using the given schema string.
+
+        @param schema_string  The schema string for the record type.
+        """
+        # Validate the schema string
+        if not schema_string: # Must NOT be empty!
+            raise ValueError( "A schema string must be given.  Given none." )
+
+        # Try to parse the schema string, this would also help us validate it
+        self._record_schema = schema.parse( schema_string )
+
+        # If no exception was thrown above, then save the schema string
+        self._schema_string = schema_string
+
+        # Now, deduce the columns from the schema string
+        schema_json = json.loads( schema_string )
+        columns = []
+        for field in schema_json["fields"]:
+            # Get the field's type
+            field_type = field["type"]
+
+            # Is the type nullable?
+            is_nullable = False
+            if ( isinstance( field_type, list )
+                 and ("null" in field_type) ):
+                is_nullable = True
+                # Then, also get the scalar type of the field
+                field_type = field_type[ 0 ]
+            # end if
+
+            # Create the column object and to the list
+            column = GPUdbRecordColumn( field["name"], field_type, is_nullable = is_nullable )
+            columns.append( column )
+        # end for
+
+        # Save the columns
+        self._columns = columns
+
+        # Save column properties (of which there is none useful; ignoring nullability here
+        # as it is not needed by GPUdb)
+        self._column_properties = {}
+
+        return
+    # end __initiate_from_schema_string
+
+
+    @property
+    def columns(self): # read-only columns
+        """A list of columns for the record type."""
+        return self._columns
+    # end columns
+
+
+    @property
+    def label(self): # read-only label
+        """A label for the record type."""
+        return self._label
+    # end label
+
+
+    @property
+    def schema_string(self): # read-only schema string
+        """The schema string for the record type."""
+        return self._schema_string
+    # end schema_string
+
+
+    @property
+    def record_schema(self): # read-only avro schema
+        """The avro schema for the record type."""
+        return self._record_schema
+    # end record_schema
+
+
+    @property
+    def column_properties(self): # read-only column properties
+        """The properties for the type's columns."""
+        return self._column_properties
+    # end column_properties
+
+
+    @property
+    def type_id(self): # read-only ID for the type
+        """The ID for the type, if it has already been registered
+        with GPUdb."""
+        if not self._type_id:
+            raise ValueError( "The record type has not been registered with GPUdb yet." )
+        return self._type_id
+    # end type_id
+
+
+    def create_type( self, gpudb, options = None ):
+        """Create the record type in GPUdb so that users can create
+        tables using this type.
+
+        @param gpudb  A GPUdb object to connect to a GPUdb server.
+        @param option Optional dictionary containing options for the /create/type call.
+
+        @returns the type ID.
+        """
+        # Validate the GPUdb handle
+        if not isinstance( gpudb, GPUdb ):
+            raise ValueError( "'gpudb' must be a GPUdb object; given " + str(type( gpudb )) )
+
+        if not options:
+            options = {}
+
+        response = gpudb.create_type( self._schema_string, self._label, self._column_properties, options )
+        self._type_id = response[ "type_id" ]
+        return self._type_id
+    # end create_type
+
+# end class GPUdbRecordType
+
+
+
+
+# ---------------------------------------------------------------------------
+# GPUdbRecord - Class to Handle GPUdb Record Data
+# ---------------------------------------------------------------------------
+class GPUdbRecord( object ):
+    """Represent the data for a given record in GPUdb.  Has convenience
+    functions for encoding/decoding the data.
+    """
+
+    @staticmethod
+    def decode_binary_data( record_type_schema_string, binary_data ):
+        """Decode binary encoded data (generally returned by GPUdb) using
+        the schema for the data.  Return the decoded data.
+
+        @param record_type_schema_string  The schema string for the record type.
+        @param binary_data  The binary encoded data.  Could be a single object or
+                            a list of data.
+
+        @returns the decoded data (a single object or a list)
+        """
+        # Create an avro schema from the schema string
+        record_schema = schema.parse( record_type_schema_string )
+
+        # Get an avro data reader
+        data_reader = io.DatumReader( record_schema )
+
+        # Decode the single data object
+        if not isinstance( binary_data, list ):
+            output = cStringIO.StringIO( binary_data )
+            bd = io.BinaryDecoder( output )
+            decoded_datum = data_reader.read( bd )
+            return decoded_datum
+        # end if
+
+        # Decode the list of data data
+        decoded_data = []
+        for binary_datum in binary_data:
+            output = cStringIO.StringIO( binary_datum )
+            bd = io.BinaryDecoder( output )
+            decoded_datum = data_reader.read( bd )
+
+            decoded_data.append( decoded_datum )
+        # end for
+
+        return decoded_data
+    # end decode_binary_data
+
+
+    @staticmethod
+    def decode_json_string_data( json_string_data ):
+        """Decode binary encoded data in string form (generally returned by GPUdb).
+        Return the decoded data.
+
+        @param json_string_data  The stringified json encoded data.  Could be
+                                 a single object or a list of data.
+
+        @returns the decoded data (a single object or a list)
+        """
+        # Decode the single data object
+        if not isinstance( json_string_data, list ):
+            json_string_data = json_string_data.replace( "\\U", "\\u")
+            decoded_datum = json.loads( json_string_data )
+            return decoded_datum
+        # end if
+
+        # Decode the list of data data
+        decoded_data = []
+        for json_datum in json_string_data:
+            json_datum = json_datum.replace( "\\U", "\\u")
+            decoded_datum = json.loads( json_datum )
+
+            decoded_data.append( decoded_datum )
+        # end for
+
+        return decoded_data
+    # end decode_json_string_data
+
+
+
+    def __init__( self, record_type, column_values ):
+        """Create a GPUdbRecord object which holds the data for
+        a given record.
+
+        @param record_type  A GPUdbRecordType object that describes the columns
+                            of this record.
+        @param column_values Either a dict or a list that contains the values for
+                             the columns.  In either case, must contain values for
+                             ALL columns.  If a list, then the columns must be in the
+                             correct order.
+        """
+        # Validate and save the record type
+        if not isinstance( record_type, GPUdbRecordType ):
+            raise ValueError( "'record_type' must be a GPUdbRecordType; given " + str(type( record_type )) )
+        self._record_type = record_type
+
+
+        # Validate the column values
+        if not column_values: # Must NOT be empty
+            raise ValueError( "Column values must be given.  Given none." )
+        if ( (not isinstance( column_values, list ))
+             and (not isinstance( column_values, dict ))
+             and (not isinstance( column_values, collections.OrderedDict )) ):
+            # Must be a list or a dict
+            raise ValueError( "Columns must be one of the following: list, dict, OrderedDict.  "
+                              "Given " + str(type( column_values )) )
+
+        # The column values must be saved in the order they're declared in the type
+        self._column_values = collections.OrderedDict()
+
+        # Get the expected number of columns based on the data type provided
+        num_columns = len( self._record_type.columns )
+
+        # Check that there are correct number of values
+        if (len( column_values ) != num_columns ):
+            raise ValueError( "Given list of column values does not have the correct (%d) "
+                              "number of values; it has %d" % (num_columns, len( column_values )) )
+
+        # Check and save the column values
+        # --------------------------------
+        # Case 1: The values are given in a list
+        if isinstance( column_values, list ):
+            # Check that the order of the columns is ok
+            # (we can only check string vs. numeric types, really;
+            # we can also check for nulls)
+            for i in range(0, num_columns):
+                column_name = self._record_type.columns[ i ].name
+                # The given value for this column
+                column_val = column_values[ i ]
+
+                # Check that the value is of the given type, save the value if it is
+                if self.__is_valid_column_value( column_val, self._record_type.columns[ i ] ):
+                    self._column_values[ column_name ] = column_val
+            # end for loop
+        else: # the values are given either in a dict or an OrderedDict
+            # Check that the column names given match those of the record's type
+            given_column_names = set( column_values.keys() )
+            record_type_column_names = set( [c.name for c in self._record_type.columns] )
+            if ( given_column_names != record_type_column_names ):
+                if (given_column_names - record_type_column_names):
+                    raise ValueError( "Given column names do not match that of the record type.  "
+                                      "Extra column names are: " + str( (given_column_names - record_type_column_names) ))
+                else:
+                    raise ValueError( "Given column names do not match that of the record type.  "
+                                      "Missing column names are: " + str( (record_type_column_names - given_column_names) ))
+            # end if
+
+            # We will disregard the order in which the column values were listed
+            # in column_values (this should help the user somewhat)
+            for i in range(0, num_columns):
+                column_name = self._record_type.columns[ i ].name
+                column_val  = column_values[ column_name ]
+                
+                # Check that the value is of the given type, save the value if it is
+                if self.__is_valid_column_value( column_val, self._record_type.columns[ i ] ):
+                    self._column_values[ column_name ] = column_val
+        # end checking and save column values
+
+        # Encode the record into binary and save it
+        # -----------------------------------------
+        sio = cStringIO.StringIO()
+        binary_encoder = io.BinaryEncoder( sio )
+        # Create a record writer
+        writer = io.DatumWriter( self._record_type.record_schema )
+        writer.write( self._column_values, binary_encoder)
+        self._binary_encoded_data = sio.getvalue()
+    # end __init__
+
+
+    @property
+    def record_type(self): # read-only record type
+        """The type for this record."""
+        return self._record_type
+    # end record_type
+
+
+    @property
+    def column_values(self): # read-only column_values
+        """The values for this record."""
+        return self._column_values
+    # end column_values
+
+
+    @property
+    def data(self): # read-only column_values, just a convenient name
+        """The values for this record."""
+        return self._column_values
+    # end data
+
+
+    @property
+    def binary_data(self): # read-only binary_data
+        """The binary encoded values for this record."""
+        return self._binary_encoded_data
+    # end binary_data
+
+
+    @property
+    def json_data_string(self): # JSON encoded column_values in a string
+        """The stringified JSON encoded values for this record."""
+        return json.dumps( self._column_values )
+    # end json_data_string
+
+
+    def insert_record( self, gpudb, table_name, encoding = "binary", options = None ):
+        """Insert this record into GPUdb.
+
+        @param gpudb  A GPUdb client handle.
+        @param table_name  The name of the table into which we need to insert
+                           the record.
+        @param encoding  Optional encoding with which to perform the insertion.  Default
+                         is binary encoding.
+        @param options  Optional parameter.  If given, use the options for the insertion
+                        function.
+
+        @retrurns the response from GPUdb.
+        """
+        # Validate the GPUdb handle
+        if not isinstance( gpudb, GPUdb ):
+            raise ValueError( "'gpudb' must be a GPUdb object; given " + str( type( gpudb ) ) )
+
+        if not options:
+            options = {}
+
+        # Based on the encoding, format the data appropriately
+        if (encoding == "binary"):
+            data = [ self._binary_encoded_data ]
+        elif (encoding == "json"):
+            data = [ json.dumps( self._column_values ) ]
+        else:
+            raise ValueError( "Unknown encoding: " + str( encoding ) )
+
+        # Insert the record
+        response = gpudb.insert_records( table_name = table_name,
+                                         data = data,
+                                         list_encoding = encoding,
+                                         options = options )
+        return response
+    # end insert_record
+
+
+
+    def __is_valid_column_value( self, column_value, column, do_throw = True ):
+        """Private function that validates the given value for a column.
+
+        @param column_value  The value for the given column
+        @param column  A GPUdbRecordColumn object that has information about
+                       the column.  This is used to validate the column value.
+        @param do_throw  Throw an exception for invalid columns
+
+        @returns True if the value can be validated, False otherwise.
+        """
+        if not isinstance( column, GPUdbRecordColumn ):
+            raise ValueError( "'column' must be a GPUdbRecordColumn object; given "
+                              + str(type( column )) )
+
+        # Check that the value is of the given type
+        # -----------------------------------------
+        column_type = column.column_type
+        if (column_value == None): # Handle null values
+            if not column.is_nullable: # but the column is not nullable
+                if do_throw:
+                    raise ValueError( "Non-nullable column '%s' given a null value" % column.name )
+                else:
+                    return False
+        # Numeric types:
+        elif (column_type in GPUdbRecordColumn._numeric_data_types):
+            if not (isinstance( column_value, (int, long, float)) and not isinstance( column_value, bool ) ):
+                if do_throw:
+                    raise ValueError( ("Column '%s' must be a numeric type (one of int, long, float); "
+                                       "given " % column.name )
+                                      + str(type( column_value )) )
+                else:
+                    return False
+        else: # string/bytes type
+            if not isinstance( column_value, (str, bytes) ):
+                if do_throw:
+                    raise ValueError( ("Column '%s' must be string or bytes; given " % column.name)
+                                      + str(type( column_value )) )
+                else:
+                    return False
+        # end if-else checking type-correctness
+        
+        # The value checks out; it is valid
+        return True
+    # end __is_valid_column_value
+
+
+# end class GPUdbRecord
+
+
+
+
+
+# ---------------------------------------------------------------------------
 # GPUdb - Lightweight client class to interact with a GPUdb server.
 # ---------------------------------------------------------------------------
 
 class GPUdb(object):
-
-    class _ConnectionToken(object):
-        """Internal wrapper class to handle multiple server logic."""
-        def __init__(self, host, port, connection):
-            assert (type(host) is str), "Expected a string host address, got: '"+str(host)+"'"
-
-            # host may take the form of :
-            #  - "https://user:password@domain.com:port/path/"
-
-            if host.startswith("http://") :    # Allow http://, but remove it.
-                host = host[7:]
-            elif host.startswith("https://") : # Allow https://, but remove it.
-                host = host[8:]
-                connection = "HTTPS" # force it
-
-            # Parse the username and password, if supplied.
-            host_at_sign_pos = host.find('@')
-            if host_at_sign_pos != -1 :
-                user_pass = host[:host_at_sign_pos]
-                host = host[host_at_sign_pos+1:]
-                user_pass_list = user_pass.split(':')
-                username = user_pass_list[0]
-                if len(user_pass_list) > 1 :
-                    password = user_pass_list[1]
-
-            url_path = ""
-            # Find the URL /path/ and remove it to get the ip address.
-            host_path_pos = host.find('/')
-            if host_path_pos != -1:
-                url_path = host[host_path_pos:]
-                if url_path[-1] == '/':
-                    url_path = url_path[:-1]
-                host = host[:host_path_pos]
-
-            # Override default port if specified in ip address
-            host_port_pos = host.find(':')
-            if host_port_pos != -1 :
-                port = host[host_port_pos+1:]
-                host = host[:host_port_pos]
-
-            # Port does not have to be provided if using standard HTTP(S) ports.
-            if (port == None) or len(str(port)) == 0:
-                if connection == 'HTTP' :
-                    port = 80
-                elif connection == 'HTTPS' :
-                    port = 443
-
-            # Validate port
-            try :
-                port = int(port)
-            except :
-                assert False, "Expected a numeric port, got: '" + str(port) + "'"
-
-            assert (port > 0) and (port < 65536), "Expected a valid port (1-65535), got: '"+str(port)+"'"
-            assert (len(host) > 0), "Expected a valid host address, got an empty string."
-            assert (connection in ["HTTP", "HTTPS"]), "Expected connection to be 'HTTP' or 'HTTPS', got: '"+str(connection)+"'"
-
-            self._host       = host
-            self._port       = int(port)
-            self._connection = connection
-            self._gpudb_url_path = url_path
 
     def __init__(self, host="127.0.0.1", port="9191",
                        encoding="BINARY", connection='HTTP',
@@ -153,7 +932,7 @@ class GPUdb(object):
             print 'SNAPPY encoding specified but python-snappy is not installed; reverting to BINARY'
             encoding = 'BINARY'
 
-        self._conn_tokens = tuple(GPUdb._ConnectionToken(h, p, c) \
+        self._conn_tokens = tuple(_ConnectionToken(h, p, c) \
                                for h, p, c in zip(host, port, connection))
         self.current_host_index = random.randint(0, len(self._conn_tokens))
 
@@ -2168,11 +2947,12 @@ class GPUdb(object):
 
     # begin alter_system_properties
     def alter_system_properties( self, property_updates_map = None, options = {} ):
-        """The alter_system_properties endpoint is primarily used to simplify the
-        testing of the system and is not expected to be used during normal
-        execution.  Commands are given through the properties_update_map whose
-        keys are commands and values are strings representing integer values
-        (for example '8000') or boolean values ('true' or 'false')."""
+        """The :ref:`alter_system_properties <alter_system_properties_python>` endpoint
+        is primarily used to simplify the testing of the system and is not
+        expected to be used during normal execution.  Commands are given through
+        the input parameter *property_updates_map* whose keys are commands and
+        values are strings representing integer values (for example '8000') or
+        boolean values ('true' or 'false')."""
 
         assert isinstance( property_updates_map, (dict)), "alter_system_properties(): Argument 'property_updates_map' must be (one) of type(s) '(dict)'; given %s" % type( property_updates_map ).__name__
         assert isinstance( options, (dict)), "alter_system_properties(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -3207,9 +3987,7 @@ class GPUdb(object):
         *offset* and input parameter *limit* parameters. Note that when paging
         through a table, if the table (or the underlying table in case of a
         view) is updated (records are inserted, deleted or modified) the records
-        retrieved may differ between calls based on the updates applied.  Note
-        that when using the Java API, it is not possible to retrieve records
-        from join tables using this operation."""
+        retrieved may differ between calls based on the updates applied."""
 
         assert isinstance( table_name, (str, unicode)), "get_records(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( offset, (int, long, float)), "get_records(): Argument 'offset' must be (one) of type(s) '(int, long, float)'; given %s" % type( offset ).__name__
@@ -3534,9 +4312,9 @@ class GPUdb(object):
         symbol, and any additional optional parameter (e.g. color). To have a
         symbol used for rendering create a table with a string column named
         'SYMBOLCODE' (along with 'x' or 'y' for example). Then when the table is
-        rendered (via `WMS <../rest/wms_rest.html>`_) if the 'dosymbology'
-        parameter is 'true' then the value of the 'SYMBOLCODE' column is used to
-        pick the symbol displayed for each point."""
+        rendered (via `WMS <../../api/rest/wms_rest.html>`_) if the
+        'dosymbology' parameter is 'true' then the value of the 'SYMBOLCODE'
+        column is used to pick the symbol displayed for each point."""
 
         assert isinstance( symbol_id, (str, unicode)), "insert_symbol(): Argument 'symbol_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( symbol_id ).__name__
         assert isinstance( symbol_format, (str, unicode)), "insert_symbol(): Argument 'symbol_format' must be (one) of type(s) '(str, unicode)'; given %s" % type( symbol_format ).__name__
