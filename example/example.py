@@ -34,11 +34,12 @@ def gpudb_example():
 
     # Create a data type for the table
     # --------------------------------
-    # First create the columns (column args: first the name, then the type)
+    # First create the columns (column args: first the name, then the type, and then properties, if any)
     columns = []
-    columns.append( gpudb.GPUdbRecordColumn( "col1", "double" ) )
-    columns.append( gpudb.GPUdbRecordColumn( "col2", "string" ) )
-    columns.append( gpudb.GPUdbRecordColumn( "group_id", "string" ) )
+    columns.append( gpudb.GPUdbRecordColumn( "col1", gpudb.GPUdbRecordColumn._ColumnType.DOUBLE ) )
+    columns.append( gpudb.GPUdbRecordColumn( "col2", gpudb.GPUdbRecordColumn._ColumnType.STRING,
+                                             [ gpudb.GPUdbColumnProperty.NULLABLE ] ) )
+    columns.append( gpudb.GPUdbRecordColumn( "group_id", gpudb.GPUdbRecordColumn._ColumnType.STRING ) )
 
     # Create the type object
     record_type = gpudb.GPUdbRecordType( columns, label = 'my_type_lb_1' )
@@ -54,12 +55,19 @@ def gpudb_example():
     # Generate data to be inserted into the table
     encoded_obj_list = []
     for val in range(1,10):
+        col1_val     = ( val + 0.1 )
+        # Using None for one of the records; this sets the value to null
+        col2_val     = ('string '+str(val)) if (val != 5) else None
+        group_id_val = 'Group 1'
+
         # Create a record: need the record type, and since we're using the list
         # constructor, we need to provide the column values in declaration order
-        record = gpudb.GPUdbRecord( record_type, [ (val+0.1), ('string '+str(val)), 'Group 1' ] )
+        record = gpudb.GPUdbRecord( record_type, [ col1_val, col2_val, group_id_val ] )
+
         # Save the binary encoded record
         encoded_obj_list.append( record.binary_data )
     # end for loop
+
 
     # Optional parameter that enables returning IDs for the
     # newly inserted records

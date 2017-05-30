@@ -2917,7 +2917,7 @@ class GPUdb(object):
         *offset* and input parameter *limit* are used to page through the
         results if there are large numbers of unique values. To get the first 10
         unique values sorted in descending order input parameter *options* would
-        be::   {"limit":"10","sort_order":"descending"}.  The response is
+        be::  {"limit":"10","sort_order":"descending"}.  The response is
         returned as a dynamic schema. For details see: `dynamic schemas
         documentation <../../concepts/dynamic_schemas.html>`_. If the
         'result_table' option is provided then the results are stored in a table
@@ -3162,7 +3162,7 @@ class GPUdb(object):
     # begin create_projection
     def create_projection( self, table_name = None, projection_name = None,
                            column_names = None, options = {} ):
-        """Creates a new projection of an existing table. A projection represents a
+        """Creates a new projection of an existing table.  A projection represents a
         subset of the columns (potentially including derived columns) of a
         table."""
 
