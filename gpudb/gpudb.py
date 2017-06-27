@@ -313,7 +313,7 @@ class GPUdbRecordColumn(object):
                             nullable.
         """
         # Validate and save the name
-        if (not isinstance(name, str) or (not name)):
+        if (not isinstance(name, str) and (not name)):
             raise ValueError( "The name of the column must be a non-empty string; given " + repr(name) )
         self._name = name
 
@@ -1020,7 +1020,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "6.0.0.0"
+    api_version   = "6.0.1.0"
 
     # constants
     END_OF_SET = -9999
@@ -2700,7 +2700,7 @@ class GPUdb(object):
         'var_samp', 'arg_min', 'arg_max' and 'count_distinct'. The response is
         returned as a dynamic schema. For details see: `dynamic schemas
         documentation <../../concepts/dynamic_schemas.html>`_. If the
-        'result_table' option is provided then the results are stored in a table
+        *result_table* option is provided then the results are stored in a table
         with the name given in the option and the results are not returned in
         the response."""
 
@@ -2982,7 +2982,9 @@ class GPUdb(object):
         set to the given value.       Making a table protected or not. Protected
         tables have their TTLs set to not automatically expire. This can be
         applied to tables, views, and collections.       Allowing homogeneous
-        tables within a collection."""
+        tables within a collection.                Managing a table's columns--a
+        column can be added or removed, or have its `type
+        <../../concepts/types.html>`_ modified."""
 
         assert isinstance( table_name, (str, unicode)), "alter_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( action, (str, unicode)), "alter_table(): Argument 'action' must be (one) of type(s) '(str, unicode)'; given %s" % type( action ).__name__
@@ -3591,7 +3593,10 @@ class GPUdb(object):
         The response payload provides the count of the resulting set. A new
         resultant set (view) which satisfies the input NAI restriction
         specification is created with the name input parameter *view_name*
-        passed in as part of the input."""
+        passed in as part of the input.  Note that if you call this endpoint
+        using a table that has WKT data, the x_column_name and y_column_name
+        settings are no longer required because the geospatial filter works
+        automatically."""
 
         assert isinstance( table_name, (str, unicode)), "filter_by_area(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (str, unicode)), "filter_by_area(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
@@ -3696,9 +3701,10 @@ class GPUdb(object):
         the request.  For example, if a type definition has the columns 'x' and
         'y', then a filter by list query with the column map {"x":["10.1",
         "2.3"], "y":["0.0", "-31.5", "42.0"]} will return the count of all data
-        points whose x and y values match one of the values in the respective x-
-        and y-lists. If the filter_mode option is set to 'not_in_list' then the
-        filter will match all items that are not in the provided list(s)."""
+        points whose x and y values match both in the respective x- and y-lists,
+        e.g., "x = 10.1 and y = 0.0", "x = 2.3 and y = -31.5", etc. However, a
+        record with "x = 10.1 and y = -31.5" or "x = 2.3 and y = 0.0" would not
+        be returned because the values in the given lists do not correspond."""
 
         assert isinstance( table_name, (str, unicode)), "filter_by_list(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (str, unicode)), "filter_by_list(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
@@ -3836,51 +3842,10 @@ class GPUdb(object):
                           None, mode = None, column_names = None, options = {}
                           ):
         """Calculates which objects from a table, collection, or view match a string
-        expression for the given string columns. The 'mode' may be:      *
-        search : full text search query with wildcards and boolean operators,
-        e.g. '(bob* OR sue) AND NOT jane'. Note that for this mode, no column
-        can be specified in input parameter *column_names*; all string columns
-        of the table that have text search enabled will be searched. Also, the
-        first character of a search term cannot be a wildcard (* or ?), and
-        search terms cannot be any of the following:  "a", "an", "and", "are",
-        "as", "at", "be", "but", "by", "for", "if", "in", "into", "is", "it",
-        "no", "not", "of", "on", "or", "such", "that", "the", "their", "then",
-        "there", "these", "they", "this", "to", "was", "will", "with".
-        Search query types:         * Multiple search terms             ex.
-        perfect union - will match any record containing "perfect", "union", or
-        both.         * Exact phrases              ex. "Perfect Union" - will
-        only match the exact phrase "Perfect Union"         * Boolean (NOT, AND,
-        OR, parentheses. OR assumed if no operator specified)             ex.
-        justice AND tranquility - will match only those records containing both
-        justice and tranquility         * Zero or more char wildcard -
-        (specified with '*')             ex, est*is* - will match any records
-        containing a word that starts with "est" and ends with "sh", such as
-        "establish", "establishable", and "establishment"         * Exactly one
-        char wildcard - (specified with ?)             ex. est???is* - will only
-        match strings that start with "est", followed by exactly three letters,
-        followed by "is", followed by one more letter.  This would only match
-        "establish"         * Fuzzy search (term~)             ex. rear~ will
-        match rear,fear,bear,read,etc.         * Proximity - match two words
-        within a specified distance of eachother             ex. "Union
-        Tranquility"~10 will match any record that has the words Union and
-        Tranquility within 10 words of eachother         * Range - inclusive
-        [<term1> TO <term2>] and exclusive {<term1> TO <term2>}.  Note: This is
-        a string search, so numbers will be seen as a string of numeric
-        characters, not as a number.  Ex. 2 > 123             ex. [100 TO 200]
-        will find all strings between 100 and 200 inclusive.             ex.
-        {alpha to beta} will find all strings between alpha and beta, but not
-        the words alpha or beta                 * escaping special characters -
-        Special characters are escaped with a backslash(\), special characters
-        are: + - && || ! ( ) { } [ ] ^ " ~ * ? : \  * equals: exact whole-string
-        match (accelerated) * contains: partial substring match (not
-        accelerated).  If the column is a string type (non-charN) and the number
-        of records is too large, it will return 0. * starts_with: strings that
-        start with the given expression (not accelerated), If the column is a
-        string type (non-charN) and the number of records is too large, it will
-        return 0. * regex: full regular expression search (not accelerated). If
-        the column is a string type (non-charN) and the number of records is too
-        large, it will return 0.  The options 'case_sensitive' can be used to
-        modify the behavior for all modes except 'search'"""
+        expression for the given string columns. The options 'case_sensitive'
+        can be used to modify the behavior for all modes except 'search'. For
+        'search' mode details and limitations, see `Full Text Search
+        <../../concepts/full_text_search.html>`_."""
 
         assert isinstance( table_name, (str, unicode)), "filter_by_string(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (str, unicode)), "filter_by_string(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
