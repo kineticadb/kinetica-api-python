@@ -6,7 +6,7 @@
 ##############################################
 
 # ---------------------------------------------------------------------------
-# gpudb.py - The Python API to interact with a GPUdb server. 
+# gpudb.py - The Python API to interact with a GPUdb server.
 #
 # Copyright (c) 2014 GIS Federal
 # ---------------------------------------------------------------------------
@@ -17,6 +17,7 @@ import os, sys
 import json
 import random
 import uuid
+from decimal import Decimal
 
 # ---------------------------------------------------------------------------
 # The absolute path of this gpudb.py module for importing local packages
@@ -313,7 +314,7 @@ class GPUdbRecordColumn(object):
                             nullable.
         """
         # Validate and save the name
-        if (not isinstance(name, str) and (not name)):
+        if (not name):
             raise ValueError( "The name of the column must be a non-empty string; given " + repr(name) )
         self._name = name
 
@@ -512,7 +513,7 @@ class GPUdbRecordType(object):
             # end if
 
             # Create the column object and to the list
-            column = GPUdbRecordColumn( field["name"], field_type, is_nullable = is_nullable )
+            column = GPUdbRecordColumn( field["name"], field_type, None , is_nullable = is_nullable )
             columns.append( column )
         # end for
 
@@ -694,14 +695,14 @@ class GPUdbRecord( object ):
 
 
         # Validate the column values
-        if not column_values: # Must NOT be empty
-            raise ValueError( "Column values must be given.  Given none." )
         if ( (not isinstance( column_values, list ))
              and (not isinstance( column_values, dict ))
              and (not isinstance( column_values, collections.OrderedDict )) ):
             # Must be a list or a dict
             raise ValueError( "Columns must be one of the following: list, dict, OrderedDict.  "
                               "Given " + str(type( column_values )) )
+        if not column_values: # Must NOT be empty
+            raise ValueError( "Column values must be given.  Given none." )
 
         # The column values must be saved in the order they're declared in the type
         self._column_values = collections.OrderedDict()
@@ -748,7 +749,7 @@ class GPUdbRecord( object ):
             for i in range(0, num_columns):
                 column_name = self._record_type.columns[ i ].name
                 column_val  = column_values[ column_name ]
-                
+
                 # Check that the value is of the given type, save the value if it is
                 if self.__is_valid_column_value( column_val, self._record_type.columns[ i ] ):
                     self._column_values[ column_name ] = column_val
@@ -871,14 +872,14 @@ class GPUdbRecord( object ):
                 else:
                     return False
         else: # string/bytes type
-            if not isinstance( column_value, (str, bytes) ):
+            if not isinstance( column_value, (str, Decimal, unicode, bytes) ):
                 if do_throw:
                     raise ValueError( ("Column '%s' must be string or bytes; given " % column.name)
                                       + str(type( column_value )) )
                 else:
                     return False
         # end if-else checking type-correctness
-        
+
         # The value checks out; it is valid
         return True
     # end __is_valid_column_value
@@ -916,7 +917,7 @@ class GPUdb(object):
                 port = [port]*len(host)
             if not type(connection) is list:
                 connection = [connection]*len(host)
-            
+
             assert len(host) == len(port) == len(connection), \
                 "Host, port and connection list must have the same number of items"
         else:
@@ -1036,7 +1037,7 @@ class GPUdb(object):
     # Some other schemas for internal work
     logger_request_schema_str = """
         {
-            "type" : "record", 
+            "type" : "record",
             "name" : "logger_request",
             "fields" : [
                 {"name" : "ranks", "type" : {"type" : "array", "items" : "int"}},
@@ -1046,7 +1047,7 @@ class GPUdb(object):
     """.replace("\n", "").replace(" ", "")
     logger_response_schema_str = """
         {
-            "type" : "record", 
+            "type" : "record",
             "name" : "logger_response",
             "fields" : [
                 {"name" : "status" , "type" : "string"},
@@ -1099,7 +1100,7 @@ class GPUdb(object):
         initial_index = self._current_conn_token_index
         cond = True
         error = None
-        
+
         while cond:
             loop_error = None
             conn_token = self._get_current_conn_token()
@@ -1132,7 +1133,7 @@ class GPUdb(object):
                     # TODO: Maybe use a class like GPUdbException
                     loop_error = ValueError( "Timeout Error: No response received from %s" % conn_token._host )
                 # end except
-            
+
             if loop_error:
                 self._current_conn_token_index = \
                     (self._current_conn_token_index+1) % len(self._conn_tokens)
@@ -1580,12 +1581,12 @@ class GPUdb(object):
         nullable = [type(x['type']['items']) != str for x in fields]
 
         if len(retobj['binary_encoded_response']) > 0:
-  
+
             bytes = retobj['binary_encoded_response']
             if type(bytes) == unicode:
                 converted = ''.join([chr(ord(x)) for x in bytes])
                 bytes = converted
-            
+
             csio = cStringIO.StringIO(bytes)
             bd = io.BinaryDecoder(csio)
             reader = io.DatumReader(my_schema)
@@ -1616,7 +1617,7 @@ class GPUdb(object):
 
             for i,(n,column_name) in enumerate(zip(nullable,column_lookup)):
                 column_index_name = 'column_%d'%(i+1)
-                
+
                 #double/float conversion here
                 #get the datatype of the underlying data
                 data_type = my_schema.fields_dict[column_index_name].type.items.type
@@ -1629,7 +1630,7 @@ class GPUdb(object):
 
                 if (n): #nullable
                     retobj['response'][column_name] = [x if x is not None else '<NULL>' for x in retobj['response'][column_name]]
-                    
+
 
         if (do_print):
             print tabulate(retobj['response'],headers='keys',tablefmt='psql')
@@ -3166,7 +3167,15 @@ class GPUdb(object):
                            column_names = None, options = {} ):
         """Creates a new projection of an existing table.  A projection represents a
         subset of the columns (potentially including derived columns) of a
-        table."""
+        table.  Can create a new column using the calculated moving average of a
+        given column with the following syntax:
+        'moving_average(column_name,num_points_before,num_points_after) as
+        new_column_name'; for each record in the 'column_name' parameter, it
+        computes the average over the previous 'num_points_before' records and
+        the subsequent 'num_points_after' records.  Note that moving average
+        relies on *order_by* and *order_by* requires that all the data being
+        ordered resides on the same processing node, so it won't make sense to
+        use *order_by* without moving average."""
 
         assert isinstance( table_name, (str, unicode)), "create_projection(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( projection_name, (str, unicode)), "create_projection(): Argument 'projection_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( projection_name ).__name__
