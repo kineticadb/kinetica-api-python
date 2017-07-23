@@ -17,7 +17,10 @@ import os, sys
 import json
 import random
 import uuid
+
+from collections import Iterator
 from decimal import Decimal
+
 
 # ---------------------------------------------------------------------------
 # The absolute path of this gpudb.py module for importing local packages
@@ -50,6 +53,27 @@ except ImportError:
     have_snappy = False
 
 from tabulate import tabulate
+
+
+
+# Some string constants used throughout the program
+class C:
+    """Some string constants used throughout the program."""
+
+    _fields = "fields"
+
+    # /show/table response
+    _table_descriptions = "table_descriptions"
+    _collection   = "COLLECTION"
+    _view         = "VIEW"
+    _replicated   = "REPLICATED"
+    _join         = "JOIN"
+    _result_table = "RESULT_TABLE"
+    _total_full_size = "total_full_size"
+
+# end class C
+
+
 
 # ---------------------------------------------------------------------------
 # _ConnectionToken - Private wrapper class to manage connection logic
@@ -115,6 +139,61 @@ class _ConnectionToken(object):
         self._connection = connection
         self._gpudb_url_path = url_path
 # end class _ConnectionToken
+
+
+# ---------------------------------------------------------------------------
+# Utility Functions
+# ---------------------------------------------------------------------------
+def is_ok( response_object ):
+    """Returns True if the response object's status is OK."""
+    return (response_object['status_info']['status'] == 'OK')
+# end is_ok
+
+def get_error_msg( response_object ):
+    """Returns the error message for the query, if any.  None otherwise."""
+    if (response_object['status_info']['status'] != 'ERROR'):
+        return None
+    return response_object['status_info']['message']
+# end get_error_msg
+
+
+def is_list_or_dict( arg ):
+    """Returns whether the given argument either a list or a dict
+    (or an OrderedDict).
+    """
+    return ( isinstance( arg, list )
+             or isinstance( arg, dict )
+             or isinstance( arg, collections.OrderedDict ) )
+# end is_list_or_dict
+
+
+# ---------------------------------------------------------------------------
+# Utility Classes
+# ---------------------------------------------------------------------------
+class AttrDict(dict):
+    """Converts a dictionary into a class object such that the entries in the
+    dict can be accessed using dot '.' notation.
+    """
+    def __init__(self, *args, **kwargs):
+        super(AttrDict, self).__init__(*args, **kwargs)
+        self.__dict__ = self
+# end class AttrDict
+
+
+# ---------------------------------------------------------------------------
+# GPUdbException - Exception for GPUdb Issues
+# ---------------------------------------------------------------------------
+class GPUdbException( Exception ):
+
+    def __init__( self, value ):
+        self.value = value
+    # end __init__
+
+    def __str__( self ):
+        return repr( self.value )
+    # end __str__
+    
+# end class GPUdbException
 
 
 # ---------------------------------------------------------------------------
@@ -309,27 +388,31 @@ class GPUdbRecordColumn(object):
         @param name  The name of the column, must be a non-empty string.
         @param column_type  The data type of the column.  Must be one of int, long,
                             float, double, string, bytes.
-        @param column_properties  Optional properties for the column.
+        @param column_properties  Optional list of properties for the column.
         @param is_nullable  Optional boolean flag indicating whether the column is
                             nullable.
         """
-        # Validate and save the name
+        # Validate and save the stringified name
         if (not name):
-            raise ValueError( "The name of the column must be a non-empty string; given " + repr(name) )
+            raise GPUdbException( "The name of the column must be a non-empty string; given " + repr(name) )
         self._name = name
 
         # Validate and save the data type
         if column_type not in self._allowed_data_types:
-            raise ValueError( "Data type must be one of " + str(self._allowed_data_types) +
-                              "; given " + column_type )
+            raise GPUdbException( "Data type must be one of " + str(self._allowed_data_types) +
+                              "; given " + str(column_type) )
         self._column_type = column_type
 
         # Validate and save the column properties
         if not column_properties: # it's ok to not have any
             column_properties = []
         if not isinstance( column_properties, list ):
-            raise ValueError( "'column_properties' must be a list; given " + str(type(column_properties)) )
-        self._column_properties = column_properties
+            raise GPUdbException( "'column_properties' must be a list; given " + str(type(column_properties)) )
+
+        # Sort and stringify the column properties so that the order for a given set of
+        # properties is always the same--handy for equivalency checks
+        self._column_properties = sorted( column_properties )
+
         # Check for nullability
         self._is_nullable = False # default value
         if (GPUdbColumnProperty.NULLABLE in self.column_properties):
@@ -337,13 +420,15 @@ class GPUdbRecordColumn(object):
 
         # Check the optional 'is_nullable' argument
         if is_nullable not in [True, False]:
-            raise ValueError( "'is_nullable' must be a boolean value; given " + repr(type(is_nullable)) )
+            raise GPUdbException( "'is_nullable' must be a boolean value; given " + repr(type(is_nullable)) )
         if (is_nullable == True):
             self._is_nullable = True
             # Enter the 'nullable' property into the list of propertie, even though
             # GPUdb doesn't actually use it (make sure not to make duplicates)
             if (GPUdbColumnProperty.NULLABLE not in self._column_properties):
                 self._column_properties.append( GPUdbColumnProperty.NULLABLE )
+                # Re-sort for equivalency tests down the road
+                self._column_properties = sorted( self._column_properties )
             # end inner if
         # end if
     # end __init__
@@ -376,6 +461,18 @@ class GPUdbRecordColumn(object):
         return self._is_nullable
     # end is_nullable
 
+
+    def __eq__( self, other ):
+        if isinstance(other, self.__class__):
+            return self.__dict__ == other.__dict__
+        else:
+            return False
+    # end __eq__
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+    # end __ne__
+
 # end class GPUdbRecordColumn
 
 
@@ -388,34 +485,39 @@ class GPUdbRecordType(object):
     functions for creating the type in GPUdb (among others).
     """
 
-    def __init__( self, columns = None, label = "", schema_string = None ):
+    def __init__( self, columns = None, label = "",
+                  schema_string = None, column_properties = None ):
         """Create a GPUdbRecordType object which represents the data type for
         a given record for GPUdb.
 
         @param columns  A list of GPUdbRecordColumn objects. Either this argument
                         or the schema_string argument must be given.
+        @param label  Optional string label for the column.
         @param schema_string  The JSON string containing the schema for the type.
                               Either this argument or the columns argument must
                               be given.
-        @param label  Optional string label for the column.
+        @param column_properties  Optional dict that lists the properties for the
+                                  columns of the type.  Meant to be used in conjunction
+                                  with schema_string only; will be ignored if
+                                  columns is given.
         """
         # Validate and save the label
         if not isinstance( label, str ):
-            raise ValueError( "Column label must be a string; given " + str(type( label )) )
+            raise GPUdbException( "Column label must be a string; given " + str(type( label )) )
         self._label = label
 
         # Either columns or schema_string must be given, but not both!
         if ((columns == None) and (schema_string == None)):
-            raise ValueError( "Either columns or schema_string must be given, but none is in this case!" )
+            raise GPUdbException( "Either columns or schema_string must be given, but none is!" )
         elif ((columns != None) and (schema_string != None)):
-            raise ValueError( "Either columns or schema_string must be given, but not both (which is the case here)!" )
+            raise GPUdbException( "Either columns or schema_string must be given, but not both!" )
 
 
         # Construct the object from the given columns
         if (columns != None):
             self.__initiate_from_columns( columns )
         else:
-            self.__initiate_from_schema_string( schema_string )
+            self.__initiate_from_schema_string( schema_string, column_properties )
 
         # The type hasn't been registered with GPUdb yet
         self._type_id = None
@@ -426,14 +528,38 @@ class GPUdbRecordType(object):
     def __initiate_from_columns( self, columns ):
         """Private method that constructs the object using the given columns.
 
-        @param columns  A list of GPUdbRecordColumn objects.
+        @param columns  A list of GPUdbRecordColumn objects or a list with the following
+                        format: [name, type, ...] where ... is optional properties. For
+                        example, ['x', 'int', 'int8']
         """
         # Validate the columns
         if not columns: # Must NOT be empty
-            raise ValueError( "Non-empty list of columns must be given.  Given none." )
+            raise GPUdbException( "Non-empty list of columns must be given.  Given none." )
         if not isinstance( columns, list ): # Must be a list
-            raise ValueError( "Non-empty list of columns must be given.  Given " + str(type( columns )) )
-        self._columns = columns
+            raise GPUdbException( "Non-empty list of columns must be given.  Given " + str(type( columns )) )
+
+        # Check if the list contains only GPUdbRecordColumns, then nothing to do
+        if all( isinstance( x, GPUdbRecordColumn ) for x in columns ):
+            self._columns = columns
+        else: # unroll the information contained within
+            # If the caller provided one list of arguments, wrap it into a list of lists so we can
+            # properly iterate over
+            columns = columns if all( isinstance( elm, list ) for elm in columns ) else [ columns ]
+
+            # Unroll the information about the column(s) and create GPUdbRecordColumn objects
+            self._columns = []
+            for col_info in columns:
+                # Arguments 3 and beyond--these are properties--must be combined into one list argument
+                if len( col_info ) > 2:
+                    self._columns.append( GPUdbRecordColumn( col_info[0], col_info[1], col_info[2:] ) )
+                elif len( col_info ) < 2:
+                    # Need at least two elements: the name and the type
+                    raise GPUdbException( "Need a list with the column name, type, and optional properties; "
+                                          "given '%s'" % col_info )
+                else:
+                    self._columns.append( GPUdbRecordColumn( *col_info ) )
+        # end if-else
+
 
         # Column property container
         self._column_properties = {}
@@ -442,14 +568,14 @@ class GPUdbRecordType(object):
         fields = []
 
         # Validate each column and deduce its properties
-        for col in columns:
+        for col in self._columns:
             # Check that each element is a GPUdbRecordColumn object
             if not isinstance( col, GPUdbRecordColumn ):
-                raise ValueError( "columns must contain only GPUdbRecordColumn objects.  Given " + str(type( col )) )
+                raise GPUdbException( "columns must contain only GPUdbRecordColumn objects.  Given " + str(type( col )) )
 
             # Extract the column's properties, if any
             if col.column_properties:
-                self._column_properties[ col.name ] = col.column_properties
+                self._column_properties[ col.name ] = sorted( col.column_properties )
 
             # Create the field for the schema string
             field_type = '"{_type}"'.format( _type = col.column_type )
@@ -481,20 +607,40 @@ class GPUdbRecordType(object):
     # end __initiate_from_columns
 
 
-    def __initiate_from_schema_string( self, schema_string ):
+    def __initiate_from_schema_string( self, schema_string, column_properties = None ):
         """Private method that constructs the object using the given schema string.
 
         @param schema_string  The schema string for the record type.
+        @param column_properties  An optional dict containing property information for
+                                  some or all of the columns.
         """
         # Validate the schema string
         if not schema_string: # Must NOT be empty!
-            raise ValueError( "A schema string must be given.  Given none." )
+            raise GPUdbException( "A schema string must be given.  Given none." )
 
         # Try to parse the schema string, this would also help us validate it
         self._record_schema = schema.parse( schema_string )
 
         # If no exception was thrown above, then save the schema string
         self._schema_string = schema_string
+
+        # Save the column properties, if any
+        self._column_properties = column_properties if column_properties else {}
+        
+        # Delete the 'data' property, if it exists, since it's useless
+        # and gets in the way of comparing properties with other types
+        for col in self._column_properties.keys():
+            props = self._column_properties[ col ]
+            if GPUdbColumnProperty.DATA in props:
+                props.remove( GPUdbColumnProperty.DATA )
+                if not ( props ): # now empty
+                    del self._column_properties[ col ]
+            # end if
+            
+            # Sort the column properties for equivalency tests
+            if props:
+                self._column_properties[ col ] = sorted( props )
+        # end loop
 
         # Now, deduce the columns from the schema string
         schema_json = json.loads( schema_string )
@@ -512,17 +658,22 @@ class GPUdbRecordType(object):
                 field_type = field_type[ 0 ]
             # end if
 
+            field_name = field["name"]
+            
+            # Get any properties for the column
+            col_props = None
+            if (self._column_properties and (field_name in self._column_properties)):
+                col_props = column_properties[ field_name ]
+            # end if
+
             # Create the column object and to the list
-            column = GPUdbRecordColumn( field["name"], field_type, None , is_nullable = is_nullable )
+            column = GPUdbRecordColumn( field["name"], field_type, col_props,
+                                        is_nullable = is_nullable )
             columns.append( column )
         # end for
 
         # Save the columns
         self._columns = columns
-
-        # Save column properties (of which there is none useful; ignoring nullability here
-        # as it is not needed by GPUdb)
-        self._column_properties = {}
 
         return
     # end __initiate_from_schema_string
@@ -568,7 +719,7 @@ class GPUdbRecordType(object):
         """The ID for the type, if it has already been registered
         with GPUdb."""
         if not self._type_id:
-            raise ValueError( "The record type has not been registered with GPUdb yet." )
+            raise GPUdbException( "The record type has not been registered with GPUdb yet." )
         return self._type_id
     # end type_id
 
@@ -584,7 +735,7 @@ class GPUdbRecordType(object):
         """
         # Validate the GPUdb handle
         if not isinstance( gpudb, GPUdb ):
-            raise ValueError( "'gpudb' must be a GPUdb object; given " + str(type( gpudb )) )
+            raise GPUdbException( "'gpudb' must be a GPUdb object; given " + str(type( gpudb )) )
 
         if not options:
             options = {}
@@ -593,6 +744,18 @@ class GPUdbRecordType(object):
         self._type_id = response[ "type_id" ]
         return self._type_id
     # end create_type
+
+
+    def __eq__( self, other ):
+        if isinstance(other, self.__class__):
+            return (self.__dict__ == other.__dict__)
+        else:
+            return False
+    # end __eq__
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+    # end __ne__
 
 # end class GPUdbRecordType
 
@@ -667,13 +830,61 @@ class GPUdbRecord( object ):
         decoded_data = []
         for json_datum in json_string_data:
             json_datum = json_datum.replace( "\\U", "\\u")
-            decoded_datum = json.loads( json_datum )
-
+            decoded_datum = json.loads( json_datum,
+                                        object_pairs_hook = collections.OrderedDict )
             decoded_data.append( decoded_datum )
         # end for
 
         return decoded_data
     # end decode_json_string_data
+
+
+
+    @staticmethod
+    def convert_data_col_major_to_row_major( col_major_data, col_major_schema_str ):
+        """Given some column major data, convert it to row major data.
+
+        @param col_major_data  An OrderedDict of arrays containing the data by
+                               column names.
+        @param col_major_schema_str  A JSON schema string describing the column
+                                     major data.
+
+        @returns a list of GPUdbRecord objects.
+        """
+        if not isinstance( col_major_data, collections.OrderedDict ):
+            raise GPUdbException( "Argument 'col_major_data' must be an OrderedDict;"
+                                  " given %s" % str( type( col_major_data ) ) )
+
+        try:
+            schema_json = json.loads( col_major_schema_str )
+        except Exception as e:
+            raise GPUdbException( "Could not parse 'col_major_schema_str': "
+                                  "%s" % str(e) )
+
+        # Create the schema for each record from the column-major format's schema
+        columns = []
+        for col_name, field in zip(col_major_data.keys(), schema_json[ C._fields ]):
+            field_type = field[ "type" ][ "items" ]
+            if isinstance( field_type, (str, unicode) ):
+                columns.append( [ col_name, field_type ] )
+            elif (isinstance( field_type, list ) and ("null" in field_type )):
+                # The column is nullable
+                columns.append( [ col_name, field_type[0], GPUdbColumnProperty.NULLABLE ] )
+            else:
+                raise GPUdbException( "Unknown column type: {0}".format( field_type ) )
+        # end loop
+
+        # Create a record type
+        record_type = GPUdbRecordType( columns )
+
+        # Create the records
+        records = []
+        for record in zip( *col_major_data.values() ):
+            records.append( GPUdbRecord( record_type, list( record ) ) )
+        # end loop
+
+        return records
+    # end convert_data_col_major_to_row_major
 
 
 
@@ -690,19 +901,17 @@ class GPUdbRecord( object ):
         """
         # Validate and save the record type
         if not isinstance( record_type, GPUdbRecordType ):
-            raise ValueError( "'record_type' must be a GPUdbRecordType; given " + str(type( record_type )) )
+            raise GPUdbException( "'record_type' must be a GPUdbRecordType; given " + str(type( record_type )) )
         self._record_type = record_type
 
 
         # Validate the column values
-        if ( (not isinstance( column_values, list ))
-             and (not isinstance( column_values, dict ))
-             and (not isinstance( column_values, collections.OrderedDict )) ):
+        if not is_list_or_dict( column_values ):
             # Must be a list or a dict
-            raise ValueError( "Columns must be one of the following: list, dict, OrderedDict.  "
+            raise GPUdbException( "Columns must be one of the following: list, dict, OrderedDict.  "
                               "Given " + str(type( column_values )) )
         if not column_values: # Must NOT be empty
-            raise ValueError( "Column values must be given.  Given none." )
+            raise GPUdbException( "Column values must be given.  Given none." )
 
         # The column values must be saved in the order they're declared in the type
         self._column_values = collections.OrderedDict()
@@ -712,7 +921,7 @@ class GPUdbRecord( object ):
 
         # Check that there are correct number of values
         if (len( column_values ) != num_columns ):
-            raise ValueError( "Given list of column values does not have the correct (%d) "
+            raise GPUdbException( "Given list of column values does not have the correct (%d) "
                               "number of values; it has %d" % (num_columns, len( column_values )) )
 
         # Check and save the column values
@@ -737,10 +946,10 @@ class GPUdbRecord( object ):
             record_type_column_names = set( [c.name for c in self._record_type.columns] )
             if ( given_column_names != record_type_column_names ):
                 if (given_column_names - record_type_column_names):
-                    raise ValueError( "Given column names do not match that of the record type.  "
+                    raise GPUdbException( "Given column names do not match that of the record type.  "
                                       "Extra column names are: " + str( (given_column_names - record_type_column_names) ))
                 else:
-                    raise ValueError( "Given column names do not match that of the record type.  "
+                    raise GPUdbException( "Given column names do not match that of the record type.  "
                                       "Missing column names are: " + str( (record_type_column_names - given_column_names) ))
             # end if
 
@@ -801,6 +1010,20 @@ class GPUdbRecord( object ):
     # end json_data_string
 
 
+    def keys( self ):
+        """Return a list of the column names of the record.
+        """
+        return self.data.keys()
+    # end values
+
+
+    def values( self ):
+        """Return a list of the values of the record.
+        """
+        return self.data.values()
+    # end values
+
+
     def insert_record( self, gpudb, table_name, encoding = "binary", options = None ):
         """Insert this record into GPUdb.
 
@@ -816,7 +1039,7 @@ class GPUdbRecord( object ):
         """
         # Validate the GPUdb handle
         if not isinstance( gpudb, GPUdb ):
-            raise ValueError( "'gpudb' must be a GPUdb object; given " + str( type( gpudb ) ) )
+            raise GPUdbException( "'gpudb' must be a GPUdb object; given " + str( type( gpudb ) ) )
 
         if not options:
             options = {}
@@ -827,7 +1050,7 @@ class GPUdbRecord( object ):
         elif (encoding == "json"):
             data = [ json.dumps( self._column_values ) ]
         else:
-            raise ValueError( "Unknown encoding: " + str( encoding ) )
+            raise GPUdbException( "Unknown encoding: " + str( encoding ) )
 
         # Insert the record
         response = gpudb.insert_records( table_name = table_name,
@@ -850,7 +1073,7 @@ class GPUdbRecord( object ):
         @returns True if the value can be validated, False otherwise.
         """
         if not isinstance( column, GPUdbRecordColumn ):
-            raise ValueError( "'column' must be a GPUdbRecordColumn object; given "
+            raise GPUdbException( "'column' must be a GPUdbRecordColumn object; given "
                               + str(type( column )) )
 
         # Check that the value is of the given type
@@ -859,14 +1082,14 @@ class GPUdbRecord( object ):
         if (column_value == None): # Handle null values
             if not column.is_nullable: # but the column is not nullable
                 if do_throw:
-                    raise ValueError( "Non-nullable column '%s' given a null value" % column.name )
+                    raise GPUdbException( "Non-nullable column '%s' given a null value" % column.name )
                 else:
                     return False
         # Numeric types:
         elif (column_type in GPUdbRecordColumn._numeric_data_types):
             if not (isinstance( column_value, (int, long, float)) and not isinstance( column_value, bool ) ):
                 if do_throw:
-                    raise ValueError( ("Column '%s' must be a numeric type (one of int, long, float); "
+                    raise GPUdbException( ("Column '%s' must be a numeric type (one of int, long, float); "
                                        "given " % column.name )
                                       + str(type( column_value )) )
                 else:
@@ -874,7 +1097,7 @@ class GPUdbRecord( object ):
         else: # string/bytes type
             if not isinstance( column_value, (str, Decimal, unicode, bytes) ):
                 if do_throw:
-                    raise ValueError( ("Column '%s' must be string or bytes; given " % column.name)
+                    raise GPUdbException( ("Column '%s' must be string or bytes; given " % column.name)
                                       + str(type( column_value )) )
                 else:
                     return False
@@ -885,8 +1108,1623 @@ class GPUdbRecord( object ):
     # end __is_valid_column_value
 
 
+    def __eq__( self, other ):
+        if isinstance(other, self.__class__):
+            return self.__dict__ == other.__dict__
+        else:
+            return False
+    # end __eq__
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+    # end __ne__
+
+
 # end class GPUdbRecord
 
+
+
+
+# ---------------------------------------------------------------------------
+# GPUdbTable - Class to Handle GPUdb Tables
+# ---------------------------------------------------------------------------
+class GPUdbTable( object ):
+
+    @staticmethod
+    def random_name():
+        """Returns a randomly generated uuid-based name"""
+        return str(uuid.uuid1())
+    # end random_name
+
+
+    @staticmethod
+    def prefix_name( val ):
+        """Returns a random name with the specified prefix"""
+        return val + GPUdbTable.random_name()
+    # end prefix_name
+
+
+
+    def __init__( self, _type, name = None, options = None, db = None,
+                  read_only_table_count = None,
+                  delete_temporary_views = True,
+                  temporary_view_names = None,
+                  create_views = True ):
+        """
+        @param _type
+        @param name
+        @param options
+        @param db
+        @param read_only_table_count  For known read-only tables, provide
+                                      the number of records in it. Integer.
+                                      Must provide the name of the table.
+        @param delete_temporary_views  If true, then in terminal queries--
+                                       queries that can not be chained--delete
+                                       delete the temporary views upon completion.
+                                       Defaults to True.
+        @param temporary_view_names  Optional list of temporary view names (that ought
+                                     to be deleted upon terminal queries)
+
+        @returns a GPUdbTable object.
+        """
+
+        # The given DB handle must be a GPUdb instance
+        if not isinstance( db, GPUdb ):
+            raise GPUdbException( "Argument 'db' must be a GPUdb object; "
+                                  "given %s" % type(db) )
+        self.db = db
+
+        # Save the options (maybe need to convert to a dict)
+        if options:
+            if isinstance( options, GPUdbTableOptions ):
+                self.options = options
+            elif isinstance( options, dict ):
+                self.options = GPUdbTableOptions( options )
+            else:
+                raise GPUdbException( "Argument 'options' must be either a dict "
+                                      "or a GPUdbTableOptions object; given '%s'"
+                                      % type( options ) )
+        else:
+            self.options = GPUdbTableOptions()
+
+        # Save the type (create it if necessary)
+        self._type = _type
+        if isinstance( _type, GPUdbRecordType):
+            self.record_type = _type
+        elif not _type:
+            self.record_type = None
+        else:
+            self.record_type = GPUdbRecordType( _type )
+
+        # Save passed-in arguments
+        self._delete_temporary_views = delete_temporary_views
+        self.create_views = create_views
+
+        # Create and update the set of temporary table names
+        self._temporary_view_names = set()
+        if temporary_view_names:
+            self._temporary_view_names.update( temporary_view_names )
+
+
+        # The table is known to be read only
+        if read_only_table_count is not None: # Integer value 0 accepted
+            if not name: # name must be given!
+                raise GPUdbException( "Table name must be provided with 'read_only_table_count'." )
+
+            if not isinstance( read_only_table_count, (int, long) ):
+                raise GPUdbException( "Argument 'read_only_table_count' must be an integer." )
+
+            if (read_only_table_count < 0):
+                raise GPUdbException( "Argument 'read_only_table_count' must be greater than "
+                                      "or equal to zero; given %d" % read_only_table_count )
+            # All checks pass; save the name and count
+            self.name          = name
+            self._count        = read_only_table_count
+            self._is_read_only = True
+
+            return # Nothing more to do
+        # end if
+
+        # NOT a known read-only table; need to either get info on it or create it
+        # -----------------------------------------------------------------------
+        # Create a random table name if none is given
+        self.name = name if name else GPUdbTable.random_name()
+
+        # Some default values (assuming it is not a read-only table)
+        self._count = None
+        self._is_read_only = False
+
+        # Do different things based on whether the table already exists
+        if self.db.has_table( self.name )["table_exists"]:
+            # Check that the given type agrees with the existing table's type, if any given
+            show_table_rsp = self.db.show_table( self.name, options = {"get_sizes": "true"} )
+            if (len( show_table_rsp["type_schemas"] ) > 0): # not a collection
+                table_type = GPUdbRecordType( None, "", show_table_rsp["type_schemas"][0],
+                                              show_table_rsp["properties"][0] )
+            else:
+                table_type = None
+            if ( self.record_type and not table_type ):
+                # TODO: Decide if we should have this check or silently ignore the given type
+                raise GPUdbException( "Table '%s' is an existing collection; so cannot be of the "
+                                      "given type." % self.name )
+            if ( self.record_type and (self.record_type != table_type) ):
+                raise GPUdbException( "Table '%s' exists; existing table's type does "
+                                      "not match the given type." % self.name )
+
+            # Check if the table is read-only or not
+            if show_table_rsp[ C._table_descriptions ] in [ C._view, C._join, C._result_table ]:
+                self._is_read_only = True
+                self._count = show_table_rsp[ C._total_full_size ]
+        else: # table does not already exist in GPUdb
+            # Create the table (and the type)
+            if self.options._is_collection: # Create a collection
+                rsp_obj = self.db.create_table( self.name, "",
+                                                self.options.as_dict() )
+            else: # create a regular table
+                self.record_type.create_type( self.db )
+                rsp_obj = self.db.create_table( self.name, self.record_type.type_id,
+                                                self.options.as_dict() )
+            if not is_ok( rsp_obj ): # problem creating the table
+                raise GPUdbException( get_error_msg( rsp_obj ) )
+        # end if-else
+
+    # end __init__
+
+
+
+    def __str__( self ):
+        return self.name
+    # end __str__
+
+
+
+    def __len__( self ):
+        """Return the current size of the table.  If it is a read-only table,
+        then return the cached count; if not a read-only table, get the current
+        size from GPUdb.
+        """
+        if self._is_read_only:
+            return self._count
+        
+        # Not a read-only table; get the current size
+        show_table_rsp = self.db.show_table( self.name, options = {"get_sizes": "true"} )
+        return show_table_rsp[ C._total_full_size ]
+    # end __len__
+
+
+    def size( self ):
+        """Return the table's size/length/count.
+        """
+        return self.__len__()
+    # end size
+
+
+    def __iter__( self ):
+        """Return a table iterator for this table.  Defaults to the first
+        10,000 records in the table.  If needing to access more records,
+        please use the GPUdbTableIterator class directly.
+        """
+        return GPUdbTableIterator( self )
+    # end __iter__
+
+
+    def __process_view_name__(self, view_name ):
+        """Given a view name, process it as needed.
+
+        @returns the processed view name
+        """
+        # If no view name is given but views ought to be created, get a random name
+        if not view_name:
+            if self.create_views: # will create a view
+                view_name = GPUdbTable.random_name()
+            else: # won't create views
+                view_name = ""
+        # end if
+
+        return view_name
+    # end __process_view_name__
+
+
+    @property
+    def table_name( self ):
+        return self.name
+    # end table_name
+
+
+    @property
+    def is_read_only( self ): # read-only attribute is_read_only
+        """Is the table read-only, or can we modify it?
+        """
+        return self._is_read_only
+    # end is_read_only
+
+
+    @property
+    def count( self ):  # read-only property count
+        """Return the table's size/length/count.
+        """
+        return self.__len__()
+    # end count
+
+
+
+    def create_view( self, view_name, count = None ):
+        """Given a view name and a related response, create a new GPUdbTable object
+        which is a read-only table with the intermediate tables automatically
+        updated.
+
+        @returns a GPUdbTable object
+        """
+        # If the current table is read-only, add it to the list of intermediate
+        # temporary table names
+        if self.is_read_only:
+            self._temporary_view_names.update( [ self.name ] )
+
+        view = GPUdbTable( None, name = view_name,
+                           read_only_table_count = count,
+                           db = self.db,
+                           temporary_view_names = self._temporary_view_names )
+        return view
+    # end create_view
+
+
+
+    def cleanup( self ):
+        """Clear/drop all intermediate tables if settings allow it.
+
+        @returns self
+        """
+        # Clear/drop all temporary tables
+        if self._delete_temporary_views:
+            for view in list(self._temporary_view_names): # iterate over a copy
+                self.db.clear_table( table_name = view )
+                self._temporary_view_names.remove( view )
+        else: # We're not allowed to delete intermediate tables!
+            raise GPUdbException( "Not allowed to delete intermediate "
+                                  "tables." )
+
+        return self
+    # end cleanup
+
+
+    def exists( self, options = {} ):
+        """Checks for the existence of a table with the given name.
+        
+        @returns a boolean flag indicating whether the table currently
+        exists in the database.
+        """
+
+        response = self.db.has_table( self.name, options = options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return response[ "table_exists" ]
+    # end exists
+
+
+
+    def insert_records( self, *args, **kwargs ):
+        """Insert one or more records.
+
+        @param args Values for all columns of a single record or multiple records.
+                    For a single record, use either of the following syntaxes:
+                        insert( 1, 2, 3 )
+                        insert( [1, 2, 3] )
+                    For multiple records, use either of the following syntaxes:
+                        insert( [ [1, 2, 3], [4, 5, 6] ] )
+                        insert(   [1, 2, 3], [4, 5, 6]   )
+        @param kwargs  Values for all columns for a single record.  Mutually
+                       exclusive with args (i.e. cannot provide both).
+
+        @returns a GPUdbTable object with the the insert_records() response fields
+                 converted to attributes and stored within.
+        """
+        encoded_data = []
+
+        # Process the input--single record or multiple records (or invalid syntax)?
+        if args and kwargs:
+            # Cannot give both args and kwargs
+            raise GPUdbException( "Cannot specify both args and kwargs: either provide "
+                                  "the column values for a single record "
+                                  "in 'kwargs', or provide column values for any number "
+                                  "of records in 'args'." )
+        if kwargs:
+            # Gave the column values for a single record in kwargs
+            encoded_record = GPUdbRecord( self.record_type, kwargs ).binary_data
+            encoded_data.append( encoded_record )
+        elif not any( is_list_or_dict( i ) for i in args):
+            # Column values not within a single list/dict: so it is a single record
+            encoded_record = GPUdbRecord( self.record_type, list(args) ).binary_data
+            encoded_data.append( encoded_record )
+        elif not all( is_list_or_dict( i ) for i in args):
+            # Some values are lists or dicts, but not all--this is an error case
+            raise GPUdbException( "Arguments must be either contain no list, or contain only "
+                                  "lists or dicts; i.e. it must not be a mix; "
+                                  "given {0}".format( args ) )
+        elif (len( args ) == 1):
+            # A list/dict of length one given
+            if any( isinstance(i, list) for i in args[0]):
+                # At least one element within the list is also a list
+                if not all( is_list_or_dict( i ) for i in args[0]):
+                    # But not all elements are lists/dict; this is an error case
+                    raise GPUdbException( "Arguments must be either a single list, multiple lists, "
+                                          "a list of lists, or contain no lists; i.e. it must not be "
+                                          "a mix of lists and non-lists; given a list with mixed "
+                                          "elements: {0}".format( args ) )
+                else:
+                    # A list of lists/dicts--multiple records within a list
+                    for col_vals in args[0]:
+                        encoded_record = GPUdbRecord( self.record_type, col_vals ).binary_data
+                        encoded_data.append( encoded_record )
+                    # end for
+                # end inner-most if-else
+            else:
+                # A single list--a single record
+                encoded_record = GPUdbRecord( self.record_type, *args ).binary_data
+                encoded_data.append( encoded_record )
+            # end 2nd inner if-else
+        else:
+            # All arguments are either lists or dicts, so multiple records given
+            for col_vals in args:
+                encoded_record = GPUdbRecord( self.record_type, col_vals ).binary_data
+                encoded_data.append( encoded_record )
+            # end for
+        # end if-else
+
+        if not encoded_data: # No data given
+            raise GPUdbException( "Must provide data for at least a single record; none given." )
+
+        # Call the insert function and check the status
+        response = self.db.insert_records( self.name, encoded_data,
+                                           options = {"return_record_ids": "true"} )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+        # return AttrDict( response )
+        return self
+    # end insert_records
+
+
+    def insert_records_random( self, count = None, options = {} ):
+        """Generates a specified number of random records and adds them to the given
+        table. There is an optional parameter that allows the user to customize
+        the ranges of the column values. It also allows the user to specify
+        linear profiles for some or all columns in which case linear values are
+        generated rather than random ones. Only individual tables are supported
+        for this operation.  This operation is synchronous, meaning that a
+        response will not be returned until all random records are fully
+        available.
+
+        @returns a GPUdbTable object with the the insert_records() response fields
+                 converted to attributes and stored within.
+        """
+        response = self.db.insert_records_random( self.name, count = count,
+                                                  options = options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        # We can
+        return self
+    # end insert_records_random
+
+
+
+    def get_records( self, offset = 0, limit = 10000,
+                     encoding = 'binary', options = {} ):
+        """Fetch records from a GPUdb table or a homogeneous collection.
+        Decodes and returns the fetched records.
+
+        @returns a list of OrderedDict objects.
+        """
+        # Issue the /get/records query
+        response = self.db.get_records( self.name, offset, limit, encoding, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        # Decode the records as necessary
+        if encoding == "binary":
+            records = GPUdbRecord.decode_binary_data( response["type_schema"],
+                                                      response["records_binary"] )
+        else:
+            records = GPUdbRecord.decode_json_string_data( response["records_json"] )
+
+
+        # Return just the records; disregard the extra info within the response
+        return records
+    # end get_records
+
+
+
+    def get_records_by_column( self, column_names, offset = 0, limit = 10000,
+                               encoding = 'binary', options = {},
+                               is_column_major = True ):
+        """For a given table, retrieves the values of the given columns within a given
+        range. It returns maps of column name to the vector of values for each
+        supported data type (double, float, long, int and string). This
+        operation supports pagination feature, i.e. values that are retrieved
+        are those associated with the indices between the start (offset) and end
+        value (offset + limit) parameters (inclusive). If there are num_points
+        values in the table then each of the indices between 0 and num_points-1
+        retrieves a unique value.  Note that when using the pagination feature,
+        if the table (or the underlying table in case of a view) is updated
+        (records are inserted, deleted or modified) the records or values
+        retrieved may differ between calls (discontiguous or overlap) based on
+        the type of the update.  The response is returned as a dynamic schema.
+        For details see: `dynamic schemas documentation
+        <../../concepts/dynamic_schemas.html>`_.
+
+        Decodes the fetched records and saves them in the response class in an
+        attribute called data.
+
+        @returns a dict of column name to column values for column-major data, or
+                 a list of OrderedDict objects for row-major data.
+        """
+        # Issue the /get/records/bycolumn query
+        response = self.db.get_records_by_column( self.name, column_names,
+                                                  offset, limit, encoding, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        # Decode the records
+        resp = self.db.parse_dynamic_response( response, convert_nulls = False )
+        data = resp[ "response" ]
+
+        if is_column_major:
+            # Return just the records; disregard the extra info within the response
+            return data
+
+        # Else, need to cobble the data together to create records
+        records = GPUdbRecord.convert_data_col_major_to_row_major( data, resp["response_schema_str"] )
+        return records
+    # end get_records_by_column
+
+
+
+    def get_records_by_series( self, world_table_name = None,
+                               offset = 0, limit = 250, encoding = 'binary',
+                               options = {} ):
+        """Retrieves the complete series/track records from the given input parameter
+        *world_table_name* based on the partial track information contained in
+        the input parameter *table_name*.   This operation supports paging
+        through the data via the input parameter *offset* and input parameter
+        *limit* parameters.  In contrast to :ref:`get_records
+        <get_records_python>` this returns records grouped by series/track. So
+        if input parameter *offset* is 0 and input parameter *limit* is 5 this
+        operation would return the first 5 series/tracks in input parameter
+        *table_name*. Each series/track will be returned sorted by their
+        TIMESTAMP column.
+
+        @returns a list of OrderedDict objects.
+        """
+        # Issue the /get/records/byseries query
+        response = self.db.get_records_by_series( self.name,
+                                                  world_table_name = world_table_name,
+                                                  offset = offset, limit = limit,
+                                                  encoding = encoding,
+                                                  options = options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        # Decode the records as necessary; flatten them into a single list
+        records = []
+        if encoding == "binary":
+            binary_encoded_tracks = response["list_records_binary"]
+            type_schemas = response[ "type_schemas" ]
+            # Decode one series at a time
+            for binary_encoded_records, type_schema in zip(binary_encoded_tracks, type_schemas):
+                # Decode all records for a given track
+                series_records = GPUdbRecord.decode_binary_data( type_schema,
+                                                                 binary_encoded_records )
+                records.extend( series_records )
+            # end loop
+
+        else:
+            json_encoded_tracks = response["list_records_json"]
+            for json_encoded_records in json_encoded_tracks:
+                records.extend( GPUdbRecord.decode_json_string_data( json_encoded_records ) )
+            # end loop
+        # end if-else
+
+        # Return just the records; disregard the extra info within the response
+        return records
+    # end get_records_by_series
+
+
+
+    def get_records_from_collection( self, offset = 0, limit = 10000,
+                                     encoding = 'binary', options = {} ):
+        """Fetch records from a GPUdb collection.  Decodes the fetched records and saves
+        them in the response class in an attribute called data.
+
+        @returns a list of OrderedDict objects.
+        """
+        # Issue the /get/records/fromcollection query
+        response = self.db.get_records_from_collection( self.name, offset, limit, encoding, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        # Decode the records as necessary
+        if encoding == "binary":
+            records = []
+            binary_encoded_records = response["records_binary"]
+            type_ids = response[ "type_names" ]
+            # Decode one record at a time
+            for bin_record, type_id in zip(binary_encoded_records, type_ids):
+                # We need to fetch the type schema string from GPUdb per record
+                type_schema = self.db.show_types( type_id, "" )["type_schemas"][ 0 ]
+                record = GPUdbRecord.decode_binary_data( type_schema,
+                                                         bin_record )
+                records.append( record )
+        else:
+            records = GPUdbRecord.decode_json_string_data( response["records_json"] )
+
+        # Return just the records; disregard the extra info within the response
+        return records
+    # end get_records_from_collection
+
+
+
+    def aggregate_convex_hull( self, x_column_name = None, y_column_name = None,
+                               options = {} ):
+        """Calculates and returns the convex hull for the values in a table
+        specified by input parameter *table_name*.
+
+        @returns the response from the server.
+        """
+        response = self.db.aggregate_convex_hull( self.name, x_column_name,
+                                                  y_column_name, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return AttrDict( response )
+    # end aggregate_convex_hull
+
+
+    def aggregate_group_by( self, column_names = None, offset = None, limit =
+                            1000, encoding = 'binary', options = {} ):
+        """Calculates unique combinations (groups) of values for the given
+        columns in a given table/view/collection and computes aggregates on each
+        unique combination. This is somewhat analogous to an SQL-style
+        SELECT...GROUP BY.  Any column(s) can be grouped on, and all column
+        types except unrestricted-length strings may be used for computing
+        applicable aggregates.  The results can be paged via the input parameter
+        *offset* and input parameter *limit* parameters. For example, to get 10
+        groups with the largest counts the inputs would be: limit=10,
+        options={"sort_order":"descending", "sort_by":"value"}.  Input parameter
+        *options* can be used to customize behavior of this call e.g. filtering
+        or sorting the results.  To group by columns 'x' and 'y' and compute the
+        number of objects within each group, use:
+        column_names=['x','y','count(*)'].  To also compute the sum of 'z' over
+        each group, use:  column_names=['x','y','count(*)','sum(z)'].  Available
+        `aggregation functions <../../concepts/expressions.html#aggregate-
+        expressions>`_ are: count(*), sum, min, max, avg, mean, stddev,
+        stddev_pop, stddev_samp, var, var_pop, var_samp, arg_min, arg_max and
+        count_distinct.  The response is returned as a dynamic schema. For
+        details see: `dynamic schemas documentation
+        <../../concepts/dynamic_schemas.html>`_.  If a *result_table* name is
+        specified in the options, the results are stored in a new table with
+        that name.  No results are returned in the response.  If the source
+        table's `shard key <../../concepts/tables.html#shard-keys>`_ is used as
+        the grouping column(s), the result table will be sharded, in all other
+        cases it will be replicated.  Sorting will properly function only if the
+        result table is replicated or if there is only one processing node and
+        should not be relied upon in other cases.
+
+        @returns a read-only GPUdbTable object if input options has 
+                 "result_table", otherwise the response from the server.
+        """
+        if "result_table" in options:
+            result_table = options[ "result_table" ]
+        else:
+            result_table = None
+
+        response = self.db.aggregate_group_by( self.name, column_names, offset,
+                                               limit, encoding, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        if result_table:
+            # Create a read-only table for the result table
+            return self.create_view( result_table, response[ "total_number_of_records" ] )
+
+        # Decode the returned records
+        response = self.db.parse_dynamic_response( response )
+
+        # Save the decoded data in a field called 'data' and delete the raw 
+        # data related fields
+        response[ "data" ] = response[ "response" ]
+        del response[ "response" ]
+        del response[ "binary_encoded_response" ]
+        del response[ "json_encoded_response" ]
+
+        return AttrDict( response )
+    # end aggregate_group_by
+
+
+    def aggregate_histogram( self, column_name = None, start = None, end = None,
+                             interval = None, options = {} ):
+        """Performs a histogram calculation given a table, a column, and an
+        interval function. The input parameter *interval* is used to produce
+        bins of that size and the result, computed over the records falling
+        within each bin, is returned.  For each bin, the start value is
+        inclusive, but the end value is exclusive--except for the very last bin
+        for which the end value is also inclusive.  The value returned for each
+        bin is the number of records in it, except when a column name is
+        provided as a *value_column* in input parameter *options*.  In this
+        latter case the sum of the values corresponding to the *value_column* is
+        used as the result instead.
+
+        @returns the response from the server.
+        """
+        response = self.db.aggregate_histogram( self.name, column_name, start,
+                                                end, interval, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return AttrDict( response )
+    # end aggregate_histogram
+
+
+    def aggregate_k_means( self, column_names = None, k = None, tolerance =
+                           None, options = {} ):
+        """This endpoint runs the k-means algorithm - a heuristic algorithm that
+        attempts to do k-means clustering.  An ideal k-means clustering
+        algorithm selects k points such that the sum of the mean squared
+        distances of each member of the set to the nearest of the k points is
+        minimized.  The k-means algorithm however does not necessarily produce
+        such an ideal cluster.   It begins with a randomly selected set of k
+        points and then refines the location of the points iteratively and
+        settles to a local minimum.  Various parameters and options are provided
+        to control the heuristic search.
+
+        @returns the response from the server.
+        """
+        response = self.db.aggregate_k_means( self.name, column_names, k,
+                                              tolerance, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return AttrDict( response )
+    # end aggregate_k_means
+
+
+    def aggregate_min_max( self, column_name = None, options = {} ):
+        """Calculates and returns the minimum and maximum values of a particular
+        column in a table.
+
+        @returns the response from the server.
+        """
+        response = self.db.aggregate_min_max( self.name, column_name, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return AttrDict( response )
+    # end aggregate_min_max
+
+
+    def aggregate_statistics( self, column_name = None, stats = None, options =
+                              {} ):
+        """Calculates the requested statistics of a given column in a given
+        table.   The available statistics are count (number of total objects),
+        mean, stdv (standard deviation), variance, skew, kurtosis, sum, min,
+        max, weighted_average, cardinality (unique count), estimated
+        cardinality, percentile and percentile_rank.   Estimated cardinality is
+        calculated by using the hyperloglog approximation technique.
+        Percentiles and percentile_ranks are approximate and are calculated
+        using the t-digest algorithm. They must include the desired
+        percentile/percentile_rank. To compute multiple percentiles each value
+        must be specified separately (i.e. 'percentile(75.0),percentile(99.0),pe
+        rcentile_rank(1234.56),percentile_rank(-5)').   The weighted average
+        statistic requires a weight_attribute to be specified in input parameter
+        *options*. The weighted average is then defined as the sum of the
+        products of input parameter *column_name* times the weight attribute
+        divided by the sum of the weight attribute.   The response includes a
+        list of the statistics requested along with the count of the number of
+        items in the given set.
+
+        @returns the response from the server.
+        """
+        response = self.db.aggregate_statistics( self.name, column_name, stats,
+                                                 options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return AttrDict( response )
+    # end aggregate_statistics
+
+
+    def aggregate_statistics_by_range( self, select_expression = '', column_name
+                                       = None, value_column_name = None, stats =
+                                       None, start = None, end = None, interval
+                                       = None, options = {} ):
+        """Divides the given set into bins and calculates statistics of the
+        values of a value-column in each bin.  The bins are based on the values
+        of a given binning-column.  The statistics that may be requested are
+        mean, stdv (standard deviation), variance, skew, kurtosis, sum, min,
+        max, first, last and weighted average. In addition to the requested
+        statistics the count of total samples in each bin is returned. This
+        counts vector is just the histogram of the column used to divide the set
+        members into bins. The weighted average statistic requires a
+        weight_column to be specified in input parameter *options*. The weighted
+        average is then defined as the sum of the products of the value column
+        times the weight column divided by the sum of the weight column.  There
+        are two methods for binning the set members. In the first, which can be
+        used for numeric valued binning-columns, a min, max and interval are
+        specified. The number of bins, nbins, is the integer upper bound of
+        (max-min)/interval. Values that fall in the range
+        [min+n\*interval,min+(n+1)\*interval) are placed in the nth bin where n
+        ranges from 0..nbin-2. The final bin is [min+(nbin-1)\*interval,max]. In
+        the second method, input parameter *options* bin_values specifies a list
+        of binning column values. Binning-columns whose value matches the nth
+        member of the bin_values list are placed in the nth bin. When a list is
+        provided the binning-column must be of type string or int.
+
+        @returns the response from the server.
+        """
+        response = self.db.aggregate_statistics_by_range( self.name,
+                                                          select_expression,
+                                                          column_name,
+                                                          value_column_name,
+                                                          stats, start, end,
+                                                          interval, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return AttrDict( response )
+    # end aggregate_statistics_by_range
+
+
+    def aggregate_unique( self, column_name = None, offset = None, limit =
+                          10000, encoding = 'binary', options = {} ):
+        """Returns all the unique values from a particular column (specified by
+        input parameter *column_name*) of a particular table (specified by input
+        parameter *table_name*). If input parameter *column_name* is a numeric
+        column the values will be in output parameter *binary_encoded_response*.
+        Otherwise if input parameter *column_name* is a string column the values
+        will be in output parameter *json_encoded_response*.  input parameter
+        *offset* and input parameter *limit* are used to page through the
+        results if there are large numbers of unique values. To get the first 10
+        unique values sorted in descending order input parameter *options* would
+        be::  {"limit":"10","sort_order":"descending"}.  The response is
+        returned as a dynamic schema. For details see: `dynamic schemas
+        documentation <../../concepts/dynamic_schemas.html>`_.  If a
+        *result_table* name is specified in the options, the results are stored
+        in a new table with that name.  No results are returned in the response.
+        If the source table's `shard key <../../concepts/tables.html#shard-
+        keys>`_ is used as the input parameter *column_name*, the result table
+        will be sharded, in all other cases it will be replicated.  Sorting will
+        properly function only if the result table is replicated or if there is
+        only one processing node and should not be relied upon in other cases.
+
+        @returns a read-only GPUdbTable object if input options has 
+                 "result_table", otherwise the response from the server.
+        """
+        if "result_table" in options:
+            result_table = options[ "result_table" ]
+        else:
+            result_table = None
+
+        response = self.db.aggregate_unique( self.name, column_name, offset,
+                                             limit, encoding, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        if result_table:
+            # Create a read-only table for the result table
+            return self.create_view( result_table )
+
+        # Decode the returned records
+        response = self.db.parse_dynamic_response( response )
+
+        # Save the decoded data in a field called 'data' and delete the raw 
+        # data related fields
+        response[ "data" ] = response[ "response" ]
+        del response[ "response" ]
+        del response[ "binary_encoded_response" ]
+        del response[ "json_encoded_response" ]
+
+        return AttrDict( response )
+    # end aggregate_unique
+
+
+    def alter_table( self, action = None, value = None, options = {} ):
+        """Apply various modifications to a table or collection. Available
+        modifications include:       Creating or deleting an index on a
+        particular column. This can speed up certain search queries (such as
+        :ref:`get_records <get_records_python>`, :ref:`delete_records
+        <delete_records_python>`, :ref:`update_records <update_records_python>`)
+        when using expressions containing equality or relational operators on
+        indexed columns. This only applies to tables.       Setting the time-to-
+        live (TTL). This can be applied to tables, views, or collections.  When
+        applied to collections, every table & view within the collection will
+        have its TTL set to the given value.       Making a table protected or
+        not. Protected tables have their TTLs set to not automatically expire.
+        This can be applied to tables, views, and collections.       Allowing
+        homogeneous tables within a collection.                Managing a
+        table's columns--a column can be added or removed, or have its `type
+        <../../concepts/types.html>`_ modified.
+
+        @returns the response from the server.
+        """
+        response = self.db.alter_table( self.name, action, value, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return AttrDict( response )
+    # end alter_table
+
+
+    def clear( self, authorization = '', options = {} ):
+        """Clears (drops) one or all tables in the database cluster. The
+        operation is synchronous meaning that the table will be cleared before
+        the function returns. The response payload returns the status of the
+        operation along with the name of the table that was cleared.
+
+        @returns the response from the server.
+        """
+        response = self.db.clear_table( self.name, authorization, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return AttrDict( response )
+    # end clear
+
+
+    def create_projection( self, projection_name = None, column_names = None,
+                           options = {} ):
+        """Creates a new `projection <../../concepts/projections.html>`_ of an
+        existing table. A projection represents a subset of the columns
+        (potentially including derived columns) of a table. A moving average can
+        be calculated on a given column using the following syntax in the input
+        parameter *column_names* parameter:
+        'moving_average(column_name,num_points_before,num_points_after) as
+        new_column_name'  For each record in the 'column_name' parameter, it
+        computes the average over the previous 'num_points_before' records and
+        the subsequent 'num_points_after' records.  Note that moving average
+        relies on *order_by*, and *order_by* requires that all the data being
+        ordered resides on the same processing node, so it won't make sense to
+        use *order_by* without moving average.
+
+        @returns the response from the server.
+        """
+        response = self.db.create_projection( self.name, projection_name,
+                                              column_names, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return AttrDict( response )
+    # end create_projection
+
+
+    def create_table_monitor( self, options = {} ):
+        """Creates a monitor that watches for new records inserted into a
+        particular table (identified by input parameter *table_name*) and
+        forwards copies to subscribers via ZMQ. After this call completes,
+        subscribe to the returned output parameter *topic_id* on the ZMQ table
+        monitor port (default 9002). Each time an insert operation on the table
+        completes, a multipart message is published for that topic; the first
+        part contains only the topic ID, and each subsequent part contains one
+        binary-encoded Avro object that was inserted. The monitor will continue
+        to run (regardless of whether or not there are any subscribers) until
+        deactivated with :ref:`clear_table_monitor <clear_tablemonitor_python>`.
+
+        @returns the response from the server.
+        """
+        response = self.db.create_table_monitor( self.name, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return AttrDict( response )
+    # end create_table_monitor
+
+
+    def delete_records( self, expressions = None, options = {} ):
+        """Deletes record(s) matching the provided criteria from the given
+        table. The record selection criteria can either be one or more  input
+        parameter *expressions* (matching multiple records) or a single record
+        identified by *record_id* options.  Note that the two selection criteria
+        are mutually exclusive.  This operation cannot be run on a collection or
+        a view.  The operation is synchronous meaning that a response will not
+        be available until the request is completely processed and all the
+        matching records are deleted.
+
+        @returns the response from the server.
+        """
+        response = self.db.delete_records( self.name, expressions, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return AttrDict( response )
+    # end delete_records
+
+
+    def filter( self, expression = None, options = {}, view_name = '' ):
+        """Filters data based on the specified expression.  The results are
+        stored in a result set with the given input parameter *view_name*.  For
+        details see `concepts <../../concepts/expressions.html>`_.  The response
+        message contains the number of points for which the expression evaluated
+        to be true, which is equivalent to the size of the result view.
+
+        @returns a read-only GPUdbTable object.
+        """
+        view_name = self.__process_view_name__( view_name )
+
+        response = self.db.filter( self.name, view_name, expression, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter
+
+
+    def filter_by_area( self, x_column_name = None, x_vector = None,
+                        y_column_name = None, y_vector = None, options = {},
+                        view_name = '' ):
+        """Calculates which objects from a table are within a named area of
+        interest (NAI/polygon). The operation is synchronous, meaning that a
+        response will not be returned until all the matching objects are fully
+        available. The response payload provides the count of the resulting set.
+        A new resultant set (view) which satisfies the input NAI restriction
+        specification is created with the name input parameter *view_name*
+        passed in as part of the input.  Note that if you call this endpoint
+        using a table that has WKT data, the x_column_name and y_column_name
+        settings are no longer required because the geospatial filter works
+        automatically.
+
+        @returns a read-only GPUdbTable object.
+        """
+        view_name = self.__process_view_name__( view_name )
+
+        response = self.db.filter_by_area( self.name, view_name, x_column_name,
+                                           x_vector, y_column_name, y_vector,
+                                           options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_area
+
+
+    def filter_by_box( self, x_column_name = None, min_x = None, max_x = None,
+                       y_column_name = None, min_y = None, max_y = None, options
+                       = {}, view_name = '' ):
+        """Calculates how many objects within the given table lie in a
+        rectangular box. The operation is synchronous, meaning that a response
+        will not be returned until all the objects are fully available. The
+        response payload provides the count of the resulting set. A new
+        resultant set which satisfies the input NAI restriction specification is
+        also created when a input parameter *view_name* is passed in as part of
+        the input payload.
+
+        @returns a read-only GPUdbTable object.
+        """
+        view_name = self.__process_view_name__( view_name )
+
+        response = self.db.filter_by_box( self.name, view_name, x_column_name,
+                                          min_x, max_x, y_column_name, min_y,
+                                          max_y, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_box
+
+
+    def filter_by_geometry( self, column_name = None, input_wkt = '', operation
+                            = None, options = {}, view_name = '' ):
+        """Applies a geometry filter against a spatial column named WKT in a
+        given table, collection or view. The filtering geometry is provided by
+        input parameter *input_wkt*.
+
+        @returns a read-only GPUdbTable object.
+        """
+        view_name = self.__process_view_name__( view_name )
+
+        response = self.db.filter_by_geometry( self.name, view_name,
+                                               column_name, input_wkt,
+                                               operation, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_geometry
+
+
+    def filter_by_list( self, column_values_map = None, options = {}, view_name
+                        = '' ):
+        """Calculates which records from a table have values in the given list
+        for the corresponding column. The operation is synchronous, meaning that
+        a response will not be returned until all the objects are fully
+        available. The response payload provides the count of the resulting set.
+        A new resultant set (view) which satisfies the input filter
+        specification is also created if a input parameter *view_name* is passed
+        in as part of the request.  For example, if a type definition has the
+        columns 'x' and 'y', then a filter by list query with the column map
+        {"x":["10.1", "2.3"], "y":["0.0", "-31.5", "42.0"]} will return the
+        count of all data points whose x and y values match both in the
+        respective x- and y-lists, e.g., "x = 10.1 and y = 0.0", "x = 2.3 and y
+        = -31.5", etc. However, a record with "x = 10.1 and y = -31.5" or "x =
+        2.3 and y = 0.0" would not be returned because the values in the given
+        lists do not correspond.
+
+        @returns a read-only GPUdbTable object.
+        """
+        view_name = self.__process_view_name__( view_name )
+
+        response = self.db.filter_by_list( self.name, view_name,
+                                           column_values_map, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_list
+
+
+    def filter_by_radius( self, x_column_name = None, x_center = None,
+                          y_column_name = None, y_center = None, radius = None,
+                          options = {}, view_name = '' ):
+        """Calculates which objects from a table lie within a circle with the
+        given radius and center point (i.e. circular NAI). The operation is
+        synchronous, meaning that a response will not be returned until all the
+        objects are fully available. The response payload provides the count of
+        the resulting set. A new resultant set (view) which satisfies the input
+        circular NAI restriction specification is also created if a input
+        parameter *view_name* is passed in as part of the request.  For track
+        data, all track points that lie within the circle plus one point on
+        either side of the circle (if the track goes beyond the circle) will be
+        included in the result. For shapes, e.g. polygons, all polygons that
+        intersect the circle will be included (even if none of the points of the
+        polygon fall within the circle).
+
+        @returns a read-only GPUdbTable object.
+        """
+        view_name = self.__process_view_name__( view_name )
+
+        response = self.db.filter_by_radius( self.name, view_name,
+                                             x_column_name, x_center,
+                                             y_column_name, y_center, radius,
+                                             options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_radius
+
+
+    def filter_by_range( self, column_name = None, lower_bound = None,
+                         upper_bound = None, options = {}, view_name = '' ):
+        """Calculates which objects from a table have a column that is within
+        the given bounds. An object from the table identified by input parameter
+        *table_name* is added to the view input parameter *view_name* if its
+        column is within [input parameter *lower_bound*, input parameter
+        *upper_bound*] (inclusive). The operation is synchronous. The response
+        provides a count of the number of objects which passed the bound filter.
+        Although this functionality can also be accomplished with the standard
+        filter function, it is more efficient.  For track objects, the count
+        reflects how many points fall within the given bounds (which may not
+        include all the track points of any given track).
+
+        @returns a read-only GPUdbTable object.
+        """
+        view_name = self.__process_view_name__( view_name )
+
+        response = self.db.filter_by_range( self.name, view_name, column_name,
+                                            lower_bound, upper_bound, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_range
+
+
+    def filter_by_series( self, track_id = None, target_track_ids = None,
+                          options = {}, view_name = '' ):
+        """Filters objects matching all points of the given track (works only on
+        track type data).  It allows users to specify a particular track to find
+        all other points in the table that fall within specified ranges-spatial
+        and temporal-of all points of the given track. Additionally, the user
+        can specify another track to see if the two intersect (or go close to
+        each other within the specified ranges). The user also has the
+        flexibility of using different metrics for the spatial distance
+        calculation: Euclidean (flat geometry) or Great Circle (spherical
+        geometry to approximate the Earth's surface distances). The filtered
+        points are stored in a newly created result set. The return value of the
+        function is the number of points in the resultant set (view).  This
+        operation is synchronous, meaning that a response will not be returned
+        until all the objects are fully available.
+
+        @returns a read-only GPUdbTable object.
+        """
+        view_name = self.__process_view_name__( view_name )
+
+        response = self.db.filter_by_series( self.name, view_name, track_id,
+                                             target_track_ids, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_series
+
+
+    def filter_by_string( self, expression = None, mode = None, column_names =
+                          None, options = {}, view_name = '' ):
+        """Calculates which objects from a table, collection, or view match a
+        string expression for the given string columns. The options
+        'case_sensitive' can be used to modify the behavior for all modes except
+        'search'. For 'search' mode details and limitations, see `Full Text
+        Search <../../concepts/full_text_search.html>`_.
+
+        @returns a read-only GPUdbTable object.
+        """
+        view_name = self.__process_view_name__( view_name )
+
+        response = self.db.filter_by_string( self.name, view_name, expression,
+                                             mode, column_names, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_string
+
+
+    def filter_by_table( self, column_name = None, source_table_name = None,
+                         source_table_column_name = None, options = {},
+                         view_name = '' ):
+        """Filters objects in one table based on objects in another table. The
+        user must specify matching column types from the two tables (i.e. the
+        target table from which objects will be filtered and the source table
+        based on which the filter will be created); the column names need not be
+        the same. If a input parameter *view_name* is specified, then the
+        filtered objects will then be put in a newly created view. The operation
+        is synchronous, meaning that a response will not be returned until all
+        objects are fully available in the result view. The return value
+        contains the count (i.e. the size) of the resulting view.
+
+        @returns a read-only GPUdbTable object.
+        """
+        view_name = self.__process_view_name__( view_name )
+
+        response = self.db.filter_by_table( self.name, view_name, column_name,
+                                            source_table_name,
+                                            source_table_column_name, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_table
+
+
+    def filter_by_value( self, is_string = None, value = 0, value_str = '',
+                         column_name = None, options = {}, view_name = '' ):
+        """Calculates which objects from a table has a particular value for a
+        particular column. The input parameters provide a way to specify either
+        a String or a Double valued column and a desired value for the column on
+        which the filter is performed. The operation is synchronous, meaning
+        that a response will not be returned until all the objects are fully
+        available. The response payload provides the count of the resulting set.
+        A new result view which satisfies the input filter restriction
+        specification is also created with a view name passed in as part of the
+        input payload.  Although this functionality can also be accomplished
+        with the standard filter function, it is more efficient.
+
+        @returns a read-only GPUdbTable object.
+        """
+        view_name = self.__process_view_name__( view_name )
+
+        response = self.db.filter_by_value( self.name, view_name, is_string,
+                                            value, value_str, column_name,
+                                            options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_value
+
+
+    def lock_table( self, lock_type = 'status', options = {} ):
+        """Manages global access to a table's data.  By default a table has a
+        input parameter *lock_type* of *unlock*, indicating all operations are
+        permitted.  A user may request a *read-only* or a *write-only* lock,
+        after which only read or write operations, respectively, are permitted
+        on the table until the lock is removed.  When input parameter
+        *lock_type* is *disable* then no operations are permitted on the table.
+        The lock status can be queried by setting input parameter *lock_type* to
+        *status*.
+
+        @returns the response from the server.
+        """
+        response = self.db.lock_table( self.name, lock_type, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return AttrDict( response )
+    # end lock_table
+
+
+    def revoke_permission_table( self, permission = None, table_name = None,
+                                 options = None ):
+        """Revokes a table-level permission from a user or role.
+
+        @returns the response from the server.
+        """
+        response = self.db.revoke_permission_table( self.name, permission,
+                                                    table_name, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return AttrDict( response )
+    # end revoke_permission_table
+
+
+    def show_table( self, options = {} ):
+        """Retrieves detailed information about a table, view, or collection,
+        specified in input parameter *table_name*. If the supplied input
+        parameter *table_name* is a collection, the call can return information
+        about either the collection itself or the tables and views it contains.
+        If input parameter *table_name* is empty, information about all
+        collections and top-level tables and views can be returned.  If the
+        option *get_sizes* is set to *true*, then the sizes (objects and
+        elements) of each table are returned (in output parameter *sizes* and
+        output parameter *full_sizes*), along with the total number of objects
+        in the requested table (in output parameter *total_size* and output
+        parameter *total_full_size*).  For a collection, setting the
+        *show_children* option to *false* returns only information about the
+        collection itself; setting *show_children* to *true* returns a list of
+        tables and views contained in the collection, along with their
+        description, type id, schema, type label, type properties, and
+        additional information including TTL.
+
+        @returns the response from the server.
+        """
+        response = self.db.show_table( self.name, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return AttrDict( response )
+    # end show_table
+
+
+    def update_records( self, expressions = None, new_values_maps = None,
+                        records_to_insert = [], records_to_insert_str = [],
+                        record_encoding = 'binary', options = {} ):
+        """Runs multiple predicate-based updates in a single call.  With the
+        list of given expressions, any matching record's column values will be
+        updated as provided in input parameter *new_values_maps*.  There is also
+        an optional 'upsert' capability where if a particular predicate doesn't
+        match any existing record, then a new record can be inserted.  Note that
+        this operation can only be run on an original table and not on a
+        collection or a result view.  This operation can update primary key
+        values.  By default only 'pure primary key' predicates are allowed when
+        updating primary key values. If the primary key for a table is the
+        column 'attr1', then the operation will only accept predicates of the
+        form: "attr1 == 'foo'" if the attr1 column is being updated.  For a
+        composite primary key (e.g. columns 'attr1' and 'attr2') then this
+        operation will only accept predicates of the form: "(attr1 == 'foo') and
+        (attr2 == 'bar')".  Meaning, all primary key columns must appear in an
+        equality predicate in the expressions.  Furthermore each 'pure primary
+        key' predicate must be unique within a given request.  These
+        restrictions can be removed by utilizing some available options through
+        input parameter *options*.
+
+        @returns the response from the server.
+        """
+        response = self.db.update_records( self.name, expressions,
+                                           new_values_maps, records_to_insert,
+                                           records_to_insert_str,
+                                           record_encoding, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return AttrDict( response )
+    # end update_records
+
+
+    def update_records_by_series( self, world_table_name = None, view_name = '',
+                                  reserved = [], options = {} ):
+        """Updates the view specified by input parameter *table_name* to include
+        full series (track) information from the input parameter
+        *world_table_name* for the series (tracks) present in the input
+        parameter *view_name*.
+
+        @returns the response from the server.
+        """
+        response = self.db.update_records_by_series( self.name,
+                                                     world_table_name,
+                                                     view_name, reserved,
+                                                     options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return AttrDict( response )
+    # end update_records_by_series
+
+
+    def visualize_image_labels( self, x_column_name = None, y_column_name =
+                                None, x_offset = None, y_offset = None,
+                                text_string = None, font = None, text_color =
+                                None, text_angle = None, text_scale = None,
+                                draw_box = None, draw_leader = None, line_width
+                                = None, line_color = None, fill_color = None,
+                                leader_x_column_name = None,
+                                leader_y_column_name = None, min_x = None, max_x
+                                = None, min_y = None, max_y = None, width =
+                                None, height = None, projection =
+                                'PLATE_CARREE', options = {} ):
+        """
+
+        @returns the response from the server.
+        """
+        response = self.db.visualize_image_labels( self.name, x_column_name,
+                                                   y_column_name, x_offset,
+                                                   y_offset, text_string, font,
+                                                   text_color, text_angle,
+                                                   text_scale, draw_box,
+                                                   draw_leader, line_width,
+                                                   line_color, fill_color,
+                                                   leader_x_column_name,
+                                                   leader_y_column_name, min_x,
+                                                   max_x, min_y, max_y, width,
+                                                   height, projection, options )
+        if not is_ok( response ):
+            raise GPUdbException( get_error_msg( response ) )
+
+        return AttrDict( response )
+    # end visualize_image_labels
+
+
+
+# end class GPUdbTable
+
+
+
+# ---------------------------------------------------------------------------
+# GPUdbTableIterator - Iterator Class to iterate over records in a table
+# ---------------------------------------------------------------------------
+class GPUdbTableIterator( Iterator ):
+    """Iterates over a chunk of records of a given table.  Once the initial
+    chunk of records have been iterated over, a new iterator object must
+    be instantiated since there is no way to guarantee that getting another
+    chunk would yield the 'next' set of records without duplicates or skipping
+    over records.  GPUdb does not guarantee any order or returned records via
+    /get/records/*.
+    """
+    def __init__( self, table, offset = 0, limit = 10000, db = None ):
+        """Initiate the iterator with the given table, offset, and limit.
+
+        @param table  A GPUdbTable object or a name of a table
+        @param offset An integer value greater than or equal to 0.
+        @param limit An integer value greater than or equal to 1.
+        @param db Optional GPUdb object
+        """
+        # Validate and set the offset
+        if not isinstance( offset, (int, long) ) or (offset < 0):
+            raise GPUdbException( "Offset must be >= 0; given {0}"
+                                  "".format( offset ) )
+        self.offset = offset
+
+        if not isinstance( limit, (int, long) ) or (limit < 1):
+            raise GPUdbException( "Limit must be >= 1; given {0}"
+                                  "".format( limit ) )
+        self.limit = limit
+
+        # Save the table name and the GPUdb object
+        if isinstance( table, GPUdbTable ):
+            self.table = table
+        elif isinstance( table, (str, unicode) ):
+            if not isinstance( db, GPUdb ):
+                raise GPUdbException( "Argument 'db' must be a GPUdb object "
+                                      "if 'table' is the table name; given "
+                                      "{0}".format( type( db ) ) )
+            # Create the table object
+            self.table = GPUdbTable( None, table, db = db )
+        else:
+            raise GPUdbException( "Argument 'table' must be a GPUdbTable object"
+                                  " or a string; given {0}".format( table ) )
+
+        self.cursor = 0
+
+        # Call /get/records to get the batch of records
+        records = self.table.get_records( offset = self.offset,
+                                          limit  = self.limit )
+        self.records = records
+    # end __init__
+
+
+    def __iter__( self ):
+        return self
+
+
+    def next( self ):
+        if (self.cursor == len( self.records ) ):
+            raise StopIteration()
+
+        cursor = self.cursor
+        self.cursor += 1
+        return self.records[ cursor ]
+    # end next
+
+# end class GPUdbTableIterator
+
+
+
+# ---------------------------------------------------------------------------
+# GPUdbTableOptions - Class to handle GPUdb table creation options
+# ---------------------------------------------------------------------------
+class GPUdbTableOptions(object):
+    """
+    Encapsulates the various options used to create a table. Same object can be used on
+    multiple tables and state modifications are chained together:
+    opts = GPUdbTableOptions.default().collection_name('coll_name')
+    table1 = Table( None, options = opts )
+    table2 = Table( None, options = opts.replicated( True ) )
+    """
+
+    __no_error_if_exists          = "no_error_if_exists"
+    __collection_name             = "collection_name"
+    __is_collection               = "is_collection"
+    __disallow_homogeneous_tables = "disallow_homogeneous_tables"
+    __is_replicated               = "is_replicated"
+    __foreign_keys                = "foreign_keys"
+    __foreign_shard_key           = "foreign_shard_key"
+    __ttl                         = "ttl"
+    __chunk_size                  = "chunk_size"
+    __is_result_table             = "is_result_table"
+
+    _supported_options = [ __no_error_if_exists,
+                           __collection_name,
+                           __is_collection,
+                           __disallow_homogeneous_tables,
+                           __is_replicated,
+                           __foreign_keys,
+                           __foreign_shard_key,
+                           __ttl,
+                           __chunk_size,
+                           __is_result_table
+    ]
+
+
+    @staticmethod
+    def default():
+        return GPUdbTableOptions()
+
+
+    def __init__(self, _dict = None):
+        """Create a default set of options for create_table().
+
+        @param _dict Optional dictionary with options already loaded.
+
+        @returns a GPUdbTableOptions object.
+        """
+        if (_dict is None): # Default values
+            self._no_error_if_exists          = None
+            self._collection_name             = None
+            self._is_collection               = None
+            self._disallow_homogeneous_tables = None
+            self._is_replicated               = None
+            self._foreign_keys                = None
+            self._foreign_shard_key           = None
+            self._ttl                         = None
+            self._chunk_size                  = None
+            self._is_result_table             = None
+            # self._no_error_if_exists          = False
+            # self._collection_name             = None
+            # self._is_collection               = False
+            # self._disallow_homogeneous_tables = False
+            # self._is_replicated               = False
+            # self._foreign_keys                = None
+            # self._foreign_shard_key           = None
+            # self._ttl                         = None
+            # self._chunk_size                  = None
+            # self._is_result_table             = None
+        elif not isinstance( _dict, dict ):
+            raise GPUdbException( "Argument '_dict' must be a dict; given '%s'."
+                                  % type( _dict ) )
+        else: # _dict is a dict; extract options from within it
+            # Check for invalid options
+            unsupported_options = set( _dict.keys() ).difference( self._supported_options )
+            if unsupported_options:
+                raise GPUdbException( "Invalid options: %s" % unsupported_options )
+
+            # Extract and save each option
+            for (key, val) in _dict.iteritems():
+                getattr( self, key )( val )
+        # end if-else
+    # end __init__
+
+
+    def as_json(self):
+        """Return the options as a JSON for using directly in create_table()"""
+        result = {}
+        if self._is_replicated is not None:
+            result[ self.__is_replicated      ] = "true" if self._is_replicated else "false"
+        if self._collection_name is not None:
+            result[ self.__collection_name    ] = self._collection_name
+        if self._no_error_if_exists is not None:
+            result[ self.__no_error_if_exists ] = "true" if self._no_error_if_exists else "false"
+        if self._chunk_size is not None:
+            result[ self.__chunk_size         ] = self._chunk_size
+        if self._is_collection is not None:
+            result[ self.__is_collection      ] = "true" if self._is_collection else "false"
+        if self._foreign_keys is not None:
+            result[ self.__foreign_keys       ] = self._foreign_keys
+        if self._foreign_shard_key is not None:
+            result[ self.__foreign_shard_key  ] = self._foreign_shard_key
+        if self._ttl is not None:
+            result[ self.__ttl                ] = str( self._ttl )
+        if self._disallow_homogeneous_tables is not None:
+            result[ self.__disallow_homogeneous_tables ] = "true" if self._disallow_homogeneous_tables else "false"
+        return result
+    # end as_json
+
+
+    def as_dict(self):
+        """Return the options as a dict for using directly in create_table()"""
+        return self.as_json()
+
+
+    def no_error_if_exists(self, val):
+        if isinstance( val, bool ):
+            self._no_error_if_exists = val
+        elif val in ["true", "false"]:
+            self._no_error_if_exists = True if (val == "true") else False
+        return self
+
+
+    def collection_name(self, val):
+        if (val and not isinstance( val, str )):
+            raise GPUdbException( "'collection_name' must be a string value; given '%s'" % val )
+        self._collection_name = val
+        return self
+
+
+    def is_collection(self, val):
+        if isinstance( val, bool ):
+            self._is_collection = val
+        elif val in ["true", "false"]:
+            self._is_collection = True if (val == "true") else False
+        return self
+
+
+    def disallow_homogeneous_tables(self, val):
+        if isinstance( val, bool ):
+            self._disallow_homogeneous_tables = val
+        elif val in ["true", "false"]:
+            self._disallow_homogeneous_tables = True if (val == "true") else False
+        return self
+
+
+    def is_replicated(self, val):
+        if isinstance( val, bool ):
+            self._is_replicated = val
+        elif val in ["true", "false"]:
+            self._is_replicated = True if (val == "true") else False
+        return self
+
+
+    def foreign_keys(self, val):
+        self._foreign_keys = val
+        return self
+
+
+    def foreign_shard_key(self, val):
+        self._foreign_shard_key = val
+        return self
+
+
+    def ttl(self, val):
+        self._ttl = val
+        return self
+
+
+    def chunk_size(self, val):
+        self._chunk_size = val
+        return self
+
+
+    def is_result_table(self, val):
+        self._is_result_table = val
+        return self
+
+# end class GPUdbTableOptions
 
 
 
@@ -1131,7 +2969,7 @@ class GPUdb(object):
                     resp_time = resp.getheader('x-request-time-secs',None)
                 except: # some error occurred; return a message
                     # TODO: Maybe use a class like GPUdbException
-                    loop_error = ValueError( "Timeout Error: No response received from %s" % conn_token._host )
+                    loop_error = GPUdbException( "Timeout Error: No response received from %s" % conn_token._host )
                 # end except
 
             if loop_error:
@@ -1568,7 +3406,7 @@ class GPUdb(object):
             return self.insert_records(set_id, [object_data], None, {"return_record_ids":"true"})
 
     # Helper for dynamic schema responses
-    def parse_dynamic_response(self, retobj, do_print=False):
+    def parse_dynamic_response(self, retobj, do_print=False, convert_nulls = True):
 
         if (retobj['status_info']['status'] == 'ERROR'):
             print 'Error: ', retobj['status_info']['message']
@@ -1598,7 +3436,7 @@ class GPUdb(object):
             translated = collections.OrderedDict()
             for i,(n,column_name) in enumerate(zip(nullable,column_lookup)):
 
-                if (n): #nullable - replace None with '<NULL>'
+                if (n and convert_nulls): # nullable - replace None with '<NULL>'
                     col = [x if x is not None else '<NULL>' for x in decoded['column_%d'%(i+1)]]
                 else:
                     col = decoded['column_%d'%(i+1)]
@@ -1628,7 +3466,7 @@ class GPUdb(object):
                 else:
                     retobj['response'][column_name] = d_resp[column_index_name]
 
-                if (n): #nullable
+                if (n and convert_nulls): # nullable
                     retobj['response'][column_name] = [x if x is not None else '<NULL>' for x in retobj['response'][column_name]]
 
 
@@ -1721,8 +3559,6 @@ class GPUdb(object):
     # -----------------------------------------------------------------------
     # Begin autogenerated functions
     # -----------------------------------------------------------------------
-
-    # @begin_autogen 
 
     def load_gpudb_schemas( self ):
         """Saves all request and response schemas for GPUdb queries
@@ -2686,24 +4522,30 @@ class GPUdb(object):
         """Calculates unique combinations (groups) of values for the given columns in a
         given table/view/collection and computes aggregates on each unique
         combination. This is somewhat analogous to an SQL-style SELECT...GROUP
-        BY. Any column(s) can be grouped on, but only non-string (i.e. numeric)
-        columns may be used for computing aggregates. The results can be paged
-        via the input parameter *offset* and input parameter *limit* parameters.
-        For example, to get 10 groups with the largest counts the inputs would
-        be: limit=10, options={"sort_order":"descending", "sort_by":"value"}.
-        Input parameter *options* can be used to customize behavior of this call
-        e.g. filtering or sorting the results. To group by 'x' and 'y' and
-        compute the number of objects within each group, use
+        BY.  Any column(s) can be grouped on, and all column types except
+        unrestricted-length strings may be used for computing applicable
+        aggregates.  The results can be paged via the input parameter *offset*
+        and input parameter *limit* parameters. For example, to get 10 groups
+        with the largest counts the inputs would be: limit=10,
+        options={"sort_order":"descending", "sort_by":"value"}.  Input parameter
+        *options* can be used to customize behavior of this call e.g. filtering
+        or sorting the results.  To group by columns 'x' and 'y' and compute the
+        number of objects within each group, use:
         column_names=['x','y','count(*)'].  To also compute the sum of 'z' over
-        each group, use column_names=['x','y','count(*)','sum(z)']. Available
-        aggregation functions are: 'count(*)', 'sum', 'min', 'max', 'avg',
-        'mean', 'stddev', 'stddev_pop', 'stddev_samp', 'var', 'var_pop',
-        'var_samp', 'arg_min', 'arg_max' and 'count_distinct'. The response is
-        returned as a dynamic schema. For details see: `dynamic schemas
-        documentation <../../concepts/dynamic_schemas.html>`_. If the
-        *result_table* option is provided then the results are stored in a table
-        with the name given in the option and the results are not returned in
-        the response."""
+        each group, use:  column_names=['x','y','count(*)','sum(z)'].  Available
+        `aggregation functions <../../concepts/expressions.html#aggregate-
+        expressions>`_ are: count(*), sum, min, max, avg, mean, stddev,
+        stddev_pop, stddev_samp, var, var_pop, var_samp, arg_min, arg_max and
+        count_distinct.  The response is returned as a dynamic schema. For
+        details see: `dynamic schemas documentation
+        <../../concepts/dynamic_schemas.html>`_.  If a *result_table* name is
+        specified in the options, the results are stored in a new table with
+        that name.  No results are returned in the response.  If the source
+        table's `shard key <../../concepts/tables.html#shard-keys>`_ is used as
+        the grouping column(s), the result table will be sharded, in all other
+        cases it will be replicated.  Sorting will properly function only if the
+        result table is replicated or if there is only one processing node and
+        should not be relied upon in other cases."""
 
         assert isinstance( table_name, (str, unicode)), "aggregate_group_by(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( column_names, (list)), "aggregate_group_by(): Argument 'column_names' must be (one) of type(s) '(list)'; given %s" % type( column_names ).__name__
@@ -2920,10 +4762,15 @@ class GPUdb(object):
         unique values sorted in descending order input parameter *options* would
         be::  {"limit":"10","sort_order":"descending"}.  The response is
         returned as a dynamic schema. For details see: `dynamic schemas
-        documentation <../../concepts/dynamic_schemas.html>`_. If the
-        'result_table' option is provided then the results are stored in a table
-        with the name given in the option and the results are not returned in
-        the response."""
+        documentation <../../concepts/dynamic_schemas.html>`_.  If a
+        *result_table* name is specified in the options, the results are stored
+        in a new table with that name.  No results are returned in the response.
+        If the source table's `shard key <../../concepts/tables.html#shard-
+        keys>`_ is used as the input parameter *column_name*, the result table
+        will be sharded, in all other cases it will be replicated.  Sorting will
+        properly function only if the result table is replicated or if there is
+        only one processing node and should not be relied upon in other
+        cases."""
 
         assert isinstance( table_name, (str, unicode)), "aggregate_unique(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( column_name, (str, unicode)), "aggregate_unique(): Argument 'column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( column_name ).__name__
@@ -3165,15 +5012,16 @@ class GPUdb(object):
     # begin create_projection
     def create_projection( self, table_name = None, projection_name = None,
                            column_names = None, options = {} ):
-        """Creates a new projection of an existing table.  A projection represents a
-        subset of the columns (potentially including derived columns) of a
-        table.  Can create a new column using the calculated moving average of a
-        given column with the following syntax:
+        """Creates a new `projection <../../concepts/projections.html>`_ of an existing
+        table. A projection represents a subset of the columns (potentially
+        including derived columns) of a table. A moving average can be
+        calculated on a given column using the following syntax in the input
+        parameter *column_names* parameter:
         'moving_average(column_name,num_points_before,num_points_after) as
-        new_column_name'; for each record in the 'column_name' parameter, it
+        new_column_name'  For each record in the 'column_name' parameter, it
         computes the average over the previous 'num_points_before' records and
         the subsequent 'num_points_after' records.  Note that moving average
-        relies on *order_by* and *order_by* requires that all the data being
+        relies on *order_by*, and *order_by* requires that all the data being
         ordered resides on the same processing node, so it won't make sense to
         use *order_by* without moving average."""
 
@@ -3218,10 +5066,10 @@ class GPUdb(object):
         the ID of a currently registered type (i.e. one created via
         :ref:`create_type <create_type_python>`). The table will be created
         inside a collection if the option *collection_name* is specified. If
-        that collection does not already exist, it will be created.          To
-        create a new collection, specify the name of the collection in input
-        parameter *table_name* and set the *is_collection* option to *true*;
-        input parameter *type_id* will be ignored."""
+        that collection does not already exist, it will be created.  To create a
+        new collection, specify the name of the collection in input parameter
+        *table_name* and set the *is_collection* option to *true*; input
+        parameter *type_id* will be ignored."""
 
         assert isinstance( table_name, (str, unicode)), "create_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( type_id, (str, unicode)), "create_table(): Argument 'type_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( type_id ).__name__
@@ -3396,10 +5244,13 @@ class GPUdb(object):
     def create_union( self, table_name = None, table_names = None,
                       input_column_names = None, output_column_names = None,
                       options = {} ):
-        """Creates a table that is the concatenation of one or more existing tables. It
-        is equivalent to the SQL UNION ALL operator.  Non-charN 'string' and
-        'bytes' column types cannot be included in a union, neither can columns
-        with the property 'store_only'."""
+        """Performs a `union <../../concepts/unions.html>`_ (concatenation) of one or
+        more existing tables or views, the results of which are stored in a new
+        view. It is equivalent to the SQL UNION ALL operator.  Non-charN
+        'string' and 'bytes' column types cannot be included in a union, neither
+        can columns with the property 'store_only'. Though not explicitly
+        unions, `intersect <../../concepts/intersect.html>`_ and `except
+        <../../concepts/except.html>`_ are also available from this endpoint."""
 
         assert isinstance( table_name, (str, unicode)), "create_union(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
         assert isinstance( table_names, (list)), "create_union(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
@@ -4024,7 +5875,7 @@ class GPUdb(object):
 
     # begin get_records_by_series
     def get_records_by_series( self, table_name = None, world_table_name = None,
-                               offset = 0, limit = 10000, encoding = 'binary',
+                               offset = 0, limit = 250, encoding = 'binary',
                                options = {} ):
         """Retrieves the complete series/track records from the given input parameter
         *world_table_name* based on the partial track information contained in
@@ -5052,8 +6903,6 @@ class GPUdb(object):
         return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/video/heatmap' )
     # end visualize_video_heatmap
 
-
-    # @end_autogen 
 
 
     # -----------------------------------------------------------------------

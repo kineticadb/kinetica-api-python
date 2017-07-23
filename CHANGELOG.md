@@ -1,8 +1,12 @@
 GPUdb Python API Changelog
 ==========================
 
-Version 6.0.0 - 2017-05-08
+Version 6.0.0 - 2017-07-23
 --------------------------
+
+-  Added new GPUdbTable class that makes the creation of tables and data i/o
+   much more convenient.  Query chaining for relevant endpoints is also made
+   convenient.
 
 -   Added object oriented record type and data handling.  See new classes
     -   GPUdbColumnProperty -- Contains the different column properties.
