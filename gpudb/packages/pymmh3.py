@@ -21,7 +21,7 @@ import sys as _sys
 if (_sys.version_info > (3, 0)):
     def xrange( a, b, c ):
         return range( a, b, c )
-del _sys
+# del _sys
 
 
 def hash( key, seed = 0x0 ):
@@ -92,7 +92,15 @@ def hash128( key, seed = 0x0, x64arch = True ):
     def hash128_x64( key, seed ):
         ''' Implements 128bit murmur3 hash for x64. '''
 
-        key = bytearray( key )
+        # Hack for python 3 support
+        if _sys.version_info.major >= 3:
+            key = key
+        else:
+            key = bytearray( key )
+        # end hack
+
+        # key = bytearray( key ) # original
+
 
         def fmix( k ):
             k ^= k >> 33

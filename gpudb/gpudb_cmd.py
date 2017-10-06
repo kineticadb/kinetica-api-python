@@ -8,6 +8,8 @@
 # @author Meem Mahmud
 # ######################################################
 
+from __future__ import print_function
+
 from gpudb import GPUdb
 
 import os
@@ -15,12 +17,15 @@ import sys
 import argparse
 import json
 
+if sys.version_info.major > 2:
+    long = int
+
 from avro import schema
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 def gpudb_cmd( argv ):
-    """An interface to GPUDB.  Run the specified query on GPUDB on the local
-       machine or at the specified address.  Also provide usage information.
+    """A command line interface to send a specified request to a GPUDB server.
+       Can be used to print the parameters for a request as well.
     """
 
     # Default values
@@ -28,14 +33,27 @@ def gpudb_cmd( argv ):
 
     # Add arguments to the parser
     parser = argparse.ArgumentParser()
-    parser.add_argument( '-g', nargs = '?', default = "127.0.0.1:9191",
-                         help = "IP address and port of GPUdb in the format: xxx.xx.xx.xx:xxxx (defaults to 127.0.0.1:9191)" )
+    parser.add_argument( '-g', '--gpudb', nargs = '?', default = "127.0.0.1:9191",
+                         help = "IP address and port of GPUdb in the format: IP_ADDRESS:PORT (default 127.0.0.1:9191)" )
+    parser.add_argument( '--json-encoding', action = "store_true",
+                         help = "Use avro JSON encoding of request message to GPUdb (default is avro binary)" )
+    parser.add_argument( '-f', '--format', action = 'store', dest = "format", default = "json",
+                         choices = ["json", "oneline", "ini", "raw"],
+                         help = "Format the returned GPUDB response in a few ways. (default 'json')" )
+    parser.add_argument( "--print-query", action = 'store_true',
+                         help = "Print the request query before sending it using the specified format." )
+
     # User must provide one or the other
     query_group = parser.add_mutually_exclusive_group( required = True )
     query_group.add_argument( "--list-queries", action = 'store_true',
-                         help = "Lists all available GPUDB queries." )
+                         help = "Lists all available GPUDB request queries." )
+    query_group.add_argument( "--print-schemas", action = 'store',
+                         help = "Print the JSON schema of the specified request and response query." )
     query_group.add_argument( '--query', nargs = argparse.REMAINDER,
-                         help = "Name of the query to be executed and any parameters associated with the query. For example, '--query max_min --attribute x --set_id set1'. Not providing any parameter after the query name will print query specific help information." )
+                         help = "Send a request query by specifying the name of the query and the parameters associated with the query. " \
+                                "Help is provided if only the query name is specified. " \
+                                "Note that unspecified parameters will take a default value. " \
+                                "Example: '--query aggregate_min_max --column_name x --table_name DataTable'" )
 
     # Print the help message and quit if no arguments are given
     if ( len(sys.argv) == 1 ): # None provided
@@ -48,25 +66,43 @@ def gpudb_cmd( argv ):
 
     # --------------------------------------
     # Set up GPUdb
-    GPUdb_IP, GPUdb_Port = args.g.split( ":" )
-    gpudb = GPUdb( encoding = 'BINARY', host = GPUdb_IP, port = GPUdb_Port )
+    GPUdb_IP, GPUdb_Port = args.gpudb.split( ":" )
+    encoding = 'JSON' if args.json_encoding else 'BINARY'
+    gpudb = GPUdb( encoding = encoding, host = GPUdb_IP, port = GPUdb_Port )
 
     # Get a list of all endpoint names
     query_names = sorted( gpudb.gpudb_schemas.keys() )
 
     # --------------------------------------
+    # Only print the request and response schemas is asked to
+    if args.print_schemas :
+        query_name = args.print_schemas
+        if query_name not in query_names:
+            print("Unknown query name: '%s'" % query_name)
+            sys.exit( 2 )
+
+        req_schema_str = gpudb.gpudb_schemas[ query_name ][ "REQ_SCHEMA_STR" ]
+        rsp_schema_str = gpudb.gpudb_schemas[ query_name ][ "RSP_SCHEMA_STR" ]
+        req_odict = json.JSONDecoder(object_pairs_hook=collections.OrderedDict).decode(req_schema_str)
+        rsp_odict = json.JSONDecoder(object_pairs_hook=collections.OrderedDict).decode(rsp_schema_str)
+
+        # Use desired formatting
+        print_dict( req_odict, args.format )
+        print_dict( rsp_odict, args.format )
+        sys.exit(0)
+
+    # --------------------------------------
     # List all endpoint/query names, if desired by user
     if (args.list_queries == True) or (len(args.query) == 0):
         for q in sorted( query_names ):
-            print q
+            print(q)
         sys.exit( 0 ) # Succesful termination after printing the desired help message
+
     # --------------------------------------
-
-
     # Get the query JSON string from GPUdb
     query_name = args.query[ 0 ]
     if query_name not in query_names:
-        print "Query not found: ", query_name
+        print("Unknown query name: '%s'" % query_name)
         sys.exit( 2 )
     request_json = gpudb.gpudb_schemas[ query_name ][ "REQ_SCHEMA_STR" ]
 
@@ -93,9 +129,7 @@ def gpudb_cmd( argv ):
     query_parser = argparse.ArgumentParser()
 
     # Add parameters to be parsed
-    query_parser.add_argument( "--format-response", action = 'store_true', dest = "format_response",
-                             help = "Boolean parameter, include to print formatted GPUDB response. Omitting it prints the raw GPUDB response." )
-    for pname, ptype in param_name_type.iteritems():
+    for pname, ptype in param_name_type.items():
         if ptype == "string": # Make string arguments optional
             query_parser.add_argument( "--" + pname, nargs='?', default="", help = "Defaults to empty string" )
         elif ptype == "double" or ptype == "float":
@@ -123,39 +157,51 @@ def gpudb_cmd( argv ):
 
     # Print the help message and quit if no arguments are given (and none is expected)
     if ( len( args.query[1:] ) == 0 and len( param_name_type ) > 0 ):
-        print "No parameters provided for query: ", query_name
+        print("No parameters provided for query: ", query_name)
         query_parser.print_help()
         sys.exit( 2 )
 
     # Parse the parameters and store in a dictionary
     query_args = vars( query_parser.parse_args( args.query[1:] ) )
 
-    # Copy the parsed values to the ordered dictionar to pass to GPUdb
-    for key, val in query_args.iteritems():
+    # Copy the parsed values to the ordered dictionary to pass to GPUdb
+    for key, val in query_args.items():
         param_vals[ key ] = val
-    # --------------------------------------
-
 
     # --------------------------------------
     # Call the GPUDB query:
 
     # Obtain the request and response schemas for the given query
-    (req_schema, resp_schema) = gpudb.get_schemas( query_name )
-    endpoint = gpudb.get_endpoint( query_name )
+    (req_schema, resp_schema) = gpudb._GPUdb__get_schemas( query_name )
+    endpoint = gpudb._GPUdb__get_endpoint( query_name )
 
+    # --------------------------------------
+    if args.print_query :
+        encoded_datum = gpudb.encode_datum(req_schema, param_vals)
+        request_odict = gpudb._GPUdb__read_orig_datum(req_schema, encoded_datum)
+        print(endpoint)
+        print_dict( request_odict, args.format )
+
+    # --------------------------------------
     # Perform the GPUDB query
-    response = gpudb.post_then_get( req_schema, resp_schema, param_vals, endpoint )
+    response = gpudb._GPUdb__post_then_get( req_schema, resp_schema, param_vals, endpoint )
 
-    print
-    print "GPUDB Response:"
-    if query_args[ "format_response" ] == True:
-        print format_response( response )
-    else:
-        print response
+    print_dict( response, args.format )
     # --------------------------------------
 
 # end gpudb_cmd
 
+
+def print_dict( response, format_type ):
+    if format_type == "oneline":
+        print(json.dumps(response))
+    elif format_type == "ini":
+        print(format_response( response ))
+    elif format_type == "raw" :
+        # prints OrderedDict(..), note that pprint doesn't do anything different
+        print(response)
+    else:
+        print(json.dumps(response, indent=4))
 
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -165,7 +211,7 @@ def format_response( response, num_tabs = 0 ):
     output = ""
     spaces = "    "
 
-    for key, val in response.iteritems():
+    for key, val in response.items():
         # Embedded map
         if isinstance( val, dict ):
             output += num_tabs * spaces + str(key) + ":\n"

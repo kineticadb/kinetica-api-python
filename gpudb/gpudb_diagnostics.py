@@ -8,6 +8,7 @@
 # @author Meem Mahmud
 # ######################################################
 
+from __future__ import print_function
 
 
 from gpudb import GPUdb
@@ -38,12 +39,12 @@ def diagnose_gpudb( argv ):
     # Parse the command line arguments
     if ( len(sys.argv) == 1 ): # None provided
         # Print help message and quit
-        print helpMessage
+        print ( helpMessage )
         sys.exit( 2 )
     try: # Parse the command line arguments
         opts, args = getopt.getopt( sys.argv[1:], "hlg:p:v" )
     except getopt.GetoptError:
-        print helpMessage
+        print ( helpMessage )
         sys.exit( 2 )
 
     # Some default values
@@ -54,7 +55,7 @@ def diagnose_gpudb( argv ):
     # Parse the arguments
     for opt, arg in opts:
         if opt == '-h': # print usage and exit
-            print helpMessage
+            print ( helpMessage )
             sys.exit()
         if opt == '-l': # run gpudb on local machine
             isServer = False
@@ -208,7 +209,7 @@ def diagnose_gpudb( argv ):
     assert clear_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed in clearing set %s" % table_name
 
     if isVerbose:
-        print "The diagnostics tests succeeded!"
+        print ( "The diagnostics tests succeeded!" )
 # end diagnose_gpudb
 
 

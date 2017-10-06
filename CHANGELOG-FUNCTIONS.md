@@ -1,7 +1,23 @@
 GPUdb Schemas Changelog
 =======================
 
+Version 6.1.0 - TBD
+-------------------
 
+-   /create/type has new column property: wkt
+-   Endpoints no longer support operations on geometry columns
+    -   /aggregate/minmax
+    -   /filter/byarea
+    -   /filter/bybox
+    -   /filter/byradius
+-   New geometry-specific endpoints
+    -   /aggregate/minmax/geometry
+    -   /filter/byarea/geometry
+    -   /filter/bybox/geometry
+    -   /filter/byradius/geometry
+-   /filter/bygeometry now supports column names other than "WKT"
+
+	
 Version 6.0.0 - 2017-01-24
 --------------------------
 

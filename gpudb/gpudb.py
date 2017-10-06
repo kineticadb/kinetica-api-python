@@ -11,13 +11,30 @@
 # Copyright (c) 2014 GIS Federal
 # ---------------------------------------------------------------------------
 
-import cStringIO, StringIO
-import base64, httplib
+from __future__ import print_function
+
+try:
+    from io import BytesIO
+except:
+    from cStringIO import StringIO as BytesIO
+try:
+    import httplib
+except:
+    import http.client as httplib
+import base64
 import os, sys
 import json
 import random
 import uuid
+
+from collections import Iterator
 from decimal import Decimal
+
+if sys.version_info.major >= 3:
+    long = int
+    basestring = str
+    class unicode:
+        pass
 
 # ---------------------------------------------------------------------------
 # The absolute path of this gpudb.py module for importing local packages
@@ -26,6 +43,8 @@ if gpudb_module_path[len(gpudb_module_path)-3:] == "pyc": # allow symlinks to gp
     gpudb_module_path = gpudb_module_path[0:len(gpudb_module_path)-1]
 if os.path.islink(gpudb_module_path): # allow symlinks to gpudb.py
     gpudb_module_path = os.readlink(gpudb_module_path)
+if not os.path.isabs(gpudb_module_path): # take care of relative symlinks
+    gpudb_module_path = os.path.join(os.path.dirname(__file__), gpudb_module_path)
 gpudb_module_path = os.path.dirname(os.path.abspath(gpudb_module_path))
 
 # Search for our modules first, probably don't need imp or virt envs.
@@ -42,6 +61,14 @@ if sys.version_info >= (2, 7):
 else:
     import ordereddict as collections # a separate package
 
+
+# Override some python3 avro things
+if sys.version_info >= (3, 0):
+    schema.parse = schema.Parse
+    schema.RecordSchema.fields_dict = schema.RecordSchema.field_map
+
+
+
 have_snappy = False
 try:
     import snappy
@@ -50,6 +77,31 @@ except ImportError:
     have_snappy = False
 
 from tabulate import tabulate
+
+
+
+# Some string constants used throughout the program
+class C:
+    """Some string constants used throughout the program."""
+
+    _fields = "fields"
+
+    # /show/table response
+    _table_descriptions = "table_descriptions"
+    _collection   = "COLLECTION"
+    _view         = "VIEW"
+    _replicated   = "REPLICATED"
+    _join         = "JOIN"
+    _result_table = "RESULT_TABLE"
+    _total_full_size = "total_full_size"
+
+    # /show/system/properties response
+    _property_map = "property_map"
+    _gaia_version = "version.gpudb_core_version"
+
+# end class C
+
+
 
 # ---------------------------------------------------------------------------
 # _ConnectionToken - Private wrapper class to manage connection logic
@@ -118,138 +170,378 @@ class _ConnectionToken(object):
 
 
 # ---------------------------------------------------------------------------
+# Utility Functions
+# ---------------------------------------------------------------------------
+class _Util(object):
+
+    @staticmethod
+    def is_ok( response_object ):
+        """Returns True if the response object's status is OK."""
+        return (response_object['status_info']['status'] == 'OK')
+    # end is_ok
+
+
+    @staticmethod
+    def get_error_msg( response_object ):
+        """Returns the error message for the query, if any.  None otherwise."""
+        if (response_object['status_info']['status'] != 'ERROR'):
+            return None
+        return response_object['status_info']['message']
+    # end get_error_msg
+
+
+    @staticmethod
+    def is_list_or_dict( arg ):
+        """Returns whether the given argument either a list or a dict
+        (or an OrderedDict).
+        """
+        return ( isinstance( arg, list )
+                 or isinstance( arg, dict )
+                 or isinstance( arg, collections.OrderedDict ) )
+    # end is_list_or_dict
+
+    if sys.version_info.major >= 3:
+        # Declaring the python 3 version of this static method
+        @staticmethod
+        def str_to_bytes(value):
+            if sys.version_info.major <= 2:
+                data = bytes()
+                for c in value:
+                    data += chr(ord(c))
+                return data
+            else:
+                # The python 3 output
+                return bytes( ord(b) for b in value )
+        # end str_to_bytes
+    else:
+        # Declaring the python 2 version of this static method
+        @staticmethod
+        def str_to_bytes(value):
+            if isinstance(value, unicode):
+                data = bytes()
+                for c in value:
+                    data += chr(ord(c))
+                return data
+            else:
+                # The python 2 output
+                return value
+        # end str_to_bytes
+    # end py 2 vs. 3
+
+
+    @staticmethod
+    def ensure_bytes(value):
+        if isinstance(value, bytes) and not isinstance(value, str):
+            return value
+        elif isinstance(value, basestring):
+            return _Util.str_to_bytes(value)
+        else:
+            raise Exception("Unhandled data type: " + str(type(value)))
+    # end ensure_bytes
+
+
+    @staticmethod
+    def bytes_to_str(value):
+        return ''.join([chr(b) for b in value])
+    # end bytes_to_str
+
+
+    @staticmethod
+    def ensure_str(value):
+        if isinstance(value, basestring):
+            return value
+        elif isinstance(value, bytes):
+            return _Util.bytes_to_str(value)
+        else:
+            raise Exception("Unhandled data type: " + str(type(value)))
+    # end ensure_str
+
+
+    @staticmethod
+    def convert_dict_bytes_to_str(value):
+        for key in list(value):
+            val = value[key]
+            if isinstance(val, bytes) and not isinstance(val, str):
+                value[key] = ''.join([chr(b) for b in val])
+            elif isinstance(val, dict):
+                value[key] = _Util.convert_dict_bytes_to_str(val)
+        return value
+    # end convert_dict_bytes_to_str
+
+
+    @staticmethod
+    def decode_binary_data( SCHEMA, encoded_data ):
+        """Given a schema and binary encoded data, decode it.
+        """
+        encoded_data = _Util.ensure_bytes( encoded_data )
+        output = BytesIO( encoded_data )
+        bd = io.BinaryDecoder( output )
+        reader = io.DatumReader( SCHEMA )
+        out = reader.read( bd ) # read, give a decoder
+        return out
+    # end decode_binary_data
+
+
+    @staticmethod
+    def encode_binary_data( SCHEMA, raw_data, encoding = "binary" ):
+        """Given a schema and raw data, encode it.
+        """
+        output = BytesIO()
+        be = io.BinaryEncoder( output )
+
+        # Create a 'record' (datum) writer
+        writer = io.DatumWriter( SCHEMA )
+        writer.write( raw_data, be )
+
+        result = None
+        if encoding.lower is 'json':
+            result = _Util.ensure_str( output.getvalue() )
+        else:
+            result = output.getvalue()
+        return result
+    # end encode_binary_data
+
+# end class _Util
+
+# ---------------------------------------------------------------------------
+# Utility Classes
+# ---------------------------------------------------------------------------
+class AttrDict(dict):
+    """Converts a dictionary into a class object such that the entries in the
+    dict can be accessed using dot '.' notation.
+    """
+    def __init__(self, *args, **kwargs):
+        super(AttrDict, self).__init__(*args, **kwargs)
+        self.__dict__ = self
+# end class AttrDict
+
+
+# ---------------------------------------------------------------------------
+# GPUdbException - Exception for GPUdb Issues
+# ---------------------------------------------------------------------------
+class GPUdbException( Exception ):
+
+    def __init__( self, value ):
+        self.value = value
+    # end __init__
+
+    def __str__( self ):
+        return repr( self.value )
+    # end __str__
+    
+# end class GPUdbException
+
+
+# ---------------------------------------------------------------------------
 # GPUdbColumnProperty - Class to Handle GPUdb Column Properties
 # ---------------------------------------------------------------------------
+
 class GPUdbColumnProperty(object):
-    """Column properties used for GPUdb record data types."""
+    """Column properties used for GPUdb record data types.  The properties
+    are class-level read-only properties, so the user can use them as such::
 
-    # Default property for all numeric and string type columns; makes the column
-    # available for GPU queries.
+        GPUdbColumnProperty.prop_name
+    """
+
     DATA = "data"
+    """str: Default property for all numeric and string type columns; makes the
+    column available for GPU queries.
+    """
 
-    # Valid only for 'string' columns. Enables full text search for string
-    # columns. Can be set independently of *data* and *store_only*.
+
     TEXT_SEARCH = "text_search"
+    """str: Valid only for 'string' columns. Enables full text search for string
+    columns. Can be set independently of *data* and *store_only*.
+    """
 
-    # Persist the column value but do not make it available to queries (e.g.
-    # :ref:`filter_by_box <filter_bybox_python>`)-i.e. it is mutually exclusive
-    # to the 'data' property. Any 'bytes' type column must have a 'store_only'
-    # property. This property reduces system memory usage.
+
     STORE_ONLY = "store_only"
+    """str: Persist the column value but do not make it available to queries (e.g.
+    :meth:`.filter_by_box`)-i.e. it is mutually exclusive to the 'data'
+    property. Any 'bytes' type column must have a 'store_only' property. This
+    property reduces system memory usage.
+    """
 
-    # Works in conjunction with the 'data' property for string columns. This
-    # property reduces system disk usage by disabling reverse string lookups.
-    # Queries like :ref:`filter <filter_python>`, :ref:`filter_by_list
-    # <filter_bylist_python>`, and :ref:`filter_by_value
-    # <filter_byvalue_python>` work as usual but :ref:`aggregate_unique
-    # <aggregate_unique_python>`, :ref:`aggregate_group_by
-    # <aggregate_groupby_python>` and :ref:`get_records_by_column
-    # <get_records_bycolumn_python>` are not allowed on columns with this
-    # property.
+
     DISK_OPTIMIZED = "disk_optimized"
+    """str: Works in conjunction with the 'data' property for string columns. This
+    property reduces system disk usage by disabling reverse string lookups.
+    Queries like :meth:`.filter`, :meth:`.filter_by_list`, and
+    :meth:`.filter_by_value` work as usual but :meth:`.aggregate_unique`,
+    :meth:`.aggregate_group_by` and :meth:`.get_records_by_column` are not
+    allowed on columns with this property.
+    """
 
-    # Valid only for 'long' columns. Indicates that this field represents a
-    # timestamp and will be provided in milliseconds since the Unix epoch:
-    # 00:00:00 Jan 1 1970.  Dates represented by a timestamp must fall between
-    # the year 1000 and the year 2900.
+
     TIMESTAMP = "timestamp"
+    """str: Valid only for 'long' columns. Indicates that this field represents a
+    timestamp and will be provided in milliseconds since the Unix epoch:
+    00:00:00 Jan 1 1970.  Dates represented by a timestamp must fall between
+    the year 1000 and the year 2900.
+    """
 
-    # Valid only for 'string' columns.  It represents a SQL type NUMERIC(19, 4)
-    # data type.  There can be up to 15 digits before the decimal point and up
-    # to four digits in the fractional part.  The value can be positive or
-    # negative (indicated by a minus sign at the beginning).  This property is
-    # mutually exclusive with the 'text_search' property.
+
     DECIMAL = "decimal"
+    """str: Valid only for 'string' columns.  It represents a SQL type NUMERIC(19,
+    4) data type.  There can be up to 15 digits before the decimal point and up
+    to four digits in the fractional part.  The value can be positive or
+    negative (indicated by a minus sign at the beginning).  This property is
+    mutually exclusive with the 'text_search' property.
+    """
 
-    # Valid only for 'string' columns.  Indicates that this field represents a
-    # date and will be provided in the format 'YYYY-MM-DD'.  The allowable range
-    # is 1000-01-01 through 2900-01-01.
+
     DATE = "date"
+    """str: Valid only for 'string' columns.  Indicates that this field represents
+    a date and will be provided in the format 'YYYY-MM-DD'.  The allowable
+    range is 1000-01-01 through 2900-01-01.  This property is mutually
+    exclusive with the *text_search* property.
+    """
 
-    # Valid only for 'string' columns.  Indicates that this field represents a
-    # time-of-day and will be provided in the format 'HH:MM:SS.mmm'.  The
-    # allowable range is 00:00:00.000 through 23:59:59.999.
+
     TIME = "time"
+    """str: Valid only for 'string' columns.  Indicates that this field represents
+    a time-of-day and will be provided in the format 'HH:MM:SS.mmm'.  The
+    allowable range is 00:00:00.000 through 23:59:59.999.  This property is
+    mutually exclusive with the *text_search* property.
+    """
 
-    # This property provides optimized memory, disk and query performance for
-    # string columns. Strings with this property must be no longer than 1
-    # character. This property cannot be combined with *text_search*
+
+    DATETIME = "datetime"
+    """str: Valid only for 'string' columns.  Indicates that this field represents
+    a datetime and will be provided in the format 'YYYY-MM-DD HH:MM:SS.mmm'.
+    The allowable range is 1000-01-01 00:00:00.000 through 2900-01-01
+    23:59:59.999.  This property is mutually exclusive with the *text_search*
+    property.
+    """
+
+
     CHAR1 = "char1"
+    """str: This property provides optimized memory, disk and query performance
+    for string columns. Strings with this property must be no longer than 1
+    character. This property cannot be combined with *text_search*
+    """
 
-    # This property provides optimized memory, disk and query performance for
-    # string columns. Strings with this property must be no longer than 2
-    # characters. This property cannot be combined with *text_search*
+
     CHAR2 = "char2"
+    """str: This property provides optimized memory, disk and query performance
+    for string columns. Strings with this property must be no longer than 2
+    characters. This property cannot be combined with *text_search*
+    """
 
-    # This property provides optimized memory, disk and query performance for
-    # string columns. Strings with this property must be no longer than 4
-    # characters. This property cannot be combined with *text_search*
+
     CHAR4 = "char4"
+    """str: This property provides optimized memory, disk and query performance
+    for string columns. Strings with this property must be no longer than 4
+    characters. This property cannot be combined with *text_search*
+    """
 
-    # This property provides optimized memory, disk and query performance for
-    # string columns. Strings with this property must be no longer than 8
-    # characters. This property cannot be combined with *text_search*
+
     CHAR8 = "char8"
+    """str: This property provides optimized memory, disk and query performance
+    for string columns. Strings with this property must be no longer than 8
+    characters. This property cannot be combined with *text_search*
+    """
 
-    # This property provides optimized memory, disk and query performance for
-    # string columns. Strings with this property must be no longer than 16
-    # characters. This property cannot be combined with *text_search*
+
     CHAR16 = "char16"
+    """str: This property provides optimized memory, disk and query performance
+    for string columns. Strings with this property must be no longer than 16
+    characters. This property cannot be combined with *text_search*
+    """
 
-    # This property provides optimized memory, disk and query performance for
-    # string columns. Strings with this property must be no longer than 32
-    # characters. This property cannot be combined with *text_search*
+
     CHAR32 = "char32"
+    """str: This property provides optimized memory, disk and query performance
+    for string columns. Strings with this property must be no longer than 32
+    characters. This property cannot be combined with *text_search*
+    """
 
-    # This property provides optimized memory, disk and query performance for
-    # string columns. Strings with this property must be no longer than 64
-    # characters. This property cannot be combined with *text_search*
+
     CHAR64 = "char64"
+    """str: This property provides optimized memory, disk and query performance
+    for string columns. Strings with this property must be no longer than 64
+    characters. This property cannot be combined with *text_search*
+    """
 
-    # This property provides optimized memory, disk and query performance for
-    # string columns. Strings with this property must be no longer than 128
-    # characters. This property cannot be combined with *text_search*
+
     CHAR128 = "char128"
+    """str: This property provides optimized memory, disk and query performance
+    for string columns. Strings with this property must be no longer than 128
+    characters. This property cannot be combined with *text_search*
+    """
 
-    # This property provides optimized memory, disk and query performance for
-    # string columns. Strings with this property must be no longer than 256
-    # characters. This property cannot be combined with *text_search*
+
     CHAR256 = "char256"
+    """str: This property provides optimized memory, disk and query performance
+    for string columns. Strings with this property must be no longer than 256
+    characters. This property cannot be combined with *text_search*
+    """
 
-    # This property provides optimized memory and query performance for int
-    # columns. Ints with this property must be between -128 and +127 (inclusive)
+
     INT8 = "int8"
+    """str: This property provides optimized memory and query performance for int
+    columns. Ints with this property must be between -128 and +127 (inclusive)
+    """
 
-    # This property provides optimized memory and query performance for int
-    # columns. Ints with this property must be between -32768 and +32767
-    # (inclusive)
+
     INT16 = "int16"
+    """str: This property provides optimized memory and query performance for int
+    columns. Ints with this property must be between -32768 and +32767
+    (inclusive)
+    """
 
-    # This property provides optimized memory, disk and query performance for
-    # string columns representing IPv4 addresses (i.e. 192.168.1.1). Strings
-    # with this property must be of the form: A.B.C.D where A, B, C and D are in
-    # the range of 0-255.
+
     IPV4 = "ipv4"
+    """str: This property provides optimized memory, disk and query performance
+    for string columns representing IPv4 addresses (i.e. 192.168.1.1). Strings
+    with this property must be of the form: A.B.C.D where A, B, C and D are in
+    the range of 0-255.
+    """
 
-    # This property indicates that this column will be part of (or the entire)
-    # primary key.
+
+    WKT = "wkt"
+    """str: Valid only for 'string' and 'bytes' columns. Indicates that this field
+    contains geospatial geometry objects in Well-Known Text (WKT) or Well-Known
+    Binary (WKB) format.
+    """
+
+
     PRIMARY_KEY = "primary_key"
+    """str: This property indicates that this column will be part of (or the
+    entire) primary key.
+    """
 
-    # This property indicates that this column will be part of (or the entire)
-    # shard key.
+
     SHARD_KEY = "shard_key"
+    """str: This property indicates that this column will be part of (or the
+    entire) shard key.
+    """
 
-    # This property indicates that this column is nullable.  However, setting
-    # this property is insufficient for making the column nullable.  The user
-    # must declare the type of the column as a union between its regular type
-    # and 'null' in the avro schema for the record type in input parameter
-    # *type_definition*.  For example, if a column is of type integer and is
-    # nullable, then the entry for the column in the avro schema must be:
-    # ['int', 'null'].
-    # The Java and C++ APIs have built-in convenience for bypassing setting the
-    # avro schema by hand.  For those two languages, one can use this property
-    # as usual and not have to worry about the avro schema for the record.
+
     NULLABLE = "nullable"
+    """str: This property indicates that this column is nullable.  However,
+    setting this property is insufficient for making the column nullable.  The
+    user must declare the type of the column as a union between its regular
+    type and 'null' in the avro schema for the record type in input parameter
+    *type_definition*.  For example, if a column is of type integer and is
+    nullable, then the entry for the column in the avro schema must be: ['int',
+    'null'].
+
+    The C++, C#, Java, and Python APIs have built-in convenience for bypassing
+    setting the avro schema by hand.  For those two languages, one can use this
+    property as usual and not have to worry about the avro schema for the
+    record.
+    """
+
+
+    DICT = "dict"
+    """str: This property indicates that this column should be dictionary encoded.
+    It can only be used in conjunction with string columns marked with a charN
+    property. This property is appropriate for columns where the cardinality
+    (the number of unique values) is expected to be low, and can save a large
+    amount of memory.
+    """
+
 # end class GPUdbColumnProperty
 
 
@@ -257,7 +549,7 @@ class GPUdbColumnProperty(object):
 # GPUdbRecordColumn - Class to Handle GPUdb Record Column Data Types
 # ---------------------------------------------------------------------------
 class GPUdbRecordColumn(object):
-    """Represents a column in a GPUdb record object (GPUdbRecordType).
+    """Represents a column in a GPUdb record object (:class:`.GPUdbRecordType`).
     """
 
     class _ColumnType(object):
@@ -306,30 +598,39 @@ class GPUdbRecordColumn(object):
     def __init__( self, name, column_type, column_properties = None, is_nullable = False ):
         """Construct a GPUdbRecordColumn object.
 
-        @param name  The name of the column, must be a non-empty string.
-        @param column_type  The data type of the column.  Must be one of int, long,
-                            float, double, string, bytes.
-        @param column_properties  Optional properties for the column.
-        @param is_nullable  Optional boolean flag indicating whether the column is
-                            nullable.
+        Parameters:
+            name (str)
+                The name of the column, must be a non-empty string.
+            column_type (str)
+                The data type of the column.  Must be one of int, long,
+                float, double, string, bytes.
+            column_properties (list)
+                Optional list of properties for the column.
+            is_nullable (bool)
+                Optional boolean flag indicating whether the column is
+                nullable.
         """
-        # Validate and save the name
+        # Validate and save the stringified name
         if (not name):
-            raise ValueError( "The name of the column must be a non-empty string; given " + repr(name) )
+            raise GPUdbException( "The name of the column must be a non-empty string; given " + repr(name) )
         self._name = name
 
         # Validate and save the data type
         if column_type not in self._allowed_data_types:
-            raise ValueError( "Data type must be one of " + str(self._allowed_data_types) +
-                              "; given " + column_type )
+            raise GPUdbException( "Data type must be one of " + str(self._allowed_data_types) +
+                              "; given " + str(column_type) )
         self._column_type = column_type
 
         # Validate and save the column properties
         if not column_properties: # it's ok to not have any
             column_properties = []
         if not isinstance( column_properties, list ):
-            raise ValueError( "'column_properties' must be a list; given " + str(type(column_properties)) )
-        self._column_properties = column_properties
+            raise GPUdbException( "'column_properties' must be a list; given " + str(type(column_properties)) )
+
+        # Sort and stringify the column properties so that the order for a given set of
+        # properties is always the same--handy for equivalency checks
+        self._column_properties = sorted( column_properties )
+
         # Check for nullability
         self._is_nullable = False # default value
         if (GPUdbColumnProperty.NULLABLE in self.column_properties):
@@ -337,13 +638,15 @@ class GPUdbRecordColumn(object):
 
         # Check the optional 'is_nullable' argument
         if is_nullable not in [True, False]:
-            raise ValueError( "'is_nullable' must be a boolean value; given " + repr(type(is_nullable)) )
+            raise GPUdbException( "'is_nullable' must be a boolean value; given " + repr(type(is_nullable)) )
         if (is_nullable == True):
             self._is_nullable = True
             # Enter the 'nullable' property into the list of propertie, even though
             # GPUdb doesn't actually use it (make sure not to make duplicates)
             if (GPUdbColumnProperty.NULLABLE not in self._column_properties):
                 self._column_properties.append( GPUdbColumnProperty.NULLABLE )
+                # Re-sort for equivalency tests down the road
+                self._column_properties = sorted( self._column_properties )
             # end inner if
         # end if
     # end __init__
@@ -376,6 +679,18 @@ class GPUdbRecordColumn(object):
         return self._is_nullable
     # end is_nullable
 
+
+    def __eq__( self, other ):
+        if isinstance(other, self.__class__):
+            return self.__dict__ == other.__dict__
+        else:
+            return False
+    # end __eq__
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+    # end __ne__
+
 # end class GPUdbRecordColumn
 
 
@@ -388,34 +703,47 @@ class GPUdbRecordType(object):
     functions for creating the type in GPUdb (among others).
     """
 
-    def __init__( self, columns = None, label = "", schema_string = None ):
+    def __init__( self, columns = None, label = "",
+                  schema_string = None, column_properties = None ):
         """Create a GPUdbRecordType object which represents the data type for
         a given record for GPUdb.
 
-        @param columns  A list of GPUdbRecordColumn objects. Either this argument
-                        or the schema_string argument must be given.
-        @param schema_string  The JSON string containing the schema for the type.
-                              Either this argument or the columns argument must
-                              be given.
-        @param label  Optional string label for the column.
+        Parameters:
+            columns (list)
+                A list of :class:`.GPUdbRecordColumn` objects. Either this argument
+                or the schema_string argument must be given.
+            label (str)
+                Optional string label for the column.
+            schema_string (str)
+                The JSON string containing the schema for the type.
+                Either this argument or the columns argument must
+                be given.
+            column_properties (dict)
+                Optional dict that lists the properties for the
+                columns of the type.  Meant to be used in conjunction
+                with schema_string only; will be ignored if
+                columns is given.
         """
         # Validate and save the label
-        if not isinstance( label, str ):
-            raise ValueError( "Column label must be a string; given " + str(type( label )) )
+        if not isinstance( label, basestring ):
+            raise GPUdbException( "Column label must be a string; given " + str(type( label )) )
         self._label = label
+
+        # The server always uses this hardcoded name and trumps any label
+        self.name = "type_name"
 
         # Either columns or schema_string must be given, but not both!
         if ((columns == None) and (schema_string == None)):
-            raise ValueError( "Either columns or schema_string must be given, but none is in this case!" )
+            raise GPUdbException( "Either columns or schema_string must be given, but none is!" )
         elif ((columns != None) and (schema_string != None)):
-            raise ValueError( "Either columns or schema_string must be given, but not both (which is the case here)!" )
+            raise GPUdbException( "Either columns or schema_string must be given, but not both!" )
 
 
         # Construct the object from the given columns
         if (columns != None):
             self.__initiate_from_columns( columns )
         else:
-            self.__initiate_from_schema_string( schema_string )
+            self.__initiate_from_schema_string( schema_string, column_properties )
 
         # The type hasn't been registered with GPUdb yet
         self._type_id = None
@@ -426,14 +754,40 @@ class GPUdbRecordType(object):
     def __initiate_from_columns( self, columns ):
         """Private method that constructs the object using the given columns.
 
-        @param columns  A list of GPUdbRecordColumn objects.
+        Parameters:
+            columns (list)
+                A list of GPUdbRecordColumn objects or a list with the following
+                format: [name, type, ...] where ... is optional properties. For
+                example, ['x', 'int', 'int8']
         """
         # Validate the columns
         if not columns: # Must NOT be empty
-            raise ValueError( "Non-empty list of columns must be given.  Given none." )
+            raise GPUdbException( "Non-empty list of columns must be given.  Given none." )
         if not isinstance( columns, list ): # Must be a list
-            raise ValueError( "Non-empty list of columns must be given.  Given " + str(type( columns )) )
-        self._columns = columns
+            raise GPUdbException( "Non-empty list of columns must be given.  Given " + str(type( columns )) )
+
+        # Check if the list contains only GPUdbRecordColumns, then nothing to do
+        if all( isinstance( x, GPUdbRecordColumn ) for x in columns ):
+            self._columns = columns
+        else: # unroll the information contained within
+            # If the caller provided one list of arguments, wrap it into a list of lists so we can
+            # properly iterate over
+            columns = columns if all( isinstance( elm, list ) for elm in columns ) else [ columns ]
+
+            # Unroll the information about the column(s) and create GPUdbRecordColumn objects
+            self._columns = []
+            for col_info in columns:
+                # Arguments 3 and beyond--these are properties--must be combined into one list argument
+                if len( col_info ) > 2:
+                    self._columns.append( GPUdbRecordColumn( col_info[0], col_info[1], col_info[2:] ) )
+                elif len( col_info ) < 2:
+                    # Need at least two elements: the name and the type
+                    raise GPUdbException( "Need a list with the column name, type, and optional properties; "
+                                          "given '%s'" % col_info )
+                else:
+                    self._columns.append( GPUdbRecordColumn( *col_info ) )
+        # end if-else
+
 
         # Column property container
         self._column_properties = {}
@@ -442,14 +796,14 @@ class GPUdbRecordType(object):
         fields = []
 
         # Validate each column and deduce its properties
-        for col in columns:
+        for col in self._columns:
             # Check that each element is a GPUdbRecordColumn object
             if not isinstance( col, GPUdbRecordColumn ):
-                raise ValueError( "columns must contain only GPUdbRecordColumn objects.  Given " + str(type( col )) )
+                raise GPUdbException( "columns must contain only GPUdbRecordColumn objects.  Given " + str(type( col )) )
 
             # Extract the column's properties, if any
             if col.column_properties:
-                self._column_properties[ col.name ] = col.column_properties
+                self._column_properties[ col.name ] = sorted( col.column_properties )
 
             # Create the field for the schema string
             field_type = '"{_type}"'.format( _type = col.column_type )
@@ -470,7 +824,7 @@ class GPUdbRecordType(object):
             "name" : "{_label}",
             "fields" : [ {_fields} ]
         }}
-        """.format( _label = self._label if self._label else "type_name",
+        """.format( _label  = self.name,
                     _fields = fields )
         self._schema_string = self._schema_string.replace( " ", "" ).replace( "\n", "" )
 
@@ -481,23 +835,61 @@ class GPUdbRecordType(object):
     # end __initiate_from_columns
 
 
-    def __initiate_from_schema_string( self, schema_string ):
+    def __initiate_from_schema_string( self, schema_string, column_properties = None ):
         """Private method that constructs the object using the given schema string.
 
-        @param schema_string  The schema string for the record type.
+        Parameters:
+            schema_string (str)
+                The schema string for the record type.
+            column_properties (dict)
+                An optional dict containing property information for
+                some or all of the columns.
         """
         # Validate the schema string
         if not schema_string: # Must NOT be empty!
-            raise ValueError( "A schema string must be given.  Given none." )
+            raise GPUdbException( "A schema string must be given.  Given none." )
 
         # Try to parse the schema string, this would also help us validate it
         self._record_schema = schema.parse( schema_string )
 
+        # Rename the schema with a generic name just like the database
+        self._record_schema.set_prop( "name", self.name )
+
         # If no exception was thrown above, then save the schema string
-        self._schema_string = schema_string
+        self._schema_string = json.dumps( self._record_schema.to_json() )
+
+        # Save the column properties, if any
+        self._column_properties = column_properties if column_properties else {}
+        
+        # Delete the 'data' and 'text_search' properties, if they exist. 'data'
+        # is useless and gets in the way of comparing properties with other
+        # types; 'text_search' is not quite useless, but the default DB behavior
+        # is to add it by default whenever text search is on; so we can ignore
+        # it for now.
+        for col in list(self._column_properties.keys()):
+            props = self._column_properties[ col ]
+
+            # Ignore the 'data' property
+            if GPUdbColumnProperty.DATA in props:
+                props.remove( GPUdbColumnProperty.DATA )
+                if not ( props ): # now empty
+                    del self._column_properties[ col ]
+            # end if
+
+            # Ignore the 'text_search' property
+            if GPUdbColumnProperty.TEXT_SEARCH in props:
+                props.remove( GPUdbColumnProperty.TEXT_SEARCH )
+                if not ( props ): # now empty
+                    del self._column_properties[ col ]
+            # end if
+
+            # Sort the column properties for equivalency tests
+            if props:
+                self._column_properties[ col ] = sorted( props )
+        # end loop
 
         # Now, deduce the columns from the schema string
-        schema_json = json.loads( schema_string )
+        schema_json = self._record_schema.to_json()
         columns = []
         for field in schema_json["fields"]:
             # Get the field's type
@@ -512,17 +904,22 @@ class GPUdbRecordType(object):
                 field_type = field_type[ 0 ]
             # end if
 
+            field_name = field["name"]
+            
+            # Get any properties for the column
+            col_props = None
+            if (self._column_properties and (field_name in self._column_properties)):
+                col_props = column_properties[ field_name ]
+            # end if
+
             # Create the column object and to the list
-            column = GPUdbRecordColumn( field["name"], field_type, None , is_nullable = is_nullable )
+            column = GPUdbRecordColumn( field["name"], field_type, col_props,
+                                        is_nullable = is_nullable )
             columns.append( column )
         # end for
 
         # Save the columns
         self._columns = columns
-
-        # Save column properties (of which there is none useful; ignoring nullability here
-        # as it is not needed by GPUdb)
-        self._column_properties = {}
 
         return
     # end __initiate_from_schema_string
@@ -568,7 +965,7 @@ class GPUdbRecordType(object):
         """The ID for the type, if it has already been registered
         with GPUdb."""
         if not self._type_id:
-            raise ValueError( "The record type has not been registered with GPUdb yet." )
+            raise GPUdbException( "The record type has not been registered with GPUdb yet." )
         return self._type_id
     # end type_id
 
@@ -577,14 +974,18 @@ class GPUdbRecordType(object):
         """Create the record type in GPUdb so that users can create
         tables using this type.
 
-        @param gpudb  A GPUdb object to connect to a GPUdb server.
-        @param option Optional dictionary containing options for the /create/type call.
+        Parameters:
+            gpudb (GPUdb)
+                A GPUdb object to connect to a GPUdb server.
+            option (dict)
+                Optional dictionary containing options for the /create/type call.
 
-        @returns the type ID.
+        Returns:
+            The type ID.
         """
         # Validate the GPUdb handle
         if not isinstance( gpudb, GPUdb ):
-            raise ValueError( "'gpudb' must be a GPUdb object; given " + str(type( gpudb )) )
+            raise GPUdbException( "'gpudb' must be a GPUdb object; given " + str(type( gpudb )) )
 
         if not options:
             options = {}
@@ -593,6 +994,18 @@ class GPUdbRecordType(object):
         self._type_id = response[ "type_id" ]
         return self._type_id
     # end create_type
+
+
+    def __eq__( self, other ):
+        if isinstance(other, self.__class__):
+            return (self.__dict__ == other.__dict__)
+        else:
+            return False
+    # end __eq__
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+    # end __ne__
 
 # end class GPUdbRecordType
 
@@ -612,11 +1025,15 @@ class GPUdbRecord( object ):
         """Decode binary encoded data (generally returned by GPUdb) using
         the schema for the data.  Return the decoded data.
 
-        @param record_type_schema_string  The schema string for the record type.
-        @param binary_data  The binary encoded data.  Could be a single object or
-                            a list of data.
+        Parameters:
+            record_type_schema_string (str)
+                The schema string for the record type.
+            binary_data (obj or list)
+                The binary encoded data.  Could be a single object or
+                a list of data.
 
-        @returns the decoded data (a single object or a list)
+        Returns:
+            The decoded data (a single object or a list)
         """
         # Create an avro schema from the schema string
         record_schema = schema.parse( record_type_schema_string )
@@ -626,20 +1043,13 @@ class GPUdbRecord( object ):
 
         # Decode the single data object
         if not isinstance( binary_data, list ):
-            output = cStringIO.StringIO( binary_data )
-            bd = io.BinaryDecoder( output )
-            decoded_datum = data_reader.read( bd )
-            return decoded_datum
+            return _Util.decode_binary_data( record_schema, binary_data )
         # end if
 
         # Decode the list of data data
         decoded_data = []
         for binary_datum in binary_data:
-            output = cStringIO.StringIO( binary_datum )
-            bd = io.BinaryDecoder( output )
-            decoded_datum = data_reader.read( bd )
-
-            decoded_data.append( decoded_datum )
+            decoded_data.append( _Util.decode_binary_data( record_schema, binary_datum ) )
         # end for
 
         return decoded_data
@@ -651,14 +1061,18 @@ class GPUdbRecord( object ):
         """Decode binary encoded data in string form (generally returned by GPUdb).
         Return the decoded data.
 
-        @param json_string_data  The stringified json encoded data.  Could be
-                                 a single object or a list of data.
+        Parameters:
+            json_string_data (str)
+                The stringified json encoded data.  Could be
+                a single object or a list of data.
 
-        @returns the decoded data (a single object or a list)
+        Returns:
+            The decoded data (a single object or a list)
         """
         # Decode the single data object
         if not isinstance( json_string_data, list ):
             json_string_data = json_string_data.replace( "\\U", "\\u")
+            json_string_data = _Util.ensure_str( json_string_data )
             decoded_datum = json.loads( json_string_data )
             return decoded_datum
         # end if
@@ -667,8 +1081,9 @@ class GPUdbRecord( object ):
         decoded_data = []
         for json_datum in json_string_data:
             json_datum = json_datum.replace( "\\U", "\\u")
-            decoded_datum = json.loads( json_datum )
-
+            json_datum = _Util.ensure_str( json_datum )
+            decoded_datum = json.loads( json_datum,
+                                        object_pairs_hook = collections.OrderedDict )
             decoded_data.append( decoded_datum )
         # end for
 
@@ -677,32 +1092,83 @@ class GPUdbRecord( object ):
 
 
 
+    @staticmethod
+    def convert_data_col_major_to_row_major( col_major_data, col_major_schema_str ):
+        """Given some column major data, convert it to row major data.
+
+        Parameters:
+            col_major_data (OrderedDict)
+                An OrderedDict of arrays containing the data by column names.
+            col_major_schema_str (str)
+                A JSON schema string describing the column major data.
+
+        Returns:
+            A list of GPUdbRecord objects.
+        """
+        if not isinstance( col_major_data, collections.OrderedDict ):
+            raise GPUdbException( "Argument 'col_major_data' must be an OrderedDict;"
+                                  " given %s" % str( type( col_major_data ) ) )
+
+        try:
+            schema_json = json.loads( col_major_schema_str )
+        except Exception as e:
+            raise GPUdbException( "Could not parse 'col_major_schema_str': "
+                                  "%s" % str(e) )
+
+        # Create the schema for each record from the column-major format's schema
+        columns = []
+        for col_name, field in zip(col_major_data.keys(), schema_json[ C._fields ]):
+            field_type = field[ "type" ][ "items" ]
+            if isinstance( field_type, (str, unicode) ):
+                columns.append( [ col_name, field_type ] )
+            elif (isinstance( field_type, list ) and ("null" in field_type )):
+                # The column is nullable
+                columns.append( [ col_name, field_type[0], GPUdbColumnProperty.NULLABLE ] )
+            else:
+                raise GPUdbException( "Unknown column type: {0}".format( field_type ) )
+        # end loop
+
+        # Create a record type
+        record_type = GPUdbRecordType( columns )
+
+        # Create the records
+        records = []
+        for record in zip( *col_major_data.values() ):
+            records.append( GPUdbRecord( record_type, list( record ) ) )
+        # end loop
+
+        return records
+    # end convert_data_col_major_to_row_major
+
+
+
     def __init__( self, record_type, column_values ):
         """Create a GPUdbRecord object which holds the data for
         a given record.
 
-        @param record_type  A GPUdbRecordType object that describes the columns
-                            of this record.
-        @param column_values Either a dict or a list that contains the values for
-                             the columns.  In either case, must contain values for
-                             ALL columns.  If a list, then the columns must be in the
-                             correct order.
+        Parameters:
+            record_type (GPUdbRecordType)
+                A :class:`.GPUdbRecordType` object that describes the columns
+                of this record.
+            column_values (dict or list)
+                Either a dict or a list that contains the values for
+                the columns.  In either case, must contain values for
+                ALL columns.  If a list, then the columns must be in the
+                correct order.
         """
         # Validate and save the record type
         if not isinstance( record_type, GPUdbRecordType ):
-            raise ValueError( "'record_type' must be a GPUdbRecordType; given " + str(type( record_type )) )
+            raise GPUdbException( "'record_type' must be a GPUdbRecordType; given " + str(type( record_type )) )
         self._record_type = record_type
 
 
         # Validate the column values
-        if ( (not isinstance( column_values, list ))
-             and (not isinstance( column_values, dict ))
-             and (not isinstance( column_values, collections.OrderedDict )) ):
+        if not _Util.is_list_or_dict( column_values ):
             # Must be a list or a dict
-            raise ValueError( "Columns must be one of the following: list, dict, OrderedDict.  "
-                              "Given " + str(type( column_values )) )
+            raise GPUdbException( "Columns must be one of the following: list, dict, OrderedDict.  "
+                                  "Given " + str(type( column_values )) )
         if not column_values: # Must NOT be empty
-            raise ValueError( "Column values must be given.  Given none." )
+            raise GPUdbException( "Column values must be given.  Given none." )
 
         # The column values must be saved in the order they're declared in the type
         self._column_values = collections.OrderedDict()
@@ -712,7 +1178,7 @@ class GPUdbRecord( object ):
 
         # Check that there are correct number of values
         if (len( column_values ) != num_columns ):
-            raise ValueError( "Given list of column values does not have the correct (%d) "
+            raise GPUdbException( "Given list of column values does not have the correct (%d) "
                               "number of values; it has %d" % (num_columns, len( column_values )) )
 
         # Check and save the column values
@@ -737,10 +1203,10 @@ class GPUdbRecord( object ):
             record_type_column_names = set( [c.name for c in self._record_type.columns] )
             if ( given_column_names != record_type_column_names ):
                 if (given_column_names - record_type_column_names):
-                    raise ValueError( "Given column names do not match that of the record type.  "
+                    raise GPUdbException( "Given column names do not match that of the record type.  "
                                       "Extra column names are: " + str( (given_column_names - record_type_column_names) ))
                 else:
-                    raise ValueError( "Given column names do not match that of the record type.  "
+                    raise GPUdbException( "Given column names do not match that of the record type.  "
                                       "Missing column names are: " + str( (record_type_column_names - given_column_names) ))
             # end if
 
@@ -757,12 +1223,8 @@ class GPUdbRecord( object ):
 
         # Encode the record into binary and save it
         # -----------------------------------------
-        sio = cStringIO.StringIO()
-        binary_encoder = io.BinaryEncoder( sio )
-        # Create a record writer
-        writer = io.DatumWriter( self._record_type.record_schema )
-        writer.write( self._column_values, binary_encoder)
-        self._binary_encoded_data = sio.getvalue()
+        self._binary_encoded_data = _Util.encode_binary_data( self._record_type.record_schema,
+                                                              self._column_values )
     # end __init__
 
 
@@ -797,26 +1259,45 @@ class GPUdbRecord( object ):
     @property
     def json_data_string(self): # JSON encoded column_values in a string
         """The stringified JSON encoded values for this record."""
-        return json.dumps( self._column_values )
+        return json.dumps( _Util.convert_dict_bytes_to_str(self._column_values) )
     # end json_data_string
+
+
+    def keys( self ):
+        """Return a list of the column names of the record.
+        """
+        return self.data.keys()
+    # end values
+
+
+    def values( self ):
+        """Return a list of the values of the record.
+        """
+        return self.data.values()
+    # end values
 
 
     def insert_record( self, gpudb, table_name, encoding = "binary", options = None ):
         """Insert this record into GPUdb.
 
-        @param gpudb  A GPUdb client handle.
-        @param table_name  The name of the table into which we need to insert
-                           the record.
-        @param encoding  Optional encoding with which to perform the insertion.  Default
-                         is binary encoding.
-        @param options  Optional parameter.  If given, use the options for the insertion
-                        function.
+        Parameters:
+            gpudb (GPUdb)
+                A :class:`.GPUdb` client handle.
+            table_name (str)
+                The name of the table into which we need to insert the record.
+            encoding (str)
+                Optional encoding with which to perform the insertion.  Default
+                is binary encoding.
+            options (dict)
+                Optional parameter.  If given, use the options for the insertion
+                function.
 
-        @retrurns the response from GPUdb.
+        Returns:
+            The response from GPUdb.
         """
         # Validate the GPUdb handle
         if not isinstance( gpudb, GPUdb ):
-            raise ValueError( "'gpudb' must be a GPUdb object; given " + str( type( gpudb ) ) )
+            raise GPUdbException( "'gpudb' must be a GPUdb object; given " + str( type( gpudb ) ) )
 
         if not options:
             options = {}
@@ -825,9 +1306,10 @@ class GPUdbRecord( object ):
         if (encoding == "binary"):
             data = [ self._binary_encoded_data ]
         elif (encoding == "json"):
-            data = [ json.dumps( self._column_values ) ]
+            data = [ json.dumps( _Util.convert_dict_bytes_to_str( self._column_values ) ) ]
+
         else:
-            raise ValueError( "Unknown encoding: " + str( encoding ) )
+            raise GPUdbException( "Unknown encoding: " + str( encoding ) )
 
         # Insert the record
         response = gpudb.insert_records( table_name = table_name,
@@ -842,15 +1324,20 @@ class GPUdbRecord( object ):
     def __is_valid_column_value( self, column_value, column, do_throw = True ):
         """Private function that validates the given value for a column.
 
-        @param column_value  The value for the given column
-        @param column  A GPUdbRecordColumn object that has information about
-                       the column.  This is used to validate the column value.
-        @param do_throw  Throw an exception for invalid columns
+        Parameters:
+            column_value
+                The value for the given column
+            column (GPUdbRecordColumn)
+                A :class:`.GPUdbRecordColumn` object that has information about
+                the column.  This is used to validate the column value.
+            do_throw (bool)
+                Throw an exception for invalid columns
 
-        @returns True if the value can be validated, False otherwise.
+        Returns:
+            True if the value can be validated, False otherwise.
         """
         if not isinstance( column, GPUdbRecordColumn ):
-            raise ValueError( "'column' must be a GPUdbRecordColumn object; given "
+            raise GPUdbException( "'column' must be a GPUdbRecordColumn object; given "
                               + str(type( column )) )
 
         # Check that the value is of the given type
@@ -859,14 +1346,14 @@ class GPUdbRecord( object ):
         if (column_value == None): # Handle null values
             if not column.is_nullable: # but the column is not nullable
                 if do_throw:
-                    raise ValueError( "Non-nullable column '%s' given a null value" % column.name )
+                    raise GPUdbException( "Non-nullable column '%s' given a null value" % column.name )
                 else:
                     return False
         # Numeric types:
         elif (column_type in GPUdbRecordColumn._numeric_data_types):
             if not (isinstance( column_value, (int, long, float)) and not isinstance( column_value, bool ) ):
                 if do_throw:
-                    raise ValueError( ("Column '%s' must be a numeric type (one of int, long, float); "
+                    raise GPUdbException( ("Column '%s' must be a numeric type (one of int, long, float); "
                                        "given " % column.name )
                                       + str(type( column_value )) )
                 else:
@@ -874,7 +1361,7 @@ class GPUdbRecord( object ):
         else: # string/bytes type
             if not isinstance( column_value, (str, Decimal, unicode, bytes) ):
                 if do_throw:
-                    raise ValueError( ("Column '%s' must be string or bytes; given " % column.name)
+                    raise GPUdbException( ("Column '%s' must be string or bytes; given " % column.name)
                                       + str(type( column_value )) )
                 else:
                     return False
@@ -885,7 +1372,22 @@ class GPUdbRecord( object ):
     # end __is_valid_column_value
 
 
+    def __eq__( self, other ):
+        if isinstance(other, self.__class__):
+            return self.__dict__ == other.__dict__
+        else:
+            return False
+    # end __eq__
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+    # end __ne__
+
+
 # end class GPUdbRecord
+
+
+
 
 
 
@@ -897,20 +1399,46 @@ class GPUdbRecord( object ):
 
 class GPUdb(object):
 
-    def __init__(self, host="127.0.0.1", port="9191",
-                       encoding="BINARY", connection='HTTP',
-                       username="", password="", timeout=None):
+    def __init__(self, host = "127.0.0.1", port = "9191",
+                       encoding = "BINARY", connection = 'HTTP',
+                       username = "", password = "", timeout = None,
+                       **kwargs ):
         """
         Construct a new GPUdb client instance.
 
         Parameters:
-            host    : The IP address of the GPUdb server. May be provided as a list to support HA.
-            port  : The port of the GPUdb server at the given IP address. May be provided as a list in conjunction with host.
-            encoding   : Type of Avro encoding to use, "BINARY", "JSON" or "SNAPPY".
-            connection : Connection type, currently only "HTTP" or "HTTPS" supported. May be provided as a list in conjunction with host.
-            username   : An optional http username.
-            password   : The http password for the username.
-            timeout    : HTTP request timeout in seconds. Defaults to global socket timeout.
+
+            host (str)
+                The IP address of the GPUdb server. May be provided as a list
+                to support HA.  Also, can include the port following a colon
+                (the *port* argument then should be unused).  Host may take
+                the form "https://user:password@domain.com:port/path/".
+
+            port (str)
+                The port of the GPUdb server at the given IP address. May be
+                provided as a list in conjunction with host; but if using the
+                same port for all hosts, then a single port value is OK.  Also,
+                can be omitted entirely if the host already contains the port.
+                If the *host* does include a port, then this argument will be
+                ignored.
+
+            encoding (str)
+                Type of Avro encoding to use, "BINARY", "JSON" or "SNAPPY".
+
+            connection (str)
+                Connection type, currently only "HTTP" or "HTTPS" supported.
+                May be provided as a list in conjunction with host; but if using
+                the same port for all hosts, then a single port value is OK.
+
+            username (str)
+                An optional http username.
+
+            password (str)
+                The http password for the username.
+
+            timeout (int)
+                HTTP request timeout in seconds. Defaults to global socket
+                timeout.
         """
         if type(host) is list:
             if not type(port) is list:
@@ -930,7 +1458,7 @@ class GPUdb(object):
 
         assert (encoding in ["BINARY", "JSON", "SNAPPY"]), "Expected encoding to be either 'BINARY', 'JSON' or 'SNAPPY' got: '"+str(encoding)+"'"
         if (encoding == 'SNAPPY' and not have_snappy):
-            print 'SNAPPY encoding specified but python-snappy is not installed; reverting to BINARY'
+            print('SNAPPY encoding specified but python-snappy is not installed; reverting to BINARY')
             encoding = 'BINARY'
 
         self._conn_tokens = tuple(_ConnectionToken(h, p, c) \
@@ -942,6 +1470,19 @@ class GPUdb(object):
         self.password   = password
         self.timeout    = timeout
 
+        # Set up the credentials to be used per POST
+        self.auth = None
+        if len(self.username) != 0:
+            if sys.version_info.major >= 3: # Python 3.x
+                # base64 encode the username and password
+                self.auth = ('%s:%s' % (self.username, self.password) )
+                self.auth = _Util.str_to_bytes( self.auth )
+                self.auth = base64.encodestring( self.auth ).decode( "ascii" ).replace('\n', '')
+                self.auth = ("Basic %s" % self.auth)
+            else: # Python 2.x
+                self.auth = base64.encodestring('%s:%s' % (self.username, self.password)).replace('\n', '')
+                self.auth = ("Basic %s" % self.auth)
+        # end if
 
         self.client_to_object_encoding_map = { \
                                                "BINARY": "binary",
@@ -951,7 +1492,32 @@ class GPUdb(object):
 
         # Load all gpudb schemas
         self.load_gpudb_schemas()
+
+        # Get the multi-head ingestion related hidden input parameter, if given
+        using_multihead_ingestion = kwargs.get( "using_multihead_ingestion", None )
+
+        # Make sure that a connection to the server can be established
+        if not using_multihead_ingestion:
+            server_status_response = self.show_system_status()
+            if not _Util.is_ok( server_status_response ):
+                raise GPUdbException( _Util.get_error_msg( server_status_response ) )
+
+
+        # Check version compatibility with the server
+        # -------------------------------------------
+        if not using_multihead_ingestion:
+            system_props = self.show_system_properties()
+            server_version = system_props[ C._property_map ][ C._gaia_version ]
+
+            # Extract the version for both server and client: major.minor.revision (ignore ABI)
+            server_version = ".".join( server_version.split( "." )[ 0 : 3 ] )
+            client_version = ".".join( self.api_version.split( "." )[ 0 : 3 ] )
+            if (server_version != client_version):
+                print ( "Warning: Client version ({0}) does not match that of the server ({1})"
+                        "".format( client_version, server_version ) )
     # end __init__
+
+
 
     def _get_current_conn_token( self ):
         """Returns the connection information for the current server."""
@@ -1021,18 +1587,13 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "6.0.1.0"
+    api_version   = "6.1.0.0"
 
     # constants
     END_OF_SET = -9999
-
-    # schemas for common data types
-    point_schema_str = """{"type":"record","name":"point","fields":[{"name":"x","type":"double"},{"name":"y","type":"double"},{"name":"OBJECT_ID","type":"string"}]}"""
-    big_point_schema_str = """{"type":"record","name":"point","fields":[{"name":"msg_id","type":"string"},{"name":"x","type":"double"},{"name":"y","type":"double"},{"name":"TIMESTAMP","type":"double"},{"name":"source","type":"string"},{"name":"group_id","type":"string"},{"name":"OBJECT_ID","type":"string"}]}"""
-    gis_point_schema_str = """{"type":"record","name":"Point","fields":[{"name":"x","type":"double"},{"name":"y","type":"double"},{"name":"timestamp","type":"double"},{"name":"tag_id","type":"double"},{"name":"derived","type":"double"},{"name":"msg_id","type":"string"},{"name":"group_id","type":"string"},{"name":"level_one_mgrs","type":"string"},{"name":"level_two_mgrs","type":"string"},{"name":"level_three_mgrs","type":"string"},{"name":"level_final_mgrs","type":"string"},{"name":"OBJECT_ID","type":"string"}]}"""
-    bytes_point_schema_str = """{"type":"record","name":"point","fields":[{"name":"msg_id","type":"string"},{"name":"x","type":"double"},{"name":"y","type":"double"},{"name":"timestamp","type":"int"},{"name":"source","type":"string"},{"name":"group_id","type":"string"},{"name":"bytes_data","type":"bytes"},{"name":"OBJECT_ID","type":"string"}]}"""
-    bigger_point_schema_str = """{"type":"record","name":"point","fields":[{"name":"ARTIFACTID","type":"string"},{"name":"x","type":"double"},{"name":"y","type":"double"},{"name":"TIMESTAMP","type":"double"},{"name":"DATASOURCE","type":"string"},{"name":"DATASOURCESUB","type":"string"},{"name":"OBJECTAUTH", "type" : "string"},{"name": "AUTHOR", "type":"string"},{"name":"DATASOURCEKEY","type":"string"},{"name":"OBJECT_ID","type":"string"}]}"""
-    twitter_point_schema_str = """{"type":"record","name":"point","fields":[{"name":"ARTIFACTID","type":"string"},{"name":"x","type":"double"},{"name":"y","type":"double"},{"name":"TIMESTAMP","type":"double"},{"name":"DATASOURCE","type":"string"},{"name":"DATASOURCESUB","type":"string"},{"name":"KEYWORD","type":"string"},{"name":"OBJECTAUTH", "type" : "string"},{"name": "AUTHOR", "type":"string"},{"name":"DATASOURCEKEY","type":"string"},{"name":"OBJECT_ID","type":"string"}]}"""
+    """(int) Used for indicating that all of the records (till the end of the
+    set are desired)--generally used for /get/records/\* functions.
+    """
 
     # Some other schemas for internal work
     logger_request_schema_str = """
@@ -1056,19 +1617,11 @@ class GPUdb(object):
         }
     """.replace("\n", "").replace(" ", "")
 
-    # Parse common schemas, others parsed on demand.
-    point_schema = schema.parse(point_schema_str)
-    big_point_schema = schema.parse(big_point_schema_str)
-    gis_point_schema = None # schema.parse(gis_point_schema_str)
-    bytes_point_schema = None # schema.parse(bytes_point_schema_str)
-    bigger_point_schema = None # schema.parse(bigger_point_schema_str)
-    twitter_point_schema = schema.parse(twitter_point_schema_str)
-
     # -----------------------------------------------------------------------
     # Helper functions
     # -----------------------------------------------------------------------
 
-    def post_to_gpudb_read(self, body_data, endpoint):
+    def __post_to_gpudb_read(self, body_data, endpoint):
         """
         Create a HTTP connection and POST then get GET, returning the server response.
 
@@ -1088,10 +1641,9 @@ class GPUdb(object):
                        "Accept": "application/x-snappy"}
             body_data = snappy.compress(body_data)
 
-        if len(self.username) != 0:
-            # base64 encode the username and password
-            auth = base64.encodestring('%s:%s' % (self.username, self.password)).replace('\n', '')
-            headers["Authorization"] = ("Basic %s" % auth)
+        # Set the authentication header, if needed
+        if self.auth:
+            headers["Authorization"] = self.auth
 
         # NOTE: Creating a new httplib.HTTPConnection is suprisingly just as
         #       fast as reusing a persistent one and has the advantage of
@@ -1104,6 +1656,7 @@ class GPUdb(object):
         while cond:
             loop_error = None
             conn_token = self._get_current_conn_token()
+            url_path = (conn_token._gpudb_url_path + endpoint)
 
             try:
                 if (conn_token._connection == 'HTTP'):
@@ -1119,19 +1672,16 @@ class GPUdb(object):
 
             if not loop_error:
                 try:
-                    conn.request("POST", conn_token._gpudb_url_path+endpoint, body_data, headers)
+                    conn.request("POST", url_path, body_data, headers)
                 except:
-                    loop_error = "Error posting to: '%s:%d%s'" % (conn_token._host, conn_token._port, conn_token._gpudb_url_path+endpoint)
+                    loop_error = "Error posting to: '%s:%d%s'" % (conn_token._host, conn_token._port, url_path)
 
                 try:
                     resp = conn.getresponse()
                     resp_data = resp.read()
-                    #print 'data received: ',len(resp_data)
-                    #print 'headers received: ',resp.getheaders()
                     resp_time = resp.getheader('x-request-time-secs',None)
                 except: # some error occurred; return a message
-                    # TODO: Maybe use a class like GPUdbException
-                    loop_error = ValueError( "Timeout Error: No response received from %s" % conn_token._host )
+                    loop_error = GPUdbException( "Timeout Error: No response received from %s" % conn_token._host )
                 # end except
 
             if loop_error:
@@ -1145,57 +1695,21 @@ class GPUdb(object):
             if type(error) is Exception:
                 raise error
             else:
-                print error
+                print(error)
                 raise
 
-        # resp = conn.getresponse()
-        # #Print resp.status,resp.reason
-        # resp_data = resp.read() # TODO: comment this out
-        # #print("response size: %d"   % (len(resp_data)))
-        # #print("response     : '%s'" % (resp_data))
-
-        return  str(resp_data),resp_time
-
-    def write_datum(self, SCHEMA, datum):
-        """
-        Returns an avro binary or JSON encoded dataum dict using its schema.
-
-        Parameters:
-            SCHEMA : A parsed schema from avro.schema.parse().
-            datum  : A dict of key-value pairs matching the schema.
-        """
-
-        # build the encoder; this output is where the data will be written
-        if self.encoding == 'BINARY' or self.encoding == 'SNAPPY':
-            output = cStringIO.StringIO()
-            be = io.BinaryEncoder(output)
-
-            # Create a 'record' (datum) writer
-            writer = io.DatumWriter(SCHEMA)
-            writer.write(datum, be)
-
-            return output.getvalue()
-
-        elif self.encoding == 'JSON':
-
-            data_str = json.dumps(datum)
-
-            return data_str
-
-    def encode_datum(self, schema_str, datum):
-        OBJ_SCHEMA = schema.parse(schema_str)
-
-        return self.write_datum(OBJ_SCHEMA, datum)
+        return  resp_data, resp_time
+    # end __post_to_gpudb_read
 
 
-    def client_to_object_encoding( self ):
+    def __client_to_object_encoding( self ):
         """Returns object encoding for queries based on the GPUdb client's
         encoding.
         """
         return self.client_to_object_encoding_map[ self.encoding ]
     # end client_to_object_encoding
 
-    def read_orig_datum(self, SCHEMA, encoded_datum, encoding=None):
+    def __read_orig_datum(self, SCHEMA, encoded_datum, encoding=None):
         """
         Decode the binary or JSON encoded datum using the avro schema and return a dict.
 
@@ -1209,19 +1723,14 @@ class GPUdb(object):
             encoding = self.encoding
 
         if (encoding == 'BINARY') or (encoding == 'SNAPPY'):
-            output = cStringIO.StringIO(encoded_datum)
-            bd = io.BinaryDecoder(output)
-            reader = io.DatumReader(SCHEMA)
-            out = reader.read(bd) # read, give a decoder
-
-            return out
+            return _Util.decode_binary_data( SCHEMA, encoded_datum )
         elif encoding == 'JSON':
-            data_str = json.loads(encoded_datum.replace('\\U','\\u'))
-
+            data_str = json.loads( _Util.ensure_str(encoded_datum).replace('\\U','\\u') )
             return data_str
+    # end __read_orig_datum
 
 
-    def read_datum(self, SCHEMA, encoded_datum, encoding=None, response_time=None):
+    def __read_datum(self, SCHEMA, encoded_datum, encoding=None, response_time=None):
         """
         Decode a gpudb_response and decode the contained message too.
 
@@ -1235,7 +1744,7 @@ class GPUdb(object):
 
         # Parse the gpudb_response message
         REP_SCHEMA = self.gpudb_schemas["gpudb_response"]["RSP_SCHEMA"]
-        resp = self.read_orig_datum(REP_SCHEMA, encoded_datum, encoding)
+        resp = self.__read_orig_datum(REP_SCHEMA, encoded_datum, encoding)
 
         #now parse the actual response if there is no error
         #NOTE: DATA_SCHEMA should be equivalent to SCHEMA but is NOT for get_set_sorted
@@ -1244,9 +1753,9 @@ class GPUdb(object):
             out = collections.OrderedDict()
         else:
             if self.encoding == 'JSON':
-                out = self.read_orig_datum(SCHEMA, resp['data_str'], 'JSON')
+                out = self.__read_orig_datum(SCHEMA, resp['data_str'], 'JSON')
             elif (self.encoding == 'BINARY') or (self.encoding == 'SNAPPY'):
-                out = self.read_orig_datum(SCHEMA, resp['data'], 'BINARY')
+                out = self.__read_orig_datum(SCHEMA, resp['data'], 'BINARY')
 
         del resp['data']
         del resp['data_str']
@@ -1257,8 +1766,10 @@ class GPUdb(object):
             out['status_info']['response_time'] = float(response_time)
 
         return out
+    # end __read_datum
 
-    def get_schemas(self, base_name):
+
+    def __get_schemas(self, base_name):
         """
         Get a tuple of parsed and cached request and reply schemas.
 
@@ -1268,8 +1779,10 @@ class GPUdb(object):
         REQ_SCHEMA = self.gpudb_schemas[base_name]["REQ_SCHEMA"]
         RSP_SCHEMA = self.gpudb_schemas[base_name]["RSP_SCHEMA"]
         return (REQ_SCHEMA, RSP_SCHEMA)
+    # end __get_schemas
 
-    def get_endpoint(self, base_name):
+
+    def __get_endpoint(self, base_name):
         """
         Get the endpoint for a given query.
 
@@ -1277,9 +1790,10 @@ class GPUdb(object):
             base_name : Schema name, e.g. "base_name"+"_request.json" or "_response.json"
         """
         return self.gpudb_schemas[base_name]["ENDPOINT"]
-    # end get_endpoint
+    # end __get_endpoint
 
-    def post_then_get(self, REQ_SCHEMA, REP_SCHEMA, datum, endpoint):
+
+    def __post_then_get(self, REQ_SCHEMA, REP_SCHEMA, datum, endpoint):
         """
         Encode the datum dict using the REQ_SCHEMA, POST to GPUdb server and
         decode the reply using the REP_SCHEMA.
@@ -1290,36 +1804,70 @@ class GPUdb(object):
             datum      : Request dict matching the REQ_SCHEMA.
             endpoint   : Server path to POST to, e.g. "/add".
         """
-        encoded_datum = self.write_datum(REQ_SCHEMA, datum)
-        response,response_time  = self.post_to_gpudb_read(encoded_datum, endpoint)
+        encoded_datum = self.encode_datum(REQ_SCHEMA, datum)
+        response,response_time  = self.__post_to_gpudb_read(encoded_datum, endpoint)
 
-        return self.read_datum(REP_SCHEMA, response, None, response_time)
+        return self.__read_datum(REP_SCHEMA, response, None, response_time)
+    # end __post_then_get
+
+
+    def __sanitize_dicts( self, _dict ):
+        if not isinstance( _dict, (dict, collections.OrderedDict) ):
+            return
+
+        # Iterate over a copy of the keys so that we can modify the dict
+        for key in _dict.keys(): 
+            val = _dict[ key ]
+
+            if isinstance( val, bool ):
+                if val: # true
+                    _dict[ key ] = 'true'
+                else:
+                    _dict[ key ] = 'false'
+            elif isinstance( val, (dict, collections.OrderedDict) ):
+                _dict[ key ] = self.__sanitize_dicts( _dict[ key ] )
+        # end loop
+
+        return _dict
+    # end sanitize_dicts
+
+
+    def encode_datum(self, SCHEMA, datum, encoding = None):
+        """
+        Returns an avro binary or JSON encoded dataum dict using its schema.
+
+        Parameters:
+            SCHEMA (str or avro.Schema)
+                A parsed schema object from avro.schema.parse() or a
+                string containing the schema.
+
+            datum (dict)
+                A dict of key-value pairs containing the data to encode (the
+                entries must match the schema).
+        """
+        # Convert the string to a parsed schema object (if needed)
+        if isinstance( SCHEMA, basestring ):
+            SCHEMA = schema.parse( SCHEMA )
+
+        if encoding is None:
+            encoding = self.encoding
+        else:
+            encoding = encoding.upper()
+
+        # Build the encoder; this output is where the data will be written
+        if encoding == 'BINARY' or encoding == 'SNAPPY':
+            return _Util.encode_binary_data( SCHEMA, datum, self.encoding )
+        elif encoding == 'JSON':
+            return json.dumps( _Util.convert_dict_bytes_to_str( datum ) )
+    # end encode_datum
+
+
 
     # ------------- Convenience Functions ------------------------------------
 
-    def read_point(self, encoded_datum, encoding=None):
-        if self.point_schema is None:
-            self.point_schema = schema.parse(self.point_schema_str)
-
-        return self.read_orig_datum(self.point_schema, encoded_datum, encoding)
-
-    def read_big_point(self, encoded_datum, encoding=None):
-        if self.big_point_schema is None:
-            self.big_point_schema = schema.parse(self.big_point_schema_str)
-
-        return self.read_orig_datum(self.big_point_schema, encoded_datum, encoding)
-
-    def read_gis_point(self, encoded_datum, encoding=None):
-        # this point is designed to look like "Point"
-
-        if self.gis_point_schema is None:
-            self.gis_point_schema = schema.parse(self.gis_point_schema_str)
-
-        return self.read_orig_datum(self.gis_point_schema, encoded_datum, encoding)
-
     def read_trigger_msg(self, encoded_datum):
         RSP_SCHEMA = self.gpudb_schemas[ "trigger_notification" ]["RSP_SCHEMA"]
-        return self.read_orig_datum(RSP_SCHEMA, encoded_datum, 'BINARY')
+        return self.__read_orig_datum(RSP_SCHEMA, encoded_datum, 'BINARY')
 
 
     def logger(self, ranks, log_levels):
@@ -1334,231 +1882,9 @@ class GPUdb(object):
         datum["log_levels"] = log_levels
 
         print('Using host: %s\n' % (self.host))
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/logger")
+        return self.__post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/logger")
     # end logger
 
-    # ------------------ Type registration functions for convenient types ------
-
-    def register_type_big_point(self):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("create_type")
-
-        datum = collections.OrderedDict()
-        datum["type_definition"] = self.big_point_schema_str
-        #datum["annotation"] = "msg_id"
-        datum["label"] = "big_point_type"
-        datum["properties"] = {}
-        datum["options"] = {}
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/create/type")
-
-    def register_type_bigger_point(self):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("create_type")
-
-        datum = collections.OrderedDict()
-        datum["type_definition"] = self.bigger_point_schema_str
-        #datum["annotation"] = "ARTIFACTID"
-        datum["label"] = "bigger_point_type"
-        datum["properties"] = {}
-        datum["options"] = {}
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/create/type")
-
-    def register_type_bytes_point(self):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("create_type")
-
-        datum = collections.OrderedDict()
-        datum["type_definition"] = self.bytes_point_schema_str
-        #datum["annotation"] = "msg_id"
-        datum["label"] = "bytes_point_type"
-        datum["properties"] = {}
-        datum["options"] = {}
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/create/type")
-
-    def register_type_gis_point(self):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("create_type")
-
-        datum = collections.OrderedDict()
-        datum["type_definition"] = self.gis_point_schema_str
-        #datum["annotation"] = "msg_id"
-        datum["label"] = "gis_point_type"
-        datum["properties"] = {}
-        datum["options"] = {}
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/create/type")
-
-    def register_type_point(self):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("create_type")
-
-        datum = collections.OrderedDict()
-        datum["type_definition"] = self.point_schema_str
-        #datum["annotation"] = ""
-        datum["label"] = "basic_point_type"
-        datum["properties"] = {}
-        datum["options"] = {}
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/create/type")
-
-    def register_type_twitter_point(self):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("create_type")
-
-        datum = collections.OrderedDict()
-        datum["type_definition"] = self.twitter_point_schema_str
-        #datum["annotation"] = "ARTIFACTID"
-        datum["label"] = "twitter_point_type"
-        datum["properties"] = {}
-        datum["options"] = {}
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/create/type")
-
-    # ------------------ Add functions for convenient types -----------------------------
-
-    def add_big_point(self, set_id, msg_id, x, y, timestamp, source, group_id, OBJECT_ID=''):
-        if self.big_point_schema is None:
-            self.big_point_schema = schema.parse(self.big_point_schema_str)
-
-        obj_list_encoded = []
-
-        datum = collections.OrderedDict()
-        datum["msg_id"] = msg_id
-        datum["x"] = x
-        datum["y"] = y
-        datum["TIMESTAMP"] = timestamp
-        datum["source"] = source
-        datum["group_id"] = group_id
-        datum["OBJECT_ID"] = OBJECT_ID
-
-        obj_list_encoded.append(self.write_datum(self.big_point_schema, datum))
-
-        return self.insert_records(set_id, obj_list_encoded, None, {"return_record_ids":"true"})
-
-    def add_bigger_point(self, set_id, artifact_id, x, y, timestamp, OBJECT_ID=''):
-        if self.bigger_point_schema is None:
-            self.bigger_point_schema = schema.parse(self.bigger_point_schema_str)
-
-        obj_list_encoded = []
-
-        datum = collections.OrderedDict()
-        datum["ARTIFACTID"] = artifact_id
-        datum["x"] = x
-        datum["y"] = y
-        datum["TIMESTAMP"] = timestamp
-        datum["DATASOURCE"] = "OSC"
-        datum["DATASOURCESUB"] = "REPLICATED"
-        datum["DATASOURCEKEY"] = "OSC:REPLICATED"
-        datum["AUTHOR"] = "OSC"
-        datum["OBJECTAUTH"] = "U"
-        datum["OBJECT_ID"] = OBJECT_ID
-
-        obj_list_encoded.append(self.write_datum(self.bigger_point_schema, datum))
-
-        return self.insert_records(set_id, obj_list_encoded, None, {"return_record_ids":"true"})
-
-
-    def add_bytes_point(self, set_id, msg_id, x, y, timestamp, source, group_id, bytes_data, OBJECT_ID=''):
-        if self.bytes_point_schema is None:
-            self.bytes_point_schema = schema.parse(self.bytes_point_schema_str)
-
-        obj_list_encoded = []
-
-        datum = collections.OrderedDict()
-        datum["msg_id"] = msg_id
-        datum["x"] = x
-        datum["y"] = y
-        datum["timestamp"] = timestamp
-        datum["source"] = source
-        datum["group_id"] = group_id
-        datum["bytes_data"] = bytes_data
-        datum["OBJECT_ID"] = OBJECT_ID
-
-        obj_list_encoded.append(self.write_datum(self.bytes_point_schema, datum))
-
-        return self.insert_records(set_id, obj_list_encoded, None, {"return_record_ids":"true"})
-
-
-    def add_gis_point(self, set_id, msg_id, x, y, timestamp, tag_id, derived, group_id,
-                         level_one_mgrs, level_two_mgrs, level_three_mgrs, level_final_mgrs, OBJECT_ID=''):
-        if self.gis_point_schema is None:
-            self.gis_point_schema = schema.parse(self.gis_point_schema_str)
-
-        obj_list_encoded = []
-
-        datum = collections.OrderedDict()
-
-        datum["x"] = x
-        datum["y"] = y
-        datum["timestamp"] = timestamp
-        datum["tag_id"] = tag_id
-        datum["derived"] = derived
-        datum["msg_id"] = msg_id
-        datum["group_id"] = group_id
-        datum["level_one_mgrs"] = level_one_mgrs
-        datum["level_two_mgrs"] = level_two_mgrs
-        datum["level_three_mgrs"] = level_three_mgrs
-        datum["level_final_mgrs"] = level_final_mgrs
-        datum["OBJECT_ID"] = OBJECT_ID
-
-        obj_list_encoded.append(self.write_datum(self.gis_point_schema, datum))
-
-        return self.insert_records(set_id, obj_list_encoded, None, {"return_record_ids":"true"})
-
-
-    def add_point(self, set_id, x, y, OBJECT_ID=''):
-        if self.point_schema is None:
-            self.point_schema = schema.parse(self.point_schema_str)
-
-        obj_list_encoded = []
-
-        datum = collections.OrderedDict()
-        datum['x'] = x
-        datum['y'] = y
-        datum['OBJECT_ID'] = OBJECT_ID
-
-        obj_list_encoded.append(self.write_datum(self.point_schema, datum))
-
-        return self.insert_records(set_id, obj_list_encoded, None, {"return_record_ids":"true"})
-
-    # This assumes equal length lists
-    def bulk_add_big_point(self, set_id, msg_id_list, x_list, y_list, timestamp_list, source_list, group_id_list, OBJECT_ID_list=None):
-        if self.big_point_schema is None:
-            self.big_point_schema = schema.parse(self.big_point_schema_str)
-
-        if (OBJECT_ID_list is None):
-            OBJECT_ID_list = ['' for x in x_list]
-
-        obj_list_encoded = []
-
-        for msg_id,x,y,timestamp,source,group_id,object_id in zip(msg_id_list,x_list,y_list,timestamp_list,source_list,group_id_list,OBJECT_ID_list):
-            datum = collections.OrderedDict()
-            datum['msg_id'] = msg_id
-            datum['x'] = x
-            datum['y'] = y
-            datum['TIMESTAMP'] = timestamp
-            datum['source'] = source
-            datum['group_id'] = group_id
-            datum['OBJECT_ID'] = object_id
-            obj_list_encoded.append(self.write_datum(self.big_point_schema, datum))
-
-        return self.insert_records(set_id, obj_list_encoded, None, {"return_record_ids":"true"})
-
-    # This assumes that 'x' and 'y' are equal length lists
-    def bulk_add_point(self, set_id, x_list, y_list, OBJECT_ID_list=None):
-        if self.point_schema is None:
-            self.point_schema = schema.parse(self.point_schema_str)
-
-        if (OBJECT_ID_list is None):
-            OBJECT_ID_list = ['' for x in x_list]
-
-        obj_list_encoded = []
-
-        for i in range(0,len(x_list)):
-            datum = collections.OrderedDict()
-            datum['x'] = x_list[i]
-            datum['y'] = y_list[i]
-            datum['OBJECT_ID'] = OBJECT_ID_list[i]
-            obj_list_encoded.append(self.write_datum(self.point_schema, datum))
-
-        return self.insert_records(set_id, obj_list_encoded, None, {"return_record_ids":"true"})
 
     # Helper function to emulate old /add (single object insert) capability
     def insert_object(self, set_id, object_data, params=None):
@@ -1567,11 +1893,12 @@ class GPUdb(object):
         else:
             return self.insert_records(set_id, [object_data], None, {"return_record_ids":"true"})
 
+
     # Helper for dynamic schema responses
-    def parse_dynamic_response(self, retobj, do_print=False):
+    def parse_dynamic_response(self, retobj, do_print=False, convert_nulls = True):
 
         if (retobj['status_info']['status'] == 'ERROR'):
-            print 'Error: ', retobj['status_info']['message']
+            print('Error: ', retobj['status_info']['message'])
             return retobj
 
         my_schema = schema.parse(retobj['response_schema_str'])
@@ -1582,15 +1909,8 @@ class GPUdb(object):
 
         if len(retobj['binary_encoded_response']) > 0:
 
-            bytes = retobj['binary_encoded_response']
-            if type(bytes) == unicode:
-                converted = ''.join([chr(ord(x)) for x in bytes])
-                bytes = converted
-
-            csio = cStringIO.StringIO(bytes)
-            bd = io.BinaryDecoder(csio)
-            reader = io.DatumReader(my_schema)
-            decoded = reader.read(bd) # read, give a decoder
+            data = retobj['binary_encoded_response']
+            decoded = _Util.decode_binary_data( my_schema, data )
 
             #translate the column names
             column_lookup = decoded['column_headers']
@@ -1598,7 +1918,7 @@ class GPUdb(object):
             translated = collections.OrderedDict()
             for i,(n,column_name) in enumerate(zip(nullable,column_lookup)):
 
-                if (n): #nullable - replace None with '<NULL>'
+                if (n and convert_nulls): # nullable - replace None with '<NULL>'
                     col = [x if x is not None else '<NULL>' for x in decoded['column_%d'%(i+1)]]
                 else:
                     col = decoded['column_%d'%(i+1)]
@@ -1628,101 +1948,24 @@ class GPUdb(object):
                 else:
                     retobj['response'][column_name] = d_resp[column_index_name]
 
-                if (n): #nullable
+                if (n and convert_nulls): # nullable
                     retobj['response'][column_name] = [x if x is not None else '<NULL>' for x in retobj['response'][column_name]]
 
 
         if (do_print):
-            print tabulate(retobj['response'],headers='keys',tablefmt='psql')
+            print(tabulate(retobj['response'],headers='keys',tablefmt='psql'))
 
         return retobj
+    # end parse_dynamic_response
 
     # ------------- END convenience functions ------------------------------------
 
-
-    # ------------- BEGIN functions for GPUdb developers -----------------------
-
-    # -----------------------------------------------------------------------
-    # join -> /join
-
-    def join(self, left_set, left_attr, right_set, right_attr, result_type, result_set, user_auth=""):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("join")
-
-        datum = collections.OrderedDict()
-        datum["left_set"] = left_set
-        datum["left_attr"] = left_attr
-        datum["right_set"] = right_set
-        datum["right_attr"] = right_attr
-        datum["result_type"] = result_type
-        datum["result_set"] = result_set
-        datum["user_auth_string"] = user_auth
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/join")
-
-    # -----------------------------------------------------------------------
-    # join_incremental -> /joinincremental
-
-    def join_incremental(self, left_subset, left_attr, left_index, right_set, right_attr, result_set, result_type, user_auth=""):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("join_incremental")
-
-        datum = collections.OrderedDict()
-        datum["left_subset"] = left_subset
-        datum["left_attr"] = left_attr
-        datum["left_index"] = left_index
-        datum["right_set"] = right_set
-        datum["right_attr"] = right_attr
-        datum["result_set"] = result_set
-        datum["result_type"] = result_type
-        datum["data_map"] = {}
-        datum["user_auth_string"] = user_auth
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/joinincremental")
-
-    # -----------------------------------------------------------------------
-    # join_setup -> /joinsetup
-
-    #initial join setup for the incremental join
-    def join_setup(self, left_set, left_attr, right_set, right_attr, subset_id, user_auth=""):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("join_setup")
-
-        datum = collections.OrderedDict()
-        datum["left_set"] = left_set
-        datum["left_attr"] = left_attr
-        datum["right_set"] = right_set
-        datum["right_attr"] = right_attr
-        datum["subset_id"] = subset_id
-        datum["user_auth_string"] = user_auth
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/joinsetup")
-
-
-    # -----------------------------------------------------------------------
-    # predicate_join -> /predicatejoin
-
-    def predicate_join(self, left_set, right_set, predicate, common_type, result_type, result_set, user_auth=""):
-        (REQ_SCHEMA,REP_SCHEMA) = self.get_schemas("predicate_join")
-
-        datum = collections.OrderedDict()
-        datum["left_set"] = left_set
-        datum["right_set"] = right_set
-        datum["common_type"] = common_type
-        datum["result_type"] = result_type
-        datum["result_set"] = result_set
-        datum["user_auth_string"] = user_auth
-        datum["predicate"] = predicate
-
-        return self.post_then_get(REQ_SCHEMA, REP_SCHEMA, datum, "/predicatejoin")
-
-
-    # ------------- END functions for GPUdb developers -----------------------
 
 
 
     # -----------------------------------------------------------------------
     # Begin autogenerated functions
     # -----------------------------------------------------------------------
-
-    # @begin_autogen 
 
     def load_gpudb_schemas( self ):
         """Saves all request and response schemas for GPUdb queries
@@ -1737,19 +1980,37 @@ class GPUdb(object):
         RSP_SCHEMA_STR = """{"type":"record","name":"trigger_notification","fields":[{"name":"trigger_id","type":"string"},{"name":"set_id","type":"string"},{"name":"object_id","type":"string"},{"name":"object_data","type":"bytes"}]}"""
         self.gpudb_schemas[ name ] = { "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
-        name = "admin_delete_node"
-        REQ_SCHEMA_STR = """{"type":"record","name":"admin_delete_node_request","fields":[{"name":"rank","type":"int"},{"name":"authorization","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_delete_node_response","fields":[{"name":"rank","type":"int"},{"name":"message","type":{"type":"array","items":"string"}}]}"""
-        ENDPOINT = "/admin/delete/node"
+        name = "admin_add_node"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_add_node_request","fields":[{"name":"host_name","type":"string"},{"name":"gpu_index","type":"int"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_add_node_response","fields":[{"name":"rank","type":"int"}]}"""
+        ENDPOINT = "/admin/add/node"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
-        name = "admin_get_shard_assignments"
-        REQ_SCHEMA_STR = """{"type":"record","name":"admin_get_shard_assignments_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_get_shard_assignments_response","fields":[{"name":"version","type":"long"},{"name":"shard_assignments_rank","type":{"type":"array","items":"int"}},{"name":"shard_assignments_tom","type":{"type":"array","items":"int"}}]}"""
-        ENDPOINT = "/admin/getshardassignments"
+        name = "admin_alter_configuration"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_alter_configuration_request","fields":[{"name":"config_string","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_alter_configuration_response","fields":[{"name":"status","type":"string"}]}"""
+        ENDPOINT = "/admin/alter/configuration"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "admin_alter_jobs"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_alter_jobs_request","fields":[{"name":"job_ids","type":{"type":"array","items":"int"}},{"name":"action","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_alter_jobs_response","fields":[{"name":"job_ids","type":{"type":"array","items":"int"}},{"name":"action","type":"string"},{"name":"status","type":{"type":"array","items":"string"}}]}"""
+        ENDPOINT = "/admin/alter/jobs"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "admin_alter_shards"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_alter_shards_request","fields":[{"name":"version","type":"long"},{"name":"use_index","type":"boolean"},{"name":"rank","type":{"type":"array","items":"int"}},{"name":"tom","type":{"type":"array","items":"int"}},{"name":"index","type":{"type":"array","items":"int"}},{"name":"backup_map_list","type":{"type":"array","items":"int"}},{"name":"backup_map_values","type":{"type":"array","items":{"type":"array","items":"int"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_alter_shards_response","fields":[{"name":"version","type":"long"}]}"""
+        ENDPOINT = "/admin/alter/shards"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
@@ -1765,7 +2026,7 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
         name = "admin_rebalance"
-        REQ_SCHEMA_STR = """{"type":"record","name":"admin_rebalance_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_rebalance_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"action","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"admin_rebalance_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"message","type":{"type":"array","items":"string"}}]}"""
         ENDPOINT = "/admin/rebalance"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -1773,10 +2034,37 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
-        name = "admin_set_shard_assignments"
-        REQ_SCHEMA_STR = """{"type":"record","name":"admin_set_shard_assignments_request","fields":[{"name":"version","type":"long"},{"name":"partial_reassignment","type":"boolean"},{"name":"shard_assignments_rank","type":{"type":"array","items":"int"}},{"name":"shard_assignments_tom","type":{"type":"array","items":"int"}},{"name":"assignment_index","type":{"type":"array","items":"int"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_set_shard_assignments_response","fields":[{"name":"version","type":"long"}]}"""
-        ENDPOINT = "/admin/setshardassignments"
+        name = "admin_remove_node"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_remove_node_request","fields":[{"name":"rank","type":"int"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_remove_node_response","fields":[{"name":"rank","type":"int"}]}"""
+        ENDPOINT = "/admin/remove/node"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "admin_show_configuration"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_show_configuration_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_show_configuration_response","fields":[{"name":"config_string","type":"string"}]}"""
+        ENDPOINT = "/admin/show/configuration"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "admin_show_jobs"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_show_jobs_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_show_jobs_response","fields":[{"name":"job_id","type":{"type":"array","items":"int"}},{"name":"status","type":{"type":"array","items":"string"}},{"name":"endpoint_name","type":{"type":"array","items":"string"}},{"name":"time_received","type":{"type":"array","items":"long"}},{"name":"auth_id","type":{"type":"array","items":"string"}},{"name":"user_data","type":{"type":"array","items":"string"}}]}"""
+        ENDPOINT = "/admin/show/jobs"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "admin_show_shards"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_show_shards_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_show_shards_response","fields":[{"name":"version","type":"long"},{"name":"rank","type":{"type":"array","items":"int"}},{"name":"tom","type":{"type":"array","items":"int"}}]}"""
+        ENDPOINT = "/admin/show/shards"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
@@ -1845,6 +2133,15 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
+        name = "aggregate_min_max_geometry"
+        REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_min_max_geometry_request","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_min_max_geometry_response","fields":[{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"}]}"""
+        ENDPOINT = "/aggregate/minmax/geometry"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "aggregate_statistics"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_statistics_request","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"},{"name":"stats","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_statistics_response","fields":[{"name":"stats","type":{"type":"map","values":"double"}}]}"""
@@ -1872,6 +2169,15 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
+        name = "aggregate_unpivot"
+        REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_unpivot_request","fields":[{"name":"table_name","type":"string"},{"name":"variable_column_name","type":"string"},{"name":"value_column_name","type":"string"},{"name":"pivoted_columns","type":{"type":"array","items":"string"}},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_unpivot_response","fields":[{"name":"table_name","type":"string"},{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"},{"name":"total_number_of_records","type":"long"},{"name":"has_more_records","type":"boolean"}]}"""
+        ENDPOINT = "/aggregate/unpivot"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "alter_system_properties"
         REQ_SCHEMA_STR = """{"type":"record","name":"alter_system_properties_request","fields":[{"name":"property_updates_map","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"alter_system_properties_response","fields":[{"name":"updated_properties_map","type":{"type":"map","values":"string"}}]}"""
@@ -1883,7 +2189,7 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "alter_table"
         REQ_SCHEMA_STR = """{"type":"record","name":"alter_table_request","fields":[{"name":"table_name","type":"string"},{"name":"action","type":"string"},{"name":"value","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"alter_table_response","fields":[{"name":"table_name","type":"string"},{"name":"action","type":"string"},{"name":"value","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_table_response","fields":[{"name":"table_name","type":"string"},{"name":"action","type":"string"},{"name":"value","type":"string"},{"name":"type_id","type":"string"},{"name":"type_definition","type":"string"},{"name":"properties","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"label","type":"string"}]}"""
         ENDPOINT = "/alter/table"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -1903,6 +2209,15 @@ class GPUdb(object):
         REQ_SCHEMA_STR = """{"type":"record","name":"alter_user_request","fields":[{"name":"name","type":"string"},{"name":"action","type":"string"},{"name":"value","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"alter_user_response","fields":[{"name":"name","type":"string"}]}"""
         ENDPOINT = "/alter/user"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "append_records"
+        REQ_SCHEMA_STR = """{"type":"record","name":"append_records_request","fields":[{"name":"table_name","type":"string"},{"name":"source_table_name","type":"string"},{"name":"field_map","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"append_records_response","fields":[{"name":"table_name","type":"string"}]}"""
+        ENDPOINT = "/append/records"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
@@ -2106,10 +2421,28 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
+        name = "filter_by_area_geometry"
+        REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_area_geometry_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"column_name","type":"string"},{"name":"x_vector","type":{"type":"array","items":"double"}},{"name":"y_vector","type":{"type":"array","items":"double"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_area_geometry_response","fields":[{"name":"count","type":"long"}]}"""
+        ENDPOINT = "/filter/byarea/geometry"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "filter_by_box"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_box_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"x_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"y_column_name","type":"string"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_box_response","fields":[{"name":"count","type":"long"}]}"""
         ENDPOINT = "/filter/bybox"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "filter_by_box_geometry"
+        REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_box_geometry_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_box_geometry_response","fields":[{"name":"count","type":"long"}]}"""
+        ENDPOINT = "/filter/bybox/geometry"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
@@ -2137,6 +2470,15 @@ class GPUdb(object):
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_radius_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"x_column_name","type":"string"},{"name":"x_center","type":"double"},{"name":"y_column_name","type":"string"},{"name":"y_center","type":"double"},{"name":"radius","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_radius_response","fields":[{"name":"count","type":"long"}]}"""
         ENDPOINT = "/filter/byradius"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "filter_by_radius_geometry"
+        REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_radius_geometry_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"column_name","type":"string"},{"name":"x_center","type":"double"},{"name":"y_center","type":"double"},{"name":"radius","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_radius_geometry_response","fields":[{"name":"count","type":"long"}]}"""
+        ENDPOINT = "/filter/byradius/geometry"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
@@ -2322,6 +2664,24 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
+        name = "merge_records"
+        REQ_SCHEMA_STR = """{"type":"record","name":"merge_records_request","fields":[{"name":"table_name","type":"string"},{"name":"source_table_names","type":{"type":"array","items":"string"}},{"name":"field_maps","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"merge_records_response","fields":[{"name":"table_name","type":"string"}]}"""
+        ENDPOINT = "/merge/records"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "admin_replace_tom"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_replace_tom_request","fields":[{"name":"old_rank_tom","type":"long"},{"name":"new_rank_tom","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_replace_tom_response","fields":[{"name":"old_rank_tom","type":"long"},{"name":"new_rank_tom","type":"long"}]}"""
+        ENDPOINT = "/replace/tom"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "revoke_permission_system"
         REQ_SCHEMA_STR = """{"type":"record","name":"revoke_permission_system_request","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"revoke_permission_system_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"}]}"""
@@ -2467,7 +2827,7 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
         name = "visualize_image"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"}]}"""
         ENDPOINT = "/visualize/image"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -2475,8 +2835,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
+        name = "visualize_image_chart"
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_chart_request","fields":[{"name":"table_name","type":"string"},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"string"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_chart_response","fields":[{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"string"},{"name":"image_data","type":"bytes"},{"name":"axes_info","type":{"type":"map","values":{"type":"array","items":"string"}}}]}"""
+        ENDPOINT = "/visualize/image/chart"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "visualize_image_classbreak"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"cb_column_name1","type":"string"},{"name":"cb_vals1","type":{"type":"array","items":"string"}},{"name":"cb_column_name2","type":{"type":"array","items":"string"}},{"name":"cb_vals2","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"cb_column_name1","type":"string"},{"name":"cb_vals1","type":{"type":"array","items":"string"}},{"name":"cb_column_name2","type":{"type":"array","items":"string"}},{"name":"cb_vals2","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"}]}"""
         ENDPOINT = "/visualize/image/classbreak"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -2494,7 +2863,7 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
         name = "visualize_image_labels"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_labels_request","fields":[{"name":"table_name","type":"string"},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"x_offset","type":"string"},{"name":"y_offset","type":"string"},{"name":"text_string","type":"string"},{"name":"font","type":"string"},{"name":"text_color","type":"string"},{"name":"text_angle","type":"string"},{"name":"text_scale","type":"string"},{"name":"draw_box","type":"string"},{"name":"draw_leader","type":"string"},{"name":"line_width","type":"string"},{"name":"line_color","type":"string"},{"name":"fill_color","type":"string"},{"name":"leader_x_column_name","type":"string"},{"name":"leader_y_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_labels_request","fields":[{"name":"table_name","type":"string"},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"x_offset","type":"string"},{"name":"y_offset","type":"string"},{"name":"text_string","type":"string"},{"name":"font","type":"string"},{"name":"text_color","type":"string"},{"name":"text_angle","type":"string"},{"name":"text_scale","type":"string"},{"name":"draw_box","type":"string"},{"name":"draw_leader","type":"string"},{"name":"line_width","type":"string"},{"name":"line_color","type":"string"},{"name":"fill_color","type":"string"},{"name":"leader_x_column_name","type":"string"},{"name":"leader_y_column_name","type":"string"},{"name":"filter","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_labels_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"}]}"""
         ENDPOINT = "/visualize/image/labels"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -2503,7 +2872,7 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
         name = "visualize_video"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_video_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"time_intervals","type":{"type":"array","items":{"type":"array","items":"double"}}},{"name":"video_style","type":"string"},{"name":"session_key","type":"string"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_video_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"time_intervals","type":{"type":"array","items":{"type":"array","items":"double"}}},{"name":"video_style","type":"string"},{"name":"session_key","type":"string"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_video_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"num_frames","type":"int"},{"name":"session_key","type":"string"},{"name":"data","type":{"type":"array","items":"bytes"}}]}"""
         ENDPOINT = "/visualize/video"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -2522,160 +2891,616 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
     # end load_gpudb_schemas
 
-    # begin admin_delete_node
-    def admin_delete_node( self, rank = None, authorization = None, options = {} ):
-        """"""
+    # begin admin_add_node
+    def admin_add_node( self, host_name = None, gpu_index = None, options = {} ):
+        """Add a new node to the GPUdb cluster. By default this will only add the
+        node to the cluster, but will not be assigned any data shards. Set the
+        *reshard* option to *true* to move some shards from the other nodes in
+        the cluster to this node.
 
-        assert isinstance( rank, (int, long, float)), "admin_delete_node(): Argument 'rank' must be (one) of type(s) '(int, long, float)'; given %s" % type( rank ).__name__
-        assert isinstance( authorization, (str, unicode)), "admin_delete_node(): Argument 'authorization' must be (one) of type(s) '(str, unicode)'; given %s" % type( authorization ).__name__
-        assert isinstance( options, (dict)), "admin_delete_node(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+        Parameters:
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "admin_delete_node" )
+            host_name (str)
+                host name of the node being added to the system.
+
+            gpu_index (int)
+
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **reshard** --
+                  If *true*, then some of the shards from all the existing
+                  nodes will be moved to the new node being added. Note that
+                  for big clusters, this data transfer could be time consuming
+                  and also result in delay in responding to queries for busy
+                  clusters.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            rank (int)
+                number assigned to the newly added rank
+        """
+        assert isinstance( host_name, (basestring)), "admin_add_node(): Argument 'host_name' must be (one) of type(s) '(basestring)'; given %s" % type( host_name ).__name__
+        assert isinstance( gpu_index, (int, long, float)), "admin_add_node(): Argument 'gpu_index' must be (one) of type(s) '(int, long, float)'; given %s" % type( gpu_index ).__name__
+        assert isinstance( options, (dict)), "admin_add_node(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "admin_add_node" )
 
         obj = collections.OrderedDict()
+        obj['host_name'] = host_name
+        obj['gpu_index'] = gpu_index
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/add/node' ) )
+    # end admin_add_node
+
+
+    # begin admin_alter_configuration
+    def admin_alter_configuration( self, config_string = None, options = {} ):
+        """Update the system config file.  Updates to the config file are only
+        permitted when the system is stopped.
+
+        Parameters:
+
+            config_string (str)
+                updated contents of the config file.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            status (str)
+                Default value is an empty dict ( {} ).
+        """
+        assert isinstance( config_string, (basestring)), "admin_alter_configuration(): Argument 'config_string' must be (one) of type(s) '(basestring)'; given %s" % type( config_string ).__name__
+        assert isinstance( options, (dict)), "admin_alter_configuration(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "admin_alter_configuration" )
+
+        obj = collections.OrderedDict()
+        obj['config_string'] = config_string
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/alter/configuration' ) )
+    # end admin_alter_configuration
+
+
+    # begin admin_alter_jobs
+    def admin_alter_jobs( self, job_ids = None, action = None, options = {} ):
+        """Perform the requested action on a list of one or more job(s) .
+        Currently only cancelling filter, aggregate and get records reqeusts
+        are supported. Based on the type of job and the current state of
+        execution, the action may not be successfully executed. The final
+        result of the attempted actions for each specified job is returned in
+        the status array of the response.
+
+        Parameters:
+
+            job_ids (list of ints)
+                Jobs to be modified.  The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
+
+            action (str)
+                Action to be performed on the jobs specified by job_ids.
+                Allowed values are:
+
+                * cancel
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            job_ids (list of ints)
+                Jobs on which the action was performed.
+
+            action (str)
+                Action requested on the jobs.
+
+            status (list of str)
+                Status of the requested action for each job.
+        """
+        job_ids = job_ids if isinstance( job_ids, list ) else ( [] if (job_ids is None) else [ job_ids ] )
+        assert isinstance( action, (basestring)), "admin_alter_jobs(): Argument 'action' must be (one) of type(s) '(basestring)'; given %s" % type( action ).__name__
+        assert isinstance( options, (dict)), "admin_alter_jobs(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "admin_alter_jobs" )
+
+        obj = collections.OrderedDict()
+        obj['job_ids'] = job_ids
+        obj['action'] = action
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/alter/jobs' ) )
+    # end admin_alter_jobs
+
+
+    # begin admin_alter_shards
+    def admin_alter_shards( self, version = None, use_index = None, rank = None, tom
+                            = None, index = None, backup_map_list = None,
+                            backup_map_values = None, options = {} ):
+        """Specify the mapping of the shards to the various ranks in the cluster.
+        In most cases, it should be sufficient to let the system automatically
+        distribute the shards evenly across the available ranks. However, this
+        endpoint can be used to move shards for various administrative reasons,
+        say in case of heterogeneous node clusters.  It should be noted that
+        the system may reassign the shards the when the number of nodes in the
+        cluster changes or the cluster is rebalanced.
+
+        Parameters:
+
+            version (long)
+
+
+            use_index (bool)
+                Set to true when only the shards being moved are specified in
+                the request.  The index must indicate the shards being moved.
+
+            rank (list of ints)
+                node to which the shard will be moved.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            tom (list of ints)
+                Toms to which the shard will be moved.   The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            index (list of ints)
+                the shard which is being moved.  When use_index is set to true,
+                size of this array must equal the size of rank/tom array.  The
+                user can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
+
+            backup_map_list (list of ints)
+                List of rank_tom integers, for which backup toms are defined
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+
+            backup_map_values (list of lists of ints)
+                List of the backup rank_tom(s) for each rank_tom in
+                backup_map_list  The user can provide a single element (which
+                will be automatically promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            version (long)
+
+        """
+        assert isinstance( version, (int, long, float)), "admin_alter_shards(): Argument 'version' must be (one) of type(s) '(int, long, float)'; given %s" % type( version ).__name__
+        assert isinstance( use_index, (bool)), "admin_alter_shards(): Argument 'use_index' must be (one) of type(s) '(bool)'; given %s" % type( use_index ).__name__
+        rank = rank if isinstance( rank, list ) else ( [] if (rank is None) else [ rank ] )
+        tom = tom if isinstance( tom, list ) else ( [] if (tom is None) else [ tom ] )
+        index = index if isinstance( index, list ) else ( [] if (index is None) else [ index ] )
+        backup_map_list = backup_map_list if isinstance( backup_map_list, list ) else ( [] if (backup_map_list is None) else [ backup_map_list ] )
+        backup_map_values = backup_map_values if isinstance( backup_map_values, list ) else ( [] if (backup_map_values is None) else [ backup_map_values ] )
+        assert isinstance( options, (dict)), "admin_alter_shards(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "admin_alter_shards" )
+
+        obj = collections.OrderedDict()
+        obj['version'] = version
+        obj['use_index'] = use_index
         obj['rank'] = rank
-        obj['authorization'] = authorization
-        obj['options'] = options
+        obj['tom'] = tom
+        obj['index'] = index
+        obj['backup_map_list'] = backup_map_list
+        obj['backup_map_values'] = backup_map_values
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/delete/node' )
-    # end admin_delete_node
-
-
-    # begin admin_get_shard_assignments
-    def admin_get_shard_assignments( self, options = {} ):
-        """"""
-
-        assert isinstance( options, (dict)), "admin_get_shard_assignments(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "admin_get_shard_assignments" )
-
-        obj = collections.OrderedDict()
-        obj['options'] = options
-
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/getshardassignments' )
-    # end admin_get_shard_assignments
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/alter/shards' ) )
+    # end admin_alter_shards
 
 
     # begin admin_offline
     def admin_offline( self, offline = None, options = {} ):
-        """Take the system offline. When the system is offline, no user operations can
-        be performed with the exception of a system shutdown."""
+        """Take the system offline. When the system is offline, no user operations
+        can be performed with the exception of a system shutdown.
 
+        Parameters:
+
+            offline (bool)
+                Set to true if desired state is offline.
+                Allowed values are:
+
+                * true
+                * false
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            is_offline (bool)
+                Returns true if the system is offline, or false otherwise.
+        """
         assert isinstance( offline, (bool)), "admin_offline(): Argument 'offline' must be (one) of type(s) '(bool)'; given %s" % type( offline ).__name__
         assert isinstance( options, (dict)), "admin_offline(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "admin_offline" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "admin_offline" )
 
         obj = collections.OrderedDict()
         obj['offline'] = offline
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/offline' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/offline' ) )
     # end admin_offline
 
 
     # begin admin_rebalance
-    def admin_rebalance( self, table_names = None, options = {} ):
-        """"""
+    def admin_rebalance( self, table_names = None, action = None, options = {} ):
+        """Rebalance the cluster so that all the nodes contain approximately equal
+        number of records.  The rebalance will also cause the shards to be (as
+        much as possible) equally distributed across all the ranks. Note that
+        the system may move any shards that were moved by system administrator
+        using :meth:`.admin_alter_shards`
 
-        assert isinstance( table_names, (list)), "admin_rebalance(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
+        Parameters:
+
+            table_names (list of str)
+                Sepcify the tables here if only specific tables have to be
+                rebalanced.  Leave this empty to rebalance all the tables.
+                Note that only the tables which have no primary or shard key
+                can be rebalanced.  The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
+
+            action (str)
+                Specify 'start' to start rebalancing the cluster or 'stop' to
+                prematurely stop a previsouly issued rebalance request.
+                Allowed values are:
+
+                * start
+                * stop
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **reshard** --
+                  If *true*, then all the nodes in the cluster will be assigned
+                  approximately the same number of shards. Note that for big
+                  clusters, this data transfer could be time consuming and also
+                  result in delay in responding to queries for busy clusters.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+        Returns:
+            A dict with the following entries--
+
+            table_names (list of str)
+                Names of the rebalanced tables.
+
+            message (list of str)
+                Error Messages from rebalancing the tables.
+        """
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        assert isinstance( action, (basestring)), "admin_rebalance(): Argument 'action' must be (one) of type(s) '(basestring)'; given %s" % type( action ).__name__
         assert isinstance( options, (dict)), "admin_rebalance(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "admin_rebalance" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "admin_rebalance" )
 
         obj = collections.OrderedDict()
         obj['table_names'] = table_names
-        obj['options'] = options
+        obj['action'] = action
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/rebalance' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/rebalance' ) )
     # end admin_rebalance
 
 
-    # begin admin_set_shard_assignments
-    def admin_set_shard_assignments( self, version = None, partial_reassignment =
-                                     None, shard_assignments_rank = None,
-                                     shard_assignments_tom = None,
-                                     assignment_index = None, options = {} ):
-        """"""
+    # begin admin_remove_node
+    def admin_remove_node( self, rank = None, options = {} ):
+        """Remove a node from the cluster.  Note that this operation could take a
+        long time to complete for big clusters.  The data is transferred to
+        other nodes in the cluster before the node is removed.
 
-        assert isinstance( version, (int, long, float)), "admin_set_shard_assignments(): Argument 'version' must be (one) of type(s) '(int, long, float)'; given %s" % type( version ).__name__
-        assert isinstance( partial_reassignment, (bool)), "admin_set_shard_assignments(): Argument 'partial_reassignment' must be (one) of type(s) '(bool)'; given %s" % type( partial_reassignment ).__name__
-        assert isinstance( shard_assignments_rank, (list)), "admin_set_shard_assignments(): Argument 'shard_assignments_rank' must be (one) of type(s) '(list)'; given %s" % type( shard_assignments_rank ).__name__
-        assert isinstance( shard_assignments_tom, (list)), "admin_set_shard_assignments(): Argument 'shard_assignments_tom' must be (one) of type(s) '(list)'; given %s" % type( shard_assignments_tom ).__name__
-        assert isinstance( assignment_index, (list)), "admin_set_shard_assignments(): Argument 'assignment_index' must be (one) of type(s) '(list)'; given %s" % type( assignment_index ).__name__
-        assert isinstance( options, (dict)), "admin_set_shard_assignments(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+        Parameters:
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "admin_set_shard_assignments" )
+            rank (int)
+                Rank number of the node being removed from the cluster.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **reshard** --
+                  When *true*, then the shards from nodes will be moved to the
+                  other nodes in the cluster. When false, then the node will
+                  only be removed from the cluster if the node does not contain
+                  any data shards, otherwise an error is returned.  Note that
+                  for big clusters, this data transfer could be time consuming
+                  and also result in delay in responding to queries for busy
+                  clusters.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **force** --
+                  When *true*, the rank is immediately shutdown and removed
+                  from the cluster.  This will result in loss of any data that
+                  is present in the node at the time of the request.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            rank (int)
+                Node that was removed from the cluster.
+        """
+        assert isinstance( rank, (int, long, float)), "admin_remove_node(): Argument 'rank' must be (one) of type(s) '(int, long, float)'; given %s" % type( rank ).__name__
+        assert isinstance( options, (dict)), "admin_remove_node(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "admin_remove_node" )
 
         obj = collections.OrderedDict()
-        obj['version'] = version
-        obj['partial_reassignment'] = partial_reassignment
-        obj['shard_assignments_rank'] = shard_assignments_rank
-        obj['shard_assignments_tom'] = shard_assignments_tom
-        obj['assignment_index'] = assignment_index
-        obj['options'] = options
+        obj['rank'] = rank
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/setshardassignments' )
-    # end admin_set_shard_assignments
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/remove/node' ) )
+    # end admin_remove_node
+
+
+    # begin admin_show_configuration
+    def admin_show_configuration( self, options = {} ):
+        """Show the current system configuration file.
+
+        Parameters:
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            config_string (str)
+                contents of the file
+        """
+        assert isinstance( options, (dict)), "admin_show_configuration(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "admin_show_configuration" )
+
+        obj = collections.OrderedDict()
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/show/configuration' ) )
+    # end admin_show_configuration
+
+
+    # begin admin_show_jobs
+    def admin_show_jobs( self, options = {} ):
+        """Get a list of the current jobs in GPUdb.
+
+        Parameters:
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * show_details
+
+        Returns:
+            A dict with the following entries--
+
+            job_id (list of ints)
+
+
+            status (list of str)
+
+
+            endpoint_name (list of str)
+
+
+            time_received (list of longs)
+
+
+            auth_id (list of str)
+
+
+            user_data (list of str)
+
+        """
+        assert isinstance( options, (dict)), "admin_show_jobs(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "admin_show_jobs" )
+
+        obj = collections.OrderedDict()
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/show/jobs' ) )
+    # end admin_show_jobs
+
+
+    # begin admin_show_shards
+    def admin_show_shards( self, options = {} ):
+        """Show the mapping of shards to the corresponding rank and tom.  The
+        response message contains list of 16384 (total number of shards in the
+        system) Rank and TOM numbers corresponding to each shard.
+
+        Parameters:
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            version (long)
+                Current shard array version number.
+
+            rank (list of ints)
+                Array of ranks indexed by the shard number.
+
+            tom (list of ints)
+                Array of toms to which the corresponding shard belongs.
+        """
+        assert isinstance( options, (dict)), "admin_show_shards(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "admin_show_shards" )
+
+        obj = collections.OrderedDict()
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/show/shards' ) )
+    # end admin_show_shards
 
 
     # begin admin_shutdown
     def admin_shutdown( self, exit_type = None, authorization = None, options = {}
                         ):
-        """Exits the database server application."""
+        """Exits the database server application.
 
-        assert isinstance( exit_type, (str, unicode)), "admin_shutdown(): Argument 'exit_type' must be (one) of type(s) '(str, unicode)'; given %s" % type( exit_type ).__name__
-        assert isinstance( authorization, (str, unicode)), "admin_shutdown(): Argument 'authorization' must be (one) of type(s) '(str, unicode)'; given %s" % type( authorization ).__name__
+        Parameters:
+
+            exit_type (str)
+                Reserved for future use. User can pass an empty string.
+
+            authorization (str)
+                No longer used. User can pass an empty string.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            exit_status (str)
+                'OK' upon (right before) successful exit.
+        """
+        assert isinstance( exit_type, (basestring)), "admin_shutdown(): Argument 'exit_type' must be (one) of type(s) '(basestring)'; given %s" % type( exit_type ).__name__
+        assert isinstance( authorization, (basestring)), "admin_shutdown(): Argument 'authorization' must be (one) of type(s) '(basestring)'; given %s" % type( authorization ).__name__
         assert isinstance( options, (dict)), "admin_shutdown(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "admin_shutdown" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "admin_shutdown" )
 
         obj = collections.OrderedDict()
         obj['exit_type'] = exit_type
         obj['authorization'] = authorization
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/shutdown' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/shutdown' ) )
     # end admin_shutdown
 
 
     # begin admin_verify_db
     def admin_verify_db( self, options = {} ):
-        """Verify database is in a consistent state.  When inconsistencies or errors are
-        found, the verified_ok flag in the response is set to false and the list
-        of errors found is provided in the error_list."""
+        """Verify database is in a consistent state.  When inconsistencies or
+        errors are found, the verified_ok flag in the response is set to false
+        and the list of errors found is provided in the error_list.
 
+        Parameters:
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * rebuild_on_error
+                * verify_persist
+
+        Returns:
+            A dict with the following entries--
+
+            verified_ok (bool)
+                True if no errors were found, false otherwise.  Default value
+                is 'false'.
+
+            error_list (list of str)
+                List of errors found while validating the database internal
+                state.  Default value is an empty list ( [] ).
+        """
         assert isinstance( options, (dict)), "admin_verify_db(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "admin_verify_db" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "admin_verify_db" )
 
         obj = collections.OrderedDict()
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/verifydb' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/verifydb' ) )
     # end admin_verify_db
 
 
     # begin aggregate_convex_hull
     def aggregate_convex_hull( self, table_name = None, x_column_name = None,
                                y_column_name = None, options = {} ):
-        """Calculates and returns the convex hull for the values in a table specified by
-        input parameter *table_name*."""
+        """Calculates and returns the convex hull for the values in a table
+        specified by input parameter *table_name*.
 
-        assert isinstance( table_name, (str, unicode)), "aggregate_convex_hull(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( x_column_name, (str, unicode)), "aggregate_convex_hull(): Argument 'x_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( x_column_name ).__name__
-        assert isinstance( y_column_name, (str, unicode)), "aggregate_convex_hull(): Argument 'y_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( y_column_name ).__name__
+        Parameters:
+
+            table_name (str)
+                Name of Table on which the operation will be performed. Must be
+                an existing table.  It can not be a collection.
+
+            x_column_name (str)
+                Name of the column containing the x coordinates of the points
+                for the operation being performed.
+
+            y_column_name (str)
+                Name of the column containing the y coordinates of the points
+                for the operation being performed.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            x_vector (list of floats)
+                Array of x coordinates of the resulting convex set.
+
+            y_vector (list of floats)
+                Array of y coordinates of the resulting convex set.
+
+            count (int)
+                Count of the number of points in the convex set.
+
+            is_valid (bool)
+
+        """
+        assert isinstance( table_name, (basestring)), "aggregate_convex_hull(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( x_column_name, (basestring)), "aggregate_convex_hull(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
+        assert isinstance( y_column_name, (basestring)), "aggregate_convex_hull(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
         assert isinstance( options, (dict)), "aggregate_convex_hull(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "aggregate_convex_hull" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "aggregate_convex_hull" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
         obj['x_column_name'] = x_column_name
         obj['y_column_name'] = y_column_name
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/aggregate/convexhull' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/aggregate/convexhull' ) )
     # end aggregate_convex_hull
 
 
@@ -2683,36 +3508,209 @@ class GPUdb(object):
     def aggregate_group_by( self, table_name = None, column_names = None, offset =
                             None, limit = 1000, encoding = 'binary', options =
                             {} ):
-        """Calculates unique combinations (groups) of values for the given columns in a
-        given table/view/collection and computes aggregates on each unique
+        """Calculates unique combinations (groups) of values for the given columns
+        in a given table/view/collection and computes aggregates on each unique
         combination. This is somewhat analogous to an SQL-style SELECT...GROUP
-        BY. Any column(s) can be grouped on, but only non-string (i.e. numeric)
-        columns may be used for computing aggregates. The results can be paged
-        via the input parameter *offset* and input parameter *limit* parameters.
-        For example, to get 10 groups with the largest counts the inputs would
-        be: limit=10, options={"sort_order":"descending", "sort_by":"value"}.
-        Input parameter *options* can be used to customize behavior of this call
-        e.g. filtering or sorting the results. To group by 'x' and 'y' and
-        compute the number of objects within each group, use
-        column_names=['x','y','count(*)'].  To also compute the sum of 'z' over
-        each group, use column_names=['x','y','count(*)','sum(z)']. Available
-        aggregation functions are: 'count(*)', 'sum', 'min', 'max', 'avg',
-        'mean', 'stddev', 'stddev_pop', 'stddev_samp', 'var', 'var_pop',
-        'var_samp', 'arg_min', 'arg_max' and 'count_distinct'. The response is
-        returned as a dynamic schema. For details see: `dynamic schemas
-        documentation <../../concepts/dynamic_schemas.html>`_. If the
-        *result_table* option is provided then the results are stored in a table
-        with the name given in the option and the results are not returned in
-        the response."""
+        BY.
 
-        assert isinstance( table_name, (str, unicode)), "aggregate_group_by(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( column_names, (list)), "aggregate_group_by(): Argument 'column_names' must be (one) of type(s) '(list)'; given %s" % type( column_names ).__name__
+        Any column(s) can be grouped on, and all column types except
+        unrestricted-length strings may be used for computing applicable
+        aggregates.
+
+        The results can be paged via the input parameter *offset* and input
+        parameter *limit* parameters. For example, to get 10 groups with the
+        largest counts the inputs would be: limit=10,
+        options={"sort_order":"descending", "sort_by":"value"}.
+
+        Input parameter *options* can be used to customize behavior of this
+        call e.g. filtering or sorting the results.
+
+        To group by columns 'x' and 'y' and compute the number of objects
+        within each group, use:  column_names=['x','y','count(*)'].
+
+        To also compute the sum of 'z' over each group, use:
+        column_names=['x','y','count(*)','sum(z)'].
+
+        Available `aggregation functions
+        <../../../concepts/expressions.html#aggregate-expressions>`_ are:
+        count(*), sum, min, max, avg, mean, stddev, stddev_pop, stddev_samp,
+        var, var_pop, var_samp, arg_min, arg_max and count_distinct.
+
+        The response is returned as a dynamic schema. For details see: `dynamic
+        schemas documentation <../../../concepts/dynamic_schemas.html>`_.
+
+        If a *result_table* name is specified in the options, the results are
+        stored in a new table with that name.  No results are returned in the
+        response.  If the source table's `shard key
+        <../../../concepts/tables.html#shard-keys>`_ is used as the grouping
+        column(s), the result table will be sharded, in all other cases it will
+        be replicated.  Sorting will properly function only if the result table
+        is replicated or if there is only one processing node and should not be
+        relied upon in other cases.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table on which the operation will be performed.
+                Must be an existing table/view/collection.
+
+            column_names (list of str)
+                List of one or more column names, expressions, and aggregate
+                expressions. Must include at least one 'grouping' column or
+                expression.  If no aggregate is included, count(*) will be
+                computed as a default.  The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
+
+            offset (long)
+                A positive integer indicating the number of initial results to
+                skip (this can be useful for paging through the results).  The
+                minimum allowed value is 0. The maximum allowed value is
+                MAX_INT.
+
+            limit (long)
+                A positive integer indicating the maximum number of results to
+                be returned Or END_OF_SET (-9999) to indicate that the max
+                number of results should be returned.  Default value is 1000.
+
+            encoding (str)
+                Specifies the encoding for returned records.  Default value is
+                'binary'.
+                Allowed values are:
+
+                * **binary** --
+                  Indicates that the returned records should be binary encoded.
+
+                * **json** --
+                  Indicates that the returned records should be json encoded.
+
+                  The default value is 'binary'.
+
+            options (dict of str to str)
+                  Optional parameters.  Default value is an empty dict ( {} ).
+                  Allowed keys are:
+
+                  * **collection_name** --
+                    Name of a collection which is to contain the table
+                    specified in *result_table*, otherwise the table will be a
+                    top-level table. If the collection does not allow duplicate
+                    types and it contains a table of the same type as the given
+                    one, then this table creation request will fail.
+                    Additionally this option is invalid if input parameter
+                    *table_name* is a collection.
+
+                  * **expression** --
+                    Filter expression to apply to the table prior to computing
+                    the aggregate group by.
+
+                  * **having** --
+                    Filter expression to apply to the aggregated results.
+
+                  * **sort_order** --
+                    String indicating how the returned values should be sorted
+                    - ascending or descending.
+                    Allowed values are:
+
+                    * **ascending** --
+                      Indicates that the returned values should be sorted in
+                      ascending order.
+
+                    * **descending** --
+                      Indicates that the returned values should be sorted in
+                      descending order.
+
+                      The default value is 'ascending'.
+
+                  * **sort_by** --
+                    String determining how the results are sorted.
+                    Allowed values are:
+
+                    * **key** --
+                      Indicates that the returned values should be sorted by
+                      key, which corresponds to the grouping columns. If you
+                      have multiple grouping columns (and are sorting by key),
+                      it will first sort the first grouping column, then the
+                      second grouping column, etc.
+
+                    * **value** --
+                      Indicates that the returned values should be sorted by
+                      value, which corresponds to the aggregates. If you have
+                      multiple aggregates (and are sorting by value), it will
+                      first sort by the first aggregate, then the second
+                      aggregate, etc.
+
+                      The default value is 'key'.
+
+                  * **result_table** --
+                    The name of the table used to store the results. Has the
+                    same naming restrictions as `tables
+                    <../../../concepts/tables.html>`_. Column names (group-by
+                    and aggregate fields) need to be given aliases e.g.
+                    ["FChar256 as fchar256", "sum(FDouble) as sfd"].  If
+                    present, no results are returned in the response.  This
+                    option is not available if one of the grouping attributes
+                    is an unrestricted string (i.e.; not charN) type.
+
+                  * **result_table_persist** --
+                    If *true* then the result table specified in
+                    {result_table}@{key of input.options} will be persisted as
+                    a regular table (it will not be automatically cleared
+                    unless a *ttl* is provided, and the table data can be
+                    modified in subsequent operations). If *false* (the
+                    default) then the result table will be a read-only,
+                    memory-only temporary table.
+                    Allowed values are:
+
+                    * true
+                    * false
+
+                    The default value is 'false'.
+
+                  * **result_table_force_replicated** --
+                    Force the result table to be replicated (ignores any
+                    sharding). Must be used in combination with the
+                    *result_table* option.
+
+                  * **result_table_generate_pk** --
+                    If 'true' then set a primary key for the result table. Must
+                    be used in combination with the *result_table* option.
+
+                  * **ttl** --
+                    Sets the TTL of the table specified in *result_table*. The
+                    value must be the desired TTL in minutes.
+
+                  * **chunk_size** --
+                    If provided this indicates the chunk size to be used for
+                    the result table. Must be used in combination with the
+                    *result_table* option.
+
+        Returns:
+            A dict with the following entries--
+
+            response_schema_str (str)
+                Avro schema of output parameter *binary_encoded_response* or
+                output parameter *json_encoded_response*.
+
+            binary_encoded_response (str)
+                Avro binary encoded response.
+
+            json_encoded_response (str)
+                Avro JSON encoded response.
+
+            total_number_of_records (long)
+                Total/Filtered number of records.
+
+            has_more_records (bool)
+                Too many records. Returned a partial set.
+        """
+        assert isinstance( table_name, (basestring)), "aggregate_group_by(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        column_names = column_names if isinstance( column_names, list ) else ( [] if (column_names is None) else [ column_names ] )
         assert isinstance( offset, (int, long, float)), "aggregate_group_by(): Argument 'offset' must be (one) of type(s) '(int, long, float)'; given %s" % type( offset ).__name__
         assert isinstance( limit, (int, long, float)), "aggregate_group_by(): Argument 'limit' must be (one) of type(s) '(int, long, float)'; given %s" % type( limit ).__name__
-        assert isinstance( encoding, (str, unicode)), "aggregate_group_by(): Argument 'encoding' must be (one) of type(s) '(str, unicode)'; given %s" % type( encoding ).__name__
+        assert isinstance( encoding, (basestring)), "aggregate_group_by(): Argument 'encoding' must be (one) of type(s) '(basestring)'; given %s" % type( encoding ).__name__
         assert isinstance( options, (dict)), "aggregate_group_by(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "aggregate_group_by" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "aggregate_group_by" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
@@ -2720,33 +3718,75 @@ class GPUdb(object):
         obj['offset'] = offset
         obj['limit'] = limit
         obj['encoding'] = encoding
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/aggregate/groupby' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/aggregate/groupby' ) )
     # end aggregate_group_by
 
 
     # begin aggregate_histogram
     def aggregate_histogram( self, table_name = None, column_name = None, start =
                              None, end = None, interval = None, options = {} ):
-        """Performs a histogram calculation given a table, a column, and an interval
-        function. The input parameter *interval* is used to produce bins of that
-        size and the result, computed over the records falling within each bin,
-        is returned.  For each bin, the start value is inclusive, but the end
-        value is exclusive--except for the very last bin for which the end value
-        is also inclusive.  The value returned for each bin is the number of
-        records in it, except when a column name is provided as a *value_column*
-        in input parameter *options*.  In this latter case the sum of the values
-        corresponding to the *value_column* is used as the result instead."""
+        """Performs a histogram calculation given a table, a column, and an
+        interval function. The input parameter *interval* is used to produce
+        bins of that size and the result, computed over the records falling
+        within each bin, is returned.  For each bin, the start value is
+        inclusive, but the end value is exclusive--except for the very last bin
+        for which the end value is also inclusive.  The value returned for each
+        bin is the number of records in it, except when a column name is
+        provided as a *value_column* in input parameter *options*.  In this
+        latter case the sum of the values corresponding to the *value_column*
+        is used as the result instead.
 
-        assert isinstance( table_name, (str, unicode)), "aggregate_histogram(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( column_name, (str, unicode)), "aggregate_histogram(): Argument 'column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( column_name ).__name__
+        Parameters:
+
+            table_name (str)
+                Name of the table on which the operation will be performed.
+                Must be an existing table or collection.
+
+            column_name (str)
+                Name of a column or an expression of one or more column names
+                over which the histogram will be calculated.
+
+            start (float)
+                Lower end value of the histogram interval, inclusive.
+
+            end (float)
+                Upper end value of the histogram interval, inclusive.
+
+            interval (float)
+                The size of each bin within the start and end parameters.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **value_column** --
+                  The name of the column to use when calculating the bin values
+                  (values are summed).  The column must be a numerical type
+                  (int, double, long, float).
+
+        Returns:
+            A dict with the following entries--
+
+            counts (list of floats)
+                The array of calculated values that represents the histogram
+                data points.
+
+            start (float)
+                Value of input parameter *start*.
+
+            end (float)
+                Value of input parameter *end*.
+        """
+        assert isinstance( table_name, (basestring)), "aggregate_histogram(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( column_name, (basestring)), "aggregate_histogram(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
         assert isinstance( start, (int, long, float)), "aggregate_histogram(): Argument 'start' must be (one) of type(s) '(int, long, float)'; given %s" % type( start ).__name__
         assert isinstance( end, (int, long, float)), "aggregate_histogram(): Argument 'end' must be (one) of type(s) '(int, long, float)'; given %s" % type( end ).__name__
         assert isinstance( interval, (int, long, float)), "aggregate_histogram(): Argument 'interval' must be (one) of type(s) '(int, long, float)'; given %s" % type( interval ).__name__
         assert isinstance( options, (dict)), "aggregate_histogram(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "aggregate_histogram" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "aggregate_histogram" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
@@ -2754,9 +3794,9 @@ class GPUdb(object):
         obj['start'] = start
         obj['end'] = end
         obj['interval'] = interval
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/aggregate/histogram' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/aggregate/histogram' ) )
     # end aggregate_histogram
 
 
@@ -2770,84 +3810,317 @@ class GPUdb(object):
         minimized.  The k-means algorithm however does not necessarily produce
         such an ideal cluster.   It begins with a randomly selected set of k
         points and then refines the location of the points iteratively and
-        settles to a local minimum.  Various parameters and options are provided
-        to control the heuristic search."""
+        settles to a local minimum.  Various parameters and options are
+        provided to control the heuristic search.
 
-        assert isinstance( table_name, (str, unicode)), "aggregate_k_means(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( column_names, (list)), "aggregate_k_means(): Argument 'column_names' must be (one) of type(s) '(list)'; given %s" % type( column_names ).__name__
+        Parameters:
+
+            table_name (str)
+                Name of the table on which the operation will be performed.
+                Must be an existing table or collection.
+
+            column_names (list of str)
+                List of column names on which the operation would be performed.
+                If n columns are provided then each of the k result points will
+                have n dimensions corresponding to the n columns.  The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
+
+            k (int)
+                The number of mean points to be determined by the algorithm.
+
+            tolerance (float)
+                Stop iterating when the distances between successive points is
+                less than the given tolerance.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **whiten** --
+                  When set to 1 each of the columns is first normalized by its
+                  stdv - default is not to whiten.
+
+                * **max_iters** --
+                  Number of times to try to hit the tolerance limit before
+                  giving up - default is 10.
+
+                * **num_tries** --
+                  Number of times to run the k-means algorithm with a different
+                  randomly selected starting points - helps avoid local
+                  minimum. Default is 1.
+
+        Returns:
+            A dict with the following entries--
+
+            means (list of lists of floats)
+                The k-mean values found.
+
+            counts (list of longs)
+                The number of elements in the cluster closest the corresponding
+                k-means values.
+
+            rms_dists (list of floats)
+                The root mean squared distance of the elements in the cluster
+                for each of the k-means values.
+
+            count (long)
+                The total count of all the clusters - will be the size of the
+                input table.
+
+            rms_dist (float)
+                The sum of all the rms_dists - the value the k-means algorithm
+                is attempting to minimize.
+
+            tolerance (float)
+                The distance between the last two iterations of the algorithm
+                before it quit.
+
+            num_iters (int)
+                The number of iterations the algorithm executed before it quit.
+        """
+        assert isinstance( table_name, (basestring)), "aggregate_k_means(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        column_names = column_names if isinstance( column_names, list ) else ( [] if (column_names is None) else [ column_names ] )
         assert isinstance( k, (int, long, float)), "aggregate_k_means(): Argument 'k' must be (one) of type(s) '(int, long, float)'; given %s" % type( k ).__name__
         assert isinstance( tolerance, (int, long, float)), "aggregate_k_means(): Argument 'tolerance' must be (one) of type(s) '(int, long, float)'; given %s" % type( tolerance ).__name__
         assert isinstance( options, (dict)), "aggregate_k_means(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "aggregate_k_means" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "aggregate_k_means" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
         obj['column_names'] = column_names
         obj['k'] = k
         obj['tolerance'] = tolerance
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/aggregate/kmeans' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/aggregate/kmeans' ) )
     # end aggregate_k_means
 
 
     # begin aggregate_min_max
     def aggregate_min_max( self, table_name = None, column_name = None, options = {}
                            ):
-        """Calculates and returns the minimum and maximum values of a particular column
-        in a table."""
+        """Calculates and returns the minimum and maximum values of a particular
+        column in a table.
 
-        assert isinstance( table_name, (str, unicode)), "aggregate_min_max(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( column_name, (str, unicode)), "aggregate_min_max(): Argument 'column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( column_name ).__name__
+        Parameters:
+
+            table_name (str)
+                Name of the table on which the operation will be performed.
+                Must be an existing table.
+
+            column_name (str)
+                Name of a column or an expression of one or more column on
+                which the min-max will be calculated.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            min (float)
+                Minimum value of the input parameter *column_name*.
+
+            max (float)
+                Maximum value of the input parameter *column_name*.
+        """
+        assert isinstance( table_name, (basestring)), "aggregate_min_max(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( column_name, (basestring)), "aggregate_min_max(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
         assert isinstance( options, (dict)), "aggregate_min_max(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "aggregate_min_max" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "aggregate_min_max" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
         obj['column_name'] = column_name
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/aggregate/minmax' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/aggregate/minmax' ) )
     # end aggregate_min_max
+
+
+    # begin aggregate_min_max_geometry
+    def aggregate_min_max_geometry( self, table_name = None, column_name = None,
+                                    options = {} ):
+        """Calculates and returns the minimum and maximum x- and y-coordinates of
+        a particular geospatial geometry column in a table.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table on which the operation will be performed.
+                Must be an existing table.
+
+            column_name (str)
+                Name of a geospatial geometry column on which the min-max will
+                be calculated.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            min_x (float)
+                Minimum x-coordinate value of the input parameter
+                *column_name*.
+
+            max_x (float)
+                Maximum x-coordinate value of the input parameter
+                *column_name*.
+
+            min_y (float)
+                Minimum y-coordinate value of the input parameter
+                *column_name*.
+
+            max_y (float)
+                Maximum y-coordinate value of the input parameter
+                *column_name*.
+        """
+        assert isinstance( table_name, (basestring)), "aggregate_min_max_geometry(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( column_name, (basestring)), "aggregate_min_max_geometry(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
+        assert isinstance( options, (dict)), "aggregate_min_max_geometry(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "aggregate_min_max_geometry" )
+
+        obj = collections.OrderedDict()
+        obj['table_name'] = table_name
+        obj['column_name'] = column_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/aggregate/minmax/geometry' ) )
+    # end aggregate_min_max_geometry
 
 
     # begin aggregate_statistics
     def aggregate_statistics( self, table_name = None, column_name = None, stats =
                               None, options = {} ):
-        """Calculates the requested statistics of a given column in a given table.   The
-        available statistics are count (number of total objects), mean, stdv
-        (standard deviation), variance, skew, kurtosis, sum, min, max,
-        weighted_average, cardinality (unique count), estimated cardinality,
-        percentile and percentile_rank.   Estimated cardinality is calculated by
-        using the hyperloglog approximation technique.   Percentiles and
-        percentile_ranks are approximate and are calculated using the t-digest
-        algorithm. They must include the desired percentile/percentile_rank. To
-        compute multiple percentiles each value must be specified separately
-        (i.e. 'percentile(75.0),percentile(99.0),percentile_rank(1234.56),percen
-        tile_rank(-5)').   The weighted average statistic requires a
-        weight_attribute to be specified in input parameter *options*. The
-        weighted average is then defined as the sum of the products of input
-        parameter *column_name* times the weight attribute divided by the sum of
-        the weight attribute.   The response includes a list of the statistics
-        requested along with the count of the number of items in the given
-        set."""
+        """Calculates the requested statistics of a given column in a given table.
 
-        assert isinstance( table_name, (str, unicode)), "aggregate_statistics(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( column_name, (str, unicode)), "aggregate_statistics(): Argument 'column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( column_name ).__name__
-        assert isinstance( stats, (str, unicode)), "aggregate_statistics(): Argument 'stats' must be (one) of type(s) '(str, unicode)'; given %s" % type( stats ).__name__
+        The available statistics are count (number of total objects), mean,
+        stdv (standard deviation), variance, skew, kurtosis, sum,
+        sum_of_squares, min, max, weighted_average, cardinality (unique count),
+        estimated cardinality, percentile and percentile_rank.
+
+        Estimated cardinality is calculated by using the hyperloglog
+        approximation technique.
+
+        Percentiles and percentile_ranks are approximate and are calculated
+        using the t-digest algorithm. They must include the desired
+        percentile/percentile_rank. To compute multiple percentiles each value
+        must be specified separately (i.e.
+        'percentile(75.0),percentile(99.0),percentile_rank(1234.56),percentile_rank(-5)').
+
+        The weighted average statistic requires a weight_attribute to be
+        specified in input parameter *options*. The weighted average is then
+        defined as the sum of the products of input parameter *column_name*
+        times the weight attribute divided by the sum of the weight attribute.
+
+        The response includes a list of the statistics requested along with the
+        count of the number of items in the given set.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table on which the statistics operation will be
+                performed.
+
+            column_name (str)
+                Name of the column for which the statistics are to be
+                calculated.
+
+            stats (str)
+                Comma separated list of the statistics to calculate, e.g.
+                "sum,mean".
+                Allowed values are:
+
+                * **count** --
+                  Number of objects (independent of the given column).
+
+                * **mean** --
+                  Arithmetic mean (average), equivalent to sum/count.
+
+                * **stdv** --
+                  Sample standard deviation (denominator is count-1).
+
+                * **variance** --
+                  Unbiased sample variance (denominator is count-1).
+
+                * **skew** --
+                  Skewness (third standardized moment).
+
+                * **kurtosis** --
+                  Kurtosis (fourth standardized moment).
+
+                * **sum** --
+                  Sum of all values in the column.
+
+                * **sum_of_squares** --
+                  Sum of the squares of all values in the column.
+
+                * **min** --
+                  Minimum value of the column.
+
+                * **max** --
+                  Maximum value of the column.
+
+                * **weighted_average** --
+                  Weighted arithmetic mean (using the option
+                  'weight_column_name' as the weighting column).
+
+                * **cardinality** --
+                  Number of unique values in the column.
+
+                * **estimated_cardinality** --
+                  Estimate (via hyperloglog technique) of the number of unique
+                  values in the column.
+
+                * **percentile** --
+                  Estimate (via t-digest) of the given percentile of the column
+                  (percentile(50.0) will be an approximation of the median).
+
+                * **percentile_rank** --
+                  Estimate (via t-digest) of the percentile rank of the given
+                  value in the column (if the given value is the median of the
+                  column, percentile_rank([median]) will return approximately
+                  50.0).
+
+            options (dict of str to str)
+                  Optional parameters.  Default value is an empty dict ( {} ).
+                  Allowed keys are:
+
+                  * **additional_column_names** --
+                    A list of comma separated column names over which
+                    statistics can be accumulated along with the primary
+                    column.
+
+                  * **weight_column_name** --
+                    Name of column used as weighting attribute for the weighted
+                    average statistic.
+
+        Returns:
+            A dict with the following entries--
+
+            stats (dict of str to floats)
+                (statistic name, double value) pairs of the requested
+                statistics, including the total count by default.
+        """
+        assert isinstance( table_name, (basestring)), "aggregate_statistics(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( column_name, (basestring)), "aggregate_statistics(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
+        assert isinstance( stats, (basestring)), "aggregate_statistics(): Argument 'stats' must be (one) of type(s) '(basestring)'; given %s" % type( stats ).__name__
         assert isinstance( options, (dict)), "aggregate_statistics(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "aggregate_statistics" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "aggregate_statistics" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
         obj['column_name'] = column_name
         obj['stats'] = stats
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/aggregate/statistics' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/aggregate/statistics' ) )
     # end aggregate_statistics
 
 
@@ -2856,39 +4129,105 @@ class GPUdb(object):
                                        '', column_name = None, value_column_name
                                        = None, stats = None, start = None, end =
                                        None, interval = None, options = {} ):
-        """Divides the given set into bins and calculates statistics of the values of a
-        value-column in each bin.  The bins are based on the values of a given
-        binning-column.  The statistics that may be requested are mean, stdv
-        (standard deviation), variance, skew, kurtosis, sum, min, max, first,
-        last and weighted average. In addition to the requested statistics the
-        count of total samples in each bin is returned. This counts vector is
-        just the histogram of the column used to divide the set members into
-        bins. The weighted average statistic requires a weight_column to be
-        specified in input parameter *options*. The weighted average is then
-        defined as the sum of the products of the value column times the weight
-        column divided by the sum of the weight column.  There are two methods
-        for binning the set members. In the first, which can be used for numeric
-        valued binning-columns, a min, max and interval are specified. The
-        number of bins, nbins, is the integer upper bound of (max-min)/interval.
-        Values that fall in the range [min+n\*interval,min+(n+1)\*interval) are
-        placed in the nth bin where n ranges from 0..nbin-2. The final bin is
-        [min+(nbin-1)\*interval,max]. In the second method, input parameter
-        *options* bin_values specifies a list of binning column values. Binning-
-        columns whose value matches the nth member of the bin_values list are
-        placed in the nth bin. When a list is provided the binning-column must
-        be of type string or int."""
+        """Divides the given set into bins and calculates statistics of the values
+        of a value-column in each bin.  The bins are based on the values of a
+        given binning-column.  The statistics that may be requested are mean,
+        stdv (standard deviation), variance, skew, kurtosis, sum, min, max,
+        first, last and weighted average. In addition to the requested
+        statistics the count of total samples in each bin is returned. This
+        counts vector is just the histogram of the column used to divide the
+        set members into bins. The weighted average statistic requires a
+        weight_column to be specified in input parameter *options*. The
+        weighted average is then defined as the sum of the products of the
+        value column times the weight column divided by the sum of the weight
+        column.
 
-        assert isinstance( table_name, (str, unicode)), "aggregate_statistics_by_range(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( select_expression, (str, unicode)), "aggregate_statistics_by_range(): Argument 'select_expression' must be (one) of type(s) '(str, unicode)'; given %s" % type( select_expression ).__name__
-        assert isinstance( column_name, (str, unicode)), "aggregate_statistics_by_range(): Argument 'column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( column_name ).__name__
-        assert isinstance( value_column_name, (str, unicode)), "aggregate_statistics_by_range(): Argument 'value_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( value_column_name ).__name__
-        assert isinstance( stats, (str, unicode)), "aggregate_statistics_by_range(): Argument 'stats' must be (one) of type(s) '(str, unicode)'; given %s" % type( stats ).__name__
+        There are two methods for binning the set members. In the first, which
+        can be used for numeric valued binning-columns, a min, max and interval
+        are specified. The number of bins, nbins, is the integer upper bound of
+        (max-min)/interval. Values that fall in the range
+        [min+n\*interval,min+(n+1)\*interval) are placed in the nth bin where n
+        ranges from 0..nbin-2. The final bin is [min+(nbin-1)\*interval,max].
+        In the second method, input parameter *options* bin_values specifies a
+        list of binning column values. Binning-columns whose value matches the
+        nth member of the bin_values list are placed in the nth bin. When a
+        list is provided the binning-column must be of type string or int.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table on which the ranged-statistics operation will
+                be performed.
+
+            select_expression (str)
+                For a non-empty expression statistics are calculated for those
+                records for which the expression is true.  Default value is ''.
+
+            column_name (str)
+                Name of the binning-column used to divide the set samples into
+                bins.
+
+            value_column_name (str)
+                Name of the value-column for which statistics are to be
+                computed.
+
+            stats (str)
+                A string of comma separated list of the statistics to
+                calculate, e.g. 'sum,mean'. Available statistics: mean, stdv
+                (standard deviation), variance, skew, kurtosis, sum.
+
+            start (float)
+                The lower bound of the binning-column.
+
+            end (float)
+                The upper bound of the binning-column.
+
+            interval (float)
+                The interval of a bin. Set members fall into bin i if the
+                binning-column falls in the range [start+interval``*``i,
+                start+interval``*``(i+1)).
+
+            options (dict of str to str)
+                Map of optional parameters:  Default value is an empty dict (
+                {} ).
+                Allowed keys are:
+
+                * **additional_column_names** --
+                  A list of comma separated value-column names over which
+                  statistics can be accumulated along with the primary
+                  value_column.
+
+                * **bin_values** --
+                  A list of comma separated binning-column values. Values that
+                  match the nth bin_values value are placed in the nth bin.
+
+                * **weight_column_name** --
+                  Name of the column used as weighting column for the
+                  weighted_average statistic.
+
+                * **order_column_name** --
+                  Name of the column used for candlestick charting techniques.
+
+        Returns:
+            A dict with the following entries--
+
+            stats (dict of str to lists of floats)
+                A map with a key for each statistic in the stats input
+                parameter having a value that is a vector of the corresponding
+                value-column bin statistics. In a addition the key count has a
+                value that is a histogram of the binning-column.
+        """
+        assert isinstance( table_name, (basestring)), "aggregate_statistics_by_range(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( select_expression, (basestring)), "aggregate_statistics_by_range(): Argument 'select_expression' must be (one) of type(s) '(basestring)'; given %s" % type( select_expression ).__name__
+        assert isinstance( column_name, (basestring)), "aggregate_statistics_by_range(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
+        assert isinstance( value_column_name, (basestring)), "aggregate_statistics_by_range(): Argument 'value_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( value_column_name ).__name__
+        assert isinstance( stats, (basestring)), "aggregate_statistics_by_range(): Argument 'stats' must be (one) of type(s) '(basestring)'; given %s" % type( stats ).__name__
         assert isinstance( start, (int, long, float)), "aggregate_statistics_by_range(): Argument 'start' must be (one) of type(s) '(int, long, float)'; given %s" % type( start ).__name__
         assert isinstance( end, (int, long, float)), "aggregate_statistics_by_range(): Argument 'end' must be (one) of type(s) '(int, long, float)'; given %s" % type( end ).__name__
         assert isinstance( interval, (int, long, float)), "aggregate_statistics_by_range(): Argument 'interval' must be (one) of type(s) '(int, long, float)'; given %s" % type( interval ).__name__
         assert isinstance( options, (dict)), "aggregate_statistics_by_range(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "aggregate_statistics_by_range" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "aggregate_statistics_by_range" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
@@ -2899,9 +4238,9 @@ class GPUdb(object):
         obj['start'] = start
         obj['end'] = end
         obj['interval'] = interval
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/aggregate/statistics/byrange' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/aggregate/statistics/byrange' ) )
     # end aggregate_statistics_by_range
 
 
@@ -2909,30 +4248,153 @@ class GPUdb(object):
     def aggregate_unique( self, table_name = None, column_name = None, offset =
                           None, limit = 10000, encoding = 'binary', options = {}
                           ):
-        """Returns all the unique values from a particular column (specified by input
-        parameter *column_name*) of a particular table (specified by input
-        parameter *table_name*). If input parameter *column_name* is a numeric
-        column the values will be in output parameter *binary_encoded_response*.
-        Otherwise if input parameter *column_name* is a string column the values
-        will be in output parameter *json_encoded_response*.  input parameter
-        *offset* and input parameter *limit* are used to page through the
-        results if there are large numbers of unique values. To get the first 10
-        unique values sorted in descending order input parameter *options* would
-        be::  {"limit":"10","sort_order":"descending"}.  The response is
-        returned as a dynamic schema. For details see: `dynamic schemas
-        documentation <../../concepts/dynamic_schemas.html>`_. If the
-        'result_table' option is provided then the results are stored in a table
-        with the name given in the option and the results are not returned in
-        the response."""
+        """Returns all the unique values from a particular column (specified by
+        input parameter *column_name*) of a particular table (specified by
+        input parameter *table_name*). If input parameter *column_name* is a
+        numeric column the values will be in output parameter
+        *binary_encoded_response*. Otherwise if input parameter *column_name*
+        is a string column the values will be in output parameter
+        *json_encoded_response*.  input parameter *offset* and input parameter
+        *limit* are used to page through the results if there are large numbers
+        of unique values. To get the first 10 unique values sorted in
+        descending order input parameter *options* would be::
 
-        assert isinstance( table_name, (str, unicode)), "aggregate_unique(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( column_name, (str, unicode)), "aggregate_unique(): Argument 'column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( column_name ).__name__
+        {"limit":"10","sort_order":"descending"}.
+
+        The response is returned as a dynamic schema. For details see: `dynamic
+        schemas documentation <../../../concepts/dynamic_schemas.html>`_.
+
+        If a *result_table* name is specified in the options, the results are
+        stored in a new table with that name.  No results are returned in the
+        response.  If the source table's `shard key
+        <../../../concepts/tables.html#shard-keys>`_ is used as the input
+        parameter *column_name*, the result table will be sharded, in all other
+        cases it will be replicated.  Sorting will properly function only if
+        the result table is replicated or if there is only one processing node
+        and should not be relied upon in other cases.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table on which the operation will be performed.
+                Must be an existing table.
+
+            column_name (str)
+                Name of the column or an expression containing one or more
+                column names on which the unique function would be applied.
+
+            offset (long)
+                A positive integer indicating the number of initial results to
+                skip (this can be useful for paging through the results).  The
+                minimum allowed value is 0. The maximum allowed value is
+                MAX_INT.
+
+            limit (long)
+                A positive integer indicating the maximum number of results to
+                be returned. Or END_OF_SET (-9999) to indicate that the max
+                number of results should be returned.  Default value is 10000.
+
+            encoding (str)
+                Specifies the encoding for returned records.  Default value is
+                'binary'.
+                Allowed values are:
+
+                * **binary** --
+                  Indicates that the returned records should be binary encoded.
+
+                * **json** --
+                  Indicates that the returned records should be json encoded.
+
+                  The default value is 'binary'.
+
+            options (dict of str to str)
+                  Optional parameters.  Default value is an empty dict ( {} ).
+                  Allowed keys are:
+
+                  * **collection_name** --
+                    Name of a collection which is to contain the table
+                    specified in 'result_table', otherwise the table will be a
+                    top-level table. If the collection does not allow duplicate
+                    types and it contains a table of the same type as the given
+                    one, then this table creation request will fail.
+
+                  * **expression** --
+                    Optional filter expression to apply to the table.
+
+                  * **sort_order** --
+                    String indicating how the returned values should be sorted.
+                    Allowed values are:
+
+                    * ascending
+                    * descending
+
+                    The default value is 'ascending'.
+
+                  * **result_table** --
+                    The name of the table used to store the results. If present
+                    no results are returned in the response. Has the same
+                    naming restrictions as `tables
+                    <../../../concepts/tables.html>`_.
+
+                  * **result_table_persist** --
+                    If *true* then the result table specified in *result_table*
+                    will be persisted as a regular table (it will not be
+                    automatically cleared unless a *ttl* is provided, and the
+                    table data can be modified in subsequent operations). If
+                    *false* (the default) then the result table will be a
+                    read-only, memory-only temporary table.
+                    Allowed values are:
+
+                    * true
+                    * false
+
+                    The default value is 'false'.
+
+                  * **result_table_force_replicated** --
+                    Force the result table to be replicated (ignores any
+                    sharding). Must be used in combination with the
+                    'result_table' option.
+
+                  * **result_table_generate_pk** --
+                    If 'true' then set a primary key for the result table. Must
+                    be used in combination with the 'result_table' option.
+
+                  * **ttl** --
+                    Sets the TTL of the table specified in 'result_table'. The
+                    value must be the desired TTL in minutes.
+
+                  * **chunk_size** --
+                    If provided this indicates the chunk size to be used for
+                    the result table. Must be used in combination with the
+                    *result_table* option.
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                The same table name as was passed in the parameter list.
+
+            response_schema_str (str)
+                Avro schema of output parameter *binary_encoded_response* or
+                output parameter *json_encoded_response*.
+
+            binary_encoded_response (str)
+                Avro binary encoded response.
+
+            json_encoded_response (str)
+                Avro JSON encoded response.
+
+            has_more_records (bool)
+                Too many records. Returned a partial set.
+        """
+        assert isinstance( table_name, (basestring)), "aggregate_unique(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( column_name, (basestring)), "aggregate_unique(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
         assert isinstance( offset, (int, long, float)), "aggregate_unique(): Argument 'offset' must be (one) of type(s) '(int, long, float)'; given %s" % type( offset ).__name__
         assert isinstance( limit, (int, long, float)), "aggregate_unique(): Argument 'limit' must be (one) of type(s) '(int, long, float)'; given %s" % type( limit ).__name__
-        assert isinstance( encoding, (str, unicode)), "aggregate_unique(): Argument 'encoding' must be (one) of type(s) '(str, unicode)'; given %s" % type( encoding ).__name__
+        assert isinstance( encoding, (basestring)), "aggregate_unique(): Argument 'encoding' must be (one) of type(s) '(basestring)'; given %s" % type( encoding ).__name__
         assert isinstance( options, (dict)), "aggregate_unique(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "aggregate_unique" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "aggregate_unique" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
@@ -2940,328 +4402,1431 @@ class GPUdb(object):
         obj['offset'] = offset
         obj['limit'] = limit
         obj['encoding'] = encoding
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/aggregate/unique' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/aggregate/unique' ) )
     # end aggregate_unique
+
+
+    # begin aggregate_unpivot
+    def aggregate_unpivot( self, table_name = None, variable_column_name = '',
+                           value_column_name = '', pivoted_columns = None,
+                           encoding = 'binary', options = {} ):
+        """Rotate the column values into rows values.
+
+        The aggregate unpivot is used to normalize tables that are built for
+        cross tabular reporting purposes. The unpivot operator rotates the
+        column values for all the pivoted columns. A variable column, value
+        column and all columns from the source table except the unpivot columns
+        are projected into the result table. The variable column and value
+        columns in the result table indicate the pivoted column name and values
+        respectively.
+
+        The response is returned as a dynamic schema. For details see: `dynamic
+        schemas documentation <../../../concepts/dynamic_schemas.html>`_.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table on which the operation will be performed.
+                Must be an existing table/view.
+
+            variable_column_name (str)
+                Specifies the variable/parameter column name.  Default value is
+                ''.
+
+            value_column_name (str)
+                Specifies the value column name.  Default value is ''.
+
+            pivoted_columns (list of str)
+                List of one or more values typically the column names of the
+                input table. All the columns in the source table must have the
+                same data type.  The user can provide a single element (which
+                will be automatically promoted to a list internally) or a list.
+
+            encoding (str)
+                Specifies the encoding for returned records.  Default value is
+                'binary'.
+                Allowed values are:
+
+                * **binary** --
+                  Indicates that the returned records should be binary encoded.
+
+                * **json** --
+                  Indicates that the returned records should be json encoded.
+
+                  The default value is 'binary'.
+
+            options (dict of str to str)
+                  Optional parameters.  Default value is an empty dict ( {} ).
+                  Allowed keys are:
+
+                  * **collection_name** --
+                    Name of a collection which is to contain the table
+                    specified in *result_table*, otherwise the table will be a
+                    top-level table. If the collection does not allow duplicate
+                    types and it contains a table of the same type as the given
+                    one, then this table creation request will fail.
+                    Additionally this option is invalid if input parameter
+                    *table_name* is a collection.
+
+                  * **result_table** --
+                    The name of the table used to store the results. Has the
+                    same naming restrictions as `tables
+                    <../../../concepts/tables.html>`_. If present, no results
+                    are returned in the response.
+
+                  * **result_table_persist** --
+                    If *true* then the result table specified in
+                    {result_table}@{key of input.options} will be persisted as
+                    a regular table (it will not be automatically cleared
+                    unless a *ttl* is provided, and the table data can be
+                    modified in subsequent operations). If *false* (the
+                    default) then the result table will be a read-only,
+                    memory-only temporary table.
+                    Allowed values are:
+
+                    * true
+                    * false
+
+                    The default value is 'false'.
+
+                  * **expression** --
+                    Filter expression to apply to the table prior to unpivot
+                    processing.
+
+                  * **order_by** --
+                    Comma-separated list of the columns to be sorted by; e.g.
+                    'timestamp asc, x desc'.  The columns specified must be
+                    present in input table.  If any alias is given for any
+                    column name, the alias must be used, rather than the
+                    original column name.
+
+                  * **chunk_size** --
+                    If provided this indicates the chunk size to be used for
+                    the result table. Must be used in combination with the
+                    *result_table* option.
+
+                  * **limit** --
+                    The number of records to keep.
+
+                  * **ttl** --
+                    Sets the TTL of the table specified in *result_table*. The
+                    value must be the desired TTL in minutes.
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                Typically shows the result-table name if provided in the
+                request (Ignore otherwise).
+
+            response_schema_str (str)
+                Avro schema of output parameter *binary_encoded_response* or
+                output parameter *json_encoded_response*.
+
+            binary_encoded_response (str)
+                Avro binary encoded response.
+
+            json_encoded_response (str)
+                Avro JSON encoded response.
+
+            total_number_of_records (long)
+                Total/Filtered number of records.
+
+            has_more_records (bool)
+                Too many records. Returned a partial set.
+        """
+        assert isinstance( table_name, (basestring)), "aggregate_unpivot(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( variable_column_name, (basestring)), "aggregate_unpivot(): Argument 'variable_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( variable_column_name ).__name__
+        assert isinstance( value_column_name, (basestring)), "aggregate_unpivot(): Argument 'value_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( value_column_name ).__name__
+        pivoted_columns = pivoted_columns if isinstance( pivoted_columns, list ) else ( [] if (pivoted_columns is None) else [ pivoted_columns ] )
+        assert isinstance( encoding, (basestring)), "aggregate_unpivot(): Argument 'encoding' must be (one) of type(s) '(basestring)'; given %s" % type( encoding ).__name__
+        assert isinstance( options, (dict)), "aggregate_unpivot(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "aggregate_unpivot" )
+
+        obj = collections.OrderedDict()
+        obj['table_name'] = table_name
+        obj['variable_column_name'] = variable_column_name
+        obj['value_column_name'] = value_column_name
+        obj['pivoted_columns'] = pivoted_columns
+        obj['encoding'] = encoding
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/aggregate/unpivot' ) )
+    # end aggregate_unpivot
 
 
     # begin alter_system_properties
     def alter_system_properties( self, property_updates_map = None, options = {} ):
-        """The :ref:`alter_system_properties <alter_system_properties_python>` endpoint
-        is primarily used to simplify the testing of the system and is not
-        expected to be used during normal execution.  Commands are given through
-        the input parameter *property_updates_map* whose keys are commands and
-        values are strings representing integer values (for example '8000') or
-        boolean values ('true' or 'false')."""
+        """The :meth:`.alter_system_properties` endpoint is primarily used to
+        simplify the testing of the system and is not expected to be used
+        during normal execution.  Commands are given through the input
+        parameter *property_updates_map* whose keys are commands and values are
+        strings representing integer values (for example '8000') or boolean
+        values ('true' or 'false').
 
+        Parameters:
+
+            property_updates_map (dict of str to str)
+                Map containing the properties of the system to be updated.
+                Error if empty.
+                Allowed keys are:
+
+                * **sm_omp_threads** --
+                  Set the number of OpenMP threads that will be used to service
+                  filter & aggregation requests against collections to the
+                  specified integer value.
+
+                * **kernel_omp_threads** --
+                  Set the number of kernel OpenMP threads to the specified
+                  integer value.
+
+                * **concurrent_kernel_execution** --
+                  Enables concurrent kernel execution if the value is *true*
+                  and disables it if the value is *false*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                * **chunk_size** --
+                  Sets the chunk size of all new sets to the specified integer
+                  value.
+
+                * **execution_mode** --
+                  Sets the execution_mode for kernel executions to the
+                  specified string value. Possible values are host, device,
+                  default (engine decides) or an integer value that indicates
+                  max chunk size to exec on host
+
+                * **flush_to_disk** --
+                  Flushes any changes to any tables to the persistent store.
+                  These changes include updates to the vector store, object
+                  store, and text search store, Value string is ignored
+
+                * **clear_cache** --
+                  Clears cached results.  Useful to allow repeated timing of
+                  endpoints. Value string is ignored
+
+                * **communicator_test** --
+                  Invoke the communicator test and report timing results. Value
+                  string is is a comma separated list of <key>=<value>
+                  expressions.  Expressions are: num_transactions=<num> where
+                  num is the number of request reply transactions to invoke per
+                  test; message_size=<bytes> where bytes is the size of the
+                  messages to send in bytes; check_values=<enabled> where if
+                  enabled is true the value of the messages received are
+                  verified.
+
+                * **set_message_timers_enabled** --
+                  Enables the communicator test to collect additional timing
+                  statistics when the value string is *true*. Disables the
+                  collection when the value string is *false*
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                * **bulk_add_test** --
+                  Invoke the bulk add test and report timing results. Value
+                  string is ignored.
+
+                * **network_speed** --
+                  Invoke the network speed test and report timing results.
+                  Value string is a semicolon-separated list of <key>=<value>
+                  expressions.  Valid expressions are: seconds=<time> where
+                  time is the time in seconds to run the test; data_size=<size>
+                  where size is the size in bytes of the block to be
+                  transferred; threads=<number of threads>;
+                  to_ranks=<space-separated list of ranks> where the list of
+                  ranks is the ranks that rank 0 will send data to and get data
+                  from. If to_ranks is unspecified then all worker ranks are
+                  used.
+
+                * **request_timeout** --
+                  Number of minutes after which filtering (e.g.,
+                  :meth:`.filter`) and aggregating (e.g.,
+                  :meth:`.aggregate_group_by`) queries will timeout.
+
+                * **max_get_records_size** --
+                  The maximum number of records the database will serve for a
+                  given data retrieval call
+
+                * **memory_allocation_limit_mb** --
+                  Set the memory allocation limit for all rank processes in
+                  megabytes, 0 means no limit. Overrides any individual rank
+                  memory allocation limits.
+
+                * **enable_audit** --
+                  Enable or disable auditing.
+
+                * **audit_headers** --
+                  Enable or disable auditing of request headers.
+
+                * **audit_body** --
+                  Enable or disable auditing of request bodies.
+
+                * **audit_data** --
+                  Enable or disable auditing of request data.
+
+                * **enable_job_manager** --
+                  Enable JobManager to enforce processing of requests in the
+                  order received.
+
+            options (dict of str to str)
+                  Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            updated_properties_map (dict of str to str)
+                map of values updated, For speed tests a map of values measured
+                to the measurement
+        """
         assert isinstance( property_updates_map, (dict)), "alter_system_properties(): Argument 'property_updates_map' must be (one) of type(s) '(dict)'; given %s" % type( property_updates_map ).__name__
         assert isinstance( options, (dict)), "alter_system_properties(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "alter_system_properties" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "alter_system_properties" )
 
         obj = collections.OrderedDict()
-        obj['property_updates_map'] = property_updates_map
-        obj['options'] = options
+        obj['property_updates_map'] = self.__sanitize_dicts( property_updates_map )
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/alter/system/properties' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/alter/system/properties' ) )
     # end alter_system_properties
 
 
     # begin alter_table
     def alter_table( self, table_name = None, action = None, value = None, options =
                      {} ):
-        """Apply various modifications to a table or collection. Available modifications
-        include:       Creating or deleting an index on a particular column.
-        This can speed up certain search queries (such as :ref:`get_records
-        <get_records_python>`, :ref:`delete_records <delete_records_python>`,
-        :ref:`update_records <update_records_python>`) when using expressions
-        containing equality or relational operators on indexed columns. This
-        only applies to tables.       Setting the time-to-live (TTL). This can
-        be applied to tables, views, or collections.  When applied to
-        collections, every table & view within the collection will have its TTL
-        set to the given value.       Making a table protected or not. Protected
-        tables have their TTLs set to not automatically expire. This can be
-        applied to tables, views, and collections.       Allowing homogeneous
-        tables within a collection.                Managing a table's columns--a
-        column can be added or removed, or have its `type
-        <../../concepts/types.html>`_ modified."""
+        """Apply various modifications to a table, view, or collection.  The
+        availble
+        modifications include the following:
 
-        assert isinstance( table_name, (str, unicode)), "alter_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( action, (str, unicode)), "alter_table(): Argument 'action' must be (one) of type(s) '(str, unicode)'; given %s" % type( action ).__name__
-        assert isinstance( value, (str, unicode)), "alter_table(): Argument 'value' must be (one) of type(s) '(str, unicode)'; given %s" % type( value ).__name__
+        Create or delete an index on a particular column. This can speed up
+        certain search queries
+        (such as :meth:`.get_records`, :meth:`.delete_records`,
+        :meth:`.update_records`)
+        when using expressions containing equality or relational operators on
+        indexed columns. This
+        only applies to tables.
+
+        Set the time-to-live (TTL). This can be applied to tables, views, or
+        collections.  When
+        applied to collections, every table & view within the collection will
+        have its TTL set to the
+        given value.
+
+        Set the global access mode (i.e. locking) for a table. The mode can be
+        set to 'no-access', 'read-only',
+        'write-only' or 'read-write'.
+
+        Make a table protected or not. Protected tables have their TTLs set to
+        not automatically
+        expire. This can be applied to tables, views, and collections.
+
+        Allow homogeneous tables within a collection.
+
+        Manage a table's columns--a column can be added, removed, or have its
+        `type and properties <../../../concepts/types.html>`_ modified.
+
+        Set or unset compression for a column.
+
+        Parameters:
+
+            table_name (str)
+                Table on which the operation will be performed. Must be an
+                existing table, view, or collection.
+
+            action (str)
+                Modification operation to be applied
+                Allowed values are:
+
+                * **allow_homogeneous_tables** --
+                  Sets whether homogeneous tables are allowed in the given
+                  collection. This action is only valid if input parameter
+                  *table_name* is a collection. The input parameter *value*
+                  must be either 'true' or 'false'.
+
+                * **create_index** --
+                  Creates an index on the column name specified in input
+                  parameter *value*. If this column is already indexed, an
+                  error will be returned.
+
+                * **delete_index** --
+                  Deletes an existing index on the column name specified in
+                  input parameter *value*. If this column does not have
+                  indexing turned on, an error will be returned.
+
+                * **move_to_collection** --
+                  Move a table into a collection input parameter *value*.
+
+                * **protected** --
+                  Sets whether the given input parameter *table_name* should be
+                  protected or not. The input parameter *value* must be either
+                  'true' or 'false'.
+
+                * **rename_table** --
+                  Rename a table, view or collection to input parameter
+                  *value*. Has the same naming restrictions as `tables
+                  <../../../concepts/tables.html>`_.
+
+                * **ttl** --
+                  Sets the TTL of the table, view, or collection specified in
+                  input parameter *table_name*. The input parameter *value*
+                  must be the desired TTL in minutes.
+
+                * **add_column** --
+                  Add the column specified in input parameter *value* to the
+                  table specified in input parameter *table_name*.  Use
+                  *column_type* and *column_properties* in input parameter
+                  *options* to set the column's type and properties,
+                  respectively.
+
+                * **change_column** --
+                  Change type and properties of the column specified in input
+                  parameter *value*.  Use *column_type* and *column_properties*
+                  in input parameter *options* to set the column's type and
+                  properties, respectively.
+
+                * **set_column_compression** --
+                  Modify the compression setting on the column specified in
+                  input parameter *value*.
+
+                * **delete_column** --
+                  Delete the column specified in input parameter *value* from
+                  the table specified in input parameter *table_name*.
+
+                * **create_foreign_key** --
+                  Create a foreign key using the format 'source_column
+                  references target_table(primary_key_column) [ as
+                  <foreign_key_name> ]'.
+
+                * **delete_foreign_key** --
+                  Delete a foreign key.  The input parameter *value* should be
+                  the <foreign_key_name> or the string used to define the
+                  foreign key.
+
+                * **set_global_access_mode** --
+                  Set the global access mode (i.e. locking) for the table
+                  specified in input parameter *table_name*. Specify the access
+                  mode in input parameter *value*. Valid modes are 'no-access',
+                  'read-only', 'write-only' and 'read-write'.
+
+            value (str)
+                  The value of the modification. May be a column name, 'true'
+                  or 'false', a TTL, or the global access mode depending on
+                  input parameter *action*.
+
+            options (dict of str to str)
+                  Optional parameters.  Default value is an empty dict ( {} ).
+                  Allowed keys are:
+
+                  * **column_default_value** --
+                    When adding a column, set a default value for existing
+                    records.
+
+                  * **column_properties** --
+                    When adding or changing a column, set the column properties
+                    (strings, separated by a comma: data, store_only,
+                    text_search, char8, int8 etc).
+
+                  * **column_type** --
+                    When adding or changing a column, set the column type
+                    (strings, separated by a comma: int, double, string, null
+                    etc).
+
+                  * **compression_type** --
+                    When setting column compression (*set_column_compression*
+                    for input parameter *action*), compression type to use:
+                    *none* (to use no compression) or a valid compression type.
+                    Allowed values are:
+
+                    * none
+                    * snappy
+                    * lz4
+                    * lz4hc
+
+                    The default value is 'snappy'.
+
+                  * **copy_values_from_column** --
+                    When adding or changing a column, enter a column name from
+                    the same table being altered to use as a source for the
+                    column being added/changed; values will be copied from this
+                    source column into the new/modified column.
+
+                  * **rename_column** --
+                    When changing a column, specify new column name.
+
+                  * **validate_change_column** --
+                    When changing a column, validate the change before applying
+                    it. If *true*, then validate all values. A value too large
+                    (or too long) for the new type will prevent any change. If
+                    *false*, then when a value is too large or long, it will be
+                    truncated.
+                    Allowed values are:
+
+                    * **true** --
+                      true
+
+                    * **false** --
+                      false
+
+                      The default value is 'true'.
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                Table on which the operation was performed.
+
+            action (str)
+                Modification operation that was performed.
+
+            value (str)
+                The value of the modification that was performed.
+
+            type_id (str)
+                return the type_id (when changing a table, a new type may be
+                created)
+
+            type_definition (str)
+                return the type_definition  (when changing a table, a new type
+                may be created)
+
+            properties (dict of str to lists of str)
+                return the type properties  (when changing a table, a new type
+                may be created)
+
+            label (str)
+                return the type label  (when changing a table, a new type may
+                be created)
+        """
+        assert isinstance( table_name, (basestring)), "alter_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( action, (basestring)), "alter_table(): Argument 'action' must be (one) of type(s) '(basestring)'; given %s" % type( action ).__name__
+        assert isinstance( value, (basestring)), "alter_table(): Argument 'value' must be (one) of type(s) '(basestring)'; given %s" % type( value ).__name__
         assert isinstance( options, (dict)), "alter_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "alter_table" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "alter_table" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
         obj['action'] = action
         obj['value'] = value
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/alter/table' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/alter/table' ) )
     # end alter_table
 
 
     # begin alter_table_metadata
     def alter_table_metadata( self, table_names = None, metadata_map = None, options
                               = {} ):
-        """Updates (adds or changes) metadata for tables. The metadata key and values
-        must both be strings. This is an easy way to annotate whole tables
-        rather than single records within tables.  Some examples of metadata are
-        owner of the table, table creation timestamp etc."""
+        """Updates (adds or changes) metadata for tables. The metadata key and
+        values must both be strings. This is an easy way to annotate whole
+        tables rather than single records within tables.  Some examples of
+        metadata are owner of the table, table creation timestamp etc.
 
-        assert isinstance( table_names, (list)), "alter_table_metadata(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
+        Parameters:
+
+            table_names (list of str)
+                Names of the tables whose metadata will be updated. All
+                specified tables must exist, or an error will be returned.  The
+                user can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
+
+            metadata_map (dict of str to str)
+                A map which contains the metadata of the tables that are to be
+                updated. Note that only one map is provided for all the tables;
+                so the change will be applied to every table. If the provided
+                map is empty, then all existing metadata for the table(s) will
+                be cleared.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            table_names (list of str)
+                Value of input parameter *table_names*.
+
+            metadata_map (dict of str to str)
+                Value of input parameter *metadata_map*.
+        """
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
         assert isinstance( metadata_map, (dict)), "alter_table_metadata(): Argument 'metadata_map' must be (one) of type(s) '(dict)'; given %s" % type( metadata_map ).__name__
         assert isinstance( options, (dict)), "alter_table_metadata(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "alter_table_metadata" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "alter_table_metadata" )
 
         obj = collections.OrderedDict()
         obj['table_names'] = table_names
-        obj['metadata_map'] = metadata_map
-        obj['options'] = options
+        obj['metadata_map'] = self.__sanitize_dicts( metadata_map )
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/alter/table/metadata' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/alter/table/metadata' ) )
     # end alter_table_metadata
 
 
     # begin alter_user
     def alter_user( self, name = None, action = None, value = None, options = None
                     ):
-        """Alters a user."""
+        """Alters a user.
 
-        assert isinstance( name, (str, unicode)), "alter_user(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
-        assert isinstance( action, (str, unicode)), "alter_user(): Argument 'action' must be (one) of type(s) '(str, unicode)'; given %s" % type( action ).__name__
-        assert isinstance( value, (str, unicode)), "alter_user(): Argument 'value' must be (one) of type(s) '(str, unicode)'; given %s" % type( value ).__name__
+        Parameters:
+
+            name (str)
+                Name of the user to be altered. Must be an existing user.
+
+            action (str)
+                Modification operation to be applied to the user.
+                Allowed values are:
+
+                * **set_password** --
+                  Sets the password of the user. The user must be an internal
+                  user.
+
+            value (str)
+                  The value of the modification, depending on input parameter
+                  *action*.
+
+            options (dict of str to str)
+                  Optional parameters.
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+        """
+        assert isinstance( name, (basestring)), "alter_user(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( action, (basestring)), "alter_user(): Argument 'action' must be (one) of type(s) '(basestring)'; given %s" % type( action ).__name__
+        assert isinstance( value, (basestring)), "alter_user(): Argument 'value' must be (one) of type(s) '(basestring)'; given %s" % type( value ).__name__
         assert isinstance( options, (dict)), "alter_user(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "alter_user" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "alter_user" )
 
         obj = collections.OrderedDict()
         obj['name'] = name
         obj['action'] = action
         obj['value'] = value
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/alter/user' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/alter/user' ) )
     # end alter_user
+
+
+    # begin append_records
+    def append_records( self, table_name = None, source_table_name = None, field_map
+                        = None, options = {} ):
+        """Append (or insert) all records from a source table (specified by input
+        parameter *source_table_name*) to a particular target table (specified
+        by input parameter *table_name*). The field map (specified by input
+        parameter *field_map*) holds the user specified map of target table
+        column names with their mapped source column names.
+
+        Parameters:
+
+            table_name (str)
+                The table name for the records to be appended. Must be an
+                existing table.
+
+            source_table_name (str)
+                The source table name to get records from. Must be an existing
+                table name.
+
+            field_map (dict of str to str)
+                Contains the mapping of column names from the target table
+                (specified by input parameter *table_name*) as the keys, and
+                corresponding column names from the source table (specified by
+                input parameter *source_table_name*). Must be existing column
+                names in source table and target table, and their types must be
+                matched.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **offset** --
+                  A positive integer indicating the number of initial results
+                  to skip from source table (specified by input parameter
+                  *source_table_name*). Default is 0. The minimum allowed value
+                  is 0. The maximum allowed value is MAX_INT.
+
+                * **limit** --
+                  A positive integer indicating the maximum number of results
+                  to be returned from source table (specified by input
+                  parameter *source_table_name*). Or END_OF_SET (-9999) to
+                  indicate that the max number of results should be returned.
+                  Default value is END_OF_SET (-9999).
+
+                * **expression** --
+                  Optional filter expression to apply to the source table
+                  (specified by input parameter *source_table_name*). Empty by
+                  default.
+
+                * **order_by** --
+                  Comma-separated list of the columns to be sorted from source
+                  table (specified by input parameter *source_table_name*) by;
+                  e.g. 'timestamp asc, x desc'.  The columns specified must be
+                  present in input parameter *field_map*.  If any alias is
+                  given for any column name, the alias must be used, rather
+                  than the original column name.
+
+                * **update_on_existing_pk** --
+                  Specifies the record collision policy for inserting the
+                  source table records (specified by input parameter
+                  *source_table_name*) into the target table (specified by
+                  input parameter *table_name*) table with a `primary key
+                  <../../../concepts/tables.html#primary-keys>`_.  If set to
+                  *true*, any existing target table record with primary key
+                  values that match those of a source table record being
+                  inserted will be replaced by that new record.  If set to
+                  *false*, any existing target table record with primary key
+                  values that match those of a source table record being
+                  inserted will remain unchanged and the new record discarded.
+                  If the specified table does not have a primary key, then this
+                  option is ignored.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+
+        """
+        assert isinstance( table_name, (basestring)), "append_records(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( source_table_name, (basestring)), "append_records(): Argument 'source_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( source_table_name ).__name__
+        assert isinstance( field_map, (dict)), "append_records(): Argument 'field_map' must be (one) of type(s) '(dict)'; given %s" % type( field_map ).__name__
+        assert isinstance( options, (dict)), "append_records(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "append_records" )
+
+        obj = collections.OrderedDict()
+        obj['table_name'] = table_name
+        obj['source_table_name'] = source_table_name
+        obj['field_map'] = self.__sanitize_dicts( field_map )
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/append/records' ) )
+    # end append_records
 
 
     # begin clear_table
     def clear_table( self, table_name = '', authorization = '', options = {} ):
-        """Clears (drops) one or all tables in the database cluster. The operation is
-        synchronous meaning that the table will be cleared before the function
-        returns. The response payload returns the status of the operation along
-        with the name of the table that was cleared."""
+        """Clears (drops) one or all tables in the database cluster. The operation
+        is synchronous meaning that the table will be cleared before the
+        function returns. The response payload returns the status of the
+        operation along with the name of the table that was cleared.
 
-        assert isinstance( table_name, (str, unicode)), "clear_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( authorization, (str, unicode)), "clear_table(): Argument 'authorization' must be (one) of type(s) '(str, unicode)'; given %s" % type( authorization ).__name__
+        Parameters:
+
+            table_name (str)
+                Name of the table to be cleared. Must be an existing table.
+                Empty string clears all available tables.  Default value is ''.
+
+            authorization (str)
+                No longer used. User can pass an empty string.  Default value
+                is ''.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **no_error_if_not_exists** --
+                  If *true* and if the table specified in input parameter
+                  *table_name* does not exist no error is returned. If *false*
+                  and if the table specified in input parameter *table_name*
+                  does not exist then an error is returned.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                Value of input parameter *table_name* for a given table, or
+                'ALL CLEARED' in case of clearing all tables.
+        """
+        assert isinstance( table_name, (basestring)), "clear_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( authorization, (basestring)), "clear_table(): Argument 'authorization' must be (one) of type(s) '(basestring)'; given %s" % type( authorization ).__name__
         assert isinstance( options, (dict)), "clear_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "clear_table" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "clear_table" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
         obj['authorization'] = authorization
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/clear/table' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/clear/table' ) )
     # end clear_table
 
 
     # begin clear_table_monitor
     def clear_table_monitor( self, topic_id = None, options = {} ):
         """Deactivates a table monitor previously created with
-        :ref:`create_table_monitor <create_tablemonitor_python>`."""
+        :meth:`.create_table_monitor`.
 
-        assert isinstance( topic_id, (str, unicode)), "clear_table_monitor(): Argument 'topic_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( topic_id ).__name__
+        Parameters:
+
+            topic_id (str)
+                The topic ID returned by :meth:`.create_table_monitor`.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            topic_id (str)
+                Value of input parameter *topic_id*.
+        """
+        assert isinstance( topic_id, (basestring)), "clear_table_monitor(): Argument 'topic_id' must be (one) of type(s) '(basestring)'; given %s" % type( topic_id ).__name__
         assert isinstance( options, (dict)), "clear_table_monitor(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "clear_table_monitor" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "clear_table_monitor" )
 
         obj = collections.OrderedDict()
         obj['topic_id'] = topic_id
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/clear/tablemonitor' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/clear/tablemonitor' ) )
     # end clear_table_monitor
 
 
     # begin clear_trigger
     def clear_trigger( self, trigger_id = None, options = {} ):
-        """Clears or cancels the trigger identified by the specified handle. The output
-        returns the handle of the trigger cleared as well as indicating success
-        or failure of the trigger deactivation."""
+        """Clears or cancels the trigger identified by the specified handle. The
+        output returns the handle of the trigger cleared as well as indicating
+        success or failure of the trigger deactivation.
 
-        assert isinstance( trigger_id, (str, unicode)), "clear_trigger(): Argument 'trigger_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( trigger_id ).__name__
+        Parameters:
+
+            trigger_id (str)
+                ID for the trigger to be deactivated.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            trigger_id (str)
+                Value of input parameter *trigger_id*.
+        """
+        assert isinstance( trigger_id, (basestring)), "clear_trigger(): Argument 'trigger_id' must be (one) of type(s) '(basestring)'; given %s" % type( trigger_id ).__name__
         assert isinstance( options, (dict)), "clear_trigger(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "clear_trigger" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "clear_trigger" )
 
         obj = collections.OrderedDict()
         obj['trigger_id'] = trigger_id
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/clear/trigger' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/clear/trigger' ) )
     # end clear_trigger
 
 
     # begin create_join_table
     def create_join_table( self, join_table_name = None, table_names = [],
                            column_names = [], expressions = [], options = {} ):
-        """Creates a table that is the result of a SQL JOIN.  For details see: `join
-        concept documentation <../../concepts/joins.html>`_."""
+        """Creates a table that is the result of a SQL JOIN.  For details see:
+        `join concept documentation <../../../concepts/joins.html>`_.
 
-        assert isinstance( join_table_name, (str, unicode)), "create_join_table(): Argument 'join_table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( join_table_name ).__name__
-        assert isinstance( table_names, (list)), "create_join_table(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
-        assert isinstance( column_names, (list)), "create_join_table(): Argument 'column_names' must be (one) of type(s) '(list)'; given %s" % type( column_names ).__name__
-        assert isinstance( expressions, (list)), "create_join_table(): Argument 'expressions' must be (one) of type(s) '(list)'; given %s" % type( expressions ).__name__
+        Parameters:
+
+            join_table_name (str)
+                Name of the join table to be created.  Has the same naming
+                restrictions as `tables <../../../concepts/tables.html>`_.
+
+            table_names (list of str)
+                The list of table names composing the join.  Corresponds to a
+                SQL statement FROM clause  The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.  Default value is an empty list ( [] ).
+
+            column_names (list of str)
+                List of member table columns or column expressions to be
+                included in the join. Columns can be prefixed with
+                'table_id.column_name', where 'table_id' is the table name or
+                alias.  Columns can be aliased via the syntax 'column_name as
+                alias'. Wild cards '*' can be used to include all columns
+                across member tables or 'table_id.*' for all of a single
+                table's columns.  Columns and column expressions comprising the
+                join must be uniquely named or aliased--therefore, the '*' wild
+                card cannot be used if column names aren't unique across all
+                tables.  The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+                Default value is an empty list ( [] ).
+
+            expressions (list of str)
+                An optional list of expressions to combine and filter the
+                joined tables.  Corresponds to a SQL statement WHERE clause.
+                For details see: `expressions
+                <../../../concepts/expressions.html>`_.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.  Default value is an empty list ( [] ).
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the join. If the
+                  collection provided is non-existent, the collection will be
+                  automatically created. If empty, then the join will be at the
+                  top level.
+
+                * **max_query_dimensions** --
+                  The maximum number of tables in a join that can be accessed
+                  by a query and are not equated by a foreign-key to
+                  primary-key equality predicate
+
+                * **optimize_lookups** --
+                  Use more memory to speed up the joining of tables.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **refresh_method** --
+                  Method by which the join can be refreshed when the data in
+                  underlying member tables have changed.
+                  Allowed values are:
+
+                  * **manual** --
+                    refresh only occurs when manually requested by calling this
+                    endpoint with refresh option set to *refresh* or
+                    *full_refresh*
+
+                  * **on_query** --
+                    incrementally refresh (refresh just those records added)
+                    whenever a new query is issued and new data is inserted
+                    into the base table.  A full refresh of all the records
+                    occurs when a new query is issued and there have been
+                    inserts to any non-base-tables since the last query
+
+                  * **on_insert** --
+                    incrementally refresh (refresh just those records added)
+                    whenever new data is inserted into a base table.  A full
+                    refresh of all the records occurs when a new query is
+                    issued and there have been inserts to any non-base-tables
+                    since the last query
+
+                    The default value is 'manual'.
+
+                * **refresh** --
+                  Do a manual refresh of the join if it exists - throws an
+                  error otherwise
+                  Allowed values are:
+
+                  * **no_refresh** --
+                    don't refresh
+
+                  * **refresh** --
+                    incrementally refresh (refresh just those records added) if
+                    new data has been inserted into the base table.  A full
+                    refresh of all the records occurs if there have been
+                    inserts to any non-base-tables since the last refresh
+
+                  * **full_refresh** --
+                    always refresh even if no new records have been added.
+                    Only refresh method guaranteed to do a full refresh
+                    (refresh all the records) if a delete or update has
+                    occurred since the last refresh.
+
+                    The default value is 'no_refresh'.
+
+                * **ttl** --
+                  Sets the TTL of the table specified in input parameter
+                  *join_table_name*. The value must be the desired TTL in
+                  minutes.
+
+        Returns:
+            A dict with the following entries--
+
+            join_table_name (str)
+                Value of input parameter *join_table_name*.
+
+            count (long)
+                The number of records in the join table filtered by the given
+                select expression.
+        """
+        assert isinstance( join_table_name, (basestring)), "create_join_table(): Argument 'join_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( join_table_name ).__name__
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        column_names = column_names if isinstance( column_names, list ) else ( [] if (column_names is None) else [ column_names ] )
+        expressions = expressions if isinstance( expressions, list ) else ( [] if (expressions is None) else [ expressions ] )
         assert isinstance( options, (dict)), "create_join_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_join_table" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "create_join_table" )
 
         obj = collections.OrderedDict()
         obj['join_table_name'] = join_table_name
         obj['table_names'] = table_names
         obj['column_names'] = column_names
         obj['expressions'] = expressions
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/jointable' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/jointable' ) )
     # end create_join_table
 
 
     # begin create_proc
     def create_proc( self, proc_name = None, execution_mode = 'distributed', files =
                      {}, command = '', args = [], options = {} ):
-        """Creates an instance (proc) of the user-defined function (UDF) specified by
-        the given command, options, and files, and makes it available for
+        """Creates an instance (proc) of the user-defined function (UDF) specified
+        by the given command, options, and files, and makes it available for
         execution.  For details on UDFs, see: `User-Defined Functions
-        <../../concepts/udf.html>`_"""
+        <../../../concepts/udf.html>`_
 
-        assert isinstance( proc_name, (str, unicode)), "create_proc(): Argument 'proc_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( proc_name ).__name__
-        assert isinstance( execution_mode, (str, unicode)), "create_proc(): Argument 'execution_mode' must be (one) of type(s) '(str, unicode)'; given %s" % type( execution_mode ).__name__
+        Parameters:
+
+            proc_name (str)
+                Name of the proc to be created. Must not be the name of a
+                currently existing proc.
+
+            execution_mode (str)
+                The execution mode of the proc.  Default value is
+                'distributed'.
+                Allowed values are:
+
+                * **distributed** --
+                  Input table data will be divided into data segments that are
+                  distributed across all nodes in the cluster, and the proc
+                  command will be invoked once per data segment in parallel.
+                  Output table data from each invocation will be saved to the
+                  same node as the corresponding input data.
+
+                * **nondistributed** --
+                  The proc command will be invoked only once per execution, and
+                  will not have access to any input or output table data.
+
+                  The default value is 'distributed'.
+
+            files (dict of str to str)
+                  A map of the files that make up the proc. The keys of the map
+                  are file names, and the values are the binary contents of the
+                  files. The file names may include subdirectory names (e.g.
+                  'subdir/file') but must not resolve to a directory above the
+                  root for the proc.  Default value is an empty dict ( {} ).
+
+            command (str)
+                  The command (excluding arguments) that will be invoked when
+                  the proc is executed. It will be invoked from the directory
+                  containing the proc input parameter *files* and may be any
+                  command that can be resolved from that directory. It need not
+                  refer to a file actually in that directory; for example, it
+                  could be 'java' if the proc is a Java application; however,
+                  any necessary external programs must be preinstalled on every
+                  database node. If the command refers to a file in that
+                  directory, it must be preceded with './' as per Linux
+                  convention. If not specified, and exactly one file is
+                  provided in input parameter *files*, that file will be
+                  invoked.  Default value is ''.
+
+            args (list of str)
+                  An array of command-line arguments that will be passed to
+                  input parameter *command* when the proc is executed.  The
+                  user can provide a single element (which will be
+                  automatically promoted to a list internally) or a list.
+                  Default value is an empty list ( [] ).
+
+            options (dict of str to str)
+                  Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            proc_name (str)
+                Value of input parameter *proc_name*.
+        """
+        assert isinstance( proc_name, (basestring)), "create_proc(): Argument 'proc_name' must be (one) of type(s) '(basestring)'; given %s" % type( proc_name ).__name__
+        assert isinstance( execution_mode, (basestring)), "create_proc(): Argument 'execution_mode' must be (one) of type(s) '(basestring)'; given %s" % type( execution_mode ).__name__
         assert isinstance( files, (dict)), "create_proc(): Argument 'files' must be (one) of type(s) '(dict)'; given %s" % type( files ).__name__
-        assert isinstance( command, (str, unicode)), "create_proc(): Argument 'command' must be (one) of type(s) '(str, unicode)'; given %s" % type( command ).__name__
-        assert isinstance( args, (list)), "create_proc(): Argument 'args' must be (one) of type(s) '(list)'; given %s" % type( args ).__name__
+        assert isinstance( command, (basestring)), "create_proc(): Argument 'command' must be (one) of type(s) '(basestring)'; given %s" % type( command ).__name__
+        args = args if isinstance( args, list ) else ( [] if (args is None) else [ args ] )
         assert isinstance( options, (dict)), "create_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_proc" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "create_proc" )
 
         obj = collections.OrderedDict()
         obj['proc_name'] = proc_name
         obj['execution_mode'] = execution_mode
-        obj['files'] = files
+        obj['files'] = self.__sanitize_dicts( files )
         obj['command'] = command
         obj['args'] = args
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/proc' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/proc' ) )
     # end create_proc
 
 
     # begin create_projection
     def create_projection( self, table_name = None, projection_name = None,
                            column_names = None, options = {} ):
-        """Creates a new projection of an existing table.  A projection represents a
-        subset of the columns (potentially including derived columns) of a
-        table.  Can create a new column using the calculated moving average of a
-        given column with the following syntax:
-        'moving_average(column_name,num_points_before,num_points_after) as
-        new_column_name'; for each record in the 'column_name' parameter, it
-        computes the average over the previous 'num_points_before' records and
-        the subsequent 'num_points_after' records.  Note that moving average
-        relies on *order_by* and *order_by* requires that all the data being
-        ordered resides on the same processing node, so it won't make sense to
-        use *order_by* without moving average."""
+        """Creates a new `projection <../../../concepts/projections.html>`_ of an
+        existing table. A projection represents a subset of the columns
+        (potentially including derived columns) of a table.
 
-        assert isinstance( table_name, (str, unicode)), "create_projection(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( projection_name, (str, unicode)), "create_projection(): Argument 'projection_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( projection_name ).__name__
-        assert isinstance( column_names, (list)), "create_projection(): Argument 'column_names' must be (one) of type(s) '(list)'; given %s" % type( column_names ).__name__
+        Notes:
+
+        A moving average can be calculated on a given column using the
+        following syntax in the input parameter *column_names* parameter:
+
+        'moving_average(column_name,num_points_before,num_points_after) as
+        new_column_name'
+
+        For each record in the moving_average function's 'column_name'
+        parameter, it computes the average over the previous
+        'num_points_before' records and the subsequent 'num_points_after'
+        records.
+
+        Note that moving average relies on *order_by*, and *order_by* requires
+        that all the data being ordered resides on the same processing node, so
+        it won't make sense to use *order_by* without moving average.
+
+        Also, a projection can be created with a different shard key than the
+        source table.  By specifying *shard_key*, the projection will be
+        sharded according to the specified columns, regardless of how the
+        source table is sharded.  The source table can even be unsharded or
+        replicated.
+
+        Parameters:
+
+            table_name (str)
+                Name of the existing table on which the projection is to be
+                applied.
+
+            projection_name (str)
+                Name of the projection to be created. Has the same naming
+                restrictions as `tables <../../../concepts/tables.html>`_.
+
+            column_names (list of str)
+                List of columns from input parameter *table_name* to be
+                included in the projection. Can include derived columns. Can be
+                specified as aliased via the syntax 'column_name as alias'.
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a `collection <../../../concepts/collections.html>`_
+                  to which the projection is to be assigned as a child. If the
+                  collection provided is non-existent, the collection will be
+                  automatically created.
+
+                * **expression** --
+                  An optional filter `expression
+                  <../../../concepts/expressions.html>`_ to be applied to the
+                  source table prior to the projection.
+
+                * **limit** --
+                  The number of records to keep.
+
+                * **order_by** --
+                  Comma-separated list of the columns to be sorted by; e.g.
+                  'timestamp asc, x desc'.  The columns specified must be
+                  present in input parameter *column_names*.  If any alias is
+                  given for any column name, the alias must be used, rather
+                  than the original column name.
+
+                * **materialize_on_gpu** --
+                  If *true* then the columns of the projection will be cached
+                  on the GPU.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **chunk_size** --
+                  If provided this indicates the chunk size to be used for this
+                  table.
+
+                * **ttl** --
+                  Sets the TTL of the table, view, or collection specified in
+                  input parameter *projection_name*. The value must be the
+                  desired TTL in minutes.
+
+                * **shard_key** --
+                  Comma-separated list of the columns to be sharded on; e.g.
+                  'column1, column2'.  The columns specified must be present in
+                  input parameter *column_names*.  If any alias is given for
+                  any column name, the alias must be used, rather than the
+                  original column name.
+
+                * **persist** --
+                  If *true* then the projection will be persisted as a regular
+                  table (it will not be automatically cleared unless a *ttl* is
+                  provided, and the table data can be modified in subsequent
+                  operations). If *false* then the projection will be a
+                  read-only, memory-only temporary table.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            projection_name (str)
+                Value of input parameter *projection_name*.
+        """
+        assert isinstance( table_name, (basestring)), "create_projection(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( projection_name, (basestring)), "create_projection(): Argument 'projection_name' must be (one) of type(s) '(basestring)'; given %s" % type( projection_name ).__name__
+        column_names = column_names if isinstance( column_names, list ) else ( [] if (column_names is None) else [ column_names ] )
         assert isinstance( options, (dict)), "create_projection(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_projection" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "create_projection" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
         obj['projection_name'] = projection_name
         obj['column_names'] = column_names
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/projection' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/projection' ) )
     # end create_projection
 
 
     # begin create_role
     def create_role( self, name = None, options = None ):
-        """Creates a new role."""
+        """Creates a new role.
 
-        assert isinstance( name, (str, unicode)), "create_role(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
+        Parameters:
+
+            name (str)
+                Name of the role to be created. Must contain only lowercase
+                letters, digits, and underscores, and cannot begin with a
+                digit. Must not be the same name as an existing user or role.
+
+            options (dict of str to str)
+                Optional parameters.
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+        """
+        assert isinstance( name, (basestring)), "create_role(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
         assert isinstance( options, (dict)), "create_role(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_role" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "create_role" )
 
         obj = collections.OrderedDict()
         obj['name'] = name
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/role' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/role' ) )
     # end create_role
 
 
     # begin create_table
     def create_table( self, table_name = None, type_id = None, options = {} ):
-        """Creates a new table or collection. If a new table is being created, the type
-        of the table is given by input parameter *type_id*, which must the be
-        the ID of a currently registered type (i.e. one created via
-        :ref:`create_type <create_type_python>`). The table will be created
-        inside a collection if the option *collection_name* is specified. If
-        that collection does not already exist, it will be created.          To
-        create a new collection, specify the name of the collection in input
-        parameter *table_name* and set the *is_collection* option to *true*;
-        input parameter *type_id* will be ignored."""
+        """Creates a new table or collection. If a new table is being created, the
+        type of the table is given by input parameter *type_id*, which must the
+        be the ID of a currently registered type (i.e. one created via
+        :meth:`.create_type`). The table will be created inside a collection if
+        the option *collection_name* is specified. If that collection does not
+        already exist, it will be created.
 
-        assert isinstance( table_name, (str, unicode)), "create_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( type_id, (str, unicode)), "create_table(): Argument 'type_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( type_id ).__name__
+        To create a new collection, specify the name of the collection in input
+        parameter *table_name* and set the *is_collection* option to *true*;
+        input parameter *type_id* will be ignored.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table to be created. Error for requests with
+                existing table of the same name and type id may be suppressed
+                by using the *no_error_if_exists* option.  See `Tables
+                <../../../concepts/tables.html>`_ for naming restrictions.
+
+            type_id (str)
+                ID of a currently registered type. All objects added to the
+                newly created table will be of this type.  Ignored if
+                *is_collection* is *true*.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **no_error_if_exists** --
+                  If *true*, prevents an error from occurring if the table
+                  already exists and is of the given type.  If a table with the
+                  same ID but a different type exists, it is still an error.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  table. If empty, then the newly created table will be a
+                  top-level table. If the collection does not allow duplicate
+                  types and it contains a table of the same type as the given
+                  one, then this table creation request will fail.
+
+                * **is_collection** --
+                  Indicates whether the new table to be created will be a
+                  collection.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **disallow_homogeneous_tables** --
+                  For a collection, indicates whether the collection prohibits
+                  containment of multiple tables of exactly the same data type.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **is_replicated** --
+                  For a table, indicates whether the table is to be replicated
+                  to all the database ranks. This may be necessary when the
+                  table is to be joined with other tables in a query.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **foreign_keys** --
+                  Semicolon-separated list of foreign key constraints, of the
+                  format 'source_column references
+                  target_table(primary_key_column) [ as <foreign_key_name> ]'.
+
+                * **foreign_shard_key** --
+                  Foreign shard key description of the format: <fk_foreign_key>
+                  references <pk_column_name> from
+                  <pk_table_name>(<pk_primary_key>)
+
+                * **ttl** --
+                  Sets the TTL of the table or collection specified in input
+                  parameter *table_name*. The value must be the desired TTL in
+                  minutes.
+
+                * **chunk_size** --
+                  If provided this indicates the chunk size to be used for this
+                  table.
+
+                * **is_result_table** --
+                  For a table, indicates whether the table is a non-persistent,
+                  memory-only table that will store the output of a proc
+                  executed with :meth:`.execute_proc`. A result table cannot
+                  contain store_only, text_search, or string columns (char
+                  columns are acceptable), records cannot be inserted into it
+                  directly, and it will not be retained if the server is
+                  restarted.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                Value of input parameter *table_name*.
+
+            type_id (str)
+                Value of input parameter *type_id*.
+
+            is_collection (bool)
+                Indicates if the created entity is a collection.
+        """
+        assert isinstance( table_name, (basestring)), "create_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( type_id, (basestring)), "create_table(): Argument 'type_id' must be (one) of type(s) '(basestring)'; given %s" % type( type_id ).__name__
         assert isinstance( options, (dict)), "create_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_table" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "create_table" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
         obj['type_id'] = type_id
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/table' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/table' ) )
     # end create_table
 
 
     # begin create_table_monitor
     def create_table_monitor( self, table_name = None, options = {} ):
-        """Creates a monitor that watches for new records inserted into a particular
-        table (identified by input parameter *table_name*) and forwards copies
-        to subscribers via ZMQ. After this call completes, subscribe to the
-        returned output parameter *topic_id* on the ZMQ table monitor port
-        (default 9002). Each time an insert operation on the table completes, a
-        multipart message is published for that topic; the first part contains
-        only the topic ID, and each subsequent part contains one binary-encoded
-        Avro object that was inserted. The monitor will continue to run
-        (regardless of whether or not there are any subscribers) until
-        deactivated with :ref:`clear_table_monitor
-        <clear_tablemonitor_python>`."""
+        """Creates a monitor that watches for new records inserted into a
+        particular table (identified by input parameter *table_name*) and
+        forwards copies to subscribers via ZMQ. After this call completes,
+        subscribe to the returned output parameter *topic_id* on the ZMQ table
+        monitor port (default 9002). Each time an insert operation on the table
+        completes, a multipart message is published for that topic; the first
+        part contains only the topic ID, and each subsequent part contains one
+        binary-encoded Avro object that was inserted. The monitor will continue
+        to run (regardless of whether or not there are any subscribers) until
+        deactivated with :meth:`.clear_table_monitor`.
 
-        assert isinstance( table_name, (str, unicode)), "create_table_monitor(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
+        Parameters:
+
+            table_name (str)
+                Name of the table to monitor. Must not refer to a collection.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            topic_id (str)
+                The ZMQ topic ID to subscribe to for inserted records.
+
+            table_name (str)
+                Value of input parameter *table_name*.
+
+            type_schema (str)
+                JSON Avro schema of the table, for use in decoding published
+                records.
+        """
+        assert isinstance( table_name, (basestring)), "create_table_monitor(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( options, (dict)), "create_table_monitor(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_table_monitor" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "create_table_monitor" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/tablemonitor' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/tablemonitor' ) )
     # end create_table_monitor
 
 
@@ -3272,27 +5837,69 @@ class GPUdb(object):
                                 {} ):
         """Sets up an area trigger mechanism for two column_names for one or more
         tables. (This function is essentially the two-dimensional version of
-        :ref:`create_trigger_by_range <create_trigger_byrange_python>`.) Once
-        the trigger has been activated, any record added to the listed tables(s)
-        via :ref:`insert_records <insert_records_python>` with the chosen
-        columns' values falling within the specified region will trip the
-        trigger. All such records will be queued at the trigger port (by default
-        '9001', but able to be retrieved via :ref:`show_system_status
-        <show_system_status_python>`) for any listening client to collect.
-        Active triggers can be cancelled by using the :ref:`clear_trigger
-        <clear_trigger_python>` endpoint or by clearing all relevant tables.
-        The output returns the trigger handle as well as indicating success or
-        failure of the trigger activation."""
+        :meth:`.create_trigger_by_range`.) Once the trigger has been activated,
+        any record added to the listed tables(s) via :meth:`.insert_records`
+        with the chosen columns' values falling within the specified region
+        will trip the trigger. All such records will be queued at the trigger
+        port (by default '9001', but able to be retrieved via
+        :meth:`.show_system_status`) for any listening client to collect.
+        Active triggers can be cancelled by using the :meth:`.clear_trigger`
+        endpoint or by clearing all relevant tables.
 
-        assert isinstance( request_id, (str, unicode)), "create_trigger_by_area(): Argument 'request_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( request_id ).__name__
-        assert isinstance( table_names, (list)), "create_trigger_by_area(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
-        assert isinstance( x_column_name, (str, unicode)), "create_trigger_by_area(): Argument 'x_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( x_column_name ).__name__
-        assert isinstance( x_vector, (list)), "create_trigger_by_area(): Argument 'x_vector' must be (one) of type(s) '(list)'; given %s" % type( x_vector ).__name__
-        assert isinstance( y_column_name, (str, unicode)), "create_trigger_by_area(): Argument 'y_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( y_column_name ).__name__
-        assert isinstance( y_vector, (list)), "create_trigger_by_area(): Argument 'y_vector' must be (one) of type(s) '(list)'; given %s" % type( y_vector ).__name__
+        The output returns the trigger handle as well as indicating success or
+        failure of the trigger activation.
+
+        Parameters:
+
+            request_id (str)
+                User-created ID for the trigger. The ID can be alphanumeric,
+                contain symbols, and must contain at least one character.
+
+            table_names (list of str)
+                Names of the tables on which the trigger will be activated and
+                maintained.  The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
+
+            x_column_name (str)
+                Name of a numeric column on which the trigger is activated.
+                Usually 'x' for geospatial data points.
+
+            x_vector (list of floats)
+                The respective coordinate values for the region on which the
+                trigger is activated. This usually translates to the
+                x-coordinates of a geospatial region.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            y_column_name (str)
+                Name of a second numeric column on which the trigger is
+                activated. Usually 'y' for geospatial data points.
+
+            y_vector (list of floats)
+                The respective coordinate values for the region on which the
+                trigger is activated. This usually translates to the
+                y-coordinates of a geospatial region. Must be the same length
+                as xvals.  The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            trigger_id (str)
+                Value of input parameter *request_id*.
+        """
+        assert isinstance( request_id, (basestring)), "create_trigger_by_area(): Argument 'request_id' must be (one) of type(s) '(basestring)'; given %s" % type( request_id ).__name__
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        assert isinstance( x_column_name, (basestring)), "create_trigger_by_area(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
+        x_vector = x_vector if isinstance( x_vector, list ) else ( [] if (x_vector is None) else [ x_vector ] )
+        assert isinstance( y_column_name, (basestring)), "create_trigger_by_area(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
+        y_vector = y_vector if isinstance( y_vector, list ) else ( [] if (y_vector is None) else [ y_vector ] )
         assert isinstance( options, (dict)), "create_trigger_by_area(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_trigger_by_area" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "create_trigger_by_area" )
 
         obj = collections.OrderedDict()
         obj['request_id'] = request_id
@@ -3301,46 +5908,77 @@ class GPUdb(object):
         obj['x_vector'] = x_vector
         obj['y_column_name'] = y_column_name
         obj['y_vector'] = y_vector
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/trigger/byarea' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/trigger/byarea' ) )
     # end create_trigger_by_area
 
 
     # begin create_trigger_by_range
     def create_trigger_by_range( self, request_id = None, table_names = None,
-                                 column_name = None, _min = None, _max = None,
+                                 column_name = None, min = None, max = None,
                                  options = {} ):
-        """Sets up a simple range trigger for a column_name for one or more tables. Once
-        the trigger has been activated, any record added to the listed tables(s)
-        via :ref:`insert_records <insert_records_python>` with the chosen
+        """Sets up a simple range trigger for a column_name for one or more
+        tables. Once the trigger has been activated, any record added to the
+        listed tables(s) via :meth:`.insert_records` with the chosen
         column_name's value falling within the specified range will trip the
-        trigger. All such records will be queued at the trigger port (by default
-        '9001', but able to be retrieved via :ref:`show_system_status
-        <show_system_status_python>`) for any listening client to collect.
-        Active triggers can be cancelled by using the :ref:`clear_trigger
-        <clear_trigger_python>` endpoint or by clearing all relevant tables.
-        The output returns the trigger handle as well as indicating success or
-        failure of the trigger activation."""
+        trigger. All such records will be queued at the trigger port (by
+        default '9001', but able to be retrieved via
+        :meth:`.show_system_status`) for any listening client to collect.
+        Active triggers can be cancelled by using the :meth:`.clear_trigger`
+        endpoint or by clearing all relevant tables.
 
-        assert isinstance( request_id, (str, unicode)), "create_trigger_by_range(): Argument 'request_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( request_id ).__name__
-        assert isinstance( table_names, (list)), "create_trigger_by_range(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
-        assert isinstance( column_name, (str, unicode)), "create_trigger_by_range(): Argument 'column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( column_name ).__name__
-        assert isinstance( _min, (int, long, float)), "create_trigger_by_range(): Argument '_min' must be (one) of type(s) '(int, long, float)'; given %s" % type( _min ).__name__
-        assert isinstance( _max, (int, long, float)), "create_trigger_by_range(): Argument '_max' must be (one) of type(s) '(int, long, float)'; given %s" % type( _max ).__name__
+        The output returns the trigger handle as well as indicating success or
+        failure of the trigger activation.
+
+        Parameters:
+
+            request_id (str)
+                User-created ID for the trigger. The ID can be alphanumeric,
+                contain symbols, and must contain at least one character.
+
+            table_names (list of str)
+                Tables on which the trigger will be active.  The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
+
+            column_name (str)
+                Name of a numeric column_name on which the trigger is
+                activated.
+
+            min (float)
+                The lower bound (inclusive) for the trigger range.
+
+            max (float)
+                The upper bound (inclusive) for the trigger range.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            trigger_id (str)
+                Value of input parameter *request_id*.
+        """
+        assert isinstance( request_id, (basestring)), "create_trigger_by_range(): Argument 'request_id' must be (one) of type(s) '(basestring)'; given %s" % type( request_id ).__name__
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        assert isinstance( column_name, (basestring)), "create_trigger_by_range(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
+        assert isinstance( min, (int, long, float)), "create_trigger_by_range(): Argument 'min' must be (one) of type(s) '(int, long, float)'; given %s" % type( min ).__name__
+        assert isinstance( max, (int, long, float)), "create_trigger_by_range(): Argument 'max' must be (one) of type(s) '(int, long, float)'; given %s" % type( max ).__name__
         assert isinstance( options, (dict)), "create_trigger_by_range(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_trigger_by_range" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "create_trigger_by_range" )
 
         obj = collections.OrderedDict()
         obj['request_id'] = request_id
         obj['table_names'] = table_names
         obj['column_name'] = column_name
-        obj['min'] = _min
-        obj['max'] = _max
-        obj['options'] = options
+        obj['min'] = min
+        obj['max'] = max
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/trigger/byrange' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/trigger/byrange' ) )
     # end create_trigger_by_range
 
 
@@ -3353,42 +5991,91 @@ class GPUdb(object):
         types are: double, float, int, long, string, and bytes. In addition one
         or more properties can be specified for each column which customize the
         memory usage and query availability of that column.  Note that some
-        properties are mutually exclusive--i.e. they cannot be specified for any
-        given column simultaneously.  One example of mutually exclusive
-        properties are *data* and *store_only*.  To set a *primary key* on one
-        or more columns include the property 'primary_key' on the desired
-        column_names. If a primary key is specified, then a uniqueness
-        constraint is enforced, in that only a single object can exist with a
-        given primary key. When :ref:`inserting <insert_records_python>` data
-        into a table with a primary key, depending on the parameters in the
-        request, incoming objects with primary keys that match existing objects
-        will either overwrite (i.e. update) the existing object or will be
-        skipped and not added into the set.  Example of a type definition with
-        some of the parameters::          {"type":"record",
-        "name":"point",         "fields":[{"name":"msg_id","type":"string"},
-        {"name":"x","type":"double"},
-        {"name":"y","type":"double"},
-        {"name":"TIMESTAMP","type":"double"},
-        {"name":"source","type":"string"},
-        {"name":"group_id","type":"string"},
-        {"name":"OBJECT_ID","type":"string"}]         }  Properties::
-        {"group_id":["store_only"],
-        "msg_id":["store_only","text_search"]         }"""
+        properties are mutually exclusive--i.e. they cannot be specified for
+        any given column simultaneously.  One example of mutually exclusive
+        properties are *data* and *store_only*.
 
-        assert isinstance( type_definition, (str, unicode)), "create_type(): Argument 'type_definition' must be (one) of type(s) '(str, unicode)'; given %s" % type( type_definition ).__name__
-        assert isinstance( label, (str, unicode)), "create_type(): Argument 'label' must be (one) of type(s) '(str, unicode)'; given %s" % type( label ).__name__
+        To set a *primary key* on one or more columns include the property
+        'primary_key' on the desired column_names. If a primary key is
+        specified, then a uniqueness constraint is enforced, in that only a
+        single object can exist with a given primary key. When :meth:`inserting
+        <.insert_records>` data into a table with a primary key, depending on
+        the parameters in the request, incoming objects with primary keys that
+        match existing objects will either overwrite (i.e. update) the existing
+        object or will be skipped and not added into the set.
+
+        Example of a type definition with some of the parameters::
+
+                {"type":"record",
+                "name":"point",
+                "fields":[{"name":"msg_id","type":"string"},
+                                {"name":"x","type":"double"},
+                                {"name":"y","type":"double"},
+                                {"name":"TIMESTAMP","type":"double"},
+                                {"name":"source","type":"string"},
+                                {"name":"group_id","type":"string"},
+                                {"name":"OBJECT_ID","type":"string"}]
+                }
+
+        Properties::
+
+                {"group_id":["store_only"],
+                "msg_id":["store_only","text_search"]
+                }
+
+        Parameters:
+
+            type_definition (str)
+                a JSON string describing the columns of the type to be
+                registered.
+
+            label (str)
+                A user-defined description string which can be used to
+                differentiate between tables and types with otherwise identical
+                schemas.
+
+            properties (dict of str to lists of str)
+                Each key-value pair specifies the properties to use for a given
+                column where the key is the column name.  All keys used must be
+                relevant column names for the given table.  Specifying any
+                property overrides the default properties for that column
+                (which is based on the column's data type).  Default value is
+                an empty dict ( {} ).
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            type_id (str)
+                An identifier representing the created type. This type_id can
+                be used in subsequent calls to :meth:`create a table
+                <.create_table>`
+
+            type_definition (str)
+                Value of input parameter *type_definition*.
+
+            label (str)
+                Value of input parameter *label*.
+
+            properties (dict of str to lists of str)
+                Value of input parameter *properties*.
+        """
+        assert isinstance( type_definition, (basestring)), "create_type(): Argument 'type_definition' must be (one) of type(s) '(basestring)'; given %s" % type( type_definition ).__name__
+        assert isinstance( label, (basestring)), "create_type(): Argument 'label' must be (one) of type(s) '(basestring)'; given %s" % type( label ).__name__
         assert isinstance( properties, (dict)), "create_type(): Argument 'properties' must be (one) of type(s) '(dict)'; given %s" % type( properties ).__name__
         assert isinstance( options, (dict)), "create_type(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_type" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "create_type" )
 
         obj = collections.OrderedDict()
         obj['type_definition'] = type_definition
         obj['label'] = label
-        obj['properties'] = properties
-        obj['options'] = options
+        obj['properties'] = self.__sanitize_dicts( properties )
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/type' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/type' ) )
     # end create_type
 
 
@@ -3396,143 +6083,368 @@ class GPUdb(object):
     def create_union( self, table_name = None, table_names = None,
                       input_column_names = None, output_column_names = None,
                       options = {} ):
-        """Creates a table that is the concatenation of one or more existing tables. It
-        is equivalent to the SQL UNION ALL operator.  Non-charN 'string' and
-        'bytes' column types cannot be included in a union, neither can columns
-        with the property 'store_only'."""
+        """Performs a `union <../../../concepts/unions.html>`_ (concatenation) of
+        one or more existing tables or views, the results of which are stored
+        in a new view. It is equivalent to the SQL UNION ALL operator.
+        Non-charN 'string' and 'bytes' column types cannot be included in a
+        union, neither can columns with the property 'store_only'. Though not
+        explicitly unions, `intersect <../../../concepts/intersect.html>`_ and
+        `except <../../../concepts/except.html>`_ are also available from this
+        endpoint.
 
-        assert isinstance( table_name, (str, unicode)), "create_union(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( table_names, (list)), "create_union(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
-        assert isinstance( input_column_names, (list)), "create_union(): Argument 'input_column_names' must be (one) of type(s) '(list)'; given %s" % type( input_column_names ).__name__
-        assert isinstance( output_column_names, (list)), "create_union(): Argument 'output_column_names' must be (one) of type(s) '(list)'; given %s" % type( output_column_names ).__name__
+        Parameters:
+
+            table_name (str)
+                Name of the table to be created. Has the same naming
+                restrictions as `tables <../../../concepts/tables.html>`_.
+
+            table_names (list of str)
+                The list of table names making up the union. Must contain the
+                names of one or more existing tables.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            input_column_names (list of lists of str)
+                The list of columns from each of the corresponding input
+                tables.  The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+
+            output_column_names (list of str)
+                The list of names of the columns to be stored in the union.
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the union. If the
+                  collection provided is non-existent, the collection will be
+                  automatically created. If empty, then the union will be a
+                  top-level table.
+
+                * **materialize_on_gpu** --
+                  If 'true' then the columns of the union will be cached on the
+                  GPU.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **mode** --
+                  If 'merge_views' then this operation will merge (i.e. union)
+                  the provided views. All 'table_names' must be views from the
+                  same underlying base table.
+                  Allowed values are:
+
+                  * **union_all** --
+                    Retains all rows from the specified tables.
+
+                  * **union** --
+                    Retains all unique rows from the specified tables (synonym
+                    for 'union_distinct').
+
+                  * **union_distinct** --
+                    Retains all unique rows from the specified tables.
+
+                  * **except** --
+                    Retains all unique rows from the first table that do not
+                    appear in the second table (only works on 2 tables).
+
+                  * **intersect** --
+                    Retains all unique rows that appear in both of the
+                    specified tables (only works on 2 tables).
+
+                  * **merge_views** --
+                    Merge two or more views (or views of views) of the same
+                    base data set into a new view. The resulting view would
+                    match the results of a SQL OR operation, e.g., if filter 1
+                    creates a view using the expression 'x = 10' and filter 2
+                    creates a view using the expression 'x <= 10', then the
+                    merge views operation creates a new view using the
+                    expression 'x = 10 OR x <= 10'.
+
+                    The default value is 'union_all'.
+
+                * **chunk_size** --
+                  If provided this indicates the chunk size to be used for this
+                  table.
+
+                * **ttl** --
+                  Sets the TTL of the table specified in input parameter
+                  *table_name*. The value must be the desired TTL in minutes.
+
+                * **persist** --
+                  If *true* then the union will be persisted as a regular table
+                  (it will not be automatically cleared unless a *ttl* is
+                  provided, and the table data can be modified in subsequent
+                  operations). If *false* (the default) then the union will be
+                  a read-only, memory-only temporary table.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                Value of input parameter *table_name*.
+        """
+        assert isinstance( table_name, (basestring)), "create_union(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        input_column_names = input_column_names if isinstance( input_column_names, list ) else ( [] if (input_column_names is None) else [ input_column_names ] )
+        output_column_names = output_column_names if isinstance( output_column_names, list ) else ( [] if (output_column_names is None) else [ output_column_names ] )
         assert isinstance( options, (dict)), "create_union(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_union" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "create_union" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
         obj['table_names'] = table_names
         obj['input_column_names'] = input_column_names
         obj['output_column_names'] = output_column_names
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/union' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/union' ) )
     # end create_union
 
 
     # begin create_user_external
     def create_user_external( self, name = None, options = None ):
         """Creates a new external user (a user whose credentials are managed by an
-        external LDAP)."""
+        external LDAP).
 
-        assert isinstance( name, (str, unicode)), "create_user_external(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
+        Parameters:
+
+            name (str)
+                Name of the user to be created. Must exactly match the user's
+                name in the external LDAP, prefixed with a @. Must not be the
+                same name as an existing user.
+
+            options (dict of str to str)
+                Optional parameters.
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+        """
+        assert isinstance( name, (basestring)), "create_user_external(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
         assert isinstance( options, (dict)), "create_user_external(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_user_external" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "create_user_external" )
 
         obj = collections.OrderedDict()
         obj['name'] = name
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/user/external' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/user/external' ) )
     # end create_user_external
 
 
     # begin create_user_internal
     def create_user_internal( self, name = None, password = None, options = None ):
-        """Creates a new internal user (a user whose credentials are managed by the
-        database system)."""
+        """Creates a new internal user (a user whose credentials are managed by
+        the database system).
 
-        assert isinstance( name, (str, unicode)), "create_user_internal(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
-        assert isinstance( password, (str, unicode)), "create_user_internal(): Argument 'password' must be (one) of type(s) '(str, unicode)'; given %s" % type( password ).__name__
+        Parameters:
+
+            name (str)
+                Name of the user to be created. Must contain only lowercase
+                letters, digits, and underscores, and cannot begin with a
+                digit. Must not be the same name as an existing user or role.
+
+            password (str)
+                Initial password of the user to be created. May be an empty
+                string for no password.
+
+            options (dict of str to str)
+                Optional parameters.
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+        """
+        assert isinstance( name, (basestring)), "create_user_internal(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( password, (basestring)), "create_user_internal(): Argument 'password' must be (one) of type(s) '(basestring)'; given %s" % type( password ).__name__
         assert isinstance( options, (dict)), "create_user_internal(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "create_user_internal" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "create_user_internal" )
 
         obj = collections.OrderedDict()
         obj['name'] = name
         obj['password'] = password
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/user/internal' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/user/internal' ) )
     # end create_user_internal
 
 
     # begin delete_proc
     def delete_proc( self, proc_name = None, options = {} ):
         """Deletes a proc. Any currently running instances of the proc will be
-        killed."""
+        killed.
 
-        assert isinstance( proc_name, (str, unicode)), "delete_proc(): Argument 'proc_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( proc_name ).__name__
+        Parameters:
+
+            proc_name (str)
+                Name of the proc to be deleted. Must be the name of a currently
+                existing proc.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            proc_name (str)
+                Value of input parameter *proc_name*.
+        """
+        assert isinstance( proc_name, (basestring)), "delete_proc(): Argument 'proc_name' must be (one) of type(s) '(basestring)'; given %s" % type( proc_name ).__name__
         assert isinstance( options, (dict)), "delete_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "delete_proc" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "delete_proc" )
 
         obj = collections.OrderedDict()
         obj['proc_name'] = proc_name
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/delete/proc' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/delete/proc' ) )
     # end delete_proc
 
 
     # begin delete_records
     def delete_records( self, table_name = None, expressions = None, options = {} ):
-        """Deletes record(s) matching the provided criteria from the given table. The
-        record selection criteria can either be one or more  input parameter
-        *expressions* (matching multiple records) or a single record identified
-        by *record_id* options.  Note that the two selection criteria are
-        mutually exclusive.  This operation cannot be run on a collection or a
-        view.  The operation is synchronous meaning that a response will not be
-        available until the request is completely processed and all the matching
-        records are deleted."""
+        """Deletes record(s) matching the provided criteria from the given table.
+        The record selection criteria can either be one or more  input
+        parameter *expressions* (matching multiple records) or a single record
+        identified by *record_id* options.  Note that the two selection
+        criteria are mutually exclusive.  This operation cannot be run on a
+        collection or a view.  The operation is synchronous meaning that a
+        response will not be available until the request is completely
+        processed and all the matching records are deleted.
 
-        assert isinstance( table_name, (str, unicode)), "delete_records(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( expressions, (list)), "delete_records(): Argument 'expressions' must be (one) of type(s) '(list)'; given %s" % type( expressions ).__name__
+        Parameters:
+
+            table_name (str)
+                Name of the table from which to delete records. The set must be
+                a currently existing table and not a collection or a view.
+
+            expressions (list of str)
+                A list of the actual predicates, one for each select; format
+                should follow the guidelines provided :meth:`here <.filter>`.
+                Specifying one or more input parameter *expressions* is
+                mutually exclusive to specifying *record_id* in the input
+                parameter *options*.  The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **global_expression** --
+                  An optional global expression to reduce the search space of
+                  the input parameter *expressions*.
+
+                * **record_id** --
+                  A record id identifying a single record, obtained at the time
+                  of :meth:`insertion of the record <.insert_records>` or by
+                  calling :meth:`.get_records_from_collection` with the
+                  *return_record_ids* option.
+
+        Returns:
+            A dict with the following entries--
+
+            count_deleted (long)
+                Total number of records deleted across all expressions.
+
+            counts_deleted (list of longs)
+                Total number of records deleted per expression.
+        """
+        assert isinstance( table_name, (basestring)), "delete_records(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        expressions = expressions if isinstance( expressions, list ) else ( [] if (expressions is None) else [ expressions ] )
         assert isinstance( options, (dict)), "delete_records(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "delete_records" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "delete_records" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
         obj['expressions'] = expressions
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/delete/records' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/delete/records' ) )
     # end delete_records
 
 
     # begin delete_role
     def delete_role( self, name = None, options = None ):
-        """Deletes an existing role."""
+        """Deletes an existing role.
 
-        assert isinstance( name, (str, unicode)), "delete_role(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
+        Parameters:
+
+            name (str)
+                Name of the role to be deleted. Must be an existing role.
+
+            options (dict of str to str)
+                Optional parameters.
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+        """
+        assert isinstance( name, (basestring)), "delete_role(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
         assert isinstance( options, (dict)), "delete_role(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "delete_role" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "delete_role" )
 
         obj = collections.OrderedDict()
         obj['name'] = name
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/delete/role' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/delete/role' ) )
     # end delete_role
 
 
     # begin delete_user
     def delete_user( self, name = None, options = None ):
-        """Deletes an existing user."""
+        """Deletes an existing user.
 
-        assert isinstance( name, (str, unicode)), "delete_user(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
+        Parameters:
+
+            name (str)
+                Name of the user to be deleted. Must be an existing user.
+
+            options (dict of str to str)
+                Optional parameters.
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+        """
+        assert isinstance( name, (basestring)), "delete_user(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
         assert isinstance( options, (dict)), "delete_user(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "delete_user" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "delete_user" )
 
         obj = collections.OrderedDict()
         obj['name'] = name
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/delete/user' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/delete/user' ) )
     # end delete_user
 
 
@@ -3540,55 +6452,176 @@ class GPUdb(object):
     def execute_proc( self, proc_name = None, params = {}, bin_params = {},
                       input_table_names = [], input_column_names = {},
                       output_table_names = [], options = {} ):
-        """Executes a proc. This endpoint is asynchronous and does not wait for the proc
-        to complete before returning."""
+        """Executes a proc. This endpoint is asynchronous and does not wait for
+        the proc to complete before returning.
 
-        assert isinstance( proc_name, (str, unicode)), "execute_proc(): Argument 'proc_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( proc_name ).__name__
+        Parameters:
+
+            proc_name (str)
+                Name of the proc to execute. Must be the name of a currently
+                existing proc.
+
+            params (dict of str to str)
+                A map containing named parameters to pass to the proc. Each
+                key/value pair specifies the name of a parameter and its value.
+                Default value is an empty dict ( {} ).
+
+            bin_params (dict of str to str)
+                A map containing named binary parameters to pass to the proc.
+                Each key/value pair specifies the name of a parameter and its
+                value.  Default value is an empty dict ( {} ).
+
+            input_table_names (list of str)
+                Names of the tables containing data to be passed to the proc.
+                Each name specified must be the name of a currently existing
+                table. If no table names are specified, no data will be passed
+                to the proc.  The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
+                Default value is an empty list ( [] ).
+
+            input_column_names (dict of str to lists of str)
+                Map of table names from input parameter *input_table_names* to
+                lists of names of columns from those tables that will be passed
+                to the proc. Each column name specified must be the name of an
+                existing column in the corresponding table. If a table name
+                from input parameter *input_table_names* is not included, all
+                columns from that table will be passed to the proc.  Default
+                value is an empty dict ( {} ).
+
+            output_table_names (list of str)
+                Names of the tables to which output data from the proc will be
+                written. If a specified table does not exist, it will
+                automatically be created with the same schema as the
+                corresponding table (by order) from input parameter
+                *input_table_names*, excluding any primary and shard keys. If a
+                specified table is a non-persistent result table, it must not
+                have primary or shard keys. If no table names are specified, no
+                output data can be returned from the proc.  The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.  Default value is an empty
+                list ( [] ).
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **cache_input** --
+                  A comma-delimited list of table names from input parameter
+                  *input_table_names* from which input data will be cached for
+                  use in subsequent calls to :meth:`.execute_proc` with the
+                  *use_cached_input* option. Cached input data will be retained
+                  until the proc status is cleared with the
+                  :meth:`clear_complete <.show_proc_status>` option of
+                  :meth:`.show_proc_status` and all proc instances using the
+                  cached data have completed.
+
+                * **use_cached_input** --
+                  A comma-delimited list of run IDs (as returned from prior
+                  calls to :meth:`.execute_proc`) of running or completed proc
+                  instances from which input data cached using the
+                  *cache_input* option will be used. Cached input data will not
+                  be used for any tables specified in input parameter
+                  *input_table_names*, but data from all other tables cached
+                  for the specified run IDs will be passed to the proc. If the
+                  same table was cached for multiple specified run IDs, the
+                  cached data from the first run ID specified in the list that
+                  includes that table will be used.
+
+        Returns:
+            A dict with the following entries--
+
+            run_id (str)
+                The run ID of the running proc instance. This may be passed to
+                :meth:`.show_proc_status` to obtain status information, or
+                :meth:`.kill_proc` to kill the proc instance.
+        """
+        assert isinstance( proc_name, (basestring)), "execute_proc(): Argument 'proc_name' must be (one) of type(s) '(basestring)'; given %s" % type( proc_name ).__name__
         assert isinstance( params, (dict)), "execute_proc(): Argument 'params' must be (one) of type(s) '(dict)'; given %s" % type( params ).__name__
         assert isinstance( bin_params, (dict)), "execute_proc(): Argument 'bin_params' must be (one) of type(s) '(dict)'; given %s" % type( bin_params ).__name__
-        assert isinstance( input_table_names, (list)), "execute_proc(): Argument 'input_table_names' must be (one) of type(s) '(list)'; given %s" % type( input_table_names ).__name__
+        input_table_names = input_table_names if isinstance( input_table_names, list ) else ( [] if (input_table_names is None) else [ input_table_names ] )
         assert isinstance( input_column_names, (dict)), "execute_proc(): Argument 'input_column_names' must be (one) of type(s) '(dict)'; given %s" % type( input_column_names ).__name__
-        assert isinstance( output_table_names, (list)), "execute_proc(): Argument 'output_table_names' must be (one) of type(s) '(list)'; given %s" % type( output_table_names ).__name__
+        output_table_names = output_table_names if isinstance( output_table_names, list ) else ( [] if (output_table_names is None) else [ output_table_names ] )
         assert isinstance( options, (dict)), "execute_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "execute_proc" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "execute_proc" )
 
         obj = collections.OrderedDict()
         obj['proc_name'] = proc_name
-        obj['params'] = params
-        obj['bin_params'] = bin_params
+        obj['params'] = self.__sanitize_dicts( params )
+        obj['bin_params'] = self.__sanitize_dicts( bin_params )
         obj['input_table_names'] = input_table_names
-        obj['input_column_names'] = input_column_names
+        obj['input_column_names'] = self.__sanitize_dicts( input_column_names )
         obj['output_table_names'] = output_table_names
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/execute/proc' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/execute/proc' ) )
     # end execute_proc
 
 
     # begin filter
     def filter( self, table_name = None, view_name = '', expression = None, options
                 = {} ):
-        """Filters data based on the specified expression.  The results are stored in a
-        result set with the given input parameter *view_name*.  For details see
-        `concepts <../../concepts/expressions.html>`_.  The response message
-        contains the number of points for which the expression evaluated to be
-        true, which is equivalent to the size of the result view."""
+        """Filters data based on the specified expression.  The results are stored
+        in a result set with the given input parameter *view_name*.
 
-        assert isinstance( table_name, (str, unicode)), "filter(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( view_name, (str, unicode)), "filter(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
-        assert isinstance( expression, (str, unicode)), "filter(): Argument 'expression' must be (one) of type(s) '(str, unicode)'; given %s" % type( expression ).__name__
+        For details see `concepts <../../../concepts/expressions.html>`_.
+
+        The response message contains the number of points for which the
+        expression evaluated to be true, which is equivalent to the size of the
+        result view.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table to filter.  This may be the ID of a
+                collection, table or a result set (for chaining queries).
+                Collections may be filtered only if all tables within the
+                collection have the same type ID.
+
+            view_name (str)
+                If provided, then this will be the name of the view containing
+                the results. Has the same naming restrictions as `tables
+                <../../../concepts/tables.html>`_.  Default value is ''.
+
+            expression (str)
+                The select expression to filter the specified table.  For
+                details see `concepts <../../../concepts/expressions.html>`_.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view, otherwise the view will be a top-level table. If the
+                  collection does not allow duplicate types and it contains a
+                  table of the same type as the given one, then this table
+                  creation request will fail.
+
+                * **ttl** --
+                  Sets the TTL of the view specified in input parameter
+                  *view_name*. The value must be the desired TTL in minutes.
+
+        Returns:
+            A dict with the following entries--
+
+            count (long)
+                The number of records that matched the given select expression.
+        """
+        assert isinstance( table_name, (basestring)), "filter(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( view_name, (basestring)), "filter(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
+        assert isinstance( expression, (basestring)), "filter(): Argument 'expression' must be (one) of type(s) '(basestring)'; given %s" % type( expression ).__name__
         assert isinstance( options, (dict)), "filter(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "filter" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "filter" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
         obj['view_name'] = view_name
         obj['expression'] = expression
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter' ) )
     # end filter
 
 
@@ -3596,26 +6629,63 @@ class GPUdb(object):
     def filter_by_area( self, table_name = None, view_name = '', x_column_name =
                         None, x_vector = None, y_column_name = None, y_vector =
                         None, options = {} ):
-        """Calculates which objects from a table are within a named area of interest
-        (NAI/polygon). The operation is synchronous, meaning that a response
-        will not be returned until all the matching objects are fully available.
-        The response payload provides the count of the resulting set. A new
-        resultant set (view) which satisfies the input NAI restriction
-        specification is created with the name input parameter *view_name*
-        passed in as part of the input.  Note that if you call this endpoint
-        using a table that has WKT data, the x_column_name and y_column_name
-        settings are no longer required because the geospatial filter works
-        automatically."""
+        """Calculates which objects from a table are within a named area of
+        interest (NAI/polygon). The operation is synchronous, meaning that a
+        response will not be returned until all the matching objects are fully
+        available. The response payload provides the count of the resulting
+        set. A new resultant set (view) which satisfies the input NAI
+        restriction specification is created with the name input parameter
+        *view_name* passed in as part of the input.
 
-        assert isinstance( table_name, (str, unicode)), "filter_by_area(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( view_name, (str, unicode)), "filter_by_area(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
-        assert isinstance( x_column_name, (str, unicode)), "filter_by_area(): Argument 'x_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( x_column_name ).__name__
-        assert isinstance( x_vector, (list)), "filter_by_area(): Argument 'x_vector' must be (one) of type(s) '(list)'; given %s" % type( x_vector ).__name__
-        assert isinstance( y_column_name, (str, unicode)), "filter_by_area(): Argument 'y_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( y_column_name ).__name__
-        assert isinstance( y_vector, (list)), "filter_by_area(): Argument 'y_vector' must be (one) of type(s) '(list)'; given %s" % type( y_vector ).__name__
+        Parameters:
+
+            table_name (str)
+                Name of the table to filter.  This may be the name of a
+                collection, a table or a view (when chaining queries).
+                Collections may be filtered only if all tables within the
+                collection have the same type ID.
+
+            view_name (str)
+                If provided, then this will be the name of the view containing
+                the results. Has the same naming restrictions as `tables
+                <../../../concepts/tables.html>`_.  Default value is ''.
+
+            x_column_name (str)
+                Name of the column containing the x values to be filtered.
+
+            x_vector (list of floats)
+                List of x coordinates of the vertices of the polygon
+                representing the area to be filtered.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            y_column_name (str)
+                Name of the column containing the y values to be filtered.
+
+            y_vector (list of floats)
+                List of y coordinates of the vertices of the polygon
+                representing the area to be filtered.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            count (long)
+                The number of records passing the area filter.
+        """
+        assert isinstance( table_name, (basestring)), "filter_by_area(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( view_name, (basestring)), "filter_by_area(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
+        assert isinstance( x_column_name, (basestring)), "filter_by_area(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
+        x_vector = x_vector if isinstance( x_vector, list ) else ( [] if (x_vector is None) else [ x_vector ] )
+        assert isinstance( y_column_name, (basestring)), "filter_by_area(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
+        y_vector = y_vector if isinstance( y_vector, list ) else ( [] if (y_vector is None) else [ y_vector ] )
         assert isinstance( options, (dict)), "filter_by_area(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "filter_by_area" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "filter_by_area" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
@@ -3624,35 +6694,151 @@ class GPUdb(object):
         obj['x_vector'] = x_vector
         obj['y_column_name'] = y_column_name
         obj['y_vector'] = y_vector
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/byarea' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/byarea' ) )
     # end filter_by_area
+
+
+    # begin filter_by_area_geometry
+    def filter_by_area_geometry( self, table_name = None, view_name = '',
+                                 column_name = None, x_vector = None, y_vector =
+                                 None, options = {} ):
+        """Calculates which geospatial geometry objects from a table intersect a
+        named area of interest (NAI/polygon). The operation is synchronous,
+        meaning that a response will not be returned until all the matching
+        objects are fully available. The response payload provides the count of
+        the resulting set. A new resultant set (view) which satisfies the input
+        NAI restriction specification is created with the name input parameter
+        *view_name* passed in as part of the input.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table to filter.  This may be the name of a
+                collection, a table or a view (when chaining queries).
+                Collections may be filtered only if all tables within the
+                collection have the same type ID.
+
+            view_name (str)
+                If provided, then this will be the name of the view containing
+                the results. Must not be an already existing collection, table
+                or view.  Default value is ''.
+
+            column_name (str)
+                Name of the geospatial geometry column to be filtered.
+
+            x_vector (list of floats)
+                List of x coordinates of the vertices of the polygon
+                representing the area to be filtered.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            y_vector (list of floats)
+                List of y coordinates of the vertices of the polygon
+                representing the area to be filtered.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            count (long)
+                The number of records passing the area filter.
+        """
+        assert isinstance( table_name, (basestring)), "filter_by_area_geometry(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( view_name, (basestring)), "filter_by_area_geometry(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
+        assert isinstance( column_name, (basestring)), "filter_by_area_geometry(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
+        x_vector = x_vector if isinstance( x_vector, list ) else ( [] if (x_vector is None) else [ x_vector ] )
+        y_vector = y_vector if isinstance( y_vector, list ) else ( [] if (y_vector is None) else [ y_vector ] )
+        assert isinstance( options, (dict)), "filter_by_area_geometry(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "filter_by_area_geometry" )
+
+        obj = collections.OrderedDict()
+        obj['table_name'] = table_name
+        obj['view_name'] = view_name
+        obj['column_name'] = column_name
+        obj['x_vector'] = x_vector
+        obj['y_vector'] = y_vector
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/byarea/geometry' ) )
+    # end filter_by_area_geometry
 
 
     # begin filter_by_box
     def filter_by_box( self, table_name = None, view_name = '', x_column_name =
                        None, min_x = None, max_x = None, y_column_name = None,
                        min_y = None, max_y = None, options = {} ):
-        """Calculates how many objects within the given table lie in a rectangular box.
-        The operation is synchronous, meaning that a response will not be
-        returned until all the objects are fully available. The response payload
-        provides the count of the resulting set. A new resultant set which
-        satisfies the input NAI restriction specification is also created when a
-        input parameter *view_name* is passed in as part of the input
-        payload."""
+        """Calculates how many objects within the given table lie in a rectangular
+        box. The operation is synchronous, meaning that a response will not be
+        returned until all the objects are fully available. The response
+        payload provides the count of the resulting set. A new resultant set
+        which satisfies the input NAI restriction specification is also created
+        when a input parameter *view_name* is passed in as part of the input
+        payload.
 
-        assert isinstance( table_name, (str, unicode)), "filter_by_box(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( view_name, (str, unicode)), "filter_by_box(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
-        assert isinstance( x_column_name, (str, unicode)), "filter_by_box(): Argument 'x_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( x_column_name ).__name__
+        Parameters:
+
+            table_name (str)
+                Name of the table on which the bounding box operation will be
+                performed. Must be an existing table.
+
+            view_name (str)
+                Optional name of the result view that will be created
+                containing the results of the query. Has the same naming
+                restrictions as `tables <../../../concepts/tables.html>`_.
+                Default value is ''.
+
+            x_column_name (str)
+                Name of the column on which to perform the bounding box query.
+                Must be a valid numeric column.
+
+            min_x (float)
+                Lower bound for the column chosen by input parameter
+                *x_column_name*.  Must be less than or equal to input parameter
+                *max_x*.
+
+            max_x (float)
+                Upper bound for input parameter *x_column_name*.  Must be
+                greater than or equal to input parameter *min_x*.
+
+            y_column_name (str)
+                Name of a column on which to perform the bounding box query.
+                Must be a valid numeric column.
+
+            min_y (float)
+                Lower bound for input parameter *y_column_name*. Must be less
+                than or equal to input parameter *max_y*.
+
+            max_y (float)
+                Upper bound for input parameter *y_column_name*. Must be
+                greater than or equal to input parameter *min_y*.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            count (long)
+                The number of records passing the box filter.
+        """
+        assert isinstance( table_name, (basestring)), "filter_by_box(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( view_name, (basestring)), "filter_by_box(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
+        assert isinstance( x_column_name, (basestring)), "filter_by_box(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
         assert isinstance( min_x, (int, long, float)), "filter_by_box(): Argument 'min_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_x ).__name__
         assert isinstance( max_x, (int, long, float)), "filter_by_box(): Argument 'max_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_x ).__name__
-        assert isinstance( y_column_name, (str, unicode)), "filter_by_box(): Argument 'y_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( y_column_name ).__name__
+        assert isinstance( y_column_name, (basestring)), "filter_by_box(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
         assert isinstance( min_y, (int, long, float)), "filter_by_box(): Argument 'min_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_y ).__name__
         assert isinstance( max_y, (int, long, float)), "filter_by_box(): Argument 'max_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_y ).__name__
         assert isinstance( options, (dict)), "filter_by_box(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "filter_by_box" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "filter_by_box" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
@@ -3663,28 +6849,163 @@ class GPUdb(object):
         obj['y_column_name'] = y_column_name
         obj['min_y'] = min_y
         obj['max_y'] = max_y
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/bybox' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/bybox' ) )
     # end filter_by_box
+
+
+    # begin filter_by_box_geometry
+    def filter_by_box_geometry( self, table_name = None, view_name = '', column_name
+                                = None, min_x = None, max_x = None, min_y =
+                                None, max_y = None, options = {} ):
+        """Calculates which geospatial geometry objects from a table intersect a
+        rectangular box. The operation is synchronous, meaning that a response
+        will not be returned until all the objects are fully available. The
+        response payload provides the count of the resulting set. A new
+        resultant set which satisfies the input NAI restriction specification
+        is also created when a input parameter *view_name* is passed in as part
+        of the input payload.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table on which the bounding box operation will be
+                performed. Must be an existing table.
+
+            view_name (str)
+                Optional name of the result view that will be created
+                containing the results of the query. Must not be an already
+                existing collection, table or view.  Default value is ''.
+
+            column_name (str)
+                Name of the geospatial geometry column to be filtered.
+
+            min_x (float)
+                Lower bound for the x-coordinate of the rectangular box.  Must
+                be less than or equal to input parameter *max_x*.
+
+            max_x (float)
+                Upper bound for the x-coordinate of the rectangular box.  Must
+                be greater than or equal to input parameter *min_x*.
+
+            min_y (float)
+                Lower bound for the y-coordinate of the rectangular box. Must
+                be less than or equal to input parameter *max_y*.
+
+            max_y (float)
+                Upper bound for the y-coordinate of the rectangular box. Must
+                be greater than or equal to input parameter *min_y*.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            count (long)
+                The number of records passing the box filter.
+        """
+        assert isinstance( table_name, (basestring)), "filter_by_box_geometry(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( view_name, (basestring)), "filter_by_box_geometry(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
+        assert isinstance( column_name, (basestring)), "filter_by_box_geometry(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
+        assert isinstance( min_x, (int, long, float)), "filter_by_box_geometry(): Argument 'min_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_x ).__name__
+        assert isinstance( max_x, (int, long, float)), "filter_by_box_geometry(): Argument 'max_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_x ).__name__
+        assert isinstance( min_y, (int, long, float)), "filter_by_box_geometry(): Argument 'min_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_y ).__name__
+        assert isinstance( max_y, (int, long, float)), "filter_by_box_geometry(): Argument 'max_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_y ).__name__
+        assert isinstance( options, (dict)), "filter_by_box_geometry(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "filter_by_box_geometry" )
+
+        obj = collections.OrderedDict()
+        obj['table_name'] = table_name
+        obj['view_name'] = view_name
+        obj['column_name'] = column_name
+        obj['min_x'] = min_x
+        obj['max_x'] = max_x
+        obj['min_y'] = min_y
+        obj['max_y'] = max_y
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/bybox/geometry' ) )
+    # end filter_by_box_geometry
 
 
     # begin filter_by_geometry
     def filter_by_geometry( self, table_name = None, view_name = '', column_name =
                             None, input_wkt = '', operation = None, options = {}
                             ):
-        """Applies a geometry filter against a spatial column named WKT in a given
-        table, collection or view. The filtering geometry is provided by input
-        parameter *input_wkt*."""
+        """Applies a geometry filter against a geospatial geometry column in a
+        given table, collection or view. The filtering geometry is provided by
+        input parameter *input_wkt*.
 
-        assert isinstance( table_name, (str, unicode)), "filter_by_geometry(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( view_name, (str, unicode)), "filter_by_geometry(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
-        assert isinstance( column_name, (str, unicode)), "filter_by_geometry(): Argument 'column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( column_name ).__name__
-        assert isinstance( input_wkt, (str, unicode)), "filter_by_geometry(): Argument 'input_wkt' must be (one) of type(s) '(str, unicode)'; given %s" % type( input_wkt ).__name__
-        assert isinstance( operation, (str, unicode)), "filter_by_geometry(): Argument 'operation' must be (one) of type(s) '(str, unicode)'; given %s" % type( operation ).__name__
+        Parameters:
+
+            table_name (str)
+                Name of the table on which the filter by geometry will be
+                performed.  Must be an existing table, collection or view
+                containing a geospatial geometry column.
+
+            view_name (str)
+                If provided, then this will be the name of the view containing
+                the results. Has the same naming restrictions as `tables
+                <../../../concepts/tables.html>`_.  Default value is ''.
+
+            column_name (str)
+                Name of the column to be used in the filter. Must be a
+                geospatial geometry column.
+
+            input_wkt (str)
+                A geometry in WKT format that will be used to filter the
+                objects in input parameter *table_name*.  Default value is ''.
+
+            operation (str)
+                The geometric filtering operation to perform
+                Allowed values are:
+
+                * **contains** --
+                  Matches records that contain the given WKT in input parameter
+                  *input_wkt*, i.e. the given WKT is within the bounds of a
+                  record's geometry.
+
+                * **crosses** --
+                  Matches records that cross the given WKT.
+
+                * **disjoint** --
+                  Matches records that are disjoint from the given WKT.
+
+                * **equals** --
+                  Matches records that are the same as the given WKT.
+
+                * **intersects** --
+                  Matches records that intersect the given WKT.
+
+                * **overlaps** --
+                  Matches records that overlap the given WKT.
+
+                * **touches** --
+                  Matches records that touch the given WKT.
+
+                * **within** --
+                  Matches records that are within the given WKT.
+
+            options (dict of str to str)
+                  Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            count (long)
+                The number of records passing the geometry filter.
+        """
+        assert isinstance( table_name, (basestring)), "filter_by_geometry(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( view_name, (basestring)), "filter_by_geometry(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
+        assert isinstance( column_name, (basestring)), "filter_by_geometry(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
+        assert isinstance( input_wkt, (basestring)), "filter_by_geometry(): Argument 'input_wkt' must be (one) of type(s) '(basestring)'; given %s" % type( input_wkt ).__name__
+        assert isinstance( operation, (basestring)), "filter_by_geometry(): Argument 'operation' must be (one) of type(s) '(basestring)'; given %s" % type( operation ).__name__
         assert isinstance( options, (dict)), "filter_by_geometry(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "filter_by_geometry" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "filter_by_geometry" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
@@ -3692,43 +7013,86 @@ class GPUdb(object):
         obj['column_name'] = column_name
         obj['input_wkt'] = input_wkt
         obj['operation'] = operation
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/bygeometry' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/bygeometry' ) )
     # end filter_by_geometry
 
 
     # begin filter_by_list
     def filter_by_list( self, table_name = None, view_name = '', column_values_map =
                         None, options = {} ):
-        """Calculates which records from a table have values in the given list for the
-        corresponding column. The operation is synchronous, meaning that a
-        response will not be returned until all the objects are fully available.
-        The response payload provides the count of the resulting set. A new
-        resultant set (view) which satisfies the input filter specification is
-        also created if a input parameter *view_name* is passed in as part of
-        the request.  For example, if a type definition has the columns 'x' and
-        'y', then a filter by list query with the column map {"x":["10.1",
-        "2.3"], "y":["0.0", "-31.5", "42.0"]} will return the count of all data
-        points whose x and y values match both in the respective x- and y-lists,
-        e.g., "x = 10.1 and y = 0.0", "x = 2.3 and y = -31.5", etc. However, a
-        record with "x = 10.1 and y = -31.5" or "x = 2.3 and y = 0.0" would not
-        be returned because the values in the given lists do not correspond."""
+        """Calculates which records from a table have values in the given list for
+        the corresponding column. The operation is synchronous, meaning that a
+        response will not be returned until all the objects are fully
+        available. The response payload provides the count of the resulting
+        set. A new resultant set (view) which satisfies the input filter
+        specification is also created if a input parameter *view_name* is
+        passed in as part of the request.
 
-        assert isinstance( table_name, (str, unicode)), "filter_by_list(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( view_name, (str, unicode)), "filter_by_list(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
+        For example, if a type definition has the columns 'x' and 'y', then a
+        filter by list query with the column map {"x":["10.1", "2.3"],
+        "y":["0.0", "-31.5", "42.0"]} will return the count of all data points
+        whose x and y values match both in the respective x- and y-lists, e.g.,
+        "x = 10.1 and y = 0.0", "x = 2.3 and y = -31.5", etc. However, a record
+        with "x = 10.1 and y = -31.5" or "x = 2.3 and y = 0.0" would not be
+        returned because the values in the given lists do not correspond.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table to filter.  This may be the ID of a
+                collection, table or a result set (for chaining queries).
+                Collections may be filtered only if all tables within the
+                collection have the same type ID.
+
+            view_name (str)
+                If provided, then this will be the name of the view containing
+                the results. Has the same naming restrictions as `tables
+                <../../../concepts/tables.html>`_.  Default value is ''.
+
+            column_values_map (dict of str to lists of str)
+                List of values for the corresponding column in the table
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **filter_mode** --
+                  String indicating the filter mode, either 'in_list' or
+                  'not_in_list'.
+                  Allowed values are:
+
+                  * **in_list** --
+                    The filter will match all items that are in the provided
+                    list(s).
+
+                  * **not_in_list** --
+                    The filter will match all items that are not in the
+                    provided list(s).
+
+                    The default value is 'in_list'.
+
+        Returns:
+            A dict with the following entries--
+
+            count (long)
+                The number of records passing the list filter.
+        """
+        assert isinstance( table_name, (basestring)), "filter_by_list(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( view_name, (basestring)), "filter_by_list(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
         assert isinstance( column_values_map, (dict)), "filter_by_list(): Argument 'column_values_map' must be (one) of type(s) '(dict)'; given %s" % type( column_values_map ).__name__
         assert isinstance( options, (dict)), "filter_by_list(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "filter_by_list" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "filter_by_list" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
         obj['view_name'] = view_name
-        obj['column_values_map'] = column_values_map
-        obj['options'] = options
+        obj['column_values_map'] = self.__sanitize_dicts( column_values_map )
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/bylist' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/bylist' ) )
     # end filter_by_list
 
 
@@ -3736,29 +7100,72 @@ class GPUdb(object):
     def filter_by_radius( self, table_name = None, view_name = '', x_column_name =
                           None, x_center = None, y_column_name = None, y_center
                           = None, radius = None, options = {} ):
-        """Calculates which objects from a table lie within a circle with the given
-        radius and center point (i.e. circular NAI). The operation is
+        """Calculates which objects from a table lie within a circle with the
+        given radius and center point (i.e. circular NAI). The operation is
         synchronous, meaning that a response will not be returned until all the
         objects are fully available. The response payload provides the count of
         the resulting set. A new resultant set (view) which satisfies the input
         circular NAI restriction specification is also created if a input
-        parameter *view_name* is passed in as part of the request.  For track
-        data, all track points that lie within the circle plus one point on
-        either side of the circle (if the track goes beyond the circle) will be
-        included in the result. For shapes, e.g. polygons, all polygons that
-        intersect the circle will be included (even if none of the points of the
-        polygon fall within the circle)."""
+        parameter *view_name* is passed in as part of the request.
 
-        assert isinstance( table_name, (str, unicode)), "filter_by_radius(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( view_name, (str, unicode)), "filter_by_radius(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
-        assert isinstance( x_column_name, (str, unicode)), "filter_by_radius(): Argument 'x_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( x_column_name ).__name__
+        For track data, all track points that lie within the circle plus one
+        point on either side of the circle (if the track goes beyond the
+        circle) will be included in the result.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table on which the filter by radius operation will
+                be performed.  Must be an existing table.
+
+            view_name (str)
+                If provided, then this will be the name of the view containing
+                the results. Has the same naming restrictions as `tables
+                <../../../concepts/tables.html>`_.  Default value is ''.
+
+            x_column_name (str)
+                Name of the column to be used for the x-coordinate (the
+                longitude) of the center.
+
+            x_center (float)
+                Value of the longitude of the center. Must be within [-180.0,
+                180.0].  The minimum allowed value is -180. The maximum allowed
+                value is 180.
+
+            y_column_name (str)
+                Name of the column to be used for the y-coordinate-the
+                latitude-of the center.
+
+            y_center (float)
+                Value of the latitude of the center. Must be within [-90.0,
+                90.0].  The minimum allowed value is -90. The maximum allowed
+                value is 90.
+
+            radius (float)
+                The radius of the circle within which the search will be
+                performed. Must be a non-zero positive value. It is in meters;
+                so, for example, a value of '42000' means 42 km.  The minimum
+                allowed value is 0. The maximum allowed value is MAX_INT.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            count (long)
+                The number of records passing the radius filter.
+        """
+        assert isinstance( table_name, (basestring)), "filter_by_radius(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( view_name, (basestring)), "filter_by_radius(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
+        assert isinstance( x_column_name, (basestring)), "filter_by_radius(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
         assert isinstance( x_center, (int, long, float)), "filter_by_radius(): Argument 'x_center' must be (one) of type(s) '(int, long, float)'; given %s" % type( x_center ).__name__
-        assert isinstance( y_column_name, (str, unicode)), "filter_by_radius(): Argument 'y_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( y_column_name ).__name__
+        assert isinstance( y_column_name, (basestring)), "filter_by_radius(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
         assert isinstance( y_center, (int, long, float)), "filter_by_radius(): Argument 'y_center' must be (one) of type(s) '(int, long, float)'; given %s" % type( y_center ).__name__
         assert isinstance( radius, (int, long, float)), "filter_by_radius(): Argument 'radius' must be (one) of type(s) '(int, long, float)'; given %s" % type( radius ).__name__
         assert isinstance( options, (dict)), "filter_by_radius(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "filter_by_radius" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "filter_by_radius" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
@@ -3768,35 +7175,141 @@ class GPUdb(object):
         obj['y_column_name'] = y_column_name
         obj['y_center'] = y_center
         obj['radius'] = radius
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/byradius' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/byradius' ) )
     # end filter_by_radius
+
+
+    # begin filter_by_radius_geometry
+    def filter_by_radius_geometry( self, table_name = None, view_name = '',
+                                   column_name = None, x_center = None, y_center
+                                   = None, radius = None, options = {} ):
+        """Calculates which geospatial geometry objects from a table intersect a
+        circle with the given radius and center point (i.e. circular NAI). The
+        operation is synchronous, meaning that a response will not be returned
+        until all the objects are fully available. The response payload
+        provides the count of the resulting set. A new resultant set (view)
+        which satisfies the input circular NAI restriction specification is
+        also created if a input parameter *view_name* is passed in as part of
+        the request.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table on which the filter by radius operation will
+                be performed.  Must be an existing table.
+
+            view_name (str)
+                If provided, then this will be the name of the view containing
+                the results. Must not be an already existing collection, table
+                or view.  Default value is ''.
+
+            column_name (str)
+                Name of the geospatial geometry column to be filtered.
+
+            x_center (float)
+                Value of the longitude of the center. Must be within [-180.0,
+                180.0].  The minimum allowed value is -180. The maximum allowed
+                value is 180.
+
+            y_center (float)
+                Value of the latitude of the center. Must be within [-90.0,
+                90.0].  The minimum allowed value is -90. The maximum allowed
+                value is 90.
+
+            radius (float)
+                The radius of the circle within which the search will be
+                performed. Must be a non-zero positive value. It is in meters;
+                so, for example, a value of '42000' means 42 km.  The minimum
+                allowed value is 0. The maximum allowed value is MAX_INT.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            count (long)
+                The number of records passing the radius filter.
+        """
+        assert isinstance( table_name, (basestring)), "filter_by_radius_geometry(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( view_name, (basestring)), "filter_by_radius_geometry(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
+        assert isinstance( column_name, (basestring)), "filter_by_radius_geometry(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
+        assert isinstance( x_center, (int, long, float)), "filter_by_radius_geometry(): Argument 'x_center' must be (one) of type(s) '(int, long, float)'; given %s" % type( x_center ).__name__
+        assert isinstance( y_center, (int, long, float)), "filter_by_radius_geometry(): Argument 'y_center' must be (one) of type(s) '(int, long, float)'; given %s" % type( y_center ).__name__
+        assert isinstance( radius, (int, long, float)), "filter_by_radius_geometry(): Argument 'radius' must be (one) of type(s) '(int, long, float)'; given %s" % type( radius ).__name__
+        assert isinstance( options, (dict)), "filter_by_radius_geometry(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "filter_by_radius_geometry" )
+
+        obj = collections.OrderedDict()
+        obj['table_name'] = table_name
+        obj['view_name'] = view_name
+        obj['column_name'] = column_name
+        obj['x_center'] = x_center
+        obj['y_center'] = y_center
+        obj['radius'] = radius
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/byradius/geometry' ) )
+    # end filter_by_radius_geometry
 
 
     # begin filter_by_range
     def filter_by_range( self, table_name = None, view_name = '', column_name =
                          None, lower_bound = None, upper_bound = None, options =
                          {} ):
-        """Calculates which objects from a table have a column that is within the given
-        bounds. An object from the table identified by input parameter
+        """Calculates which objects from a table have a column that is within the
+        given bounds. An object from the table identified by input parameter
         *table_name* is added to the view input parameter *view_name* if its
         column is within [input parameter *lower_bound*, input parameter
         *upper_bound*] (inclusive). The operation is synchronous. The response
-        provides a count of the number of objects which passed the bound filter.
-        Although this functionality can also be accomplished with the standard
-        filter function, it is more efficient.  For track objects, the count
-        reflects how many points fall within the given bounds (which may not
-        include all the track points of any given track)."""
+        provides a count of the number of objects which passed the bound
+        filter.  Although this functionality can also be accomplished with the
+        standard filter function, it is more efficient.
 
-        assert isinstance( table_name, (str, unicode)), "filter_by_range(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( view_name, (str, unicode)), "filter_by_range(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
-        assert isinstance( column_name, (str, unicode)), "filter_by_range(): Argument 'column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( column_name ).__name__
+        For track objects, the count reflects how many points fall within the
+        given bounds (which may not include all the track points of any given
+        track).
+
+        Parameters:
+
+            table_name (str)
+                Name of the table on which the filter by range operation will
+                be performed.  Must be an existing table.
+
+            view_name (str)
+                If provided, then this will be the name of the view containing
+                the results. Has the same naming restrictions as `tables
+                <../../../concepts/tables.html>`_.  Default value is ''.
+
+            column_name (str)
+                Name of a column on which the operation would be applied.
+
+            lower_bound (float)
+                Value of the lower bound (inclusive).
+
+            upper_bound (float)
+                Value of the upper bound (inclusive).
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            count (long)
+                The number of records passing the range filter.
+        """
+        assert isinstance( table_name, (basestring)), "filter_by_range(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( view_name, (basestring)), "filter_by_range(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
+        assert isinstance( column_name, (basestring)), "filter_by_range(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
         assert isinstance( lower_bound, (int, long, float)), "filter_by_range(): Argument 'lower_bound' must be (one) of type(s) '(int, long, float)'; given %s" % type( lower_bound ).__name__
         assert isinstance( upper_bound, (int, long, float)), "filter_by_range(): Argument 'upper_bound' must be (one) of type(s) '(int, long, float)'; given %s" % type( upper_bound ).__name__
         assert isinstance( options, (dict)), "filter_by_range(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "filter_by_range" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "filter_by_range" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
@@ -3804,45 +7317,101 @@ class GPUdb(object):
         obj['column_name'] = column_name
         obj['lower_bound'] = lower_bound
         obj['upper_bound'] = upper_bound
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/byrange' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/byrange' ) )
     # end filter_by_range
 
 
     # begin filter_by_series
     def filter_by_series( self, table_name = None, view_name = '', track_id = None,
                           target_track_ids = None, options = {} ):
-        """Filters objects matching all points of the given track (works only on track
-        type data).  It allows users to specify a particular track to find all
-        other points in the table that fall within specified ranges-spatial and
-        temporal-of all points of the given track. Additionally, the user can
-        specify another track to see if the two intersect (or go close to each
-        other within the specified ranges). The user also has the flexibility of
-        using different metrics for the spatial distance calculation: Euclidean
-        (flat geometry) or Great Circle (spherical geometry to approximate the
-        Earth's surface distances). The filtered points are stored in a newly
-        created result set. The return value of the function is the number of
-        points in the resultant set (view).  This operation is synchronous,
-        meaning that a response will not be returned until all the objects are
-        fully available."""
+        """Filters objects matching all points of the given track (works only on
+        track type data).  It allows users to specify a particular track to
+        find all other points in the table that fall within specified
+        ranges-spatial and temporal-of all points of the given track.
+        Additionally, the user can specify another track to see if the two
+        intersect (or go close to each other within the specified ranges). The
+        user also has the flexibility of using different metrics for the
+        spatial distance calculation: Euclidean (flat geometry) or Great Circle
+        (spherical geometry to approximate the Earth's surface distances). The
+        filtered points are stored in a newly created result set. The return
+        value of the function is the number of points in the resultant set
+        (view).
 
-        assert isinstance( table_name, (str, unicode)), "filter_by_series(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( view_name, (str, unicode)), "filter_by_series(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
-        assert isinstance( track_id, (str, unicode)), "filter_by_series(): Argument 'track_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( track_id ).__name__
-        assert isinstance( target_track_ids, (list)), "filter_by_series(): Argument 'target_track_ids' must be (one) of type(s) '(list)'; given %s" % type( target_track_ids ).__name__
+        This operation is synchronous, meaning that a response will not be
+        returned until all the objects are fully available.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table on which the filter by track operation will
+                be performed. Must be a currently existing table with track
+                semantic type.
+
+            view_name (str)
+                If provided, then this will be the name of the view containing
+                the results. Has the same naming restrictions as `tables
+                <../../../concepts/tables.html>`_.  Default value is ''.
+
+            track_id (str)
+                The ID of the track which will act as the filtering points.
+                Must be an existing track within the given table.
+
+            target_track_ids (list of str)
+                Up to one track ID to intersect with the "filter" track. If any
+                provided, it must be an valid track ID within the given set.
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **spatial_radius** --
+                  A positive number passed as a string representing the radius
+                  of the search area centered around each track point's
+                  geospatial coordinates. The value is interpreted in meters.
+                  Required parameter.
+
+                * **time_radius** --
+                  A positive number passed as a string representing the maximum
+                  allowable time difference between the timestamps of a
+                  filtered object and the given track's points. The value is
+                  interpreted in seconds. Required parameter.
+
+                * **spatial_distance_metric** --
+                  A string representing the coordinate system to use for the
+                  spatial search criteria. Acceptable values are 'euclidean'
+                  and 'great_circle'. Optional parameter; default is
+                  'euclidean'.
+                  Allowed values are:
+
+                  * euclidean
+                  * great_circle
+
+        Returns:
+            A dict with the following entries--
+
+            count (long)
+                The number of records passing the series filter.
+        """
+        assert isinstance( table_name, (basestring)), "filter_by_series(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( view_name, (basestring)), "filter_by_series(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
+        assert isinstance( track_id, (basestring)), "filter_by_series(): Argument 'track_id' must be (one) of type(s) '(basestring)'; given %s" % type( track_id ).__name__
+        target_track_ids = target_track_ids if isinstance( target_track_ids, list ) else ( [] if (target_track_ids is None) else [ target_track_ids ] )
         assert isinstance( options, (dict)), "filter_by_series(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "filter_by_series" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "filter_by_series" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
         obj['view_name'] = view_name
         obj['track_id'] = track_id
         obj['target_track_ids'] = target_track_ids
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/byseries' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/byseries' ) )
     # end filter_by_series
 
 
@@ -3850,20 +7419,88 @@ class GPUdb(object):
     def filter_by_string( self, table_name = None, view_name = '', expression =
                           None, mode = None, column_names = None, options = {}
                           ):
-        """Calculates which objects from a table, collection, or view match a string
-        expression for the given string columns. The options 'case_sensitive'
-        can be used to modify the behavior for all modes except 'search'. For
-        'search' mode details and limitations, see `Full Text Search
-        <../../concepts/full_text_search.html>`_."""
+        """Calculates which objects from a table, collection, or view match a
+        string expression for the given string columns. The options
+        'case_sensitive' can be used to modify the behavior for all modes
+        except 'search'. For 'search' mode details and limitations, see `Full
+        Text Search <../../../concepts/full_text_search.html>`_.
 
-        assert isinstance( table_name, (str, unicode)), "filter_by_string(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( view_name, (str, unicode)), "filter_by_string(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
-        assert isinstance( expression, (str, unicode)), "filter_by_string(): Argument 'expression' must be (one) of type(s) '(str, unicode)'; given %s" % type( expression ).__name__
-        assert isinstance( mode, (str, unicode)), "filter_by_string(): Argument 'mode' must be (one) of type(s) '(str, unicode)'; given %s" % type( mode ).__name__
-        assert isinstance( column_names, (list)), "filter_by_string(): Argument 'column_names' must be (one) of type(s) '(list)'; given %s" % type( column_names ).__name__
+        Parameters:
+
+            table_name (str)
+                Name of the table on which the filter operation will be
+                performed.  Must be an existing table, collection or view.
+
+            view_name (str)
+                If provided, then this will be the name of the view containing
+                the results. Has the same naming restrictions as `tables
+                <../../../concepts/tables.html>`_.  Default value is ''.
+
+            expression (str)
+                The expression with which to filter the table.
+
+            mode (str)
+                The string filtering mode to apply. See below for details.
+                Allowed values are:
+
+                * **search** --
+                  Full text search query with wildcards and boolean operators.
+                  Note that for this mode, no column can be specified in input
+                  parameter *column_names*; all string columns of the table
+                  that have text search enabled will be searched.
+
+                * **equals** --
+                  Exact whole-string match (accelerated).
+
+                * **contains** --
+                  Partial substring match (not accelerated).  If the column is
+                  a string type (non-charN) and the number of records is too
+                  large, it will return 0.
+
+                * **starts_with** --
+                  Strings that start with the given expression (not
+                  accelerated). If the column is a string type (non-charN) and
+                  the number of records is too large, it will return 0.
+
+                * **regex** --
+                  Full regular expression search (not accelerated). If the
+                  column is a string type (non-charN) and the number of records
+                  is too large, it will return 0.
+
+            column_names (list of str)
+                  List of columns on which to apply the filter. Ignored for
+                  'search' mode.  The user can provide a single element (which
+                  will be automatically promoted to a list internally) or a
+                  list.
+
+            options (dict of str to str)
+                  Optional parameters.  Default value is an empty dict ( {} ).
+                  Allowed keys are:
+
+                  * **case_sensitive** --
+                    If 'false' then string filtering will ignore case. Does not
+                    apply to 'search' mode.
+                    Allowed values are:
+
+                    * true
+                    * false
+
+                    The default value is 'true'.
+
+        Returns:
+            A dict with the following entries--
+
+            count (long)
+                The number of records that passed the string filter.
+        """
+        assert isinstance( table_name, (basestring)), "filter_by_string(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( view_name, (basestring)), "filter_by_string(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
+        assert isinstance( expression, (basestring)), "filter_by_string(): Argument 'expression' must be (one) of type(s) '(basestring)'; given %s" % type( expression ).__name__
+        assert isinstance( mode, (basestring)), "filter_by_string(): Argument 'mode' must be (one) of type(s) '(basestring)'; given %s" % type( mode ).__name__
+        column_names = column_names if isinstance( column_names, list ) else ( [] if (column_names is None) else [ column_names ] )
         assert isinstance( options, (dict)), "filter_by_string(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "filter_by_string" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "filter_by_string" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
@@ -3871,9 +7508,9 @@ class GPUdb(object):
         obj['expression'] = expression
         obj['mode'] = mode
         obj['column_names'] = column_names
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/bystring' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/bystring' ) )
     # end filter_by_string
 
 
@@ -3881,24 +7518,112 @@ class GPUdb(object):
     def filter_by_table( self, table_name = None, view_name = '', column_name =
                          None, source_table_name = None,
                          source_table_column_name = None, options = {} ):
-        """Filters objects in one table based on objects in another table. The user must
-        specify matching column types from the two tables (i.e. the target table
-        from which objects will be filtered and the source table based on which
-        the filter will be created); the column names need not be the same. If a
-        input parameter *view_name* is specified, then the filtered objects will
-        then be put in a newly created view. The operation is synchronous,
-        meaning that a response will not be returned until all objects are fully
-        available in the result view. The return value contains the count (i.e.
-        the size) of the resulting view."""
+        """Filters objects in one table based on objects in another table. The
+        user must specify matching column types from the two tables (i.e. the
+        target table from which objects will be filtered and the source table
+        based on which the filter will be created); the column names need not
+        be the same. If a input parameter *view_name* is specified, then the
+        filtered objects will then be put in a newly created view. The
+        operation is synchronous, meaning that a response will not be returned
+        until all objects are fully available in the result view. The return
+        value contains the count (i.e. the size) of the resulting view.
 
-        assert isinstance( table_name, (str, unicode)), "filter_by_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( view_name, (str, unicode)), "filter_by_table(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
-        assert isinstance( column_name, (str, unicode)), "filter_by_table(): Argument 'column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( column_name ).__name__
-        assert isinstance( source_table_name, (str, unicode)), "filter_by_table(): Argument 'source_table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( source_table_name ).__name__
-        assert isinstance( source_table_column_name, (str, unicode)), "filter_by_table(): Argument 'source_table_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( source_table_column_name ).__name__
+        Parameters:
+
+            table_name (str)
+                Name of the table whose data will be filtered. Must be an
+                existing table.
+
+            view_name (str)
+                If provided, then this will be the name of the view containing
+                the results. Has the same naming restrictions as `tables
+                <../../../concepts/tables.html>`_.  Default value is ''.
+
+            column_name (str)
+                Name of the column by whose value the data will be filtered
+                from the table designated by input parameter *table_name*.
+
+            source_table_name (str)
+                Name of the table whose data will be compared against in the
+                table called input parameter *table_name*. Must be an existing
+                table.
+
+            source_table_column_name (str)
+                Name of the column in the input parameter *source_table_name*
+                whose values will be used as the filter for table input
+                parameter *table_name*. Must be a geospatial geometry column if
+                in 'spatial' mode; otherwise, Must match the type of the input
+                parameter *column_name*.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **filter_mode** --
+                  String indicating the filter mode, either *in_table* or
+                  *not_in_table*.
+                  Allowed values are:
+
+                  * in_table
+                  * not_in_table
+
+                  The default value is 'in_table'.
+
+                * **mode** --
+                  Mode - should be either *spatial* or *normal*.
+                  Allowed values are:
+
+                  * normal
+                  * spatial
+
+                  The default value is 'normal'.
+
+                * **buffer** --
+                  Buffer size, in meters. Only relevant for *spatial* mode.
+
+                * **buffer_method** --
+                  Method used to buffer polygons.  Only relevant for *spatial*
+                  mode.
+                  Allowed values are:
+
+                  * **geos** --
+                    Use geos 1 edge per corner algorithm
+
+                    The default value is 'normal'.
+
+                * **max_partition_size** --
+                  Maximum number of points in a partition. Only relevant for
+                  *spatial* mode.
+
+                * **max_partition_score** --
+                  Maximum number of points * edges in a partition. Only
+                  relevant for *spatial* mode.
+
+                * **x_column_name** --
+                  Name of column containing x value of point being filtered in
+                  *spatial* mode.
+
+                * **y_column_name** --
+                  Name of column containing y value of point being filtered in
+                  *spatial* mode.
+
+        Returns:
+            A dict with the following entries--
+
+            count (long)
+                The number of records in input parameter *table_name* that have
+                input parameter *column_name* values matching input parameter
+                *source_table_column_name* values in input parameter
+                *source_table_name*.
+        """
+        assert isinstance( table_name, (basestring)), "filter_by_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( view_name, (basestring)), "filter_by_table(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
+        assert isinstance( column_name, (basestring)), "filter_by_table(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
+        assert isinstance( source_table_name, (basestring)), "filter_by_table(): Argument 'source_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( source_table_name ).__name__
+        assert isinstance( source_table_column_name, (basestring)), "filter_by_table(): Argument 'source_table_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( source_table_column_name ).__name__
         assert isinstance( options, (dict)), "filter_by_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "filter_by_table" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "filter_by_table" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
@@ -3906,9 +7631,9 @@ class GPUdb(object):
         obj['column_name'] = column_name
         obj['source_table_name'] = source_table_name
         obj['source_table_column_name'] = source_table_column_name
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/bytable' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/bytable' ) )
     # end filter_by_table
 
 
@@ -3916,26 +7641,58 @@ class GPUdb(object):
     def filter_by_value( self, table_name = None, view_name = '', is_string = None,
                          value = 0, value_str = '', column_name = None, options
                          = {} ):
-        """Calculates which objects from a table has a particular value for a particular
-        column. The input parameters provide a way to specify either a String or
-        a Double valued column and a desired value for the column on which the
-        filter is performed. The operation is synchronous, meaning that a
-        response will not be returned until all the objects are fully available.
-        The response payload provides the count of the resulting set. A new
-        result view which satisfies the input filter restriction specification
-        is also created with a view name passed in as part of the input payload.
-        Although this functionality can also be accomplished with the standard
-        filter function, it is more efficient."""
+        """Calculates which objects from a table has a particular value for a
+        particular column. The input parameters provide a way to specify either
+        a String or a Double valued column and a desired value for the column
+        on which the filter is performed. The operation is synchronous, meaning
+        that a response will not be returned until all the objects are fully
+        available. The response payload provides the count of the resulting
+        set. A new result view which satisfies the input filter restriction
+        specification is also created with a view name passed in as part of the
+        input payload.  Although this functionality can also be accomplished
+        with the standard filter function, it is more efficient.
 
-        assert isinstance( table_name, (str, unicode)), "filter_by_value(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( view_name, (str, unicode)), "filter_by_value(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
+        Parameters:
+
+            table_name (str)
+                Name of an existing table on which to perform the calculation.
+
+            view_name (str)
+                If provided, then this will be the name of the view containing
+                the results. Has the same naming restrictions as `tables
+                <../../../concepts/tables.html>`_.  Default value is ''.
+
+            is_string (bool)
+                Indicates whether the value being searched for is string or
+                numeric.
+
+            value (float)
+                The value to search for.  Default value is 0.
+
+            value_str (str)
+                The string value to search for.  Default value is ''.
+
+            column_name (str)
+                Name of a column on which the filter by value would be applied.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            count (long)
+                The number of records passing the value filter.
+        """
+        assert isinstance( table_name, (basestring)), "filter_by_value(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( view_name, (basestring)), "filter_by_value(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
         assert isinstance( is_string, (bool)), "filter_by_value(): Argument 'is_string' must be (one) of type(s) '(bool)'; given %s" % type( is_string ).__name__
         assert isinstance( value, (int, long, float)), "filter_by_value(): Argument 'value' must be (one) of type(s) '(int, long, float)'; given %s" % type( value ).__name__
-        assert isinstance( value_str, (str, unicode)), "filter_by_value(): Argument 'value_str' must be (one) of type(s) '(str, unicode)'; given %s" % type( value_str ).__name__
-        assert isinstance( column_name, (str, unicode)), "filter_by_value(): Argument 'column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( column_name ).__name__
+        assert isinstance( value_str, (basestring)), "filter_by_value(): Argument 'value_str' must be (one) of type(s) '(basestring)'; given %s" % type( value_str ).__name__
+        assert isinstance( column_name, (basestring)), "filter_by_value(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
         assert isinstance( options, (dict)), "filter_by_value(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "filter_by_value" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "filter_by_value" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
@@ -3944,41 +7701,135 @@ class GPUdb(object):
         obj['value'] = value
         obj['value_str'] = value_str
         obj['column_name'] = column_name
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/byvalue' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/filter/byvalue' ) )
     # end filter_by_value
 
 
     # begin get_records
     def get_records( self, table_name = None, offset = 0, limit = 10000, encoding =
                      'binary', options = {} ):
-        """Retrieves records from a given table, optionally filtered by an expression
-        and/or sorted by a column. This operation can be performed on tables,
-        views, or on homogeneous collections (collections containing tables of
-        all the same type). Records can be returned encoded as binary or json.
+        """Retrieves records from a given table, optionally filtered by an
+        expression and/or sorted by a column. This operation can be performed
+        on tables, views, or on homogeneous collections (collections containing
+        tables of all the same type). Records can be returned encoded as binary
+        or json.
+
         This operation supports paging through the data via the input parameter
         *offset* and input parameter *limit* parameters. Note that when paging
         through a table, if the table (or the underlying table in case of a
-        view) is updated (records are inserted, deleted or modified) the records
-        retrieved may differ between calls based on the updates applied."""
+        view) is updated (records are inserted, deleted or modified) the
+        records retrieved may differ between calls based on the updates
+        applied.
 
-        assert isinstance( table_name, (str, unicode)), "get_records(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
+        Parameters:
+
+            table_name (str)
+                Name of the table from which the records will be fetched. Must
+                be a table, view or homogeneous collection.
+
+            offset (long)
+                A positive integer indicating the number of initial results to
+                skip (this can be useful for paging through the results).
+                Default value is 0. The minimum allowed value is 0. The maximum
+                allowed value is MAX_INT.
+
+            limit (long)
+                A positive integer indicating the maximum number of results to
+                be returned. Or END_OF_SET (-9999) to indicate that the max
+                number of results should be returned.  Default value is 10000.
+
+            encoding (str)
+                Specifies the encoding for returned records.  Default value is
+                'binary'.
+                Allowed values are:
+
+                * binary
+                * json
+
+                The default value is 'binary'.
+
+            options (dict of str to str)
+                Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **expression** --
+                  Optional filter expression to apply to the table.
+
+                * **fast_index_lookup** --
+                  Indicates if indexes should be used to perform the lookup for
+                  a given expression if possible. Only applicable if there is
+                  no sorting, the expression contains only equivalence
+                  comparisons based on existing tables indexes and the range of
+                  requested values is from [0 to END_OF_SET].
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **sort_by** --
+                  Optional column that the data should be sorted by. Empty by
+                  default (i.e. no sorting is applied).
+
+                * **sort_order** --
+                  String indicating how the returned values should be sorted -
+                  ascending or descending. If sort_order is provided, sort_by
+                  has to be provided.
+                  Allowed values are:
+
+                  * ascending
+                  * descending
+
+                  The default value is 'ascending'.
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                Value of input parameter *table_name*.
+
+            type_name (str)
+
+
+            type_schema (str)
+                Avro schema of output parameter *records_binary* or output
+                parameter *records_json*
+
+            records_binary (list of str)
+                If the input parameter *encoding* was 'binary', then this list
+                contains the JSON encoded records retrieved from the set,
+                otherwise not populated.
+
+            records_json (list of str)
+                If the input parameter *encoding* was 'json', then this list
+                contains the JSON encoded records retrieved from the set,
+                otherwise not populated.
+
+            total_number_of_records (long)
+                Total/Filtered number of records.
+
+            has_more_records (bool)
+                Too many records. Returned a partial set.
+        """
+        assert isinstance( table_name, (basestring)), "get_records(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( offset, (int, long, float)), "get_records(): Argument 'offset' must be (one) of type(s) '(int, long, float)'; given %s" % type( offset ).__name__
         assert isinstance( limit, (int, long, float)), "get_records(): Argument 'limit' must be (one) of type(s) '(int, long, float)'; given %s" % type( limit ).__name__
-        assert isinstance( encoding, (str, unicode)), "get_records(): Argument 'encoding' must be (one) of type(s) '(str, unicode)'; given %s" % type( encoding ).__name__
+        assert isinstance( encoding, (basestring)), "get_records(): Argument 'encoding' must be (one) of type(s) '(basestring)'; given %s" % type( encoding ).__name__
         assert isinstance( options, (dict)), "get_records(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "get_records" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "get_records" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
         obj['offset'] = offset
         obj['limit'] = limit
         obj['encoding'] = encoding
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/get/records' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/get/records' ) )
     # end get_records
 
 
@@ -3986,29 +7837,115 @@ class GPUdb(object):
     def get_records_by_column( self, table_name = None, column_names = None, offset
                                = None, limit = None, encoding = 'binary',
                                options = {} ):
-        """For a given table, retrieves the values of the given columns within a given
-        range. It returns maps of column name to the vector of values for each
-        supported data type (double, float, long, int and string). This
+        """For a given table, retrieves the values of the given columns within a
+        given range. It returns maps of column name to the vector of values for
+        each supported data type (double, float, long, int and string). This
         operation supports pagination feature, i.e. values that are retrieved
-        are those associated with the indices between the start (offset) and end
-        value (offset + limit) parameters (inclusive). If there are num_points
-        values in the table then each of the indices between 0 and num_points-1
-        retrieves a unique value.  Note that when using the pagination feature,
-        if the table (or the underlying table in case of a view) is updated
-        (records are inserted, deleted or modified) the records or values
-        retrieved may differ between calls (discontiguous or overlap) based on
-        the type of the update.  The response is returned as a dynamic schema.
-        For details see: `dynamic schemas documentation
-        <../../concepts/dynamic_schemas.html>`_."""
+        are those associated with the indices between the start (offset) and
+        end value (offset + limit) parameters (inclusive). If there are
+        num_points values in the table then each of the indices between 0 and
+        num_points-1 retrieves a unique value.
 
-        assert isinstance( table_name, (str, unicode)), "get_records_by_column(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( column_names, (list)), "get_records_by_column(): Argument 'column_names' must be (one) of type(s) '(list)'; given %s" % type( column_names ).__name__
+        Note that when using the pagination feature, if the table (or the
+        underlying table in case of a view) is updated (records are inserted,
+        deleted or modified) the records or values retrieved may differ between
+        calls (discontiguous or overlap) based on the type of the update.
+
+        The response is returned as a dynamic schema. For details see: `dynamic
+        schemas documentation <../../../concepts/dynamic_schemas.html>`_.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table on which this operation will be performed.
+                The table cannot be a parent set.
+
+            column_names (list of str)
+                The list of column values to retrieve.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            offset (long)
+                A positive integer indicating the number of initial results to
+                skip (this can be useful for paging through the results).  The
+                minimum allowed value is 0. The maximum allowed value is
+                MAX_INT.
+
+            limit (long)
+                A positive integer indicating the maximum number of results to
+                be returned (if not provided the default is 10000), or
+                END_OF_SET (-9999) to indicate that the maximum number of
+                results allowed by the server should be returned.
+
+            encoding (str)
+                Specifies the encoding for returned records; either 'binary' or
+                'json'.  Default value is 'binary'.
+                Allowed values are:
+
+                * binary
+                * json
+
+                The default value is 'binary'.
+
+            options (dict of str to str)
+                Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **expression** --
+                  Optional filter expression to apply to the table.
+
+                * **sort_by** --
+                  Optional column that the data should be sorted by. Empty by
+                  default (i.e. no sorting is applied).
+
+                * **sort_order** --
+                  String indicating how the returned values should be sorted -
+                  ascending or descending. Default is 'ascending'. If
+                  sort_order is provided, sort_by has to be provided.
+                  Allowed values are:
+
+                  * ascending
+                  * descending
+
+                  The default value is 'ascending'.
+
+                * **order_by** --
+                  Comma-separated list of the columns to be sorted by; e.g.
+                  'timestamp asc, x desc'.  The columns specified must be
+                  present in input parameter *column_names*.  If any alias is
+                  given for any column name, the alias must be used, rather
+                  than the original column name.
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                The same table name as was passed in the parameter list.
+
+            response_schema_str (str)
+                Avro schema of output parameter *binary_encoded_response* or
+                output parameter *json_encoded_response*.
+
+            binary_encoded_response (str)
+                Avro binary encoded response.
+
+            json_encoded_response (str)
+                Avro JSON encoded response.
+
+            total_number_of_records (long)
+                Total/Filtered number of records.
+
+            has_more_records (bool)
+                Too many records. Returned a partial set.
+        """
+        assert isinstance( table_name, (basestring)), "get_records_by_column(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        column_names = column_names if isinstance( column_names, list ) else ( [] if (column_names is None) else [ column_names ] )
         assert isinstance( offset, (int, long, float)), "get_records_by_column(): Argument 'offset' must be (one) of type(s) '(int, long, float)'; given %s" % type( offset ).__name__
         assert isinstance( limit, (int, long, float)), "get_records_by_column(): Argument 'limit' must be (one) of type(s) '(int, long, float)'; given %s" % type( limit ).__name__
-        assert isinstance( encoding, (str, unicode)), "get_records_by_column(): Argument 'encoding' must be (one) of type(s) '(str, unicode)'; given %s" % type( encoding ).__name__
+        assert isinstance( encoding, (basestring)), "get_records_by_column(): Argument 'encoding' must be (one) of type(s) '(basestring)'; given %s" % type( encoding ).__name__
         assert isinstance( options, (dict)), "get_records_by_column(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "get_records_by_column" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "get_records_by_column" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
@@ -4016,35 +7953,105 @@ class GPUdb(object):
         obj['offset'] = offset
         obj['limit'] = limit
         obj['encoding'] = encoding
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/get/records/bycolumn' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/get/records/bycolumn' ) )
     # end get_records_by_column
 
 
     # begin get_records_by_series
     def get_records_by_series( self, table_name = None, world_table_name = None,
-                               offset = 0, limit = 10000, encoding = 'binary',
+                               offset = 0, limit = 250, encoding = 'binary',
                                options = {} ):
-        """Retrieves the complete series/track records from the given input parameter
-        *world_table_name* based on the partial track information contained in
-        the input parameter *table_name*.   This operation supports paging
-        through the data via the input parameter *offset* and input parameter
-        *limit* parameters.  In contrast to :ref:`get_records
-        <get_records_python>` this returns records grouped by series/track. So
-        if input parameter *offset* is 0 and input parameter *limit* is 5 this
-        operation would return the first 5 series/tracks in input parameter
-        *table_name*. Each series/track will be returned sorted by their
-        TIMESTAMP column."""
+        """Retrieves the complete series/track records from the given input
+        parameter *world_table_name* based on the partial track information
+        contained in the input parameter *table_name*.
 
-        assert isinstance( table_name, (str, unicode)), "get_records_by_series(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( world_table_name, (str, unicode)), "get_records_by_series(): Argument 'world_table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( world_table_name ).__name__
+        This operation supports paging through the data via the input parameter
+        *offset* and input parameter *limit* parameters.
+
+        In contrast to :meth:`.get_records` this returns records grouped by
+        series/track. So if input parameter *offset* is 0 and input parameter
+        *limit* is 5 this operation would return the first 5 series/tracks in
+        input parameter *table_name*. Each series/track will be returned sorted
+        by their TIMESTAMP column.
+
+        Parameters:
+
+            table_name (str)
+                Name of the collection/table/view for which series/tracks will
+                be fetched.
+
+            world_table_name (str)
+                Name of the table containing the complete series/track
+                information to be returned for the tracks present in the input
+                parameter *table_name*. Typically this is used when retrieving
+                series/tracks from a view (which contains partial
+                series/tracks) but the user wants to retrieve the entire
+                original series/tracks. Can be blank.
+
+            offset (int)
+                A positive integer indicating the number of initial
+                series/tracks to skip (useful for paging through the results).
+                Default value is 0. The minimum allowed value is 0. The maximum
+                allowed value is MAX_INT.
+
+            limit (int)
+                A positive integer indicating the maximum number of
+                series/tracks to be returned. Or END_OF_SET (-9999) to indicate
+                that the max number of results should be returned.  Default
+                value is 250.
+
+            encoding (str)
+                Specifies the encoding for returned records; either 'binary' or
+                'json'.  Default value is 'binary'.
+                Allowed values are:
+
+                * binary
+                * json
+
+                The default value is 'binary'.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            table_names (list of str)
+                The table name (one per series/track) of the returned
+                series/tracks.
+
+            type_names (list of str)
+                The type IDs (one per series/track) of the returned
+                series/tracks. This is useful when input parameter *table_name*
+                is a collection and the returned series/tracks belong to tables
+                with different types.
+
+            type_schemas (list of str)
+                The type schemas (one per series/track) of the returned
+                series/tracks.
+
+            list_records_binary (list of lists of str)
+                If the encoding parameter of the request was 'binary' then this
+                list-of-lists contains the binary encoded records for each
+                object (inner list) in each series/track (outer list).
+                Otherwise, empty list-of-lists.
+
+            list_records_json (list of lists of str)
+                If the encoding parameter of the request was 'json' then this
+                list-of-lists contains the json encoded records for each object
+                (inner list) in each series/track (outer list). Otherwise,
+                empty list-of-lists.
+        """
+        assert isinstance( table_name, (basestring)), "get_records_by_series(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( world_table_name, (basestring)), "get_records_by_series(): Argument 'world_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( world_table_name ).__name__
         assert isinstance( offset, (int, long, float)), "get_records_by_series(): Argument 'offset' must be (one) of type(s) '(int, long, float)'; given %s" % type( offset ).__name__
         assert isinstance( limit, (int, long, float)), "get_records_by_series(): Argument 'limit' must be (one) of type(s) '(int, long, float)'; given %s" % type( limit ).__name__
-        assert isinstance( encoding, (str, unicode)), "get_records_by_series(): Argument 'encoding' must be (one) of type(s) '(str, unicode)'; given %s" % type( encoding ).__name__
+        assert isinstance( encoding, (basestring)), "get_records_by_series(): Argument 'encoding' must be (one) of type(s) '(basestring)'; given %s" % type( encoding ).__name__
         assert isinstance( options, (dict)), "get_records_by_series(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "get_records_by_series" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "get_records_by_series" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
@@ -4052,191 +8059,498 @@ class GPUdb(object):
         obj['offset'] = offset
         obj['limit'] = limit
         obj['encoding'] = encoding
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/get/records/byseries' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/get/records/byseries' ) )
     # end get_records_by_series
 
 
     # begin get_records_from_collection
     def get_records_from_collection( self, table_name = None, offset = 0, limit =
                                      10000, encoding = 'binary', options = {} ):
-        """Retrieves records from a collection. The operation can optionally return the
-        record IDs which can be used in certain queries such as
-        :ref:`delete_records <delete_records_python>`.   This operation supports
-        paging through the data via the input parameter *offset* and input
-        parameter *limit* parameters.  Note that when using the Java API, it is
-        not possible to retrieve records from join tables using this
-        operation."""
+        """Retrieves records from a collection. The operation can optionally
+        return the record IDs which can be used in certain queries such as
+        :meth:`.delete_records`.
 
-        assert isinstance( table_name, (str, unicode)), "get_records_from_collection(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
+        This operation supports paging through the data via the input parameter
+        *offset* and input parameter *limit* parameters.
+
+        Note that when using the Java API, it is not possible to retrieve
+        records from join tables using this operation.
+
+        Parameters:
+
+            table_name (str)
+                Name of the collection or table from which records are to be
+                retrieved. Must be an existing collection or table.
+
+            offset (long)
+                A positive integer indicating the number of initial results to
+                skip (this can be useful for paging through the results).
+                Default value is 0. The minimum allowed value is 0. The maximum
+                allowed value is MAX_INT.
+
+            limit (long)
+                A positive integer indicating the maximum number of results to
+                be returned, or END_OF_SET (-9999) to indicate that the max
+                number of results should be returned.  Default value is 10000.
+
+            encoding (str)
+                Specifies the encoding for returned records; either 'binary' or
+                'json'.  Default value is 'binary'.
+                Allowed values are:
+
+                * binary
+                * json
+
+                The default value is 'binary'.
+
+            options (dict of str to str)
+                Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **return_record_ids** --
+                  If 'true' then return the internal record ID along with each
+                  returned record. Default is 'false'.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                Value of input parameter *table_name*.
+
+            type_names (list of str)
+                The type IDs of the corresponding records in output parameter
+                *records_binary* or output parameter *records_json*. This is
+                useful when input parameter *table_name* is a heterogeneous
+                collection (collections containing tables of different types).
+
+            records_binary (list of str)
+                If the encoding parameter of the request was 'binary' then this
+                list contains the binary encoded records retrieved from the
+                table/collection. Otherwise, empty list.
+
+            records_json (list of str)
+                If the encoding parameter of the request was 'json', then this
+                list contains the JSON encoded records retrieved from the
+                table/collection. Otherwise, empty list.
+
+            record_ids (list of str)
+                If the 'return_record_ids' option of the request was 'true',
+                then this list contains the internal ID for each object.
+                Otherwise it will be empty.
+        """
+        assert isinstance( table_name, (basestring)), "get_records_from_collection(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( offset, (int, long, float)), "get_records_from_collection(): Argument 'offset' must be (one) of type(s) '(int, long, float)'; given %s" % type( offset ).__name__
         assert isinstance( limit, (int, long, float)), "get_records_from_collection(): Argument 'limit' must be (one) of type(s) '(int, long, float)'; given %s" % type( limit ).__name__
-        assert isinstance( encoding, (str, unicode)), "get_records_from_collection(): Argument 'encoding' must be (one) of type(s) '(str, unicode)'; given %s" % type( encoding ).__name__
+        assert isinstance( encoding, (basestring)), "get_records_from_collection(): Argument 'encoding' must be (one) of type(s) '(basestring)'; given %s" % type( encoding ).__name__
         assert isinstance( options, (dict)), "get_records_from_collection(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "get_records_from_collection" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "get_records_from_collection" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
         obj['offset'] = offset
         obj['limit'] = limit
         obj['encoding'] = encoding
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/get/records/fromcollection' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/get/records/fromcollection' ) )
     # end get_records_from_collection
 
 
     # begin grant_permission_system
     def grant_permission_system( self, name = None, permission = None, options =
                                  None ):
-        """Grants a system-level permission to a user or role."""
+        """Grants a system-level permission to a user or role.
 
-        assert isinstance( name, (str, unicode)), "grant_permission_system(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
-        assert isinstance( permission, (str, unicode)), "grant_permission_system(): Argument 'permission' must be (one) of type(s) '(str, unicode)'; given %s" % type( permission ).__name__
+        Parameters:
+
+            name (str)
+                Name of the user or role to which the permission will be
+                granted. Must be an existing user or role.
+
+            permission (str)
+                Permission to grant to the user or role.
+                Allowed values are:
+
+                * **system_admin** --
+                  Full access to all data and system functions.
+
+                * **system_write** --
+                  Read and write access to all tables.
+
+                * **system_read** --
+                  Read-only access to all tables.
+
+            options (dict of str to str)
+                  Optional parameters.
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+
+            permission (str)
+                Value of input parameter *permission*.
+        """
+        assert isinstance( name, (basestring)), "grant_permission_system(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( permission, (basestring)), "grant_permission_system(): Argument 'permission' must be (one) of type(s) '(basestring)'; given %s" % type( permission ).__name__
         assert isinstance( options, (dict)), "grant_permission_system(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "grant_permission_system" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "grant_permission_system" )
 
         obj = collections.OrderedDict()
         obj['name'] = name
         obj['permission'] = permission
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/grant/permission/system' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/grant/permission/system' ) )
     # end grant_permission_system
 
 
     # begin grant_permission_table
     def grant_permission_table( self, name = None, permission = None, table_name =
                                 None, filter_expression = '', options = None ):
-        """Grants a table-level permission to a user or role."""
+        """Grants a table-level permission to a user or role.
 
-        assert isinstance( name, (str, unicode)), "grant_permission_table(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
-        assert isinstance( permission, (str, unicode)), "grant_permission_table(): Argument 'permission' must be (one) of type(s) '(str, unicode)'; given %s" % type( permission ).__name__
-        assert isinstance( table_name, (str, unicode)), "grant_permission_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( filter_expression, (str, unicode)), "grant_permission_table(): Argument 'filter_expression' must be (one) of type(s) '(str, unicode)'; given %s" % type( filter_expression ).__name__
+        Parameters:
+
+            name (str)
+                Name of the user or role to which the permission will be
+                granted. Must be an existing user or role.
+
+            permission (str)
+                Permission to grant to the user or role.
+                Allowed values are:
+
+                * **table_admin** --
+                  Full read/write and administrative access to the table.
+
+                * **table_insert** --
+                  Insert access to the table.
+
+                * **table_update** --
+                  Update access to the table.
+
+                * **table_delete** --
+                  Delete access to the table.
+
+                * **table_read** --
+                  Read access to the table.
+
+            table_name (str)
+                  Name of the table to which the permission grants access. Must
+                  be an existing table, collection, or view. If a collection,
+                  the permission also applies to tables and views in the
+                  collection.
+
+            filter_expression (str)
+                  Reserved for future use.  Default value is ''.
+
+            options (dict of str to str)
+                  Optional parameters.
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+
+            permission (str)
+                Value of input parameter *permission*.
+
+            table_name (str)
+                Value of input parameter *table_name*.
+
+            filter_expression (str)
+                Value of input parameter *filter_expression*.
+        """
+        assert isinstance( name, (basestring)), "grant_permission_table(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( permission, (basestring)), "grant_permission_table(): Argument 'permission' must be (one) of type(s) '(basestring)'; given %s" % type( permission ).__name__
+        assert isinstance( table_name, (basestring)), "grant_permission_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( filter_expression, (basestring)), "grant_permission_table(): Argument 'filter_expression' must be (one) of type(s) '(basestring)'; given %s" % type( filter_expression ).__name__
         assert isinstance( options, (dict)), "grant_permission_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "grant_permission_table" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "grant_permission_table" )
 
         obj = collections.OrderedDict()
         obj['name'] = name
         obj['permission'] = permission
         obj['table_name'] = table_name
         obj['filter_expression'] = filter_expression
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/grant/permission/table' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/grant/permission/table' ) )
     # end grant_permission_table
 
 
     # begin grant_role
     def grant_role( self, role = None, member = None, options = None ):
-        """Grants membership in a role to a user or role."""
+        """Grants membership in a role to a user or role.
 
-        assert isinstance( role, (str, unicode)), "grant_role(): Argument 'role' must be (one) of type(s) '(str, unicode)'; given %s" % type( role ).__name__
-        assert isinstance( member, (str, unicode)), "grant_role(): Argument 'member' must be (one) of type(s) '(str, unicode)'; given %s" % type( member ).__name__
+        Parameters:
+
+            role (str)
+                Name of the role in which membership will be granted. Must be
+                an existing role.
+
+            member (str)
+                Name of the user or role that will be granted membership in
+                input parameter *role*. Must be an existing user or role.
+
+            options (dict of str to str)
+                Optional parameters.
+
+        Returns:
+            A dict with the following entries--
+
+            role (str)
+                Value of input parameter *role*.
+
+            member (str)
+                Value of input parameter *member*.
+        """
+        assert isinstance( role, (basestring)), "grant_role(): Argument 'role' must be (one) of type(s) '(basestring)'; given %s" % type( role ).__name__
+        assert isinstance( member, (basestring)), "grant_role(): Argument 'member' must be (one) of type(s) '(basestring)'; given %s" % type( member ).__name__
         assert isinstance( options, (dict)), "grant_role(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "grant_role" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "grant_role" )
 
         obj = collections.OrderedDict()
         obj['role'] = role
         obj['member'] = member
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/grant/role' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/grant/role' ) )
     # end grant_role
 
 
     # begin has_proc
     def has_proc( self, proc_name = None, options = {} ):
-        """Checks the existence of a proc with the given name."""
+        """Checks the existence of a proc with the given name.
 
-        assert isinstance( proc_name, (str, unicode)), "has_proc(): Argument 'proc_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( proc_name ).__name__
+        Parameters:
+
+            proc_name (str)
+                Name of the proc to check for existence.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            proc_name (str)
+                Value of input parameter *proc_name*
+
+            proc_exists (bool)
+                Indicates whether the proc exists or not.
+                Allowed values are:
+
+                * true
+                * false
+        """
+        assert isinstance( proc_name, (basestring)), "has_proc(): Argument 'proc_name' must be (one) of type(s) '(basestring)'; given %s" % type( proc_name ).__name__
         assert isinstance( options, (dict)), "has_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "has_proc" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "has_proc" )
 
         obj = collections.OrderedDict()
         obj['proc_name'] = proc_name
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/has/proc' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/has/proc' ) )
     # end has_proc
 
 
     # begin has_table
     def has_table( self, table_name = None, options = {} ):
-        """Checks for the existence of a table with the given name."""
+        """Checks for the existence of a table with the given name.
 
-        assert isinstance( table_name, (str, unicode)), "has_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
+        Parameters:
+
+            table_name (str)
+                Name of the table to check for existence.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                Value of input parameter *table_name*
+
+            table_exists (bool)
+                Indicates whether the table exists or not.
+                Allowed values are:
+
+                * true
+                * false
+        """
+        assert isinstance( table_name, (basestring)), "has_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( options, (dict)), "has_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "has_table" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "has_table" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/has/table' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/has/table' ) )
     # end has_table
 
 
     # begin has_type
     def has_type( self, type_id = None, options = {} ):
-        """Check for the existence of a type."""
+        """Check for the existence of a type.
 
-        assert isinstance( type_id, (str, unicode)), "has_type(): Argument 'type_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( type_id ).__name__
+        Parameters:
+
+            type_id (str)
+                Id of the type returned in response to :meth:`.create_type`
+                request.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            type_id (str)
+                Value of input parameter *type_id*.
+
+            type_exists (bool)
+                Indicates whether the type exists or not.
+                Allowed values are:
+
+                * true
+                * false
+        """
+        assert isinstance( type_id, (basestring)), "has_type(): Argument 'type_id' must be (one) of type(s) '(basestring)'; given %s" % type( type_id ).__name__
         assert isinstance( options, (dict)), "has_type(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "has_type" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "has_type" )
 
         obj = collections.OrderedDict()
         obj['type_id'] = type_id
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/has/type' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/has/type' ) )
     # end has_type
 
 
     # begin insert_records
     def insert_records( self, table_name = None, data = None, list_encoding = None,
                         options = {} ):
-        """Adds multiple records to the specified table. The operation is synchronous,
-        meaning that a response will not be returned until all the records are
-        fully inserted and available. The response payload provides the counts
-        of the number of records actually inserted and/or updated, and can
-        provide the unique identifier of each added record.  The input parameter
-        *options* parameter can be used to customize this function's behavior.
-        The *update_on_existing_pk* option specifies the primary-key collision
-        policy.  If the table has a :ref:`primary key <create_type_python>` and
-        if *update_on_existing_pk* is *true*, then if any of the records being
-        added have the same primary key as existing records, the existing
-        records are replaced (i.e. updated) with the given records.  If
-        *update_on_existing_pk* is *false* and if the records being added have
-        the same primary key as existing records, they are ignored (the existing
-        records are left unchanged).  It is quite possible that in this case
-        some of the given records will be inserted and some (those having
-        existing primary keys) will be ignored (or updated).  If the specified
-        table does not have a primary key column, then the
-        *update_on_existing_pk* option is ignored.  The *return_record_ids*
-        option indicates that the database should return the unique identifiers
-        of inserted records.  The *route_to_address* option directs that
-        inserted records should be targeted for a particular database node."""
+        """Adds multiple records to the specified table. The operation is
+        synchronous, meaning that a response will not be returned until all the
+        records are fully inserted and available. The response payload provides
+        the counts of the number of records actually inserted and/or updated,
+        and can provide the unique identifier of each added record.
 
-        assert isinstance( table_name, (str, unicode)), "insert_records(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( data, (list)), "insert_records(): Argument 'data' must be (one) of type(s) '(list)'; given %s" % type( data ).__name__
-        assert isinstance( list_encoding, (str, unicode, type( None ))), "insert_records(): Argument 'list_encoding' must be (one) of type(s) '(str, unicode, type( None ))'; given %s" % type( list_encoding ).__name__
+        The input parameter *options* parameter can be used to customize this
+        function's behavior.
+
+        The *update_on_existing_pk* option specifies the record collision
+        policy for inserting into a table with a `primary key
+        <../../../concepts/tables.html#primary-keys>`_, but is ignored if no
+        primary key exists.
+
+        The *return_record_ids* option indicates that the database should
+        return the unique identifiers of inserted records.
+
+        The *route_to_address* option directs that inserted records should be
+        targeted for a particular database node.
+
+        Parameters:
+
+            table_name (str)
+                Table to which the records are to be added. Must be an existing
+                table.
+
+            data (list of str)
+                An array of *binary* or *json* encoded data for the records to
+                be added.  The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+
+            list_encoding (str)
+                The encoding of the records to be inserted.  Default value is
+                'binary'.
+                Allowed values are:
+
+                * binary
+                * json
+
+                The default value is 'binary'.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **update_on_existing_pk** --
+                  Specifies the record collision policy for inserting into a
+                  table with a `primary key
+                  <../../../concepts/tables.html#primary-keys>`_.  If set to
+                  *true*, any existing table record with primary key values
+                  that match those of a record being inserted will be replaced
+                  by that new record.  If set to *false*, any existing table
+                  record with primary key values that match those of a record
+                  being inserted will remain unchanged and the new record
+                  discarded.  If the specified table does not have a primary
+                  key, then this option is ignored.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **return_record_ids** --
+                  If *true* then return the internal record id along for each
+                  inserted record.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **route_to_address** --
+                  Route to a specific rank/tom. Option not suitable for tables
+                  using primary/shard keys
+
+        Returns:
+            A dict with the following entries--
+
+            record_ids (list of str)
+                An array containing the IDs with which the added records are
+                identified internally.
+
+            count_inserted (int)
+                The number of records inserted.
+
+            count_updated (int)
+                The number of records updated.
+        """
+        assert isinstance( table_name, (basestring)), "insert_records(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        data = data if isinstance( data, list ) else ( [] if (data is None) else [ data ] )
+        assert isinstance( list_encoding, (basestring, type( None ))), "insert_records(): Argument 'list_encoding' must be (one) of type(s) '(basestring, type( None ))'; given %s" % type( list_encoding ).__name__
         assert isinstance( options, (dict)), "insert_records(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "insert_records" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "insert_records" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
-        list_encoding = list_encoding if list_encoding else self.client_to_object_encoding()
+        list_encoding = list_encoding if list_encoding else self.__client_to_object_encoding()
         obj['list_encoding'] = list_encoding
         if (list_encoding == 'json'):
             obj['list_str'] = data
@@ -4244,366 +8558,1314 @@ class GPUdb(object):
         elif (list_encoding == 'binary'):
             obj['list'] = data
             obj['list_str'] = []
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/insert/records' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/insert/records' ) )
     # end insert_records
 
 
     # begin insert_records_random
     def insert_records_random( self, table_name = None, count = None, options = {}
                                ):
-        """Generates a specified number of random records and adds them to the given
-        table. There is an optional parameter that allows the user to customize
-        the ranges of the column values. It also allows the user to specify
-        linear profiles for some or all columns in which case linear values are
-        generated rather than random ones. Only individual tables are supported
-        for this operation.  This operation is synchronous, meaning that a
-        response will not be returned until all random records are fully
-        available."""
+        """Generates a specified number of random records and adds them to the
+        given table. There is an optional parameter that allows the user to
+        customize the ranges of the column values. It also allows the user to
+        specify linear profiles for some or all columns in which case linear
+        values are generated rather than random ones. Only individual tables
+        are supported for this operation.
 
-        assert isinstance( table_name, (str, unicode)), "insert_records_random(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
+        This operation is synchronous, meaning that a response will not be
+        returned until all random records are fully available.
+
+        Parameters:
+
+            table_name (str)
+                Table to which random records will be added. Must be an
+                existing table.  Also, must be an individual table, not a
+                collection of tables, nor a view of a table.
+
+            count (long)
+                Number of records to generate.
+
+            options (dict of str to dicts of str to floats)
+                Optional parameter to pass in specifications for the randomness
+                of the values.  This map is different from the *options*
+                parameter of most other endpoints in that it is a map of string
+                to map of string to doubles, while most others are maps of
+                string to string.  In this map, the top level keys represent
+                which column's parameters are being specified, while the
+                internal keys represents which parameter is being specified.
+                These parameters take on different meanings depending on the
+                type of the column.  Below follows a more detailed description
+                of the map:  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **seed** --
+                  If provided, the internal random number generator will be
+                  initialized with the given value.  The minimum is 0.  This
+                  allows for the same set of random numbers to be generated
+                  across invocation of this endpoint in case the user wants to
+                  repeat the test.  Since input parameter *options*, is a map
+                  of maps, we need an internal map to provide the seed value.
+                  For example, to pass 100 as the seed value through this
+                  parameter, you need something equivalent to: 'options' =
+                  {'seed': { 'value': 100 } }
+                  Allowed keys are:
+
+                  * **value** --
+                    Pass the seed value here.
+
+                * **all** --
+                  This key indicates that the specifications relayed in the
+                  internal map are to be applied to all columns of the records.
+                  Allowed keys are:
+
+                  * **min** --
+                    For numerical columns, the minimum of the generated values
+                    is set to this value.  Default is -99999.  For point,
+                    shape, and track semantic types, min for numeric 'x' and
+                    'y' columns needs to be within [-180, 180] and [-90, 90],
+                    respectively. The default minimum possible values for these
+                    columns in such cases are -180.0 and -90.0. For the
+                    'TIMESTAMP' column, the default minimum corresponds to Jan
+                    1, 2010.
+                    For string columns, the minimum length of the randomly
+                    generated strings is set to this value (default is 0). If
+                    both minimum and maximum are provided, minimum must be less
+                    than or equal to max. Value needs to be within [0, 200].
+                    If the min is outside the accepted ranges for strings
+                    columns and 'x' and 'y' columns for point/shape/track
+                    types, then those parameters will not be set; however, an
+                    error will not be thrown in such a case. It is the
+                    responsibility of the user to use the *all* parameter
+                    judiciously.
+
+                  * **max** --
+                    For numerical columns, the maximum of the generated values
+                    is set to this value. Default is 99999. For point, shape,
+                    and track semantic types, max for numeric 'x' and 'y'
+                    columns needs to be within [-180, 180] and [-90, 90],
+                    respectively. The default minimum possible values for these
+                    columns in such cases are 180.0 and 90.0.
+                    For string columns, the maximum length of the randomly
+                    generated strings is set to this value (default is 200). If
+                    both minimum and maximum are provided, *max* must be
+                    greater than or equal to *min*. Value needs to be within
+                    [0, 200].
+                    If the *max* is outside the accepted ranges for strings
+                    columns and 'x' and 'y' columns for point/shape/track
+                    types, then those parameters will not be set; however, an
+                    error will not be thrown in such a case. It is the
+                    responsibility of the user to use the *all* parameter
+                    judiciously.
+
+                  * **interval** --
+                    If specified, generate values for all columns evenly spaced
+                    with the given interval value. If a max value is specified
+                    for a given column the data is randomly generated between
+                    min and max and decimated down to the interval. If no max
+                    is provided the data is linerally generated starting at the
+                    minimum value (instead of generating random data). For
+                    non-decimated string-type columns the interval value is
+                    ignored. Instead the values are generated following the
+                    pattern: 'attrname_creationIndex#', i.e. the column name
+                    suffixed with an underscore and a running counter (starting
+                    at 0). For string types with limited size (eg char4) the
+                    prefix is dropped. No nulls will be generated for nullable
+                    columns.
+
+                  * **null_percentage** --
+                    If specified, then generate the given percentage of the
+                    count as nulls for all nullable columns.  This option will
+                    be ignored for non-nullable columns.  The value must be
+                    within the range [0, 1.0].  The default value is 5% (0.05).
+
+                  * **cardinality** --
+                    If specified, limit the randomly generated values to a
+                    fixed set. Not allowed on a column with interval specified,
+                    and is not applicable to WKT or Track-specific columns. The
+                    value must be greater than 0. This option is disabled by
+                    default.
+
+                * **attr_name** --
+                  Set the following parameters for the column specified by the
+                  key. This overrides any parameter set by *all*.
+                  Allowed keys are:
+
+                  * **min** --
+                    For numerical columns, the minimum of the generated values
+                    is set to this value.  Default is -99999.  For point,
+                    shape, and track semantic types, min for numeric 'x' and
+                    'y' columns needs to be within [-180, 180] and [-90, 90],
+                    respectively. The default minimum possible values for these
+                    columns in such cases are -180.0 and -90.0. For the
+                    'TIMESTAMP' column, the default minimum corresponds to Jan
+                    1, 2010.
+                    For string columns, the minimum length of the randomly
+                    generated strings is set to this value (default is 0). If
+                    both minimum and maximum are provided, minimum must be less
+                    than or equal to max. Value needs to be within [0, 200].
+                    If the min is outside the accepted ranges for strings
+                    columns and 'x' and 'y' columns for point/shape/track
+                    types, then those parameters will not be set; however, an
+                    error will not be thrown in such a case. It is the
+                    responsibility of the user to use the *all* parameter
+                    judiciously.
+
+                  * **max** --
+                    For numerical columns, the maximum of the generated values
+                    is set to this value. Default is 99999. For point, shape,
+                    and track semantic types, max for numeric 'x' and 'y'
+                    columns needs to be within [-180, 180] and [-90, 90],
+                    respectively. The default minimum possible values for these
+                    columns in such cases are 180.0 and 90.0.
+                    For string columns, the maximum length of the randomly
+                    generated strings is set to this value (default is 200). If
+                    both minimum and maximum are provided, *max* must be
+                    greater than or equal to *min*. Value needs to be within
+                    [0, 200].
+                    If the *max* is outside the accepted ranges for strings
+                    columns and 'x' and 'y' columns for point/shape/track
+                    types, then those parameters will not be set; however, an
+                    error will not be thrown in such a case. It is the
+                    responsibility of the user to use the *all* parameter
+                    judiciously.
+
+                  * **interval** --
+                    If specified, generate values for all columns evenly spaced
+                    with the given interval value. If a max value is specified
+                    for a given column the data is randomly generated between
+                    min and max and decimated down to the interval. If no max
+                    is provided the data is linerally generated starting at the
+                    minimum value (instead of generating random data). For
+                    non-decimated string-type columns the interval value is
+                    ignored. Instead the values are generated following the
+                    pattern: 'attrname_creationIndex#', i.e. the column name
+                    suffixed with an underscore and a running counter (starting
+                    at 0). For string types with limited size (eg char4) the
+                    prefix is dropped. No nulls will be generated for nullable
+                    columns.
+
+                  * **null_percentage** --
+                    If specified and if this column is nullable, then generate
+                    the given percentage of the count as nulls.  This option
+                    will result in an error if the column is not nullable.  The
+                    value must be within the range [0, 1.0].  The default value
+                    is 5% (0.05).
+
+                  * **cardinality** --
+                    If specified, limit the randomly generated values to a
+                    fixed set. Not allowed on a column with interval specified,
+                    and is not applicable to WKT or Track-specific columns. The
+                    value must be greater than 0. This option is disabled by
+                    default.
+
+                * **track_length** --
+                  This key-map pair is only valid for track type data sets (an
+                  error is thrown otherwise).  No nulls would be generated for
+                  nullable columns.
+                  Allowed keys are:
+
+                  * **min** --
+                    Minimum possible length for generated series; default is
+                    100 records per series. Must be an integral value within
+                    the range [1, 500]. If both min and max are specified, min
+                    must be less than or equal to max.
+
+                  * **max** --
+                    Maximum possible length for generated series; default is
+                    500 records per series. Must be an integral value within
+                    the range [1, 500]. If both min and max are specified, max
+                    must be greater than or equal to min.
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                Value of input parameter *table_name*.
+
+            count (long)
+                Value of input parameter *count*.
+        """
+        assert isinstance( table_name, (basestring)), "insert_records_random(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( count, (int, long, float)), "insert_records_random(): Argument 'count' must be (one) of type(s) '(int, long, float)'; given %s" % type( count ).__name__
         assert isinstance( options, (dict)), "insert_records_random(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "insert_records_random" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "insert_records_random" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
         obj['count'] = count
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/insert/records/random' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/insert/records/random' ) )
     # end insert_records_random
 
 
     # begin insert_symbol
     def insert_symbol( self, symbol_id = None, symbol_format = None, symbol_data =
                        None, options = {} ):
-        """Adds a symbol or icon (i.e. an image) to represent data points when data is
-        rendered visually. Users must provide the symbol identifier (string), a
-        format (currently supported: 'svg' and 'svg_path'), the data for the
-        symbol, and any additional optional parameter (e.g. color). To have a
-        symbol used for rendering create a table with a string column named
-        'SYMBOLCODE' (along with 'x' or 'y' for example). Then when the table is
-        rendered (via `WMS <../../api/rest/wms_rest.html>`_) if the
-        'dosymbology' parameter is 'true' then the value of the 'SYMBOLCODE'
-        column is used to pick the symbol displayed for each point."""
+        """Adds a symbol or icon (i.e. an image) to represent data points when
+        data is rendered visually. Users must provide the symbol identifier
+        (string), a format (currently supported: 'svg' and 'svg_path'), the
+        data for the symbol, and any additional optional parameter (e.g.
+        color). To have a symbol used for rendering create a table with a
+        string column named 'SYMBOLCODE' (along with 'x' or 'y' for example).
+        Then when the table is rendered (via `WMS
+        <../../../api/rest/wms_rest.html>`_) if the 'dosymbology' parameter is
+        'true' then the value of the 'SYMBOLCODE' column is used to pick the
+        symbol displayed for each point.
 
-        assert isinstance( symbol_id, (str, unicode)), "insert_symbol(): Argument 'symbol_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( symbol_id ).__name__
-        assert isinstance( symbol_format, (str, unicode)), "insert_symbol(): Argument 'symbol_format' must be (one) of type(s) '(str, unicode)'; given %s" % type( symbol_format ).__name__
-        assert isinstance( symbol_data, (str, unicode)), "insert_symbol(): Argument 'symbol_data' must be (one) of type(s) '(str, unicode)'; given %s" % type( symbol_data ).__name__
+        Parameters:
+
+            symbol_id (str)
+                The id of the symbol being added. This is the same id that
+                should be in the 'SYMBOLCODE' column for objects using this
+                symbol
+
+            symbol_format (str)
+                Specifies the symbol format. Must be either 'svg' or
+                'svg_path'.
+                Allowed values are:
+
+                * svg
+                * svg_path
+
+            symbol_data (str)
+                The actual symbol data. If input parameter *symbol_format* is
+                'svg' then this should be the raw bytes representing an svg
+                file. If input parameter *symbol_format* is svg path then this
+                should be an svg path string, for example:
+                'M25.979,12.896,5.979,12.896,5.979,19.562,25.979,19.562z'
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **color** --
+                  If input parameter *symbol_format* is 'svg' this is ignored.
+                  If input parameter *symbol_format* is 'svg_path' then this
+                  option specifies the color (in RRGGBB hex format) of the
+                  path. For example, to have the path rendered in red, used
+                  'FF0000'. If 'color' is not provided then '00FF00' (i.e.
+                  green) is used by default.
+
+        Returns:
+            A dict with the following entries--
+
+            symbol_id (str)
+                Value of input parameter *symbol_id*.
+        """
+        assert isinstance( symbol_id, (basestring)), "insert_symbol(): Argument 'symbol_id' must be (one) of type(s) '(basestring)'; given %s" % type( symbol_id ).__name__
+        assert isinstance( symbol_format, (basestring)), "insert_symbol(): Argument 'symbol_format' must be (one) of type(s) '(basestring)'; given %s" % type( symbol_format ).__name__
+        assert isinstance( symbol_data, (basestring)), "insert_symbol(): Argument 'symbol_data' must be (one) of type(s) '(basestring)'; given %s" % type( symbol_data ).__name__
         assert isinstance( options, (dict)), "insert_symbol(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "insert_symbol" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "insert_symbol" )
 
         obj = collections.OrderedDict()
         obj['symbol_id'] = symbol_id
         obj['symbol_format'] = symbol_format
         obj['symbol_data'] = symbol_data
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/insert/symbol' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/insert/symbol' ) )
     # end insert_symbol
 
 
     # begin kill_proc
     def kill_proc( self, run_id = '', options = {} ):
-        """Kills a running proc instance."""
+        """Kills a running proc instance.
 
-        assert isinstance( run_id, (str, unicode)), "kill_proc(): Argument 'run_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( run_id ).__name__
+        Parameters:
+
+            run_id (str)
+                The run ID of the running proc instance. If the run ID is not
+                found or the proc instance has already completed, this does
+                nothing. If not specified, all running proc instances will be
+                killed.  Default value is ''.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            run_ids (list of str)
+                List of run IDs of proc instances that were killed.
+        """
+        assert isinstance( run_id, (basestring)), "kill_proc(): Argument 'run_id' must be (one) of type(s) '(basestring)'; given %s" % type( run_id ).__name__
         assert isinstance( options, (dict)), "kill_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "kill_proc" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "kill_proc" )
 
         obj = collections.OrderedDict()
         obj['run_id'] = run_id
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/kill/proc' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/kill/proc' ) )
     # end kill_proc
 
 
     # begin lock_table
     def lock_table( self, table_name = None, lock_type = 'status', options = {} ):
-        """Manages global access to a table's data.  By default a table has a input
-        parameter *lock_type* of *unlock*, indicating all operations are
-        permitted.  A user may request a *read-only* or a *write-only* lock,
-        after which only read or write operations, respectively, are permitted
-        on the table until the lock is removed.  When input parameter
-        *lock_type* is *disable* then no operations are permitted on the table.
-        The lock status can be queried by setting input parameter *lock_type* to
-        *status*."""
+        """Manages global access to a table's data.  By default a table has a
+        input parameter *lock_type* of *read-write*, indicating all operations
+        are permitted.  A user may request a *read-only* or a *write-only*
+        lock, after which only read or write operations, respectively, are
+        permitted on the table until the lock is removed.  When input parameter
+        *lock_type* is *no-access* then no operations are permitted on the
+        table.  The lock status can be queried by setting input parameter
+        *lock_type* to *status*.
 
-        assert isinstance( table_name, (str, unicode)), "lock_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( lock_type, (str, unicode)), "lock_table(): Argument 'lock_type' must be (one) of type(s) '(str, unicode)'; given %s" % type( lock_type ).__name__
+        Parameters:
+
+            table_name (str)
+                Name of the table to be locked. It must be a currently existing
+                table, collection, or view.
+
+            lock_type (str)
+                The type of lock being applied to the table. Setting it to
+                *status* will return the current lock status of the table
+                without changing it.  Default value is 'status'.
+                Allowed values are:
+
+                * **status** --
+                  Show locked status
+
+                * **no-access** --
+                  Allow no read/write operations
+
+                * **read-only** --
+                  Allow only read operations
+
+                * **write-only** --
+                  Allow only write operations
+
+                * **read-write** --
+                  Allow all read/write operations
+
+                  The default value is 'status'.
+
+            options (dict of str to str)
+                  Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            lock_type (str)
+                Returns the lock state of the table.
+        """
+        assert isinstance( table_name, (basestring)), "lock_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( lock_type, (basestring)), "lock_table(): Argument 'lock_type' must be (one) of type(s) '(basestring)'; given %s" % type( lock_type ).__name__
         assert isinstance( options, (dict)), "lock_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "lock_table" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "lock_table" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
         obj['lock_type'] = lock_type
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/lock/table' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/lock/table' ) )
     # end lock_table
+
+
+    # begin merge_records
+    def merge_records( self, table_name = None, source_table_names = None,
+                       field_maps = None, options = {} ):
+        """Create a new empty result table (specified by input parameter
+        *table_name*), and insert all records from source tables (specified by
+        input parameter *source_table_names*) based on the field mapping
+        information (specified by input parameter *field_maps*). The field map
+        (specified by input parameter *field_maps*) holds the user specified
+        maps of target table column names to source table columns.
+
+        Parameters:
+
+            table_name (str)
+                The new result table name for the records to be merged.  Must
+                NOT be an existing table.
+
+            source_table_names (list of str)
+                The list of source table names to get the records from. Must be
+                existing table names.  The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
+
+            field_maps (list of dicts of str to str)
+                Contains the mapping of column names from result table
+                (specified by input parameter *table_name*) as the keys, and
+                corresponding column names from a table from source tables
+                (specified by input parameter *source_table_names*). Must be
+                existing column names in source table and target table, and
+                their types must be matched.  The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  merged table (specified by input parameter *table_name*). If
+                  empty, then the newly created merged table will be a
+                  top-level table. If the collection does not allow duplicate
+                  types and it contains a table of the same type as the given
+                  one, then this table creation request will fail.
+
+                * **is_replicated** --
+                  For a merged table (specified by input parameter
+                  *table_name*), indicates whether the table is to be
+                  replicated to all the database ranks. This may be necessary
+                  when the table is to be joined with other tables in a query.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **ttl** --
+                  Sets the TTL of the merged table or collection (specified by
+                  input parameter *table_name*). The value must be the desired
+                  TTL in minutes.
+
+                * **chunk_size** --
+                  If provided this indicates the chunk size to be used for the
+                  merged table.
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+
+        """
+        assert isinstance( table_name, (basestring)), "merge_records(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        source_table_names = source_table_names if isinstance( source_table_names, list ) else ( [] if (source_table_names is None) else [ source_table_names ] )
+        field_maps = field_maps if isinstance( field_maps, list ) else ( [] if (field_maps is None) else [ field_maps ] )
+        assert isinstance( options, (dict)), "merge_records(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "merge_records" )
+
+        obj = collections.OrderedDict()
+        obj['table_name'] = table_name
+        obj['source_table_names'] = source_table_names
+        obj['field_maps'] = field_maps
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/merge/records' ) )
+    # end merge_records
+
+
+    # begin admin_replace_tom
+    def admin_replace_tom( self, old_rank_tom = None, new_rank_tom = None ):
+
+        assert isinstance( old_rank_tom, (int, long, float)), "admin_replace_tom(): Argument 'old_rank_tom' must be (one) of type(s) '(int, long, float)'; given %s" % type( old_rank_tom ).__name__
+        assert isinstance( new_rank_tom, (int, long, float)), "admin_replace_tom(): Argument 'new_rank_tom' must be (one) of type(s) '(int, long, float)'; given %s" % type( new_rank_tom ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "admin_replace_tom" )
+
+        obj = collections.OrderedDict()
+        obj['old_rank_tom'] = old_rank_tom
+        obj['new_rank_tom'] = new_rank_tom
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/replace/tom' ) )
+    # end admin_replace_tom
 
 
     # begin revoke_permission_system
     def revoke_permission_system( self, name = None, permission = None, options =
                                   None ):
-        """Revokes a system-level permission from a user or role."""
+        """Revokes a system-level permission from a user or role.
 
-        assert isinstance( name, (str, unicode)), "revoke_permission_system(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
-        assert isinstance( permission, (str, unicode)), "revoke_permission_system(): Argument 'permission' must be (one) of type(s) '(str, unicode)'; given %s" % type( permission ).__name__
+        Parameters:
+
+            name (str)
+                Name of the user or role from which the permission will be
+                revoked. Must be an existing user or role.
+
+            permission (str)
+                Permission to revoke from the user or role.
+                Allowed values are:
+
+                * **system_admin** --
+                  Full access to all data and system functions.
+
+                * **system_write** --
+                  Read and write access to all tables.
+
+                * **system_read** --
+                  Read-only access to all tables.
+
+            options (dict of str to str)
+                  Optional parameters.
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+
+            permission (str)
+                Value of input parameter *permission*.
+        """
+        assert isinstance( name, (basestring)), "revoke_permission_system(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( permission, (basestring)), "revoke_permission_system(): Argument 'permission' must be (one) of type(s) '(basestring)'; given %s" % type( permission ).__name__
         assert isinstance( options, (dict)), "revoke_permission_system(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "revoke_permission_system" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "revoke_permission_system" )
 
         obj = collections.OrderedDict()
         obj['name'] = name
         obj['permission'] = permission
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/revoke/permission/system' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/revoke/permission/system' ) )
     # end revoke_permission_system
 
 
     # begin revoke_permission_table
     def revoke_permission_table( self, name = None, permission = None, table_name =
                                  None, options = None ):
-        """Revokes a table-level permission from a user or role."""
+        """Revokes a table-level permission from a user or role.
 
-        assert isinstance( name, (str, unicode)), "revoke_permission_table(): Argument 'name' must be (one) of type(s) '(str, unicode)'; given %s" % type( name ).__name__
-        assert isinstance( permission, (str, unicode)), "revoke_permission_table(): Argument 'permission' must be (one) of type(s) '(str, unicode)'; given %s" % type( permission ).__name__
-        assert isinstance( table_name, (str, unicode)), "revoke_permission_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
+        Parameters:
+
+            name (str)
+                Name of the user or role from which the permission will be
+                revoked. Must be an existing user or role.
+
+            permission (str)
+                Permission to revoke from the user or role.
+                Allowed values are:
+
+                * **table_admin** --
+                  Full read/write and administrative access to the table.
+
+                * **table_insert** --
+                  Insert access to the table.
+
+                * **table_update** --
+                  Update access to the table.
+
+                * **table_delete** --
+                  Delete access to the table.
+
+                * **table_read** --
+                  Read access to the table.
+
+            table_name (str)
+                  Name of the table to which the permission grants access. Must
+                  be an existing table, collection, or view.
+
+            options (dict of str to str)
+                  Optional parameters.
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+
+            permission (str)
+                Value of input parameter *permission*.
+
+            table_name (str)
+                Value of input parameter *table_name*.
+        """
+        assert isinstance( name, (basestring)), "revoke_permission_table(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( permission, (basestring)), "revoke_permission_table(): Argument 'permission' must be (one) of type(s) '(basestring)'; given %s" % type( permission ).__name__
+        assert isinstance( table_name, (basestring)), "revoke_permission_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( options, (dict)), "revoke_permission_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "revoke_permission_table" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "revoke_permission_table" )
 
         obj = collections.OrderedDict()
         obj['name'] = name
         obj['permission'] = permission
         obj['table_name'] = table_name
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/revoke/permission/table' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/revoke/permission/table' ) )
     # end revoke_permission_table
 
 
     # begin revoke_role
     def revoke_role( self, role = None, member = None, options = None ):
-        """Revokes membership in a role from a user or role."""
+        """Revokes membership in a role from a user or role.
 
-        assert isinstance( role, (str, unicode)), "revoke_role(): Argument 'role' must be (one) of type(s) '(str, unicode)'; given %s" % type( role ).__name__
-        assert isinstance( member, (str, unicode)), "revoke_role(): Argument 'member' must be (one) of type(s) '(str, unicode)'; given %s" % type( member ).__name__
+        Parameters:
+
+            role (str)
+                Name of the role in which membership will be revoked. Must be
+                an existing role.
+
+            member (str)
+                Name of the user or role that will be revoked membership in
+                input parameter *role*. Must be an existing user or role.
+
+            options (dict of str to str)
+                Optional parameters.
+
+        Returns:
+            A dict with the following entries--
+
+            role (str)
+                Value of input parameter *role*.
+
+            member (str)
+                Value of input parameter *member*.
+        """
+        assert isinstance( role, (basestring)), "revoke_role(): Argument 'role' must be (one) of type(s) '(basestring)'; given %s" % type( role ).__name__
+        assert isinstance( member, (basestring)), "revoke_role(): Argument 'member' must be (one) of type(s) '(basestring)'; given %s" % type( member ).__name__
         assert isinstance( options, (dict)), "revoke_role(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "revoke_role" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "revoke_role" )
 
         obj = collections.OrderedDict()
         obj['role'] = role
         obj['member'] = member
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/revoke/role' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/revoke/role' ) )
     # end revoke_role
 
 
     # begin show_proc
     def show_proc( self, proc_name = '', options = {} ):
-        """Shows information about a proc."""
+        """Shows information about a proc.
 
-        assert isinstance( proc_name, (str, unicode)), "show_proc(): Argument 'proc_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( proc_name ).__name__
+        Parameters:
+
+            proc_name (str)
+                Name of the proc to show information about. If specified, must
+                be the name of a currently existing proc. If not specified,
+                information about all procs will be returned.  Default value is
+                ''.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **include_files** --
+                  If set to *true*, the files that make up the proc will be
+                  returned. If set to *false*, the files will not be returned.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            proc_names (list of str)
+                The proc names.
+
+            execution_modes (list of str)
+                The execution modes of the procs named in output parameter
+                *proc_names*.
+                Allowed values are:
+
+                * @INNER_STRUCTURE
+
+            files (list of dicts of str to str)
+                Maps of the files that make up the procs named in output
+                parameter *proc_names*.
+
+            commands (list of str)
+                The commands (excluding arguments) that will be invoked when
+                the procs named in output parameter *proc_names* are executed.
+
+            args (list of lists of str)
+                Arrays of command-line arguments that will be passed to the
+                procs named in output parameter *proc_names* when executed.
+
+            options (list of dicts of str to str)
+                The optional parameters for the procs named in output parameter
+                *proc_names*.
+        """
+        assert isinstance( proc_name, (basestring)), "show_proc(): Argument 'proc_name' must be (one) of type(s) '(basestring)'; given %s" % type( proc_name ).__name__
         assert isinstance( options, (dict)), "show_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "show_proc" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "show_proc" )
 
         obj = collections.OrderedDict()
         obj['proc_name'] = proc_name
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/proc' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/proc' ) )
     # end show_proc
 
 
     # begin show_proc_status
     def show_proc_status( self, run_id = '', options = {} ):
         """Shows the statuses of running or completed proc instances. Results are
-        grouped by run ID (as returned from :ref:`execute_proc
-        <execute_proc_python>`) and data segment ID (each invocation of the proc
-        command on a data segment is assigned a data segment ID)."""
+        grouped by run ID (as returned from :meth:`.execute_proc`) and data
+        segment ID (each invocation of the proc command on a data segment is
+        assigned a data segment ID).
 
-        assert isinstance( run_id, (str, unicode)), "show_proc_status(): Argument 'run_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( run_id ).__name__
+        Parameters:
+
+            run_id (str)
+                The run ID of a specific running or completed proc instance for
+                which the status will be returned. If the run ID is not found,
+                nothing will be returned. If not specified, the statuses of all
+                running and completed proc instances will be returned.  Default
+                value is ''.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **clear_complete** --
+                  If set to *true*, if a proc instance has completed (either
+                  successfully or unsuccessfully) then its status will be
+                  cleared and no longer returned in subsequent calls.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            proc_names (dict of str to str)
+                The proc names corresponding to the returned run IDs.
+
+            params (dict of str to dicts of str to str)
+                The string params passed to :meth:`.execute_proc` for the
+                returned run IDs.
+
+            bin_params (dict of str to dicts of str to str)
+                The binary params passed to :meth:`.execute_proc` for the
+                returned run IDs.
+
+            input_table_names (dict of str to lists of str)
+                The input table names passed to :meth:`.execute_proc` for the
+                returned run IDs.
+
+            input_column_names (dict of str to dicts of str to lists of str)
+                The input column names passed to :meth:`.execute_proc` for the
+                returned run IDs, supplemented with the column names for input
+                tables not included in the input column name map.
+
+            output_table_names (dict of str to lists of str)
+                The output table names passed to :meth:`.execute_proc` for the
+                returned run IDs.
+
+            options (dict of str to dicts of str to str)
+                The optional parameters passed to :meth:`.execute_proc` for the
+                returned run IDs.
+
+            overall_statuses (dict of str to str)
+                Overall statuses for the returned run IDs. Note that these are
+                rollups and individual statuses may differ between data
+                segments for the same run ID; see output parameter *statuses*
+                and output parameter *messages* for statuses from individual
+                data segments.
+
+            statuses (dict of str to dicts of str to str)
+                Statuses for the returned run IDs, grouped by data segment ID.
+
+            messages (dict of str to dicts of str to str)
+                Messages containing additional status information for the
+                returned run IDs, grouped by data segment ID.
+
+            results (dict of str to dicts of str to dicts of str to str)
+                String results for the returned run IDs, grouped by data
+                segment ID.
+
+            bin_results (dict of str to dicts of str to dicts of str to str)
+                Binary results for the returned run IDs, grouped by data
+                segment ID.
+
+            timings (dict of str to dicts of str to dicts of str to longs)
+                Timing information for the returned run IDs, grouped by data
+                segment ID.
+        """
+        assert isinstance( run_id, (basestring)), "show_proc_status(): Argument 'run_id' must be (one) of type(s) '(basestring)'; given %s" % type( run_id ).__name__
         assert isinstance( options, (dict)), "show_proc_status(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "show_proc_status" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "show_proc_status" )
 
         obj = collections.OrderedDict()
         obj['run_id'] = run_id
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/proc/status' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/proc/status' ) )
     # end show_proc_status
 
 
     # begin show_security
     def show_security( self, names = None, options = None ):
-        """Shows security information relating to users and/or roles. If the caller is
-        not a system administrator, only information relating to the caller and
-        their roles is returned."""
+        """Shows security information relating to users and/or roles. If the
+        caller is not a system administrator, only information relating to the
+        caller and their roles is returned.
 
-        assert isinstance( names, (list)), "show_security(): Argument 'names' must be (one) of type(s) '(list)'; given %s" % type( names ).__name__
+        Parameters:
+
+            names (list of str)
+                A list of names of users and/or roles about which security
+                information is requested. If none are provided, information
+                about all users and roles will be returned.  The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.
+
+        Returns:
+            A dict with the following entries--
+
+            types (dict of str to str)
+                Map of user/role name to the type of that user/role.
+
+            roles (dict of str to lists of str)
+                Map of user/role name to a list of names of roles of which that
+                user/role is a member.
+
+            permissions (dict of str to lists of dicts of str to str)
+                Map of user/role name to a list of permissions directly granted
+                to that user/role.
+        """
+        names = names if isinstance( names, list ) else ( [] if (names is None) else [ names ] )
         assert isinstance( options, (dict)), "show_security(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "show_security" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "show_security" )
 
         obj = collections.OrderedDict()
         obj['names'] = names
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/security' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/security' ) )
     # end show_security
 
 
     # begin show_system_properties
     def show_system_properties( self, options = {} ):
-        """Returns server configuration and version related information to the caller.
-        The admin tool uses it to present server related information to the
-        user."""
+        """Returns server configuration and version related information to the
+        caller. The admin tool uses it to present server related information to
+        the user.
 
+        Parameters:
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **properties** --
+                  A list of comma separated names of properties requested. If
+                  not specified, all properties will be returned.
+
+        Returns:
+            A dict with the following entries--
+
+            property_map (dict of str to str)
+                A map of server configuration parameters and version
+                information.
+                Allowed keys are:
+
+                * **conf.enable_worker_http_servers** --
+                  Boolean value indicating whether the system is configured for
+                  multi-head ingestion.
+                  Allowed values are:
+
+                  * **TRUE** --
+                    Indicates that the system is configured for multi-head
+                    ingestion.
+
+                  * **FALSE** --
+                    Indicates that the system is NOT configured for multi-head
+                    ingestion.
+
+                * **conf.worker_http_server_ips** --
+                  Semicolon (';') separated string of IP addresses of all the
+                  ingestion-enabled worker heads of the system.
+
+                * **conf.worker_http_server_ports** --
+                  Semicolon (';') separated string of the port numbers of all
+                  the ingestion-enabled worker ranks of the system.
+        """
         assert isinstance( options, (dict)), "show_system_properties(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "show_system_properties" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "show_system_properties" )
 
         obj = collections.OrderedDict()
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/system/properties' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/system/properties' ) )
     # end show_system_properties
 
 
     # begin show_system_status
     def show_system_status( self, options = {} ):
-        """Provides server configuration and health related status to the caller. The
-        admin tool uses it to present server related information to the user."""
+        """Provides server configuration and health related status to the caller.
+        The admin tool uses it to present server related information to the
+        user.
 
+        Parameters:
+
+            options (dict of str to str)
+                Optional parameters, currently unused.  Default value is an
+                empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            status_map (dict of str to str)
+                A map of server configuration and health related status.
+        """
         assert isinstance( options, (dict)), "show_system_status(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "show_system_status" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "show_system_status" )
 
         obj = collections.OrderedDict()
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/system/status' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/system/status' ) )
     # end show_system_status
 
 
     # begin show_system_timing
     def show_system_timing( self, options = {} ):
-        """Returns the last 100 database requests along with the request timing and
-        internal job id. The admin tool uses it to present request timing
-        information to the user."""
+        """Returns the last 100 database requests along with the request timing
+        and internal job id. The admin tool uses it to present request timing
+        information to the user.
 
+        Parameters:
+
+            options (dict of str to str)
+                Optional parameters, currently unused.  Default value is an
+                empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            endpoints (list of str)
+                List of recently called endpoints, most recent first.
+
+            time_in_ms (list of floats)
+                List of time (in ms) of the recent requests.
+
+            jobIds (list of str)
+                List of the internal job ids for the recent requests.
+        """
         assert isinstance( options, (dict)), "show_system_timing(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "show_system_timing" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "show_system_timing" )
 
         obj = collections.OrderedDict()
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/system/timing' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/system/timing' ) )
     # end show_system_timing
 
 
     # begin show_table
     def show_table( self, table_name = None, options = {} ):
-        """Retrieves detailed information about a table, view, or collection, specified
-        in input parameter *table_name*. If the supplied input parameter
-        *table_name* is a collection, the call can return information about
-        either the collection itself or the tables and views it contains. If
-        input parameter *table_name* is empty, information about all collections
-        and top-level tables and views can be returned.  If the option
-        *get_sizes* is set to *true*, then the sizes (objects and elements) of
-        each table are returned (in output parameter *sizes* and output
-        parameter *full_sizes*), along with the total number of objects in the
-        requested table (in output parameter *total_size* and output parameter
-        *total_full_size*).  For a collection, setting the *show_children*
-        option to *false* returns only information about the collection itself;
-        setting *show_children* to *true* returns a list of tables and views
-        contained in the collection, along with their description, type id,
-        schema, type label, type properties, and additional information
-        including TTL."""
+        """Retrieves detailed information about a table, view, or collection,
+        specified in input parameter *table_name*. If the supplied input
+        parameter *table_name* is a collection, the call can return information
+        about either the collection itself or the tables and views it contains.
+        If input parameter *table_name* is empty, information about all
+        collections and top-level tables and views can be returned.
 
-        assert isinstance( table_name, (str, unicode)), "show_table(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
+        If the option *get_sizes* is set to *true*, then the sizes (objects and
+        elements) of each table are returned (in output parameter *sizes* and
+        output parameter *full_sizes*), along with the total number of objects
+        in the requested table (in output parameter *total_size* and output
+        parameter *total_full_size*).
+
+        For a collection, setting the *show_children* option to *false* returns
+        only information about the collection itself; setting *show_children*
+        to *true* returns a list of tables and views contained in the
+        collection, along with their description, type id, schema, type label,
+        type properties, and additional information including TTL.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table for which to retrieve the information. If
+                blank, then information about all collections and top-level
+                tables and views is returned.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **get_sizes** --
+                  If *true* then the table sizes will be returned; blank,
+                  otherwise.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **show_children** --
+                  If input parameter *table_name* is a collection, then *true*
+                  will return information about the children of the collection,
+                  and *false* will return information about the collection
+                  itself. If input parameter *table_name* is a table or view,
+                  *show_children* must be *false*. If input parameter
+                  *table_name* is empty, then *show_children* must be *true*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **no_error_if_not_exists** --
+                  If *false* will return an error if the provided input
+                  parameter *table_name* does not exist. If *true* then it will
+                  return an empty result.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **get_column_info** --
+                  If *true* then column info (memory usage, etc) will be
+                  returned.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                Value of input parameter *table_name*.
+
+            table_names (list of str)
+                If input parameter *table_name* is a table or view, then the
+                single element of the array is input parameter *table_name*. If
+                input parameter *table_name* is a collection and
+                *show_children* is set to *true*, then this array is populated
+                with the names of all tables and views contained by the given
+                collection; if *show_children* is *false* then this array will
+                only include the collection name itself. If input parameter
+                *table_name* is an empty string, then the array contains the
+                names of all collections and top-level tables.
+
+            table_descriptions (list of lists of str)
+                List of descriptions for the respective tables in output
+                parameter *table_names*.
+                Allowed values are:
+
+                * COLLECTION
+                * VIEW
+                * REPLICATED
+                * JOIN
+                * RESULT_TABLE
+
+            type_ids (list of str)
+                Type ids of the respective tables in output parameter
+                *table_names*.
+
+            type_schemas (list of str)
+                Type schemas of the respective tables in output parameter
+                *table_names*.
+
+            type_labels (list of str)
+                Type labels of the respective tables in output parameter
+                *table_names*.
+
+            properties (list of dicts of str to lists of str)
+                Property maps of the respective tables in output parameter
+                *table_names*.
+
+            additional_info (list of dicts of str to str)
+                Additional information about the respective tables in output
+                parameter *table_names*.
+                Allowed values are:
+
+                * @INNER_STRUCTURE
+
+            sizes (list of longs)
+                Empty array if the *get_sizes* option is *false*. Otherwise,
+                sizes of the respective tables represented in output parameter
+                *table_names*. For all but track data types, this is simply the
+                number of total objects in a table. For track types, since each
+                track semantically contains many individual objects, the output
+                parameter *sizes* are the counts of conceptual tracks (each of
+                which may be associated with multiple objects).
+
+            full_sizes (list of longs)
+                Empty array if the *get_sizes* option is *false*. Otherwise,
+                number of total objects in the respective tables represented in
+                output parameter *table_names*. For all but track data types,
+                this is the same as output parameter *sizes*. For track types,
+                since each track semantically contains many individual objects,
+                output parameter *full_sizes* is the count of total objects.
+
+            join_sizes (list of floats)
+                Empty array if the *get_sizes* option is *false*. Otherwise,
+                number of unfiltered objects in the cross product of the
+                sub-tables in the joined-tables represented in output parameter
+                *table_names*. For simple tables, this number will be the same
+                as output parameter *sizes*.  For join-tables this value gives
+                the number of joined-table rows that must be processed by any
+                aggregate functions operating on the table.
+
+            total_size (long)
+                -1 if the *get_sizes* option is *false*. Otherwise, the sum of
+                the elements of output parameter *sizes*.
+
+            total_full_size (long)
+                -1 if the *get_sizes* option is *false*. The sum of the
+                elements of output parameter *full_sizes*.
+        """
+        assert isinstance( table_name, (basestring)), "show_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( options, (dict)), "show_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "show_table" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "show_table" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/table' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/table' ) )
     # end show_table
 
 
     # begin show_table_metadata
     def show_table_metadata( self, table_names = None, options = {} ):
-        """Retrieves the user provided metadata for the specified tables."""
+        """Retrieves the user provided metadata for the specified tables.
 
-        assert isinstance( table_names, (list)), "show_table_metadata(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
+        Parameters:
+
+            table_names (list of str)
+                Tables whose metadata will be fetched. All provided tables must
+                exist, or an error is returned.  The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            table_names (list of str)
+                Value of input parameter *table_names*.
+
+            metadata_maps (list of dicts of str to str)
+                A list of maps which contain the metadata of the tables in the
+                order the tables are listed in input parameter *table_names*.
+                Each map has (metadata attribute name, metadata attribute
+                value) pairs.
+        """
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
         assert isinstance( options, (dict)), "show_table_metadata(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "show_table_metadata" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "show_table_metadata" )
 
         obj = collections.OrderedDict()
         obj['table_names'] = table_names
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/table/metadata' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/table/metadata' ) )
     # end show_table_metadata
 
 
     # begin show_tables_by_type
     def show_tables_by_type( self, type_id = None, label = None, options = {} ):
-        """Gets names of the tables whose type matches the given criteria. Each table
-        has a particular type. This type is made out of the type label, schema
-        of the table, and the semantic type of the table. This function allows a
-        look up of the existing tables based on full or partial type
-        information. The operation is synchronous."""
+        """Gets names of the tables whose type matches the given criteria. Each
+        table has a particular type. This type is made out of the type label,
+        schema of the table, and the semantic type of the table. This function
+        allows a look up of the existing tables based on full or partial type
+        information. The operation is synchronous.
 
-        assert isinstance( type_id, (str, unicode)), "show_tables_by_type(): Argument 'type_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( type_id ).__name__
-        assert isinstance( label, (str, unicode)), "show_tables_by_type(): Argument 'label' must be (one) of type(s) '(str, unicode)'; given %s" % type( label ).__name__
+        Parameters:
+
+            type_id (str)
+                Type id returned by a call to :meth:`.create_type`.
+
+            label (str)
+                Optional user supplied label which can be used instead of the
+                type_id to retrieve all tables with the given label.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            table_names (list of str)
+                List of tables matching the input criteria.
+        """
+        assert isinstance( type_id, (basestring)), "show_tables_by_type(): Argument 'type_id' must be (one) of type(s) '(basestring)'; given %s" % type( type_id ).__name__
+        assert isinstance( label, (basestring)), "show_tables_by_type(): Argument 'label' must be (one) of type(s) '(basestring)'; given %s" % type( label ).__name__
         assert isinstance( options, (dict)), "show_tables_by_type(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "show_tables_by_type" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "show_tables_by_type" )
 
         obj = collections.OrderedDict()
         obj['type_id'] = type_id
         obj['label'] = label
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/tables/bytype' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/tables/bytype' ) )
     # end show_tables_by_type
 
 
     # begin show_triggers
     def show_triggers( self, trigger_ids = None, options = {} ):
         """Retrieves information regarding the specified triggers or all existing
-        triggers currently active."""
+        triggers currently active.
 
-        assert isinstance( trigger_ids, (list)), "show_triggers(): Argument 'trigger_ids' must be (one) of type(s) '(list)'; given %s" % type( trigger_ids ).__name__
+        Parameters:
+
+            trigger_ids (list of str)
+                List of IDs of the triggers whose information is to be
+                retrieved. An empty list means information will be retrieved on
+                all active triggers.  The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            trigger_map (dict of str to dicts of str to str)
+                This dictionary contains (key, value) pairs of (trigger ID,
+                information map/dictionary) where the key is a Unicode string
+                representing a Trigger ID. The value is another embedded
+                dictionary containing (key, value) pairs where the keys consist
+                of 'table_name', 'type' and the parameter names relating to the
+                trigger type, e.g. *nai*, *min*, *max*. The values are unicode
+                strings (numeric values are also converted to strings)
+                representing the value of the respective parameter. If a
+                trigger is associated with multiple tables, then the string
+                value for *table_name* contains a comma separated list of table
+                names.
+        """
+        trigger_ids = trigger_ids if isinstance( trigger_ids, list ) else ( [] if (trigger_ids is None) else [ trigger_ids ] )
         assert isinstance( options, (dict)), "show_triggers(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "show_triggers" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "show_triggers" )
 
         obj = collections.OrderedDict()
         obj['trigger_ids'] = trigger_ids
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/triggers' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/triggers' ) )
     # end show_triggers
 
 
@@ -4613,20 +9875,47 @@ class GPUdb(object):
         database returns the data type schema, the label, and the semantic type
         along with the type ID. If the user provides any combination of label
         and semantic type, then the database returns the pertinent information
-        for all data types that match the input criteria."""
+        for all data types that match the input criteria.
 
-        assert isinstance( type_id, (str, unicode)), "show_types(): Argument 'type_id' must be (one) of type(s) '(str, unicode)'; given %s" % type( type_id ).__name__
-        assert isinstance( label, (str, unicode)), "show_types(): Argument 'label' must be (one) of type(s) '(str, unicode)'; given %s" % type( label ).__name__
+        Parameters:
+
+            type_id (str)
+                Type Id returned in response to a call to :meth:`.create_type`.
+
+            label (str)
+                Option string that was supplied by user in a call to
+                :meth:`.create_type`.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            type_ids (list of str)
+
+
+            type_schemas (list of str)
+
+
+            labels (list of str)
+
+
+            properties (list of dicts of str to lists of str)
+
+        """
+        assert isinstance( type_id, (basestring)), "show_types(): Argument 'type_id' must be (one) of type(s) '(basestring)'; given %s" % type( type_id ).__name__
+        assert isinstance( label, (basestring)), "show_types(): Argument 'label' must be (one) of type(s) '(basestring)'; given %s" % type( label ).__name__
         assert isinstance( options, (dict)), "show_types(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "show_types" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "show_types" )
 
         obj = collections.OrderedDict()
         obj['type_id'] = type_id
         obj['label'] = label
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/types' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/types' ) )
     # end show_types
 
 
@@ -4634,34 +9923,142 @@ class GPUdb(object):
     def update_records( self, table_name = None, expressions = None, new_values_maps
                         = None, records_to_insert = [], records_to_insert_str =
                         [], record_encoding = 'binary', options = {} ):
-        """Runs multiple predicate-based updates in a single call.  With the list of
-        given expressions, any matching record's column values will be updated
-        as provided in input parameter *new_values_maps*.  There is also an
-        optional 'upsert' capability where if a particular predicate doesn't
-        match any existing record, then a new record can be inserted.  Note that
-        this operation can only be run on an original table and not on a
-        collection or a result view.  This operation can update primary key
-        values.  By default only 'pure primary key' predicates are allowed when
-        updating primary key values. If the primary key for a table is the
-        column 'attr1', then the operation will only accept predicates of the
-        form: "attr1 == 'foo'" if the attr1 column is being updated.  For a
-        composite primary key (e.g. columns 'attr1' and 'attr2') then this
-        operation will only accept predicates of the form: "(attr1 == 'foo') and
-        (attr2 == 'bar')".  Meaning, all primary key columns must appear in an
-        equality predicate in the expressions.  Furthermore each 'pure primary
-        key' predicate must be unique within a given request.  These
-        restrictions can be removed by utilizing some available options through
-        input parameter *options*."""
+        """Runs multiple predicate-based updates in a single call.  With the list
+        of given expressions, any matching record's column values will be
+        updated as provided in input parameter *new_values_maps*.  There is
+        also an optional 'upsert' capability where if a particular predicate
+        doesn't match any existing record, then a new record can be inserted.
 
-        assert isinstance( table_name, (str, unicode)), "update_records(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( expressions, (list)), "update_records(): Argument 'expressions' must be (one) of type(s) '(list)'; given %s" % type( expressions ).__name__
-        assert isinstance( new_values_maps, (list)), "update_records(): Argument 'new_values_maps' must be (one) of type(s) '(list)'; given %s" % type( new_values_maps ).__name__
-        assert isinstance( records_to_insert, (list)), "update_records(): Argument 'records_to_insert' must be (one) of type(s) '(list)'; given %s" % type( records_to_insert ).__name__
-        assert isinstance( records_to_insert_str, (list)), "update_records(): Argument 'records_to_insert_str' must be (one) of type(s) '(list)'; given %s" % type( records_to_insert_str ).__name__
-        assert isinstance( record_encoding, (str, unicode)), "update_records(): Argument 'record_encoding' must be (one) of type(s) '(str, unicode)'; given %s" % type( record_encoding ).__name__
+        Note that this operation can only be run on an original table and not
+        on a collection or a result view.
+
+        This operation can update primary key values.  By default only 'pure
+        primary key' predicates are allowed when updating primary key values.
+        If the primary key for a table is the column 'attr1', then the
+        operation will only accept predicates of the form: "attr1 == 'foo'" if
+        the attr1 column is being updated.  For a composite primary key (e.g.
+        columns 'attr1' and 'attr2') then this operation will only accept
+        predicates of the form: "(attr1 == 'foo') and (attr2 == 'bar')".
+        Meaning, all primary key columns must appear in an equality predicate
+        in the expressions.  Furthermore each 'pure primary key' predicate must
+        be unique within a given request.  These restrictions can be removed by
+        utilizing some available options through input parameter *options*.
+
+        Parameters:
+
+            table_name (str)
+                Table to be updated. Must be a currently existing table and not
+                a collection or view.
+
+            expressions (list of str)
+                A list of the actual predicates, one for each update; format
+                should follow the guidelines :meth:`here <.filter>`.  The user
+                can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
+
+            new_values_maps (list of dicts of str to str and/or None)
+                List of new values for the matching records.  Each element is a
+                map with (key, value) pairs where the keys are the names of the
+                columns whose values are to be updated; the values are the new
+                values.  The number of elements in the list should match the
+                length of input parameter *expressions*.  The user can provide
+                a single element (which will be automatically promoted to a
+                list internally) or a list.
+
+            records_to_insert (list of str)
+                An *optional* list of new binary-avro encoded records to
+                insert, one for each update.  If one of input parameter
+                *expressions* does not yield a matching record to be updated,
+                then the corresponding element from this list will be added to
+                the table.  The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
+                Default value is an empty list ( [] ).
+
+            records_to_insert_str (list of str)
+                An optional list of new json-avro encoded objects to insert,
+                one for each update, to be added to the set if the particular
+                update did not affect any objects.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.  Default value is an empty list ( [] ).
+
+            record_encoding (str)
+                Identifies which of input parameter *records_to_insert* and
+                input parameter *records_to_insert_str* should be used.
+                Default value is 'binary'.
+                Allowed values are:
+
+                * binary
+                * json
+
+                The default value is 'binary'.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **global_expression** --
+                  An optional global expression to reduce the search space of
+                  the predicates listed in input parameter *expressions*.
+
+                * **bypass_safety_checks** --
+                  When set to 'true', all predicates are available for primary
+                  key updates.  Keep in mind that it is possible to destroy
+                  data in this case, since a single predicate may match
+                  multiple objects (potentially all of records of a table), and
+                  then updating all of those records to have the same primary
+                  key will, due to the primary key uniqueness constraints,
+                  effectively delete all but one of those updated records.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **update_on_existing_pk** --
+                  Can be used to customize behavior when the updated primary
+                  key value already exists, as described in
+                  :meth:`.insert_records`.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **record_id** --
+                  ID of a single record to be updated (returned in the call to
+                  :meth:`.insert_records` or
+                  :meth:`.get_records_from_collection`).
+
+        Returns:
+            A dict with the following entries--
+
+            count_updated (long)
+                Total number of records updated.
+
+            counts_updated (list of longs)
+                Total number of records updated per predicate in input
+                parameter *expressions*.
+
+            count_inserted (long)
+                Total number of records inserted (due to expressions not
+                matching any existing records).
+
+            counts_inserted (list of longs)
+                Total number of records inserted per predicate in input
+                parameter *expressions* (will be either 0 or 1 for each
+                expression).
+        """
+        assert isinstance( table_name, (basestring)), "update_records(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        expressions = expressions if isinstance( expressions, list ) else ( [] if (expressions is None) else [ expressions ] )
+        new_values_maps = new_values_maps if isinstance( new_values_maps, list ) else ( [] if (new_values_maps is None) else [ new_values_maps ] )
+        records_to_insert = records_to_insert if isinstance( records_to_insert, list ) else ( [] if (records_to_insert is None) else [ records_to_insert ] )
+        records_to_insert_str = records_to_insert_str if isinstance( records_to_insert_str, list ) else ( [] if (records_to_insert_str is None) else [ records_to_insert_str ] )
+        assert isinstance( record_encoding, (basestring)), "update_records(): Argument 'record_encoding' must be (one) of type(s) '(basestring)'; given %s" % type( record_encoding ).__name__
         assert isinstance( options, (dict)), "update_records(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "update_records" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "update_records" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
@@ -4670,70 +10067,100 @@ class GPUdb(object):
         obj['records_to_insert'] = records_to_insert
         obj['records_to_insert_str'] = records_to_insert_str
         obj['record_encoding'] = record_encoding
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/update/records' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/update/records' ) )
     # end update_records
 
 
     # begin update_records_by_series
     def update_records_by_series( self, table_name = None, world_table_name = None,
                                   view_name = '', reserved = [], options = {} ):
-        """Updates the view specified by input parameter *table_name* to include full
-        series (track) information from the input parameter *world_table_name*
-        for the series (tracks) present in the input parameter *view_name*."""
+        """Updates the view specified by input parameter *table_name* to include
+        full series (track) information from the input parameter
+        *world_table_name* for the series (tracks) present in the input
+        parameter *view_name*.
 
-        assert isinstance( table_name, (str, unicode)), "update_records_by_series(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( world_table_name, (str, unicode)), "update_records_by_series(): Argument 'world_table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( world_table_name ).__name__
-        assert isinstance( view_name, (str, unicode)), "update_records_by_series(): Argument 'view_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( view_name ).__name__
-        assert isinstance( reserved, (list)), "update_records_by_series(): Argument 'reserved' must be (one) of type(s) '(list)'; given %s" % type( reserved ).__name__
+        Parameters:
+
+            table_name (str)
+                Name of the view on which the update operation will be
+                performed. Must be an existing view.
+
+            world_table_name (str)
+                Name of the table containing the complete series (track)
+                information.
+
+            view_name (str)
+                Optional name of the view containing the series (tracks) which
+                have to be updated.  Default value is ''.
+
+            reserved (list of str)
+                  The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+                Default value is an empty list ( [] ).
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            count (int)
+
+        """
+        assert isinstance( table_name, (basestring)), "update_records_by_series(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( world_table_name, (basestring)), "update_records_by_series(): Argument 'world_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( world_table_name ).__name__
+        assert isinstance( view_name, (basestring)), "update_records_by_series(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
+        reserved = reserved if isinstance( reserved, list ) else ( [] if (reserved is None) else [ reserved ] )
         assert isinstance( options, (dict)), "update_records_by_series(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "update_records_by_series" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "update_records_by_series" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
         obj['world_table_name'] = world_table_name
         obj['view_name'] = view_name
         obj['reserved'] = reserved
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/update/records/byseries' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/update/records/byseries' ) )
     # end update_records_by_series
 
 
     # begin visualize_image
     def visualize_image( self, table_names = None, world_table_names = None,
-                         x_column_name = None, y_column_name = None, track_ids =
-                         None, min_x = None, max_x = None, min_y = None, max_y =
-                         None, width = None, height = None, projection =
-                         'PLATE_CARREE', bg_color = None, style_options = None,
-                         options = {} ):
-        """"""
+                         x_column_name = None, y_column_name = None,
+                         geometry_column_name = None, track_ids = None, min_x =
+                         None, max_x = None, min_y = None, max_y = None, width =
+                         None, height = None, projection = 'PLATE_CARREE',
+                         bg_color = None, style_options = None, options = {} ):
 
-        assert isinstance( table_names, (list)), "visualize_image(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
-        assert isinstance( world_table_names, (list)), "visualize_image(): Argument 'world_table_names' must be (one) of type(s) '(list)'; given %s" % type( world_table_names ).__name__
-        assert isinstance( x_column_name, (str, unicode)), "visualize_image(): Argument 'x_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( x_column_name ).__name__
-        assert isinstance( y_column_name, (str, unicode)), "visualize_image(): Argument 'y_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( y_column_name ).__name__
-        assert isinstance( track_ids, (list)), "visualize_image(): Argument 'track_ids' must be (one) of type(s) '(list)'; given %s" % type( track_ids ).__name__
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        world_table_names = world_table_names if isinstance( world_table_names, list ) else ( [] if (world_table_names is None) else [ world_table_names ] )
+        assert isinstance( x_column_name, (basestring)), "visualize_image(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
+        assert isinstance( y_column_name, (basestring)), "visualize_image(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
+        assert isinstance( geometry_column_name, (basestring)), "visualize_image(): Argument 'geometry_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( geometry_column_name ).__name__
+        track_ids = track_ids if isinstance( track_ids, list ) else ( [] if (track_ids is None) else [ track_ids ] )
         assert isinstance( min_x, (int, long, float)), "visualize_image(): Argument 'min_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_x ).__name__
         assert isinstance( max_x, (int, long, float)), "visualize_image(): Argument 'max_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_x ).__name__
         assert isinstance( min_y, (int, long, float)), "visualize_image(): Argument 'min_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_y ).__name__
         assert isinstance( max_y, (int, long, float)), "visualize_image(): Argument 'max_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_y ).__name__
         assert isinstance( width, (int, long, float)), "visualize_image(): Argument 'width' must be (one) of type(s) '(int, long, float)'; given %s" % type( width ).__name__
         assert isinstance( height, (int, long, float)), "visualize_image(): Argument 'height' must be (one) of type(s) '(int, long, float)'; given %s" % type( height ).__name__
-        assert isinstance( projection, (str, unicode)), "visualize_image(): Argument 'projection' must be (one) of type(s) '(str, unicode)'; given %s" % type( projection ).__name__
+        assert isinstance( projection, (basestring)), "visualize_image(): Argument 'projection' must be (one) of type(s) '(basestring)'; given %s" % type( projection ).__name__
         assert isinstance( bg_color, (int, long, float)), "visualize_image(): Argument 'bg_color' must be (one) of type(s) '(int, long, float)'; given %s" % type( bg_color ).__name__
         assert isinstance( style_options, (dict)), "visualize_image(): Argument 'style_options' must be (one) of type(s) '(dict)'; given %s" % type( style_options ).__name__
         assert isinstance( options, (dict)), "visualize_image(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "visualize_image" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "visualize_image" )
 
         obj = collections.OrderedDict()
         obj['table_names'] = table_names
         obj['world_table_names'] = world_table_names
         obj['x_column_name'] = x_column_name
         obj['y_column_name'] = y_column_name
+        obj['geometry_column_name'] = geometry_column_name
         obj['track_ids'] = track_ids
         obj['min_x'] = min_x
         obj['max_x'] = max_x
@@ -4743,52 +10170,281 @@ class GPUdb(object):
         obj['height'] = height
         obj['projection'] = projection
         obj['bg_color'] = bg_color
-        obj['style_options'] = style_options
-        obj['options'] = options
+        obj['style_options'] = self.__sanitize_dicts( style_options )
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/image' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/image' ) )
     # end visualize_image
+
+
+    # begin visualize_image_chart
+    def visualize_image_chart( self, table_name = None, x_column_name = None,
+                               y_column_name = None, min_x = None, max_x = None,
+                               min_y = None, max_y = None, width = None, height
+                               = None, bg_color = None, style_options = None,
+                               options = {} ):
+        """Scatter plot is the only plot type currently supported. A non-numeric
+        column can be specified as x or y column and jitters can be added to
+        them to avoid excessive overlapping. All color values must be in the
+        format RRGGBB or AARRGGBB (to specify the alpha value).
+        The image is contained in the output parameter *image_data* field.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table containing the data to be drawn as a chart.
+
+            x_column_name (str)
+                Name of the column containing the data mapped to the x axis of
+                a chart.
+
+            y_column_name (str)
+                Name of the column containing the data mapped to the y axis of
+                a chart.
+
+            min_x (float)
+                Lower bound for the x column values. For non-numeric x column,
+                each x column item is mapped to an integral value starting from
+                0.
+
+            max_x (float)
+                Upper bound for the x column values. For non-numeric x column,
+                each x column item is mapped to an integral value starting from
+                0.
+
+            min_y (float)
+                Lower bound for the y column values. For non-numeric y column,
+                each y column item is mapped to an integral value starting from
+                0.
+
+            max_y (float)
+                Upper bound for the y column values. For non-numeric y column,
+                each y column item is mapped to an integral value starting from
+                0.
+
+            width (int)
+                Width of the generated image in pixels.
+
+            height (int)
+                Height of the generated image in pixels.
+
+            bg_color (str)
+                Background color of the generated image.
+
+            style_options (dict of str to lists of str)
+                Rendering style options for a chart.
+                Allowed keys are:
+
+                * **pointcolor** --
+                  The color of points in the plot represented as a hexadecimal
+                  number.
+
+                * **pointsize** --
+                  The size of points in the plot represented as number of
+                  pixels.
+
+                * **pointshape** --
+                  The shape of points in the plot.
+                  Allowed values are:
+
+                  * none
+                  * circle
+                  * square
+                  * diamond
+                  * hollowcircle
+                  * hollowsquare
+                  * hollowdiamond
+
+                  The default value is 'square'.
+
+                * **cb_pointcolors** --
+                  Point color class break information consisting of three
+                  entries: class-break attribute, class-break values/ranges,
+                  and point color values. This option overrides the pointcolor
+                  option if both are provided. Class-break ranges are
+                  represented in the form of "min:max". Class-break
+                  values/ranges and point color values are separated by
+                  cb_delimiter, e.g. {"price", "20:30;30:40;40:50",
+                  "0xFF0000;0x00FF00;0x0000FF"}.
+
+                * **cb_pointsizes** --
+                  Point size class break information consisting of three
+                  entries: class-break attribute, class-break values/ranges,
+                  and point size values. This option overrides the pointsize
+                  option if both are provided. Class-break ranges are
+                  represented in the form of "min:max". Class-break
+                  values/ranges and point size values are separated by
+                  cb_delimiter, e.g. {"states", "NY;TX;CA", "3;5;7"}.
+
+                * **cb_pointshapes** --
+                  Point shape class break information consisting of three
+                  entries: class-break attribute, class-break values/ranges,
+                  and point shape names. This option overrides the pointshape
+                  option if both are provided. Class-break ranges are
+                  represented in the form of "min:max". Class-break
+                  values/ranges and point shape names are separated by
+                  cb_delimiter, e.g. {"states", "NY;TX;CA",
+                  "circle;square;diamond"}.
+
+                * **cb_delimiter** --
+                  A character or string which separates per-class values in a
+                  class-break style option string.
+
+                * **x_order_by** --
+                  An expression or aggregate expression by which non-numeric x
+                  column values are sorted, e.g. avg(price).
+
+                * **y_order_by** --
+                  An expression or aggregate expression by which non-numeric y
+                  column values are sorted, e.g. avg(price).
+
+                * **jitter_x** --
+                  Amplitude of horizontal jitter applied to non-numaric x
+                  column values.
+
+                * **jitter_y** --
+                  Amplitude of vertical jitter applied to non-numaric y column
+                  values.
+
+                * **plot_all** --
+                  If this options is set to "true", all non-numeric column
+                  values are plotted ignoring min_x, max_x, min_y and max_y
+                  parameters.
+
+            options (dict of str to str)
+                  Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            min_x (float)
+                Lower bound for the x column values as provided in input
+                parameter *min_x* or calculated for non-numeric columns when
+                plot_all option is used.
+
+            max_x (float)
+                Upper bound for the x column values as provided in input
+                parameter *max_x* or calculated for non-numeric columns when
+                plot_all option is used.
+
+            min_y (float)
+                Lower bound for the y column values as provided in input
+                parameter *min_y* or calculated for non-numeric columns when
+                plot_all option is used.
+
+            max_y (float)
+                Upper bound for the y column values as provided in input
+                parameter *max_y* or calculated for non-numeric columns when
+                plot_all option is used.
+
+            width (int)
+                Width of the image as provided in input parameter *width*.
+
+            height (int)
+                Height of the image as provided in input parameter *height*.
+
+            bg_color (str)
+                Background color of the image as provided in input parameter
+                *bg_color*.
+
+            image_data (str)
+                The generated image data.
+
+            axes_info (dict of str to lists of str)
+                Information returned for drawing labels for the axes associated
+                with non-numeric columns.
+                Allowed keys are:
+
+                * **sorted_x_values** --
+                  Sorted non-numeric x column value list for drawing x axis
+                  label.
+
+                * **location_x** --
+                  X axis label positions of sorted_x_values in pixel
+                  coordinates.
+
+                * **sorted_y_values** --
+                  Sorted non-numeric y column value list for drawing y axis
+                  label.
+
+                * **location_y** --
+                  Y axis label positions of sorted_y_values in pixel
+                  coordinates.
+        """
+        assert isinstance( table_name, (basestring)), "visualize_image_chart(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( x_column_name, (basestring)), "visualize_image_chart(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
+        assert isinstance( y_column_name, (basestring)), "visualize_image_chart(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
+        assert isinstance( min_x, (int, long, float)), "visualize_image_chart(): Argument 'min_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_x ).__name__
+        assert isinstance( max_x, (int, long, float)), "visualize_image_chart(): Argument 'max_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_x ).__name__
+        assert isinstance( min_y, (int, long, float)), "visualize_image_chart(): Argument 'min_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_y ).__name__
+        assert isinstance( max_y, (int, long, float)), "visualize_image_chart(): Argument 'max_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_y ).__name__
+        assert isinstance( width, (int, long, float)), "visualize_image_chart(): Argument 'width' must be (one) of type(s) '(int, long, float)'; given %s" % type( width ).__name__
+        assert isinstance( height, (int, long, float)), "visualize_image_chart(): Argument 'height' must be (one) of type(s) '(int, long, float)'; given %s" % type( height ).__name__
+        assert isinstance( bg_color, (basestring)), "visualize_image_chart(): Argument 'bg_color' must be (one) of type(s) '(basestring)'; given %s" % type( bg_color ).__name__
+        assert isinstance( style_options, (dict)), "visualize_image_chart(): Argument 'style_options' must be (one) of type(s) '(dict)'; given %s" % type( style_options ).__name__
+        assert isinstance( options, (dict)), "visualize_image_chart(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "visualize_image_chart" )
+
+        obj = collections.OrderedDict()
+        obj['table_name'] = table_name
+        obj['x_column_name'] = x_column_name
+        obj['y_column_name'] = y_column_name
+        obj['min_x'] = min_x
+        obj['max_x'] = max_x
+        obj['min_y'] = min_y
+        obj['max_y'] = max_y
+        obj['width'] = width
+        obj['height'] = height
+        obj['bg_color'] = bg_color
+        obj['style_options'] = self.__sanitize_dicts( style_options )
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/image/chart' ) )
+    # end visualize_image_chart
 
 
     # begin visualize_image_classbreak
     def visualize_image_classbreak( self, table_names = None, world_table_names =
                                     None, x_column_name = None, y_column_name =
-                                    None, track_ids = None, cb_column_name1 =
-                                    None, cb_vals1 = None, cb_column_name2 =
-                                    None, cb_vals2 = None, min_x = None, max_x =
-                                    None, min_y = None, max_y = None, width =
-                                    None, height = None, projection =
-                                    'PLATE_CARREE', bg_color = None,
-                                    style_options = None, options = {} ):
-        """"""
+                                    None, geometry_column_name = None, track_ids
+                                    = None, cb_column_name1 = None, cb_vals1 =
+                                    None, cb_column_name2 = None, cb_vals2 =
+                                    None, min_x = None, max_x = None, min_y =
+                                    None, max_y = None, width = None, height =
+                                    None, projection = 'PLATE_CARREE', bg_color
+                                    = None, style_options = None, options = {}
+                                    ):
 
-        assert isinstance( table_names, (list)), "visualize_image_classbreak(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
-        assert isinstance( world_table_names, (list)), "visualize_image_classbreak(): Argument 'world_table_names' must be (one) of type(s) '(list)'; given %s" % type( world_table_names ).__name__
-        assert isinstance( x_column_name, (str, unicode)), "visualize_image_classbreak(): Argument 'x_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( x_column_name ).__name__
-        assert isinstance( y_column_name, (str, unicode)), "visualize_image_classbreak(): Argument 'y_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( y_column_name ).__name__
-        assert isinstance( track_ids, (list)), "visualize_image_classbreak(): Argument 'track_ids' must be (one) of type(s) '(list)'; given %s" % type( track_ids ).__name__
-        assert isinstance( cb_column_name1, (str, unicode)), "visualize_image_classbreak(): Argument 'cb_column_name1' must be (one) of type(s) '(str, unicode)'; given %s" % type( cb_column_name1 ).__name__
-        assert isinstance( cb_vals1, (list)), "visualize_image_classbreak(): Argument 'cb_vals1' must be (one) of type(s) '(list)'; given %s" % type( cb_vals1 ).__name__
-        assert isinstance( cb_column_name2, (list)), "visualize_image_classbreak(): Argument 'cb_column_name2' must be (one) of type(s) '(list)'; given %s" % type( cb_column_name2 ).__name__
-        assert isinstance( cb_vals2, (list)), "visualize_image_classbreak(): Argument 'cb_vals2' must be (one) of type(s) '(list)'; given %s" % type( cb_vals2 ).__name__
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        world_table_names = world_table_names if isinstance( world_table_names, list ) else ( [] if (world_table_names is None) else [ world_table_names ] )
+        assert isinstance( x_column_name, (basestring)), "visualize_image_classbreak(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
+        assert isinstance( y_column_name, (basestring)), "visualize_image_classbreak(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
+        assert isinstance( geometry_column_name, (basestring)), "visualize_image_classbreak(): Argument 'geometry_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( geometry_column_name ).__name__
+        track_ids = track_ids if isinstance( track_ids, list ) else ( [] if (track_ids is None) else [ track_ids ] )
+        assert isinstance( cb_column_name1, (basestring)), "visualize_image_classbreak(): Argument 'cb_column_name1' must be (one) of type(s) '(basestring)'; given %s" % type( cb_column_name1 ).__name__
+        cb_vals1 = cb_vals1 if isinstance( cb_vals1, list ) else ( [] if (cb_vals1 is None) else [ cb_vals1 ] )
+        cb_column_name2 = cb_column_name2 if isinstance( cb_column_name2, list ) else ( [] if (cb_column_name2 is None) else [ cb_column_name2 ] )
+        cb_vals2 = cb_vals2 if isinstance( cb_vals2, list ) else ( [] if (cb_vals2 is None) else [ cb_vals2 ] )
         assert isinstance( min_x, (int, long, float)), "visualize_image_classbreak(): Argument 'min_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_x ).__name__
         assert isinstance( max_x, (int, long, float)), "visualize_image_classbreak(): Argument 'max_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_x ).__name__
         assert isinstance( min_y, (int, long, float)), "visualize_image_classbreak(): Argument 'min_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_y ).__name__
         assert isinstance( max_y, (int, long, float)), "visualize_image_classbreak(): Argument 'max_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_y ).__name__
         assert isinstance( width, (int, long, float)), "visualize_image_classbreak(): Argument 'width' must be (one) of type(s) '(int, long, float)'; given %s" % type( width ).__name__
         assert isinstance( height, (int, long, float)), "visualize_image_classbreak(): Argument 'height' must be (one) of type(s) '(int, long, float)'; given %s" % type( height ).__name__
-        assert isinstance( projection, (str, unicode)), "visualize_image_classbreak(): Argument 'projection' must be (one) of type(s) '(str, unicode)'; given %s" % type( projection ).__name__
+        assert isinstance( projection, (basestring)), "visualize_image_classbreak(): Argument 'projection' must be (one) of type(s) '(basestring)'; given %s" % type( projection ).__name__
         assert isinstance( bg_color, (int, long, float)), "visualize_image_classbreak(): Argument 'bg_color' must be (one) of type(s) '(int, long, float)'; given %s" % type( bg_color ).__name__
         assert isinstance( style_options, (dict)), "visualize_image_classbreak(): Argument 'style_options' must be (one) of type(s) '(dict)'; given %s" % type( style_options ).__name__
         assert isinstance( options, (dict)), "visualize_image_classbreak(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "visualize_image_classbreak" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "visualize_image_classbreak" )
 
         obj = collections.OrderedDict()
         obj['table_names'] = table_names
         obj['world_table_names'] = world_table_names
         obj['x_column_name'] = x_column_name
         obj['y_column_name'] = y_column_name
+        obj['geometry_column_name'] = geometry_column_name
         obj['track_ids'] = track_ids
         obj['cb_column_name1'] = cb_column_name1
         obj['cb_vals1'] = cb_vals1
@@ -4802,10 +10458,10 @@ class GPUdb(object):
         obj['height'] = height
         obj['projection'] = projection
         obj['bg_color'] = bg_color
-        obj['style_options'] = style_options
-        obj['options'] = options
+        obj['style_options'] = self.__sanitize_dicts( style_options )
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/image/classbreak' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/image/classbreak' ) )
     # end visualize_image_classbreak
 
 
@@ -4816,23 +10472,22 @@ class GPUdb(object):
                                  = None, width = None, height = None, projection
                                  = 'PLATE_CARREE', style_options = None, options
                                  = {} ):
-        """"""
 
-        assert isinstance( table_names, (list)), "visualize_image_heatmap(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
-        assert isinstance( x_column_name, (str, unicode)), "visualize_image_heatmap(): Argument 'x_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( x_column_name ).__name__
-        assert isinstance( y_column_name, (str, unicode)), "visualize_image_heatmap(): Argument 'y_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( y_column_name ).__name__
-        assert isinstance( value_column_name, (str, unicode)), "visualize_image_heatmap(): Argument 'value_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( value_column_name ).__name__
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        assert isinstance( x_column_name, (basestring)), "visualize_image_heatmap(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
+        assert isinstance( y_column_name, (basestring)), "visualize_image_heatmap(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
+        assert isinstance( value_column_name, (basestring)), "visualize_image_heatmap(): Argument 'value_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( value_column_name ).__name__
         assert isinstance( min_x, (int, long, float)), "visualize_image_heatmap(): Argument 'min_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_x ).__name__
         assert isinstance( max_x, (int, long, float)), "visualize_image_heatmap(): Argument 'max_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_x ).__name__
         assert isinstance( min_y, (int, long, float)), "visualize_image_heatmap(): Argument 'min_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_y ).__name__
         assert isinstance( max_y, (int, long, float)), "visualize_image_heatmap(): Argument 'max_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_y ).__name__
         assert isinstance( width, (int, long, float)), "visualize_image_heatmap(): Argument 'width' must be (one) of type(s) '(int, long, float)'; given %s" % type( width ).__name__
         assert isinstance( height, (int, long, float)), "visualize_image_heatmap(): Argument 'height' must be (one) of type(s) '(int, long, float)'; given %s" % type( height ).__name__
-        assert isinstance( projection, (str, unicode)), "visualize_image_heatmap(): Argument 'projection' must be (one) of type(s) '(str, unicode)'; given %s" % type( projection ).__name__
+        assert isinstance( projection, (basestring)), "visualize_image_heatmap(): Argument 'projection' must be (one) of type(s) '(basestring)'; given %s" % type( projection ).__name__
         assert isinstance( style_options, (dict)), "visualize_image_heatmap(): Argument 'style_options' must be (one) of type(s) '(dict)'; given %s" % type( style_options ).__name__
         assert isinstance( options, (dict)), "visualize_image_heatmap(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "visualize_image_heatmap" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "visualize_image_heatmap" )
 
         obj = collections.OrderedDict()
         obj['table_names'] = table_names
@@ -4846,54 +10501,54 @@ class GPUdb(object):
         obj['width'] = width
         obj['height'] = height
         obj['projection'] = projection
-        obj['style_options'] = style_options
-        obj['options'] = options
+        obj['style_options'] = self.__sanitize_dicts( style_options )
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/image/heatmap' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/image/heatmap' ) )
     # end visualize_image_heatmap
 
 
     # begin visualize_image_labels
     def visualize_image_labels( self, table_name = None, x_column_name = None,
-                                y_column_name = None, x_offset = None, y_offset
-                                = None, text_string = None, font = None,
-                                text_color = None, text_angle = None, text_scale
-                                = None, draw_box = None, draw_leader = None,
-                                line_width = None, line_color = None, fill_color
-                                = None, leader_x_column_name = None,
-                                leader_y_column_name = None, min_x = None, max_x
-                                = None, min_y = None, max_y = None, width =
-                                None, height = None, projection =
-                                'PLATE_CARREE', options = {} ):
-        """"""
+                                y_column_name = None, x_offset = '', y_offset =
+                                '', text_string = None, font = '', text_color =
+                                '', text_angle = '', text_scale = '', draw_box =
+                                '', draw_leader = '', line_width = '',
+                                line_color = '', fill_color = '',
+                                leader_x_column_name = '', leader_y_column_name
+                                = '', filter = '', min_x = None, max_x = None,
+                                min_y = None, max_y = None, width = None, height
+                                = None, projection = 'PLATE_CARREE', options =
+                                {} ):
 
-        assert isinstance( table_name, (str, unicode)), "visualize_image_labels(): Argument 'table_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( table_name ).__name__
-        assert isinstance( x_column_name, (str, unicode)), "visualize_image_labels(): Argument 'x_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( x_column_name ).__name__
-        assert isinstance( y_column_name, (str, unicode)), "visualize_image_labels(): Argument 'y_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( y_column_name ).__name__
-        assert isinstance( x_offset, (str, unicode)), "visualize_image_labels(): Argument 'x_offset' must be (one) of type(s) '(str, unicode)'; given %s" % type( x_offset ).__name__
-        assert isinstance( y_offset, (str, unicode)), "visualize_image_labels(): Argument 'y_offset' must be (one) of type(s) '(str, unicode)'; given %s" % type( y_offset ).__name__
-        assert isinstance( text_string, (str, unicode)), "visualize_image_labels(): Argument 'text_string' must be (one) of type(s) '(str, unicode)'; given %s" % type( text_string ).__name__
-        assert isinstance( font, (str, unicode)), "visualize_image_labels(): Argument 'font' must be (one) of type(s) '(str, unicode)'; given %s" % type( font ).__name__
-        assert isinstance( text_color, (str, unicode)), "visualize_image_labels(): Argument 'text_color' must be (one) of type(s) '(str, unicode)'; given %s" % type( text_color ).__name__
-        assert isinstance( text_angle, (str, unicode)), "visualize_image_labels(): Argument 'text_angle' must be (one) of type(s) '(str, unicode)'; given %s" % type( text_angle ).__name__
-        assert isinstance( text_scale, (str, unicode)), "visualize_image_labels(): Argument 'text_scale' must be (one) of type(s) '(str, unicode)'; given %s" % type( text_scale ).__name__
-        assert isinstance( draw_box, (str, unicode)), "visualize_image_labels(): Argument 'draw_box' must be (one) of type(s) '(str, unicode)'; given %s" % type( draw_box ).__name__
-        assert isinstance( draw_leader, (str, unicode)), "visualize_image_labels(): Argument 'draw_leader' must be (one) of type(s) '(str, unicode)'; given %s" % type( draw_leader ).__name__
-        assert isinstance( line_width, (str, unicode)), "visualize_image_labels(): Argument 'line_width' must be (one) of type(s) '(str, unicode)'; given %s" % type( line_width ).__name__
-        assert isinstance( line_color, (str, unicode)), "visualize_image_labels(): Argument 'line_color' must be (one) of type(s) '(str, unicode)'; given %s" % type( line_color ).__name__
-        assert isinstance( fill_color, (str, unicode)), "visualize_image_labels(): Argument 'fill_color' must be (one) of type(s) '(str, unicode)'; given %s" % type( fill_color ).__name__
-        assert isinstance( leader_x_column_name, (str, unicode)), "visualize_image_labels(): Argument 'leader_x_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( leader_x_column_name ).__name__
-        assert isinstance( leader_y_column_name, (str, unicode)), "visualize_image_labels(): Argument 'leader_y_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( leader_y_column_name ).__name__
+        assert isinstance( table_name, (basestring)), "visualize_image_labels(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( x_column_name, (basestring)), "visualize_image_labels(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
+        assert isinstance( y_column_name, (basestring)), "visualize_image_labels(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
+        assert isinstance( x_offset, (basestring)), "visualize_image_labels(): Argument 'x_offset' must be (one) of type(s) '(basestring)'; given %s" % type( x_offset ).__name__
+        assert isinstance( y_offset, (basestring)), "visualize_image_labels(): Argument 'y_offset' must be (one) of type(s) '(basestring)'; given %s" % type( y_offset ).__name__
+        assert isinstance( text_string, (basestring)), "visualize_image_labels(): Argument 'text_string' must be (one) of type(s) '(basestring)'; given %s" % type( text_string ).__name__
+        assert isinstance( font, (basestring)), "visualize_image_labels(): Argument 'font' must be (one) of type(s) '(basestring)'; given %s" % type( font ).__name__
+        assert isinstance( text_color, (basestring)), "visualize_image_labels(): Argument 'text_color' must be (one) of type(s) '(basestring)'; given %s" % type( text_color ).__name__
+        assert isinstance( text_angle, (basestring)), "visualize_image_labels(): Argument 'text_angle' must be (one) of type(s) '(basestring)'; given %s" % type( text_angle ).__name__
+        assert isinstance( text_scale, (basestring)), "visualize_image_labels(): Argument 'text_scale' must be (one) of type(s) '(basestring)'; given %s" % type( text_scale ).__name__
+        assert isinstance( draw_box, (basestring)), "visualize_image_labels(): Argument 'draw_box' must be (one) of type(s) '(basestring)'; given %s" % type( draw_box ).__name__
+        assert isinstance( draw_leader, (basestring)), "visualize_image_labels(): Argument 'draw_leader' must be (one) of type(s) '(basestring)'; given %s" % type( draw_leader ).__name__
+        assert isinstance( line_width, (basestring)), "visualize_image_labels(): Argument 'line_width' must be (one) of type(s) '(basestring)'; given %s" % type( line_width ).__name__
+        assert isinstance( line_color, (basestring)), "visualize_image_labels(): Argument 'line_color' must be (one) of type(s) '(basestring)'; given %s" % type( line_color ).__name__
+        assert isinstance( fill_color, (basestring)), "visualize_image_labels(): Argument 'fill_color' must be (one) of type(s) '(basestring)'; given %s" % type( fill_color ).__name__
+        assert isinstance( leader_x_column_name, (basestring)), "visualize_image_labels(): Argument 'leader_x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( leader_x_column_name ).__name__
+        assert isinstance( leader_y_column_name, (basestring)), "visualize_image_labels(): Argument 'leader_y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( leader_y_column_name ).__name__
+        assert isinstance( filter, (basestring)), "visualize_image_labels(): Argument 'filter' must be (one) of type(s) '(basestring)'; given %s" % type( filter ).__name__
         assert isinstance( min_x, (int, long, float)), "visualize_image_labels(): Argument 'min_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_x ).__name__
         assert isinstance( max_x, (int, long, float)), "visualize_image_labels(): Argument 'max_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_x ).__name__
         assert isinstance( min_y, (int, long, float)), "visualize_image_labels(): Argument 'min_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_y ).__name__
         assert isinstance( max_y, (int, long, float)), "visualize_image_labels(): Argument 'max_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_y ).__name__
         assert isinstance( width, (int, long, float)), "visualize_image_labels(): Argument 'width' must be (one) of type(s) '(int, long, float)'; given %s" % type( width ).__name__
         assert isinstance( height, (int, long, float)), "visualize_image_labels(): Argument 'height' must be (one) of type(s) '(int, long, float)'; given %s" % type( height ).__name__
-        assert isinstance( projection, (str, unicode)), "visualize_image_labels(): Argument 'projection' must be (one) of type(s) '(str, unicode)'; given %s" % type( projection ).__name__
+        assert isinstance( projection, (basestring)), "visualize_image_labels(): Argument 'projection' must be (one) of type(s) '(basestring)'; given %s" % type( projection ).__name__
         assert isinstance( options, (dict)), "visualize_image_labels(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "visualize_image_labels" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "visualize_image_labels" )
 
         obj = collections.OrderedDict()
         obj['table_name'] = table_name
@@ -4913,6 +10568,7 @@ class GPUdb(object):
         obj['fill_color'] = fill_color
         obj['leader_x_column_name'] = leader_x_column_name
         obj['leader_y_column_name'] = leader_y_column_name
+        obj['filter'] = filter
         obj['min_x'] = min_x
         obj['max_x'] = max_x
         obj['min_y'] = min_y
@@ -4920,65 +10576,43 @@ class GPUdb(object):
         obj['width'] = width
         obj['height'] = height
         obj['projection'] = projection
-        obj['options'] = options
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/image/labels' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/image/labels' ) )
     # end visualize_image_labels
 
 
     # begin visualize_video
     def visualize_video( self, table_names = None, world_table_names = None,
                          track_ids = None, x_column_name = None, y_column_name =
-                         None, min_x = None, max_x = None, min_y = None, max_y =
-                         None, width = None, height = None, projection =
-                         'PLATE_CARREE', bg_color = None, time_intervals = None,
-                         video_style = None, session_key = None, style_options =
-                         None, options = {} ):
-        """Creates raster images of data in the given table based on provided input
-        parameters. Numerous parameters are required to call this function. Some
-        of the important parameters are the attributes of the generated images
-        (input parameter *bg_color*, input parameter *width*, input parameter
-        *height*), the collection of table names on which this function is to be
-        applied, for which shapes (point, polygon, tracks) the images are to be
-        created and a user specified session key. This session key is later used
-        to fetch the generated images. The operation is synchronous, meaning
-        that a response will not be returned until the images for all the frames
-        of the video are fully available.  Once the request has been processed
-        then the generated video frames are available for download via WMS using
-        STYLES=cached. In this request the LAYERS parameter should be populated
-        with the session key passed in input parameter *session_key* of the
-        visualize video request and the FRAME parameter indicates which 0-based
-        frame of the video should be returned. All other WMS parameters are
-        ignored for this mode.  For instance, if a 20 frame video with the
-        session key 'MY-SESSION-KEY' was generated, the first frame could be
-        retrieved with the URL:      `http://<hostname/ipAddress>:9191/wms?REQUE
-        ST=GetMap&STYLES=cached&LAYERS=MY-SESSION-KEY&FRAME=0
-        <../rest/wms_rest.html>`_  and the last frame could be retrieved with:
-        `http://<hostname/ipAddress>:9191/wms?REQUEST=GetMap&STYLES=cached&LAYER
-        S=MY-SESSION-KEY&FRAME=19 <../rest/wms_rest.html>`_  The response
-        payload provides, among other things, the number of frames which were
-        created."""
+                         None, geometry_column_name = None, min_x = None, max_x
+                         = None, min_y = None, max_y = None, width = None,
+                         height = None, projection = 'PLATE_CARREE', bg_color =
+                         None, time_intervals = None, video_style = None,
+                         session_key = None, style_options = None, options = {}
+                         ):
 
-        assert isinstance( table_names, (list)), "visualize_video(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
-        assert isinstance( world_table_names, (list)), "visualize_video(): Argument 'world_table_names' must be (one) of type(s) '(list)'; given %s" % type( world_table_names ).__name__
-        assert isinstance( track_ids, (list)), "visualize_video(): Argument 'track_ids' must be (one) of type(s) '(list)'; given %s" % type( track_ids ).__name__
-        assert isinstance( x_column_name, (str, unicode)), "visualize_video(): Argument 'x_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( x_column_name ).__name__
-        assert isinstance( y_column_name, (str, unicode)), "visualize_video(): Argument 'y_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( y_column_name ).__name__
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        world_table_names = world_table_names if isinstance( world_table_names, list ) else ( [] if (world_table_names is None) else [ world_table_names ] )
+        track_ids = track_ids if isinstance( track_ids, list ) else ( [] if (track_ids is None) else [ track_ids ] )
+        assert isinstance( x_column_name, (basestring)), "visualize_video(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
+        assert isinstance( y_column_name, (basestring)), "visualize_video(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
+        assert isinstance( geometry_column_name, (basestring)), "visualize_video(): Argument 'geometry_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( geometry_column_name ).__name__
         assert isinstance( min_x, (int, long, float)), "visualize_video(): Argument 'min_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_x ).__name__
         assert isinstance( max_x, (int, long, float)), "visualize_video(): Argument 'max_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_x ).__name__
         assert isinstance( min_y, (int, long, float)), "visualize_video(): Argument 'min_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_y ).__name__
         assert isinstance( max_y, (int, long, float)), "visualize_video(): Argument 'max_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_y ).__name__
         assert isinstance( width, (int, long, float)), "visualize_video(): Argument 'width' must be (one) of type(s) '(int, long, float)'; given %s" % type( width ).__name__
         assert isinstance( height, (int, long, float)), "visualize_video(): Argument 'height' must be (one) of type(s) '(int, long, float)'; given %s" % type( height ).__name__
-        assert isinstance( projection, (str, unicode)), "visualize_video(): Argument 'projection' must be (one) of type(s) '(str, unicode)'; given %s" % type( projection ).__name__
+        assert isinstance( projection, (basestring)), "visualize_video(): Argument 'projection' must be (one) of type(s) '(basestring)'; given %s" % type( projection ).__name__
         assert isinstance( bg_color, (int, long, float)), "visualize_video(): Argument 'bg_color' must be (one) of type(s) '(int, long, float)'; given %s" % type( bg_color ).__name__
-        assert isinstance( time_intervals, (list)), "visualize_video(): Argument 'time_intervals' must be (one) of type(s) '(list)'; given %s" % type( time_intervals ).__name__
-        assert isinstance( video_style, (str, unicode)), "visualize_video(): Argument 'video_style' must be (one) of type(s) '(str, unicode)'; given %s" % type( video_style ).__name__
-        assert isinstance( session_key, (str, unicode)), "visualize_video(): Argument 'session_key' must be (one) of type(s) '(str, unicode)'; given %s" % type( session_key ).__name__
+        time_intervals = time_intervals if isinstance( time_intervals, list ) else ( [] if (time_intervals is None) else [ time_intervals ] )
+        assert isinstance( video_style, (basestring)), "visualize_video(): Argument 'video_style' must be (one) of type(s) '(basestring)'; given %s" % type( video_style ).__name__
+        assert isinstance( session_key, (basestring)), "visualize_video(): Argument 'session_key' must be (one) of type(s) '(basestring)'; given %s" % type( session_key ).__name__
         assert isinstance( style_options, (dict)), "visualize_video(): Argument 'style_options' must be (one) of type(s) '(dict)'; given %s" % type( style_options ).__name__
         assert isinstance( options, (dict)), "visualize_video(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "visualize_video" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "visualize_video" )
 
         obj = collections.OrderedDict()
         obj['table_names'] = table_names
@@ -4986,6 +10620,7 @@ class GPUdb(object):
         obj['track_ids'] = track_ids
         obj['x_column_name'] = x_column_name
         obj['y_column_name'] = y_column_name
+        obj['geometry_column_name'] = geometry_column_name
         obj['min_x'] = min_x
         obj['max_x'] = max_x
         obj['min_y'] = min_y
@@ -4997,10 +10632,10 @@ class GPUdb(object):
         obj['time_intervals'] = time_intervals
         obj['video_style'] = video_style
         obj['session_key'] = session_key
-        obj['style_options'] = style_options
-        obj['options'] = options
+        obj['style_options'] = self.__sanitize_dicts( style_options )
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/video' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/video' ) )
     # end visualize_video
 
 
@@ -5012,25 +10647,24 @@ class GPUdb(object):
                                  None, projection = 'PLATE_CARREE', video_style
                                  = None, session_key = None, style_options =
                                  None, options = {} ):
-        """"""
 
-        assert isinstance( table_names, (list)), "visualize_video_heatmap(): Argument 'table_names' must be (one) of type(s) '(list)'; given %s" % type( table_names ).__name__
-        assert isinstance( x_column_name, (str, unicode)), "visualize_video_heatmap(): Argument 'x_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( x_column_name ).__name__
-        assert isinstance( y_column_name, (str, unicode)), "visualize_video_heatmap(): Argument 'y_column_name' must be (one) of type(s) '(str, unicode)'; given %s" % type( y_column_name ).__name__
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        assert isinstance( x_column_name, (basestring)), "visualize_video_heatmap(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
+        assert isinstance( y_column_name, (basestring)), "visualize_video_heatmap(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
         assert isinstance( min_x, (int, long, float)), "visualize_video_heatmap(): Argument 'min_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_x ).__name__
         assert isinstance( max_x, (int, long, float)), "visualize_video_heatmap(): Argument 'max_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_x ).__name__
         assert isinstance( min_y, (int, long, float)), "visualize_video_heatmap(): Argument 'min_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_y ).__name__
         assert isinstance( max_y, (int, long, float)), "visualize_video_heatmap(): Argument 'max_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_y ).__name__
-        assert isinstance( time_intervals, (list)), "visualize_video_heatmap(): Argument 'time_intervals' must be (one) of type(s) '(list)'; given %s" % type( time_intervals ).__name__
+        time_intervals = time_intervals if isinstance( time_intervals, list ) else ( [] if (time_intervals is None) else [ time_intervals ] )
         assert isinstance( width, (int, long, float)), "visualize_video_heatmap(): Argument 'width' must be (one) of type(s) '(int, long, float)'; given %s" % type( width ).__name__
         assert isinstance( height, (int, long, float)), "visualize_video_heatmap(): Argument 'height' must be (one) of type(s) '(int, long, float)'; given %s" % type( height ).__name__
-        assert isinstance( projection, (str, unicode)), "visualize_video_heatmap(): Argument 'projection' must be (one) of type(s) '(str, unicode)'; given %s" % type( projection ).__name__
-        assert isinstance( video_style, (str, unicode)), "visualize_video_heatmap(): Argument 'video_style' must be (one) of type(s) '(str, unicode)'; given %s" % type( video_style ).__name__
-        assert isinstance( session_key, (str, unicode)), "visualize_video_heatmap(): Argument 'session_key' must be (one) of type(s) '(str, unicode)'; given %s" % type( session_key ).__name__
+        assert isinstance( projection, (basestring)), "visualize_video_heatmap(): Argument 'projection' must be (one) of type(s) '(basestring)'; given %s" % type( projection ).__name__
+        assert isinstance( video_style, (basestring)), "visualize_video_heatmap(): Argument 'video_style' must be (one) of type(s) '(basestring)'; given %s" % type( video_style ).__name__
+        assert isinstance( session_key, (basestring)), "visualize_video_heatmap(): Argument 'session_key' must be (one) of type(s) '(basestring)'; given %s" % type( session_key ).__name__
         assert isinstance( style_options, (dict)), "visualize_video_heatmap(): Argument 'style_options' must be (one) of type(s) '(dict)'; given %s" % type( style_options ).__name__
         assert isinstance( options, (dict)), "visualize_video_heatmap(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        (REQ_SCHEMA, REP_SCHEMA) = self.get_schemas( "visualize_video_heatmap" )
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "visualize_video_heatmap" )
 
         obj = collections.OrderedDict()
         obj['table_names'] = table_names
@@ -5046,14 +10680,12 @@ class GPUdb(object):
         obj['projection'] = projection
         obj['video_style'] = video_style
         obj['session_key'] = session_key
-        obj['style_options'] = style_options
-        obj['options'] = options
+        obj['style_options'] = self.__sanitize_dicts( style_options )
+        obj['options'] = self.__sanitize_dicts( options )
 
-        return self.post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/video/heatmap' )
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/visualize/video/heatmap' ) )
     # end visualize_video_heatmap
 
-
-    # @end_autogen 
 
 
     # -----------------------------------------------------------------------
@@ -5062,5 +10694,4999 @@ class GPUdb(object):
 
 
 # end class GPUdb
+
+
+
+
+# ---------------------------------------------------------------------------
+# Import GPUdbIngestor; try from an installed package first, if not, try local
+try:
+    from gpudb import GPUdbIngestor
+except:
+    if not gpudb_module_path in sys.path :
+        sys.path.insert(1, gpudb_module_path)
+    from gpudb_ingestor import GPUdbIngestor
+
+
+
+# ---------------------------------------------------------------------------
+# GPUdbTable - Class to Handle GPUdb Tables
+# ---------------------------------------------------------------------------
+class GPUdbTable( object ):
+
+    @staticmethod
+    def random_name():
+        """Returns a randomly generated uuid-based name"""
+        return str(uuid.uuid1())
+    # end random_name
+
+
+    @staticmethod
+    def prefix_name( val ):
+        """Returns a random name with the specified prefix"""
+        return val + GPUdbTable.random_name()
+    # end prefix_name
+
+
+
+    def __init__( self, _type, name = None, options = None, db = None,
+                  read_only_table_count = None,
+                  delete_temporary_views = True,
+                  temporary_view_names = None,
+                  create_views = True,
+                  use_multihead_ingest = False,
+                  multihead_ingest_batch_size = 10000,
+                  flush_multi_head_ingest_per_insertion = True ):
+        """
+        Parameters:
+            _type (GPUdbRecordType or list of lists of str)
+                Either a :class:`.GPUdbRecordType` object which represents
+                a type for the table, or a nested list of lists, where each
+                internal list has the format of:
+
+                ::
+
+                    # Just the name and type
+                    [ "name", "type (double, int etc.)" ]
+
+                    # Name, type, and one column property
+                    [ "name", "type (double, int etc.)", "nullable" ]
+
+                    # Name, type, and multiple column properties
+                    [ "name", "string", "char4", "nullable" ]
+
+                Pass None for collections.  If creating a GPUdbTable
+                object for a pre-existing table, then also pass None.
+
+                If no table with the given name exists, then the given type
+                will be created in GPUdb before creating the table.
+
+
+            name (str)
+                The name for the table.  if none provided, then a random
+                name will be generated using :meth:`.random_name`.
+
+            options (GPUdbTableOptions or dict)
+                A :class:`.GPUdbTableOptions` object or a dict containing
+                options for the table creation.
+
+            db (GPUdb)
+                A :class:`.GPUdb` object that allows the user to connect to
+                the GPUdb server.
+
+            read_only_table_count (int)
+                For known read-only tables, provide the number of records
+                in it. Integer.  Must provide the name of the table.
+
+            delete_temporary_views (bool)
+                If true, then in terminal queries--queries that can not be
+                chained--delete the temporary views upon completion. Defaults
+                to True.
+
+            create_views (bool)
+                Indicates whether or not to create views for this table.
+
+            temporary_view_names (list)
+                Optional list of temporary view names (that ought
+                to be deleted upon terminal queries)
+
+            use_multihead_ingest (bool)
+                Indicates whether or not to use multi-head ingestion, if
+                available upon insertion.  Note that multi-head ingestion
+                is more computation intensive for sharded tables, and it
+                it probably advisable only if there is a heavy ingestion
+                load.  Choose carefully.
+
+            multihead_ingest_batch_size (int)
+                Used only in conjunction with *use_multihead_ingest*;
+                ignored otherwise.  Sets the batch size to be used for the
+                ingestor.  Must be greater than zero.  Default is 10,000.
+                The multi-head ingestor flushes the inserted records every
+                *multihead_ingest_batch_size* automatically, unless
+                *flush_multi_head_ingest_automatically* is False.  Any
+                remaining records would have to be manually flushed using
+                :meth:`.flush_data_to_server` by the user, or will be
+                automatically flushed per :meth:`.insert_records` if
+                *flush_multi_head_ingest_automatically* is True.
+
+            flush_multi_head_ingest_per_insertion (bool)
+                Used only in conjunction with *use_multihead_ingest*;
+                ignored otherwise.  If True, flushes the multi-head ingestor in
+                every :meth:`.insert_records` call.  Otherwise, the multi-head
+                ingestor flushes the data to the server when a worker queue
+                reaches *multihead_ingest_batch_size* in size, and any
+                remaining records will have to be manually flushed using
+                :meth:`.flush_data_to_server`. Default True.
+
+        Returns:
+            A GPUdbTable object.
+        """
+
+        # The given DB handle must be a GPUdb instance
+        if not isinstance( db, GPUdb ):
+            raise GPUdbException( "Argument 'db' must be a GPUdb object; "
+                                  "given %s" % type(db) )
+        self.db = db
+
+        # Save the options (maybe need to convert to a dict)
+        if options:
+            if isinstance( options, GPUdbTableOptions ):
+                self.options = options
+            elif isinstance( options, dict ):
+                self.options = GPUdbTableOptions( options )
+            else:
+                raise GPUdbException( "Argument 'options' must be either a dict "
+                                      "or a GPUdbTableOptions object; given '%s'"
+                                      % type( options ) )
+        else:
+            self.options = GPUdbTableOptions()
+
+        # Save the type (create it if necessary)
+        self._type = _type
+        if isinstance( _type, GPUdbRecordType):
+            self.record_type = _type
+        elif not _type:
+            self.record_type = None
+        else:
+            self.record_type = GPUdbRecordType( _type )
+
+        # Save passed-in arguments
+        self._delete_temporary_views = delete_temporary_views
+        self.create_views = create_views
+
+        # Create and update the set of temporary table names
+        self._temporary_view_names = set()
+        if temporary_view_names:
+            self._temporary_view_names.update( temporary_view_names )
+
+
+        # The table is known to be read only
+        if read_only_table_count is not None: # Integer value 0 accepted
+            if not name: # name must be given!
+                raise GPUdbException( "Table name must be provided with 'read_only_table_count'." )
+
+            if not isinstance( read_only_table_count, (int, long) ):
+                raise GPUdbException( "Argument 'read_only_table_count' must be an integer." )
+
+            if (read_only_table_count < 0):
+                raise GPUdbException( "Argument 'read_only_table_count' must be greater than "
+                                      "or equal to zero; given %d" % read_only_table_count )
+            # All checks pass; save the name and count
+            self.name          = name
+            self._count        = read_only_table_count
+            self._is_read_only = True
+
+            return # Nothing more to do
+        # end if
+
+        # NOT a known read-only table; need to either get info on it or create it
+        # -----------------------------------------------------------------------
+        # Create a random table name if none is given
+        self.name = name if name else GPUdbTable.random_name()
+
+        # Some default values (assuming it is not a read-only table)
+        self._count = None
+        self._is_read_only = False
+
+        # Do different things based on whether the table already exists
+        if self.db.has_table( self.name )["table_exists"]:
+            # Check that the given type agrees with the existing table's type, if any given
+            show_table_rsp = self.db.show_table( self.name, options = {"get_sizes": "true"} )
+            if (len( show_table_rsp["type_schemas"] ) > 0): # not a collection
+                table_type = GPUdbRecordType( None, "", show_table_rsp["type_schemas"][0],
+                                              show_table_rsp["properties"][0] )
+            else:
+                table_type = None
+            if ( self.record_type and not table_type ):
+                # TODO: Decide if we should have this check or silently ignore the given type
+                raise GPUdbException( "Table '%s' is an existing collection; so cannot be of the "
+                                      "given type." % self.name )
+            if ( self.record_type and (self.record_type != table_type) ):
+                raise GPUdbException( "Table '%s' exists; existing table's type does "
+                                      "not match the given type." % self.name )
+
+            self.record_type = table_type
+
+            # Check if the table is read-only or not
+            if show_table_rsp[ C._table_descriptions ] in [ C._view, C._join, C._result_table ]:
+                self._is_read_only = True
+                self._count = show_table_rsp[ C._total_full_size ]
+        else: # table does not already exist in GPUdb
+            # Create the table (and the type)
+            if self.options._is_collection: # Create a collection
+                rsp_obj = self.db.create_table( self.name, "",
+                                                self.options.as_dict() )
+            elif self.record_type: # create a regular table
+                self.record_type.create_type( self.db )
+                rsp_obj = self.db.create_table( self.name, self.record_type.type_id,
+                                                self.options.as_dict() )
+            else: # Need to create a table-hence the type-but none given
+                raise GPUdbException( "Must provide a type to create a new table; none given." )
+
+            if not _Util.is_ok( rsp_obj ): # problem creating the table
+                raise GPUdbException( _Util.get_error_msg( rsp_obj ) )
+        # end if-else
+
+
+        # Set up multi-head ingestion, if needed
+        self._multihead_ingestor = None
+        if not isinstance( use_multihead_ingest, bool ):
+            raise GPUdbException( "Argument 'use_multihead_ingest' must be "
+                                  "a bool; given '%s'"
+                                  % str( type( use_multihead_ingest ) ) )
+        if use_multihead_ingest:
+            # Check multihead_ingest_batch_size
+            if ( not isinstance( multihead_ingest_batch_size, (int, long) )
+                 or (multihead_ingest_batch_size < 1) ):
+                raise GPUdbException( "Argument 'multihead_ingest_batch_size' "
+                                      "must be an integer greater than zero; "
+                                      "given: " + multihead_ingest_batch_size )
+
+            self._multihead_ingestor = GPUdbIngestor( self.db, self.name,
+                                                      self.record_type,
+                                                      multihead_ingest_batch_size )
+
+            # Save the per-insertion-call flushing setting
+            self._flush_multi_head_ingest_per_insertion = flush_multi_head_ingest_per_insertion
+
+            # Set the function used by multihead ingestor for encoding records
+            self._record_encoding_function = lambda vals: GPUdbRecord( self.record_type, vals )
+        else: # no multi-head ingestion
+            # Set the function used by the regular insertion for encoding records
+            self._record_encoding_function = lambda vals: self.__encode_data_for_insertion( vals )
+        # end if
+    # end __init__
+
+
+
+    def __str__( self ):
+        return self.name
+    # end __str__
+
+
+
+    def __len__( self ):
+        """Return the current size of the table.  If it is a read-only table,
+        then return the cached count; if not a read-only table, get the current
+        size from GPUdb.
+        """
+        if self._is_read_only:
+            return self._count
+        
+        # Not a read-only table; get the current size
+        show_table_rsp = self.db.show_table( self.name, options = {"get_sizes": "true"} )
+        return show_table_rsp[ C._total_full_size ]
+    # end __len__
+
+
+    def size( self ):
+        """Return the table's size/length/count.
+        """
+        return self.__len__()
+    # end size
+
+
+    def __getitem__( self, key ):
+        """Implement indexing and slicing for the table.
+        """
+        # A single integer--get a single record
+        if isinstance( key, (int, long) ):
+            if (key < 0):
+                raise TypeError( "GPUdbTable does not support negative indexing" )
+            return self.get_records( key, 1 )
+        # end if
+
+        # Handle slicing
+        if isinstance( key, slice ):
+            if key.step and (key.step != 1):
+                raise TypeError( "GPUdbTable does not support slicing with steps" )
+            if not isinstance(key.start, (int, long)) or not isinstance(key.stop, (int, long)):
+                raise TypeError( "GPUdbTable slicing requires integers" )
+            if (key.start < 0):
+                raise TypeError( "GPUdbTable does not support negative indexing" )
+            if ( (key.stop < 0) and (key.stop != self.db.END_OF_SET) ):
+                raise TypeError( "GPUdbTable does not support negative indexing" )
+            if ( (key.stop <= key.start) and (key.stop != self.db.END_OF_SET) ):
+                raise IndexError( "GPUdbTable slice start index must be greater than the stop index" )
+
+            limit = key.stop if (key.stop == self.db.END_OF_SET) \
+                    else (key.stop - key.start)
+            return self.get_records( key.start, limit )
+        # end if
+
+        raise TypeError( "GPUdbTable indexing/slicing requires integers" )
+    # end __getitem__
+
+
+    def __iter__( self ):
+        """Return a table iterator for this table.  Defaults to the first
+        10,000 records in the table.  If needing to access more records,
+        please use the GPUdbTableIterator class directly.
+        """
+        return GPUdbTableIterator( self )
+    # end __iter__
+
+
+    def __process_view_name(self, view_name ):
+        """Given a view name, process it as needed.
+
+        Returns:
+            The processed view name
+        """
+        # If no view name is given but views ought to be created, get a random name
+        if not view_name:
+            if self.create_views: # will create a view
+                view_name = GPUdbTable.random_name()
+            else: # won't create views
+                view_name = ""
+        # end if
+
+        return view_name
+    # end __process_view_name
+
+
+    @property
+    def table_name( self ):
+        return self.name
+    # end table_name
+
+
+    @property
+    def is_read_only( self ): # read-only attribute is_read_only
+        """Is the table read-only, or can we modify it?
+        """
+        return self._is_read_only
+    # end is_read_only
+
+
+    @property
+    def count( self ):  # read-only property count
+        """Return the table's size/length/count.
+        """
+        return self.__len__()
+    # end count
+
+
+    def get_table_type( self ):
+        """Return the table's (record) type."""
+        return self.record_type
+    # end get_table_type
+
+
+    def alias( self, alias ):
+        """Create an alias string for this table.
+
+        Parameters:
+            alias (str)
+                A string that contains the alias.
+
+        Returns:
+            A string with the format "this-table-name as alias".
+        """
+        if not isinstance( alias, (str, unicode) ):
+           raise GPUdbException( "'alias' must be a string; given {0}"
+                                 "".format( str( type( alias ) ) ) )
+
+        return "{0} as {1}".format( self.name, alias )
+    # end alias
+    
+
+
+    def create_view( self, view_name, count = None ):
+        """Given a view name and a related response, create a new GPUdbTable object
+        which is a read-only table with the intermediate tables automatically
+        updated.
+
+        Returns:
+            A :class:`.GPUdbTable` object
+        """
+        # If the current table is read-only, add it to the list of intermediate
+        # temporary table names
+        if self.is_read_only:
+            self._temporary_view_names.update( [ self.name ] )
+
+        view = GPUdbTable( None, name = view_name,
+                           read_only_table_count = count,
+                           db = self.db,
+                           temporary_view_names = self._temporary_view_names )
+        return view
+    # end create_view
+
+
+
+    def cleanup( self ):
+        """Clear/drop all intermediate tables if settings allow it.
+
+        Returns:
+            self for enabling chaining method invocations.
+        """
+        # Clear/drop all temporary tables
+        if self._delete_temporary_views:
+            for view in list(self._temporary_view_names): # iterate over a copy
+                self.db.clear_table( table_name = view )
+                self._temporary_view_names.remove( view )
+        else: # We're not allowed to delete intermediate tables!
+            raise GPUdbException( "Not allowed to delete intermediate "
+                                  "tables." )
+
+        return self
+    # end cleanup
+
+
+    def exists( self, options = {} ):
+        """Checks for the existence of a table with the given name.
+
+        Returns:
+            A boolean flag indicating whether the table currently
+            exists in the database.
+        """
+
+        response = self.db.has_table( self.name, options = options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response[ "table_exists" ]
+    # end exists
+
+
+
+    def flush_data_to_server( self ):
+        """If multi-head ingestion is enabled, then flush all records
+        in the ingestors' worker queues so that they actually get
+        inserted to the server database.
+        """
+        if self._multihead_ingestor:
+            self._multihead_ingestor.flush()
+    # end flush_data_to_server
+
+
+    def __encode_data_for_insertion( self, values ):
+        """Encode the given values with the database client's encoding
+        and return the encoded data.
+        """
+        encoding = self.db._GPUdb__client_to_object_encoding()
+
+        if encoding is "binary":
+            encoded_record = GPUdbRecord( self.record_type, values ).binary_data
+        else: # JSON encoding
+            encoded_record = GPUdbRecord( self.record_type, values ).json_data_string
+
+        return encoded_record
+    # end __encode_data_for_insertion
+
+
+
+    def insert_records( self, *args, **kwargs ):
+        """Insert one or more records.
+
+        Parameters:
+            args
+                Values for all columns of a single record or multiple records.
+                For a single record, use either of the following syntaxes:
+
+                ::
+
+                    insert_records( 1, 2, 3 )
+                    insert_records( [1, 2, 3] )
+
+                For multiple records, use either of the following syntaxes:
+
+                ::
+
+                    insert_records( [ [1, 2, 3], [4, 5, 6] ] )
+                    insert_records(   [1, 2, 3], [4, 5, 6]   )
+
+                Also, the user can use keyword arguments to pass in values:
+
+                ::
+
+                    # For a record type with two integers named 'a' and 'b':
+                    insert_records( {"a":  1, "b":  1},
+                                    {"a": 42, "b": 32} )
+
+                Additionally, the user may provide options for the insertion
+                operation.  For example:
+
+                ::
+
+                    insert_records( [1, 2, 3], [4, 5, 6],
+                                    options = {"return_record_ids": "true"} )
+
+            kwargs
+                Values for all columns for a single record.  Mutually
+                exclusive with args (i.e. cannot provide both) when it
+                only contains data.
+
+                May contain an 'options' keyword arg which will be passed
+                to the database for the insertion operation.
+
+        Returns:
+            A :class:`.GPUdbTable` object with the the insert_records()
+            response fields converted to attributes and stored within.
+        """
+        # Extract any options that the user may have provided
+        options = kwargs.get( "options", None )
+        if options is not None: # if given, remove from kwargs
+            kwargs.pop( "options" )
+        else: # no option given; use an empty dict
+            options = {}
+
+
+        encoded_data = []
+
+        # Process the input--single record or multiple records (or invalid syntax)?
+        if args and kwargs:
+            # Cannot give both args and kwargs
+            raise GPUdbException( "Cannot specify both args and kwargs: either provide "
+                                  "the column values for a single record "
+                                  "in 'kwargs', or provide column values for any number "
+                                  "of records in 'args'." )
+        if kwargs:
+            # Gave the column values for a single record in kwargs
+            encoded_record = self._record_encoding_function( kwargs )
+            encoded_data.append( encoded_record )
+        elif not any( _Util.is_list_or_dict( i ) for i in args):
+            # Column values not within a single list/dict: so it is a single record
+            encoded_record = self._record_encoding_function( list(args) )
+            encoded_data.append( encoded_record )
+        elif not all( _Util.is_list_or_dict( i ) for i in args):
+            # Some values are lists or dicts, but not all--this is an error case
+            raise GPUdbException( "Arguments must be either contain no list, or contain only "
+                                  "lists or dicts; i.e. it must not be a mix; "
+                                  "given {0}".format( args ) )
+        elif (len( args ) == 1):
+            # A list/dict of length one given
+            if any( isinstance(i, list) for i in args[0]):
+                # At least one element within the list is also a list
+                if not all( _Util.is_list_or_dict( i ) for i in args[0]):
+                    # But not all elements are lists/dict; this is an error case
+                    raise GPUdbException( "Arguments must be either a single list, multiple lists, "
+                                          "a list of lists, or contain no lists; i.e. it must not be "
+                                          "a mix of lists and non-lists; given a list with mixed "
+                                          "elements: {0}".format( args ) )
+                else:
+                    # A list of lists/dicts--multiple records within a list
+                    for col_vals in args[0]:
+                        encoded_record = self._record_encoding_function( col_vals )
+                        encoded_data.append( encoded_record )
+                    # end for
+                # end inner-most if-else
+            else:
+                # A single list--a single record
+                encoded_record = self._record_encoding_function( *args )
+                encoded_data.append( encoded_record )
+            # end 2nd inner if-else
+        else:
+            # All arguments are either lists or dicts, so multiple records given
+            for col_vals in args:
+                encoded_record = self._record_encoding_function( col_vals )
+                encoded_data.append( encoded_record )
+            # end for
+        # end if-else
+
+        if not encoded_data: # No data given
+            raise GPUdbException( "Must provide data for at least a single record; none given." )
+
+        # Make the insertion call-- either with the multi-head ingestor or the regular way
+        if self._multihead_ingestor:
+            # Set the multi-head ingestor's options
+            self._multihead_ingestor.options = options
+
+            try:
+                # Call the insertion funciton
+                response = self._multihead_ingestor.insert_records( encoded_data )
+
+                # Need to flush the records, per the setting
+                if self._flush_multi_head_ingest_per_insertion:
+                    self._multihead_ingestor.flush()
+            except Exception as e:
+                raise GPUdbException( str(e) )
+        else:
+            # Call the insert function and check the status
+            response = self.db.insert_records( self.name, encoded_data,
+                                               options = options )
+            if not _Util.is_ok( response ):
+                raise GPUdbException( _Util.get_error_msg( response ) )
+        # end if-else
+
+        return self
+    # end insert_records
+
+
+    def insert_records_random( self, count = None, options = {} ):
+        """Generates a specified number of random records and adds them to the
+        given table. There is an optional parameter that allows the user to
+        customize the ranges of the column values. It also allows the user to
+        specify linear profiles for some or all columns in which case linear
+        values are generated rather than random ones. Only individual tables
+        are supported for this operation.
+
+        This operation is synchronous, meaning that a response will not be
+        returned until all random records are fully available.
+
+        Parameters:
+
+            count (long)
+                Number of records to generate.
+
+            options (dict of dicts of floats)
+                Optional parameter to pass in specifications for the randomness
+                of the values.  This map is different from the *options*
+                parameter of most other endpoints in that it is a map of string
+                to map of string to doubles, while most others are maps of
+                string to string.  In this map, the top level keys represent
+                which column's parameters are being specified, while the
+                internal keys represents which parameter is being specified.
+                These parameters take on different meanings depending on the
+                type of the column.  Below follows a more detailed description
+                of the map:  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **seed** --
+                  If provided, the internal random number generator will be
+                  initialized with the given value.  The minimum is 0.  This
+                  allows for the same set of random numbers to be generated
+                  across invocation of this endpoint in case the user wants to
+                  repeat the test.  Since input parameter *options*, is a map
+                  of maps, we need an internal map to provide the seed value.
+                  For example, to pass 100 as the seed value through this
+                  parameter, you need something equivalent to: 'options' =
+                  {'seed': { 'value': 100 } }
+                  Allowed keys are:
+
+                  * **value** --
+                    Pass the seed value here.
+
+                * **all** --
+                  This key indicates that the specifications relayed in the
+                  internal map are to be applied to all columns of the records.
+                  Allowed keys are:
+
+                  * **min** --
+                    For numerical columns, the minimum of the generated values
+                    is set to this value.  Default is -99999.  For point,
+                    shape, and track semantic types, min for numeric 'x' and
+                    'y' columns needs to be within [-180, 180] and [-90, 90],
+                    respectively. The default minimum possible values for these
+                    columns in such cases are -180.0 and -90.0. For the
+                    'TIMESTAMP' column, the default minimum corresponds to Jan
+                    1, 2010.
+                    For string columns, the minimum length of the randomly
+                    generated strings is set to this value (default is 0). If
+                    both minimum and maximum are provided, minimum must be less
+                    than or equal to max. Value needs to be within [0, 200].
+                    If the min is outside the accepted ranges for strings
+                    columns and 'x' and 'y' columns for point/shape/track
+                    types, then those parameters will not be set; however, an
+                    error will not be thrown in such a case. It is the
+                    responsibility of the user to use the *all* parameter
+                    judiciously.
+
+                  * **max** --
+                    For numerical columns, the maximum of the generated values
+                    is set to this value. Default is 99999. For point, shape,
+                    and track semantic types, max for numeric 'x' and 'y'
+                    columns needs to be within [-180, 180] and [-90, 90],
+                    respectively. The default minimum possible values for these
+                    columns in such cases are 180.0 and 90.0.
+                    For string columns, the maximum length of the randomly
+                    generated strings is set to this value (default is 200). If
+                    both minimum and maximum are provided, *max* must be
+                    greater than or equal to *min*. Value needs to be within
+                    [0, 200].
+                    If the *max* is outside the accepted ranges for strings
+                    columns and 'x' and 'y' columns for point/shape/track
+                    types, then those parameters will not be set; however, an
+                    error will not be thrown in such a case. It is the
+                    responsibility of the user to use the *all* parameter
+                    judiciously.
+
+                  * **interval** --
+                    If specified, generate values for all columns evenly spaced
+                    with the given interval value. If a max value is specified
+                    for a given column the data is randomly generated between
+                    min and max and decimated down to the interval. If no max
+                    is provided the data is linerally generated starting at the
+                    minimum value (instead of generating random data). For
+                    non-decimated string-type columns the interval value is
+                    ignored. Instead the values are generated following the
+                    pattern: 'attrname_creationIndex#', i.e. the column name
+                    suffixed with an underscore and a running counter (starting
+                    at 0). For string types with limited size (eg char4) the
+                    prefix is dropped. No nulls will be generated for nullable
+                    columns.
+
+                  * **null_percentage** --
+                    If specified, then generate the given percentage of the
+                    count as nulls for all nullable columns.  This option will
+                    be ignored for non-nullable columns.  The value must be
+                    within the range [0, 1.0].  The default value is 5% (0.05).
+
+                  * **cardinality** --
+                    If specified, limit the randomly generated values to a
+                    fixed set. Not allowed on a column with interval specified,
+                    and is not applicable to WKT or Track-specific columns. The
+                    value must be greater than 0. This option is disabled by
+                    default.
+
+                * **attr_name** --
+                  Set the following parameters for the column specified by the
+                  key. This overrides any parameter set by *all*.
+                  Allowed keys are:
+
+                  * **min** --
+                    For numerical columns, the minimum of the generated values
+                    is set to this value.  Default is -99999.  For point,
+                    shape, and track semantic types, min for numeric 'x' and
+                    'y' columns needs to be within [-180, 180] and [-90, 90],
+                    respectively. The default minimum possible values for these
+                    columns in such cases are -180.0 and -90.0. For the
+                    'TIMESTAMP' column, the default minimum corresponds to Jan
+                    1, 2010.
+                    For string columns, the minimum length of the randomly
+                    generated strings is set to this value (default is 0). If
+                    both minimum and maximum are provided, minimum must be less
+                    than or equal to max. Value needs to be within [0, 200].
+                    If the min is outside the accepted ranges for strings
+                    columns and 'x' and 'y' columns for point/shape/track
+                    types, then those parameters will not be set; however, an
+                    error will not be thrown in such a case. It is the
+                    responsibility of the user to use the *all* parameter
+                    judiciously.
+
+                  * **max** --
+                    For numerical columns, the maximum of the generated values
+                    is set to this value. Default is 99999. For point, shape,
+                    and track semantic types, max for numeric 'x' and 'y'
+                    columns needs to be within [-180, 180] and [-90, 90],
+                    respectively. The default minimum possible values for these
+                    columns in such cases are 180.0 and 90.0.
+                    For string columns, the maximum length of the randomly
+                    generated strings is set to this value (default is 200). If
+                    both minimum and maximum are provided, *max* must be
+                    greater than or equal to *min*. Value needs to be within
+                    [0, 200].
+                    If the *max* is outside the accepted ranges for strings
+                    columns and 'x' and 'y' columns for point/shape/track
+                    types, then those parameters will not be set; however, an
+                    error will not be thrown in such a case. It is the
+                    responsibility of the user to use the *all* parameter
+                    judiciously.
+
+                  * **interval** --
+                    If specified, generate values for all columns evenly spaced
+                    with the given interval value. If a max value is specified
+                    for a given column the data is randomly generated between
+                    min and max and decimated down to the interval. If no max
+                    is provided the data is linerally generated starting at the
+                    minimum value (instead of generating random data). For
+                    non-decimated string-type columns the interval value is
+                    ignored. Instead the values are generated following the
+                    pattern: 'attrname_creationIndex#', i.e. the column name
+                    suffixed with an underscore and a running counter (starting
+                    at 0). For string types with limited size (eg char4) the
+                    prefix is dropped. No nulls will be generated for nullable
+                    columns.
+
+                  * **null_percentage** --
+                    If specified and if this column is nullable, then generate
+                    the given percentage of the count as nulls.  This option
+                    will result in an error if the column is not nullable.  The
+                    value must be within the range [0, 1.0].  The default value
+                    is 5% (0.05).
+
+                  * **cardinality** --
+                    If specified, limit the randomly generated values to a
+                    fixed set. Not allowed on a column with interval specified,
+                    and is not applicable to WKT or Track-specific columns. The
+                    value must be greater than 0. This option is disabled by
+                    default.
+
+                * **track_length** --
+                  This key-map pair is only valid for track type data sets (an
+                  error is thrown otherwise).  No nulls would be generated for
+                  nullable columns.
+                  Allowed keys are:
+
+                  * **min** --
+                    Minimum possible length for generated series; default is
+                    100 records per series. Must be an integral value within
+                    the range [1, 500]. If both min and max are specified, min
+                    must be less than or equal to max.
+
+                  * **max** --
+                    Maximum possible length for generated series; default is
+                    500 records per series. Must be an integral value within
+                    the range [1, 500]. If both min and max are specified, max
+                    must be greater than or equal to min.
+
+
+        Returns:
+            A GPUdbTable object with the the insert_records() response fields
+            converted to attributes (and stored within) with the following
+            entries:
+
+            table_name (str)
+                Value of input parameter *table_name*.
+
+            count (long)
+                Value of input parameter *count*.
+        """
+        response = self.db.insert_records_random( self.name, count = count,
+                                                  options = options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        # We can
+        return self
+    # end insert_records_random
+
+
+
+    def get_records( self, offset = 0, limit = 10000,
+                     encoding = 'binary', options = {} ):
+        """Retrieves records from a given table, optionally filtered by an
+        expression and/or sorted by a column. This operation can be performed
+        on tables, views, or on homogeneous collections (collections containing
+        tables of all the same type). Records can be returned encoded as binary
+        or json.
+
+        This operation supports paging through the data via the input parameter
+        *offset* and input parameter *limit* parameters. Note that when paging
+        through a table, if the table (or the underlying table in case of a
+        view) is updated (records are inserted, deleted or modified) the
+        records retrieved may differ between calls based on the updates
+        applied.
+
+        Decodes and returns the fetched records.
+
+        Parameters:
+
+            offset (long)
+                A positive integer indicating the number of initial results to
+                skip (this can be useful for paging through the results).
+                Default value is 0. The minimum allowed value is 0. The maximum
+                allowed value is MAX_INT.
+
+            limit (long)
+                A positive integer indicating the maximum number of results to
+                be returned. Or END_OF_SET (-9999) to indicate that the max
+                number of results should be returned.  Default value is 10000.
+
+            encoding (str)
+                Specifies the encoding for returned records.  Default value is
+                'binary'.
+                Allowed values are:
+
+                * binary
+                * json
+
+                The default value is 'binary'.
+
+            options (dict of str)
+                Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **expression** --
+                  Optional filter expression to apply to the table.
+
+                * **fast_index_lookup** --
+                  Indicates if indexes should be used to perform the lookup for
+                  a given expression if possible. Only applicable if there is
+                  no sorting, the expression contains only equivalence
+                  comparisons based on existing tables indexes and the range of
+                  requested values is from [0 to END_OF_SET]. The default value
+                  is true.
+
+                * **sort_by** --
+                  Optional column that the data should be sorted by. Empty by
+                  default (i.e. no sorting is applied).
+
+                * **sort_order** --
+                  String indicating how the returned values should be sorted -
+                  ascending or descending. If sort_order is provided, sort_by
+                  has to be provided.
+                  Allowed values are:
+
+                  * ascending
+                  * descending
+
+                  The default value is 'ascending'.
+
+        Returns:
+            A list of OrderedDict objects containg the record values.
+        """
+        # Issue the /get/records query
+        response = self.db.get_records( self.name, offset, limit, encoding, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        # Decode the records as necessary
+        if encoding == "binary":
+            records = GPUdbRecord.decode_binary_data( response["type_schema"],
+                                                      response["records_binary"] )
+        else:
+            records = GPUdbRecord.decode_json_string_data( response["records_json"] )
+
+
+        # Return just the records; disregard the extra info within the response
+        return records
+    # end get_records
+
+
+
+    def get_records_by_column( self, column_names, offset = 0, limit = 10000,
+                               encoding = 'binary', options = {},
+                               print_data = False,
+                               is_column_major = True ):
+        """For a given table, retrieves the values of the given columns within a
+        given range. It returns maps of column name to the vector of values for
+        each supported data type (double, float, long, int and string). This
+        operation supports pagination feature, i.e. values that are retrieved
+        are those associated with the indices between the start (offset) and
+        end value (offset + limit) parameters (inclusive). If there are
+        num_points values in the table then each of the indices between 0 and
+        num_points-1 retrieves a unique value.
+
+        Note that when using the pagination feature, if the table (or the
+        underlying table in case of a view) is updated (records are inserted,
+        deleted or modified) the records or values retrieved may differ between
+        calls (discontiguous or overlap) based on the type of the update.
+
+        The response is returned as a dynamic schema. For details see: `dynamic
+        schemas documentation <../../concepts/dynamic_schemas.html>`_.
+
+        Parameters:
+
+            column_names (list of str)
+                The list of column values to retrieve.
+
+            offset (long)
+                A positive integer indicating the number of initial results to
+                skip (this can be useful for paging through the results).  The
+                minimum allowed value is 0. The maximum allowed value is
+                MAX_INT.
+
+            limit (long)
+                A positive integer indicating the maximum number of results to
+                be returned (if not provided the default is 10000), or
+                END_OF_SET (-9999) to indicate that the maximum number of
+                results allowed by the server should be returned.
+
+            encoding (str)
+                Specifies the encoding for returned records; either 'binary' or
+                'json'.  Default value is 'binary'.
+                Allowed values are:
+
+                * binary
+                * json
+
+                The default value is 'binary'.
+
+            options (dict of str)
+                Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **expression** --
+                  Optional filter expression to apply to the table.
+
+                * **sort_by** --
+                  Optional column that the data should be sorted by. Empty by
+                  default (i.e. no sorting is applied).
+
+                * **sort_order** --
+                  String indicating how the returned values should be sorted -
+                  ascending or descending. Default is 'ascending'. If
+                  sort_order is provided, sort_by has to be provided.
+                  Allowed values are:
+
+                  * ascending
+                  * descending
+
+                  The default value is 'ascending'.
+
+                * **order_by** --
+                  Comma-separated list of the columns to be sorted by; e.g.
+                  'timestamp asc, x desc'.  The columns specified must be
+                  present in input parameter *column_names*.  If any alias is
+                  given for any column name, the alias must be used, rather
+                  than the original column name.
+
+            print_data (bool)
+                If True, print the fetched data to the console in a tabular
+                format.  Default is False.
+
+            is_column_major (bool)
+                If True, then return the fetched values in a column-major
+                format; otherwise, return them in a row-major format.  Deafult
+                is True.
+
+        Decodes the fetched records and saves them in the response class in an
+        attribute called data.
+
+        Returns:
+            A dict of column name to column values for column-major data, or
+            a list of OrderedDict objects for row-major data.
+        """
+        # Issue the /get/records/bycolumn query
+        response = self.db.get_records_by_column( self.name, column_names,
+                                                  offset, limit, encoding, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        # Decode the records
+        resp = self.db.parse_dynamic_response( response, convert_nulls = False,
+                                               do_print = print_data )
+        data = resp[ "response" ]
+
+        if is_column_major:
+            # Return just the records; disregard the extra info within the response
+            return data
+
+        # Else, need to cobble the data together to create records
+        records = GPUdbRecord.convert_data_col_major_to_row_major( data, resp["response_schema_str"] )
+        return records
+    # end get_records_by_column
+
+
+
+    def get_records_by_series( self, world_table_name = None,
+                               offset = 0, limit = 250, encoding = 'binary',
+                               options = {} ):
+        """Retrieves the complete series/track records from the given input
+        parameter *world_table_name* based on the partial track information
+        contained in the input parameter *table_name*.
+
+        This operation supports paging through the data via the input parameter
+        *offset* and input parameter *limit* parameters.
+
+        In contrast to :meth:`.get_records` this returns records grouped by
+        series/track. So if input parameter *offset* is 0 and input parameter
+        *limit* is 5 this operation would return the first 5 series/tracks in
+        input parameter *table_name*. Each series/track will be returned sorted
+        by their TIMESTAMP column.
+
+        Parameters:
+
+            world_table_name (str)
+                Name of the table containing the complete series/track
+                information to be returned for the tracks present in the input
+                parameter *table_name*. Typically this is used when retrieving
+                series/tracks from a view (which contains partial
+                series/tracks) but the user wants to retrieve the entire
+                original series/tracks. Can be blank.
+
+            offset (int)
+                A positive integer indicating the number of initial
+                series/tracks to skip (useful for paging through the results).
+                Default value is 0. The minimum allowed value is 0. The maximum
+                allowed value is MAX_INT.
+
+            limit (int)
+                A positive integer indicating the maximum number of
+                series/tracks to be returned. Or END_OF_SET (-9999) to indicate
+                that the max number of results should be returned.  Default
+                value is 250.
+
+            encoding (str)
+                Specifies the encoding for returned records; either 'binary' or
+                'json'.  Default value is 'binary'.
+                Allowed values are:
+
+                * binary
+                * json
+
+                The default value is 'binary'.
+
+            options (dict of str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A list of OrderedDict objects containing the record values.
+        """
+        # Issue the /get/records/byseries query
+        response = self.db.get_records_by_series( self.name,
+                                                  world_table_name = world_table_name,
+                                                  offset = offset, limit = limit,
+                                                  encoding = encoding,
+                                                  options = options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        # Decode the records as necessary; flatten them into a single list
+        records = []
+        if encoding == "binary":
+            binary_encoded_tracks = response["list_records_binary"]
+            type_schemas = response[ "type_schemas" ]
+            # Decode one series at a time
+            for binary_encoded_records, type_schema in zip(binary_encoded_tracks, type_schemas):
+                # Decode all records for a given track
+                series_records = GPUdbRecord.decode_binary_data( type_schema,
+                                                                 binary_encoded_records )
+                records.extend( series_records )
+            # end loop
+
+        else:
+            json_encoded_tracks = response["list_records_json"]
+            for json_encoded_records in json_encoded_tracks:
+                records.extend( GPUdbRecord.decode_json_string_data( json_encoded_records ) )
+            # end loop
+        # end if-else
+
+        # Return just the records; disregard the extra info within the response
+        return records
+    # end get_records_by_series
+
+
+
+    def get_records_from_collection( self, offset = 0, limit = 10000,
+                                     encoding = 'binary', options = {} ):
+        """Retrieves records from a collection. The operation can optionally
+        return the record IDs which can be used in certain queries such as
+        :meth:`.delete_records`.
+
+        This operation supports paging through the data via the input parameter
+        *offset* and input parameter *limit* parameters.
+
+        Note that when using the Java API, it is not possible to retrieve
+        records from join tables using this operation.
+
+        Parameters:
+
+            offset (long)
+                A positive integer indicating the number of initial results to
+                skip (this can be useful for paging through the results).
+                Default value is 0. The minimum allowed value is 0. The maximum
+                allowed value is MAX_INT.
+
+            limit (long)
+                A positive integer indicating the maximum number of results to
+                be returned, or END_OF_SET (-9999) to indicate that the max
+                number of results should be returned.  Default value is 10000.
+
+            encoding (str)
+                Specifies the encoding for returned records; either 'binary' or
+                'json'.  Default value is 'binary'.
+                Allowed values are:
+
+                * binary
+                * json
+
+                The default value is 'binary'.
+
+            options (dict of str)
+                Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **return_record_ids** --
+                  If 'true' then return the internal record ID along with each
+                  returned record. Default is 'false'.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A list of OrderedDict objects containing the record values.
+        """
+        # Issue the /get/records/fromcollection query
+        response = self.db.get_records_from_collection( self.name, offset, limit, encoding, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        # Decode the records as necessary
+        if encoding == "binary":
+            records = []
+            binary_encoded_records = response["records_binary"]
+            type_ids = response[ "type_names" ]
+            # Decode one record at a time
+            for bin_record, type_id in zip(binary_encoded_records, type_ids):
+                # We need to fetch the type schema string from GPUdb per record
+                type_schema = self.db.show_types( type_id, "" )["type_schemas"][ 0 ]
+                record = GPUdbRecord.decode_binary_data( type_schema,
+                                                         bin_record )
+                records.append( record )
+        else:
+            records = GPUdbRecord.decode_json_string_data( response["records_json"] )
+
+        # Return just the records; disregard the extra info within the response
+        return records
+    # end get_records_from_collection
+
+
+
+
+    @staticmethod
+    def create_join_table( db, join_table_name = None, table_names = [],
+                           column_names = [], expressions = [], options = {} ):
+        """Creates a table that is the result of a SQL JOIN.  For details see:
+        `join concept documentation <../../../concepts/joins.html>`_.
+
+        Parameters:
+
+            join_table_name (str)
+                Name of the join table to be created.  Has the same naming
+                restrictions as `tables <../../../concepts/tables.html>`_.
+
+            table_names (list of str)
+                The list of table names composing the join.  Corresponds to a
+                SQL statement FROM clause  The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.  Default value is an empty list ( [] ).
+
+            column_names (list of str)
+                List of member table columns or column expressions to be
+                included in the join. Columns can be prefixed with
+                'table_id.column_name', where 'table_id' is the table name or
+                alias.  Columns can be aliased via the syntax 'column_name as
+                alias'. Wild cards '*' can be used to include all columns
+                across member tables or 'table_id.*' for all of a single
+                table's columns.  Columns and column expressions comprising the
+                join must be uniquely named or aliased--therefore, the '*' wild
+                card cannot be used if column names aren't unique across all
+                tables.  The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+                Default value is an empty list ( [] ).
+
+            expressions (list of str)
+                An optional list of expressions to combine and filter the
+                joined tables.  Corresponds to a SQL statement WHERE clause.
+                For details see: `expressions
+                <../../../concepts/expressions.html>`_.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.  Default value is an empty list ( [] ).
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the join. If the
+                  collection provided is non-existent, the collection will be
+                  automatically created. If empty, then the join will be at the
+                  top level.
+
+                * **max_query_dimensions** --
+                  The maximum number of tables in a join that can be accessed
+                  by a query and are not equated by a foreign-key to
+                  primary-key equality predicate
+
+                * **optimize_lookups** --
+                  Use more memory to speed up the joining of tables.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **refresh_method** --
+                  Method by which the join can be refreshed when the data in
+                  underlying member tables have changed.
+                  Allowed values are:
+
+                  * **manual** --
+                    refresh only occurs when manually requested by calling this
+                    endpoint with refresh option set to *refresh* or
+                    *full_refresh*
+
+                  * **on_query** --
+                    incrementally refresh (refresh just those records added)
+                    whenever a new query is issued and new data is inserted
+                    into the base table.  A full refresh of all the records
+                    occurs when a new query is issued and there have been
+                    inserts to any non-base-tables since the last query
+
+                  * **on_insert** --
+                    incrementally refresh (refresh just those records added)
+                    whenever new data is inserted into a base table.  A full
+                    refresh of all the records occurs when a new query is
+                    issued and there have been inserts to any non-base-tables
+                    since the last query
+
+                    The default value is 'manual'.
+
+                * **refresh** --
+                  Do a manual refresh of the join if it exists - throws an
+                  error otherwise
+                  Allowed values are:
+
+                  * **no_refresh** --
+                    don't refresh
+
+                  * **refresh** --
+                    incrementally refresh (refresh just those records added) if
+                    new data has been inserted into the base table.  A full
+                    refresh of all the records occurs if there have been
+                    inserts to any non-base-tables since the last refresh
+
+                  * **full_refresh** --
+                    always refresh even if no new records have been added.
+                    Only refresh method guaranteed to do a full refresh
+                    (refresh all the records) if a delete or update has
+                    occurred since the last refresh.
+
+                    The default value is 'no_refresh'.
+
+                * **ttl** --
+                  Sets the TTL of the table specified in input parameter
+                  *join_table_name*. The value must be the desired TTL in
+                  minutes.
+
+        Returns:
+            A read-only GPUdbTable object.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        # Create a random table name if none is given
+        join_table_name = join_table_name if join_table_name else GPUdbTable.random_name()
+
+        # Normalize the input table names
+        table_names = table_names if isinstance( table_names, list ) else [ table_names ]
+        table_names = [ t.name if isinstance(t, GPUdbTable) else t for t in table_names ]
+
+        # The given DB handle must be a GPUdb instance
+        if not isinstance( db, GPUdb ):
+            raise GPUdbException( "Argument 'db' must be a GPUdb object; "
+                                  "given %s" % str( type( db ) ) )
+
+        response = db.create_join_table( join_table_name, table_names,
+                                         column_names, expressions, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return GPUdbTable( None, name = join_table_name, db = db )
+    # end create_join_table
+
+
+    @staticmethod
+    def create_union( db, table_name = None, table_names = None,
+                      input_column_names = None, output_column_names = None,
+                      options = {} ):
+        """Performs a `union <../../../concepts/unions.html>`_ (concatenation) of
+        one or more existing tables or views, the results of which are stored
+        in a new view. It is equivalent to the SQL UNION ALL operator.
+        Non-charN 'string' and 'bytes' column types cannot be included in a
+        union, neither can columns with the property 'store_only'. Though not
+        explicitly unions, `intersect <../../../concepts/intersect.html>`_ and
+        `except <../../../concepts/except.html>`_ are also available from this
+        endpoint.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table to be created. Has the same naming
+                restrictions as `tables <../../../concepts/tables.html>`_.
+
+            table_names (list of str)
+                The list of table names making up the union. Must contain the
+                names of one or more existing tables.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            input_column_names (list of lists of str)
+                The list of columns from each of the corresponding input
+                tables.  The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+
+            output_column_names (list of str)
+                The list of names of the columns to be stored in the union.
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the union. If the
+                  collection provided is non-existent, the collection will be
+                  automatically created. If empty, then the union will be a
+                  top-level table.
+
+                * **materialize_on_gpu** --
+                  If 'true' then the columns of the union will be cached on the
+                  GPU.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **mode** --
+                  If 'merge_views' then this operation will merge (i.e. union)
+                  the provided views. All 'table_names' must be views from the
+                  same underlying base table.
+                  Allowed values are:
+
+                  * **union_all** --
+                    Retains all rows from the specified tables.
+
+                  * **union** --
+                    Retains all unique rows from the specified tables (synonym
+                    for 'union_distinct').
+
+                  * **union_distinct** --
+                    Retains all unique rows from the specified tables.
+
+                  * **except** --
+                    Retains all unique rows from the first table that do not
+                    appear in the second table (only works on 2 tables).
+
+                  * **intersect** --
+                    Retains all unique rows that appear in both of the
+                    specified tables (only works on 2 tables).
+
+                  * **merge_views** --
+                    Merge two or more views (or views of views) of the same
+                    base data set into a new view. The resulting view would
+                    match the results of a SQL OR operation, e.g., if filter 1
+                    creates a view using the expression 'x = 10' and filter 2
+                    creates a view using the expression 'x <= 10', then the
+                    merge views operation creates a new view using the
+                    expression 'x = 10 OR x <= 10'.
+
+                    The default value is 'union_all'.
+
+                * **chunk_size** --
+                  If provided this indicates the chunk size to be used for this
+                  table.
+
+                * **ttl** --
+                  Sets the TTL of the table specified in input parameter
+                  *table_name*. The value must be the desired TTL in minutes.
+
+                * **persist** --
+                  If *true* then the union will be persisted as a regular table
+                  (it will not be automatically cleared unless a *ttl* is
+                  provided, and the table data can be modified in subsequent
+                  operations). If *false* (the default) then the union will be
+                  a read-only, memory-only temporary table.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A read-only GPUdbTable object.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        # Create a random table name if none is given
+        table_name = table_name if table_name else GPUdbTable.random_name()
+
+        # Normalize the input table names
+        table_names = table_names if isinstance( table_names, list ) else [ table_names ]
+        table_names = [ t.name if isinstance(t, GPUdbTable) else t for t in table_names ]
+
+        # The given DB handle must be a GPUdb instance
+        if not isinstance( db, GPUdb ):
+            raise GPUdbException( "Argument 'db' must be a GPUdb object; "
+                                  "given %s" % str( type( db ) ) )
+
+        response = db.create_union( table_name, table_names, input_column_names,
+                                    output_column_names, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return GPUdbTable( None, name = table_name, db = db )
+    # end create_union
+
+
+    @staticmethod
+    def merge_records( db, table_name = None, source_table_names = None,
+                       field_maps = None, options = {} ):
+        """Create a new empty result table (specified by input parameter
+        *table_name*), and insert all records from source tables (specified by
+        input parameter *source_table_names*) based on the field mapping
+        information (specified by input parameter *field_maps*). The field map
+        (specified by input parameter *field_maps*) holds the user specified
+        maps of target table column names to source table columns.
+
+        Parameters:
+
+            table_name (str)
+                The new result table name for the records to be merged.  Must
+                NOT be an existing table.
+
+            source_table_names (list of str)
+                The list of source table names to get the records from. Must be
+                existing table names.  The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
+
+            field_maps (list of dicts of str to str)
+                Contains the mapping of column names from result table
+                (specified by input parameter *table_name*) as the keys, and
+                corresponding column names from a table from source tables
+                (specified by input parameter *source_table_names*). Must be
+                existing column names in source table and target table, and
+                their types must be matched.  The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  merged table (specified by input parameter *table_name*). If
+                  empty, then the newly created merged table will be a
+                  top-level table. If the collection does not allow duplicate
+                  types and it contains a table of the same type as the given
+                  one, then this table creation request will fail.
+
+                * **is_replicated** --
+                  For a merged table (specified by input parameter
+                  *table_name*), indicates whether the table is to be
+                  replicated to all the database ranks. This may be necessary
+                  when the table is to be joined with other tables in a query.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **ttl** --
+                  Sets the TTL of the merged table or collection (specified by
+                  input parameter *table_name*). The value must be the desired
+                  TTL in minutes.
+
+                * **chunk_size** --
+                  If provided this indicates the chunk size to be used for the
+                  merged table.
+
+        Returns:
+            A read-only GPUdbTable object.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        # Create a random table name if none is given
+        table_name = table_name if table_name else GPUdbTable.random_name()
+
+        # Normalize the input table names
+        source_table_names = source_table_names if isinstance( source_table_names, list ) else [ source_table_names ]
+        source_table_names = [ t.name if isinstance(t, GPUdbTable) else t for t in source_table_names ]
+
+        # The given DB handle must be a GPUdb instance
+        if not isinstance( db, GPUdb ):
+            raise GPUdbException( "Argument 'db' must be a GPUdb object; "
+                                  "given %s" % str( type( db ) ) )
+
+        response = db.merge_records( table_name, source_table_names, field_maps,
+                                     options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return GPUdbTable( None, name = table_name, db = db )
+    # end merge_records
+
+
+
+
+    def aggregate_convex_hull( self, x_column_name = None, y_column_name = None,
+                               options = {} ):
+        """Calculates and returns the convex hull for the values in a table
+        specified by input parameter *table_name*.
+
+        Parameters:
+
+            x_column_name (str)
+                Name of the column containing the x coordinates of the points
+                for the operation being performed.
+
+            y_column_name (str)
+                Name of the column containing the y coordinates of the points
+                for the operation being performed.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            x_vector (list of floats)
+                Array of x coordinates of the resulting convex set.
+
+            y_vector (list of floats)
+                Array of y coordinates of the resulting convex set.
+
+            count (int)
+                Count of the number of points in the convex set.
+
+            is_valid (bool)
+
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.aggregate_convex_hull( self.name, x_column_name,
+                                                  y_column_name, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end aggregate_convex_hull
+
+
+    def aggregate_group_by( self, column_names = None, offset = None, limit =
+                            1000, encoding = 'binary', options = {} ):
+        """Calculates unique combinations (groups) of values for the given columns
+        in a given table/view/collection and computes aggregates on each unique
+        combination. This is somewhat analogous to an SQL-style SELECT...GROUP
+        BY.
+
+        Any column(s) can be grouped on, and all column types except
+        unrestricted-length strings may be used for computing applicable
+        aggregates.
+
+        The results can be paged via the input parameter *offset* and input
+        parameter *limit* parameters. For example, to get 10 groups with the
+        largest counts the inputs would be: limit=10,
+        options={"sort_order":"descending", "sort_by":"value"}.
+
+        Input parameter *options* can be used to customize behavior of this
+        call e.g. filtering or sorting the results.
+
+        To group by columns 'x' and 'y' and compute the number of objects
+        within each group, use:  column_names=['x','y','count(*)'].
+
+        To also compute the sum of 'z' over each group, use:
+        column_names=['x','y','count(*)','sum(z)'].
+
+        Available `aggregation functions
+        <../../../concepts/expressions.html#aggregate-expressions>`_ are:
+        count(*), sum, min, max, avg, mean, stddev, stddev_pop, stddev_samp,
+        var, var_pop, var_samp, arg_min, arg_max and count_distinct.
+
+        The response is returned as a dynamic schema. For details see: `dynamic
+        schemas documentation <../../../concepts/dynamic_schemas.html>`_.
+
+        If a *result_table* name is specified in the options, the results are
+        stored in a new table with that name.  No results are returned in the
+        response.  If the source table's `shard key
+        <../../../concepts/tables.html#shard-keys>`_ is used as the grouping
+        column(s), the result table will be sharded, in all other cases it will
+        be replicated.  Sorting will properly function only if the result table
+        is replicated or if there is only one processing node and should not be
+        relied upon in other cases.
+
+        Parameters:
+
+            column_names (list of str)
+                List of one or more column names, expressions, and aggregate
+                expressions. Must include at least one 'grouping' column or
+                expression.  If no aggregate is included, count(*) will be
+                computed as a default.  The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
+
+            offset (long)
+                A positive integer indicating the number of initial results to
+                skip (this can be useful for paging through the results).  The
+                minimum allowed value is 0. The maximum allowed value is
+                MAX_INT.
+
+            limit (long)
+                A positive integer indicating the maximum number of results to
+                be returned Or END_OF_SET (-9999) to indicate that the max
+                number of results should be returned.  Default value is 1000.
+
+            encoding (str)
+                Specifies the encoding for returned records.  Default value is
+                'binary'.
+                Allowed values are:
+
+                * **binary** --
+                  Indicates that the returned records should be binary encoded.
+
+                * **json** --
+                  Indicates that the returned records should be json encoded.
+
+                  The default value is 'binary'.
+
+            options (dict of str to str)
+                  Optional parameters.  Default value is an empty dict ( {} ).
+                  Allowed keys are:
+
+                  * **collection_name** --
+                    Name of a collection which is to contain the table
+                    specified in *result_table*, otherwise the table will be a
+                    top-level table. If the collection does not allow duplicate
+                    types and it contains a table of the same type as the given
+                    one, then this table creation request will fail.
+                    Additionally this option is invalid if input parameter
+                    *table_name* is a collection.
+
+                  * **expression** --
+                    Filter expression to apply to the table prior to computing
+                    the aggregate group by.
+
+                  * **having** --
+                    Filter expression to apply to the aggregated results.
+
+                  * **sort_order** --
+                    String indicating how the returned values should be sorted
+                    - ascending or descending.
+                    Allowed values are:
+
+                    * **ascending** --
+                      Indicates that the returned values should be sorted in
+                      ascending order.
+
+                    * **descending** --
+                      Indicates that the returned values should be sorted in
+                      descending order.
+
+                      The default value is 'ascending'.
+
+                  * **sort_by** --
+                    String determining how the results are sorted.
+                    Allowed values are:
+
+                    * **key** --
+                      Indicates that the returned values should be sorted by
+                      key, which corresponds to the grouping columns. If you
+                      have multiple grouping columns (and are sorting by key),
+                      it will first sort the first grouping column, then the
+                      second grouping column, etc.
+
+                    * **value** --
+                      Indicates that the returned values should be sorted by
+                      value, which corresponds to the aggregates. If you have
+                      multiple aggregates (and are sorting by value), it will
+                      first sort by the first aggregate, then the second
+                      aggregate, etc.
+
+                      The default value is 'key'.
+
+                  * **result_table** --
+                    The name of the table used to store the results. Has the
+                    same naming restrictions as `tables
+                    <../../../concepts/tables.html>`_. Column names (group-by
+                    and aggregate fields) need to be given aliases e.g.
+                    ["FChar256 as fchar256", "sum(FDouble) as sfd"].  If
+                    present, no results are returned in the response.  This
+                    option is not available if one of the grouping attributes
+                    is an unrestricted string (i.e.; not charN) type.
+
+                  * **result_table_persist** --
+                    If *true* then the result table specified in
+                    {result_table}@{key of input.options} will be persisted as
+                    a regular table (it will not be automatically cleared
+                    unless a *ttl* is provided, and the table data can be
+                    modified in subsequent operations). If *false* (the
+                    default) then the result table will be a read-only,
+                    memory-only temporary table.
+                    Allowed values are:
+
+                    * true
+                    * false
+
+                    The default value is 'false'.
+
+                  * **result_table_force_replicated** --
+                    Force the result table to be replicated (ignores any
+                    sharding). Must be used in combination with the
+                    *result_table* option.
+
+                  * **result_table_generate_pk** --
+                    If 'true' then set a primary key for the result table. Must
+                    be used in combination with the *result_table* option.
+
+                  * **ttl** --
+                    Sets the TTL of the table specified in *result_table*. The
+                    value must be the desired TTL in minutes.
+
+                  * **chunk_size** --
+                    If provided this indicates the chunk size to be used for
+                    the result table. Must be used in combination with the
+                    *result_table* option.
+
+        Returns:
+            A read-only GPUdbTable object if input options has "result_table";
+            otherwise the response from the server, which is a dict containing
+            the following entries--
+
+            response_schema_str (str)
+                Avro schema of output parameter *binary_encoded_response* or
+                output parameter *json_encoded_response*.
+
+            binary_encoded_response (str)
+                Avro binary encoded response.
+
+            json_encoded_response (str)
+                Avro JSON encoded response.
+
+            total_number_of_records (long)
+                Total/Filtered number of records.
+
+            has_more_records (bool)
+                Too many records. Returned a partial set.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        if "result_table" in options:
+            result_table = options[ "result_table" ]
+        else:
+            result_table = None
+
+        response = self.db.aggregate_group_by( self.name, column_names, offset,
+                                               limit, encoding, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        if result_table:
+            # Create a read-only table for the result table
+            return self.create_view( result_table, response[ "total_number_of_records" ] )
+
+        # Decode the returned records
+        response = self.db.parse_dynamic_response( response, convert_nulls = False )
+
+        # Save the decoded data in a field called 'data' and delete the raw 
+        # data related fields
+        response[ "data" ] = response[ "response" ]
+        del response[ "response" ]
+        del response[ "binary_encoded_response" ]
+        del response[ "json_encoded_response" ]
+
+        return response
+    # end aggregate_group_by
+
+
+    def aggregate_histogram( self, column_name = None, start = None, end = None,
+                             interval = None, options = {} ):
+        """Performs a histogram calculation given a table, a column, and an
+        interval function. The input parameter *interval* is used to produce
+        bins of that size and the result, computed over the records falling
+        within each bin, is returned.  For each bin, the start value is
+        inclusive, but the end value is exclusive--except for the very last bin
+        for which the end value is also inclusive.  The value returned for each
+        bin is the number of records in it, except when a column name is
+        provided as a *value_column* in input parameter *options*.  In this
+        latter case the sum of the values corresponding to the *value_column*
+        is used as the result instead.
+
+        Parameters:
+
+            column_name (str)
+                Name of a column or an expression of one or more column names
+                over which the histogram will be calculated.
+
+            start (float)
+                Lower end value of the histogram interval, inclusive.
+
+            end (float)
+                Upper end value of the histogram interval, inclusive.
+
+            interval (float)
+                The size of each bin within the start and end parameters.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **value_column** --
+                  The name of the column to use when calculating the bin values
+                  (values are summed).  The column must be a numerical type
+                  (int, double, long, float).
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            counts (list of floats)
+                The array of calculated values that represents the histogram
+                data points.
+
+            start (float)
+                Value of input parameter *start*.
+
+            end (float)
+                Value of input parameter *end*.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.aggregate_histogram( self.name, column_name, start,
+                                                end, interval, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end aggregate_histogram
+
+
+    def aggregate_k_means( self, column_names = None, k = None, tolerance =
+                           None, options = {} ):
+        """This endpoint runs the k-means algorithm - a heuristic algorithm that
+        attempts to do k-means clustering.  An ideal k-means clustering
+        algorithm selects k points such that the sum of the mean squared
+        distances of each member of the set to the nearest of the k points is
+        minimized.  The k-means algorithm however does not necessarily produce
+        such an ideal cluster.   It begins with a randomly selected set of k
+        points and then refines the location of the points iteratively and
+        settles to a local minimum.  Various parameters and options are
+        provided to control the heuristic search.
+
+        Parameters:
+
+            column_names (list of str)
+                List of column names on which the operation would be performed.
+                If n columns are provided then each of the k result points will
+                have n dimensions corresponding to the n columns.  The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
+
+            k (int)
+                The number of mean points to be determined by the algorithm.
+
+            tolerance (float)
+                Stop iterating when the distances between successive points is
+                less than the given tolerance.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **whiten** --
+                  When set to 1 each of the columns is first normalized by its
+                  stdv - default is not to whiten.
+
+                * **max_iters** --
+                  Number of times to try to hit the tolerance limit before
+                  giving up - default is 10.
+
+                * **num_tries** --
+                  Number of times to run the k-means algorithm with a different
+                  randomly selected starting points - helps avoid local
+                  minimum. Default is 1.
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            means (list of lists of floats)
+                The k-mean values found.
+
+            counts (list of longs)
+                The number of elements in the cluster closest the corresponding
+                k-means values.
+
+            rms_dists (list of floats)
+                The root mean squared distance of the elements in the cluster
+                for each of the k-means values.
+
+            count (long)
+                The total count of all the clusters - will be the size of the
+                input table.
+
+            rms_dist (float)
+                The sum of all the rms_dists - the value the k-means algorithm
+                is attempting to minimize.
+
+            tolerance (float)
+                The distance between the last two iterations of the algorithm
+                before it quit.
+
+            num_iters (int)
+                The number of iterations the algorithm executed before it quit.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.aggregate_k_means( self.name, column_names, k,
+                                              tolerance, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end aggregate_k_means
+
+
+    def aggregate_min_max( self, column_name = None, options = {} ):
+        """Calculates and returns the minimum and maximum values of a particular
+        column in a table.
+
+        Parameters:
+
+            column_name (str)
+                Name of a column or an expression of one or more column on
+                which the min-max will be calculated.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            min (float)
+                Minimum value of the input parameter *column_name*.
+
+            max (float)
+                Maximum value of the input parameter *column_name*.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.aggregate_min_max( self.name, column_name, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end aggregate_min_max
+
+
+    def aggregate_min_max_geometry( self, column_name = None, options = {} ):
+        """Calculates and returns the minimum and maximum x- and y-coordinates of
+        a particular geospatial geometry column in a table.
+
+        Parameters:
+
+            column_name (str)
+                Name of a geospatial geometry column on which the min-max will
+                be calculated.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            min_x (float)
+                Minimum x-coordinate value of the input parameter
+                *column_name*.
+
+            max_x (float)
+                Maximum x-coordinate value of the input parameter
+                *column_name*.
+
+            min_y (float)
+                Minimum y-coordinate value of the input parameter
+                *column_name*.
+
+            max_y (float)
+                Maximum y-coordinate value of the input parameter
+                *column_name*.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.aggregate_min_max_geometry( self.name, column_name,
+                                                       options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end aggregate_min_max_geometry
+
+
+    def aggregate_statistics( self, column_name = None, stats = None, options =
+                              {} ):
+        """Calculates the requested statistics of a given column in a given table.
+
+        The available statistics are count (number of total objects), mean,
+        stdv (standard deviation), variance, skew, kurtosis, sum,
+        sum_of_squares, min, max, weighted_average, cardinality (unique count),
+        estimated cardinality, percentile and percentile_rank.
+
+        Estimated cardinality is calculated by using the hyperloglog
+        approximation technique.
+
+        Percentiles and percentile_ranks are approximate and are calculated
+        using the t-digest algorithm. They must include the desired
+        percentile/percentile_rank. To compute multiple percentiles each value
+        must be specified separately (i.e.
+        'percentile(75.0),percentile(99.0),percentile_rank(1234.56),percentile_rank(-5)').
+
+        The weighted average statistic requires a weight_attribute to be
+        specified in input parameter *options*. The weighted average is then
+        defined as the sum of the products of input parameter *column_name*
+        times the weight attribute divided by the sum of the weight attribute.
+
+        The response includes a list of the statistics requested along with the
+        count of the number of items in the given set.
+
+        Parameters:
+
+            column_name (str)
+                Name of the column for which the statistics are to be
+                calculated.
+
+            stats (str)
+                Comma separated list of the statistics to calculate, e.g.
+                "sum,mean".
+                Allowed values are:
+
+                * **count** --
+                  Number of objects (independent of the given column).
+
+                * **mean** --
+                  Arithmetic mean (average), equivalent to sum/count.
+
+                * **stdv** --
+                  Sample standard deviation (denominator is count-1).
+
+                * **variance** --
+                  Unbiased sample variance (denominator is count-1).
+
+                * **skew** --
+                  Skewness (third standardized moment).
+
+                * **kurtosis** --
+                  Kurtosis (fourth standardized moment).
+
+                * **sum** --
+                  Sum of all values in the column.
+
+                * **sum_of_squares** --
+                  Sum of the squares of all values in the column.
+
+                * **min** --
+                  Minimum value of the column.
+
+                * **max** --
+                  Maximum value of the column.
+
+                * **weighted_average** --
+                  Weighted arithmetic mean (using the option
+                  'weight_column_name' as the weighting column).
+
+                * **cardinality** --
+                  Number of unique values in the column.
+
+                * **estimated_cardinality** --
+                  Estimate (via hyperloglog technique) of the number of unique
+                  values in the column.
+
+                * **percentile** --
+                  Estimate (via t-digest) of the given percentile of the column
+                  (percentile(50.0) will be an approximation of the median).
+
+                * **percentile_rank** --
+                  Estimate (via t-digest) of the percentile rank of the given
+                  value in the column (if the given value is the median of the
+                  column, percentile_rank([median]) will return approximately
+                  50.0).
+
+            options (dict of str to str)
+                  Optional parameters.  Default value is an empty dict ( {} ).
+                  Allowed keys are:
+
+                  * **additional_column_names** --
+                    A list of comma separated column names over which
+                    statistics can be accumulated along with the primary
+                    column.
+
+                  * **weight_column_name** --
+                    Name of column used as weighting attribute for the weighted
+                    average statistic.
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            stats (dict of str to floats)
+                (statistic name, double value) pairs of the requested
+                statistics, including the total count by default.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.aggregate_statistics( self.name, column_name, stats,
+                                                 options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end aggregate_statistics
+
+
+    def aggregate_statistics_by_range( self, select_expression = '', column_name
+                                       = None, value_column_name = None, stats =
+                                       None, start = None, end = None, interval
+                                       = None, options = {} ):
+        """Divides the given set into bins and calculates statistics of the values
+        of a value-column in each bin.  The bins are based on the values of a
+        given binning-column.  The statistics that may be requested are mean,
+        stdv (standard deviation), variance, skew, kurtosis, sum, min, max,
+        first, last and weighted average. In addition to the requested
+        statistics the count of total samples in each bin is returned. This
+        counts vector is just the histogram of the column used to divide the
+        set members into bins. The weighted average statistic requires a
+        weight_column to be specified in input parameter *options*. The
+        weighted average is then defined as the sum of the products of the
+        value column times the weight column divided by the sum of the weight
+        column.
+
+        There are two methods for binning the set members. In the first, which
+        can be used for numeric valued binning-columns, a min, max and interval
+        are specified. The number of bins, nbins, is the integer upper bound of
+        (max-min)/interval. Values that fall in the range
+        [min+n\*interval,min+(n+1)\*interval) are placed in the nth bin where n
+        ranges from 0..nbin-2. The final bin is [min+(nbin-1)\*interval,max].
+        In the second method, input parameter *options* bin_values specifies a
+        list of binning column values. Binning-columns whose value matches the
+        nth member of the bin_values list are placed in the nth bin. When a
+        list is provided the binning-column must be of type string or int.
+
+        Parameters:
+
+            select_expression (str)
+                For a non-empty expression statistics are calculated for those
+                records for which the expression is true.  Default value is ''.
+
+            column_name (str)
+                Name of the binning-column used to divide the set samples into
+                bins.
+
+            value_column_name (str)
+                Name of the value-column for which statistics are to be
+                computed.
+
+            stats (str)
+                A string of comma separated list of the statistics to
+                calculate, e.g. 'sum,mean'. Available statistics: mean, stdv
+                (standard deviation), variance, skew, kurtosis, sum.
+
+            start (float)
+                The lower bound of the binning-column.
+
+            end (float)
+                The upper bound of the binning-column.
+
+            interval (float)
+                The interval of a bin. Set members fall into bin i if the
+                binning-column falls in the range [start+interval``*``i,
+                start+interval``*``(i+1)).
+
+            options (dict of str to str)
+                Map of optional parameters:  Default value is an empty dict (
+                {} ).
+                Allowed keys are:
+
+                * **additional_column_names** --
+                  A list of comma separated value-column names over which
+                  statistics can be accumulated along with the primary
+                  value_column.
+
+                * **bin_values** --
+                  A list of comma separated binning-column values. Values that
+                  match the nth bin_values value are placed in the nth bin.
+
+                * **weight_column_name** --
+                  Name of the column used as weighting column for the
+                  weighted_average statistic.
+
+                * **order_column_name** --
+                  Name of the column used for candlestick charting techniques.
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            stats (dict of str to lists of floats)
+                A map with a key for each statistic in the stats input
+                parameter having a value that is a vector of the corresponding
+                value-column bin statistics. In a addition the key count has a
+                value that is a histogram of the binning-column.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.aggregate_statistics_by_range( self.name,
+                                                          select_expression,
+                                                          column_name,
+                                                          value_column_name,
+                                                          stats, start, end,
+                                                          interval, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end aggregate_statistics_by_range
+
+
+    def aggregate_unique( self, column_name = None, offset = None, limit =
+                          10000, encoding = 'binary', options = {} ):
+        """Returns all the unique values from a particular column (specified by
+        input parameter *column_name*) of a particular table (specified by
+        input parameter *table_name*). If input parameter *column_name* is a
+        numeric column the values will be in output parameter
+        *binary_encoded_response*. Otherwise if input parameter *column_name*
+        is a string column the values will be in output parameter
+        *json_encoded_response*.  input parameter *offset* and input parameter
+        *limit* are used to page through the results if there are large numbers
+        of unique values. To get the first 10 unique values sorted in
+        descending order input parameter *options* would be::
+
+        {"limit":"10","sort_order":"descending"}.
+
+        The response is returned as a dynamic schema. For details see: `dynamic
+        schemas documentation <../../../concepts/dynamic_schemas.html>`_.
+
+        If a *result_table* name is specified in the options, the results are
+        stored in a new table with that name.  No results are returned in the
+        response.  If the source table's `shard key
+        <../../../concepts/tables.html#shard-keys>`_ is used as the input
+        parameter *column_name*, the result table will be sharded, in all other
+        cases it will be replicated.  Sorting will properly function only if
+        the result table is replicated or if there is only one processing node
+        and should not be relied upon in other cases.
+
+        Parameters:
+
+            column_name (str)
+                Name of the column or an expression containing one or more
+                column names on which the unique function would be applied.
+
+            offset (long)
+                A positive integer indicating the number of initial results to
+                skip (this can be useful for paging through the results).  The
+                minimum allowed value is 0. The maximum allowed value is
+                MAX_INT.
+
+            limit (long)
+                A positive integer indicating the maximum number of results to
+                be returned. Or END_OF_SET (-9999) to indicate that the max
+                number of results should be returned.  Default value is 10000.
+
+            encoding (str)
+                Specifies the encoding for returned records.  Default value is
+                'binary'.
+                Allowed values are:
+
+                * **binary** --
+                  Indicates that the returned records should be binary encoded.
+
+                * **json** --
+                  Indicates that the returned records should be json encoded.
+
+                  The default value is 'binary'.
+
+            options (dict of str to str)
+                  Optional parameters.  Default value is an empty dict ( {} ).
+                  Allowed keys are:
+
+                  * **collection_name** --
+                    Name of a collection which is to contain the table
+                    specified in 'result_table', otherwise the table will be a
+                    top-level table. If the collection does not allow duplicate
+                    types and it contains a table of the same type as the given
+                    one, then this table creation request will fail.
+
+                  * **expression** --
+                    Optional filter expression to apply to the table.
+
+                  * **sort_order** --
+                    String indicating how the returned values should be sorted.
+                    Allowed values are:
+
+                    * ascending
+                    * descending
+
+                    The default value is 'ascending'.
+
+                  * **result_table** --
+                    The name of the table used to store the results. If present
+                    no results are returned in the response. Has the same
+                    naming restrictions as `tables
+                    <../../../concepts/tables.html>`_.
+
+                  * **result_table_persist** --
+                    If *true* then the result table specified in *result_table*
+                    will be persisted as a regular table (it will not be
+                    automatically cleared unless a *ttl* is provided, and the
+                    table data can be modified in subsequent operations). If
+                    *false* (the default) then the result table will be a
+                    read-only, memory-only temporary table.
+                    Allowed values are:
+
+                    * true
+                    * false
+
+                    The default value is 'false'.
+
+                  * **result_table_force_replicated** --
+                    Force the result table to be replicated (ignores any
+                    sharding). Must be used in combination with the
+                    'result_table' option.
+
+                  * **result_table_generate_pk** --
+                    If 'true' then set a primary key for the result table. Must
+                    be used in combination with the 'result_table' option.
+
+                  * **ttl** --
+                    Sets the TTL of the table specified in 'result_table'. The
+                    value must be the desired TTL in minutes.
+
+                  * **chunk_size** --
+                    If provided this indicates the chunk size to be used for
+                    the result table. Must be used in combination with the
+                    *result_table* option.
+
+        Returns:
+            A read-only GPUdbTable object if input options has "result_table";
+            otherwise the response from the server, which is a dict containing
+            the following entries--
+
+            table_name (str)
+                The same table name as was passed in the parameter list.
+
+            response_schema_str (str)
+                Avro schema of output parameter *binary_encoded_response* or
+                output parameter *json_encoded_response*.
+
+            binary_encoded_response (str)
+                Avro binary encoded response.
+
+            json_encoded_response (str)
+                Avro JSON encoded response.
+
+            has_more_records (bool)
+                Too many records. Returned a partial set.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        if "result_table" in options:
+            result_table = options[ "result_table" ]
+        else:
+            result_table = None
+
+        response = self.db.aggregate_unique( self.name, column_name, offset,
+                                             limit, encoding, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        if result_table:
+            # Create a read-only table for the result table
+            return self.create_view( result_table )
+
+        # Decode the returned records
+        response = self.db.parse_dynamic_response( response, convert_nulls = False )
+
+        # Save the decoded data in a field called 'data' and delete the raw 
+        # data related fields
+        response[ "data" ] = response[ "response" ]
+        del response[ "response" ]
+        del response[ "binary_encoded_response" ]
+        del response[ "json_encoded_response" ]
+
+        return response
+    # end aggregate_unique
+
+
+    def aggregate_unpivot( self, variable_column_name = '', value_column_name =
+                           '', pivoted_columns = None, encoding = 'binary',
+                           options = {} ):
+        """Rotate the column values into rows values.
+
+        The aggregate unpivot is used to normalize tables that are built for
+        cross tabular reporting purposes. The unpivot operator rotates the
+        column values for all the pivoted columns. A variable column, value
+        column and all columns from the source table except the unpivot columns
+        are projected into the result table. The variable column and value
+        columns in the result table indicate the pivoted column name and values
+        respectively.
+
+        The response is returned as a dynamic schema. For details see: `dynamic
+        schemas documentation <../../../concepts/dynamic_schemas.html>`_.
+
+        Parameters:
+
+            variable_column_name (str)
+                Specifies the variable/parameter column name.  Default value is
+                ''.
+
+            value_column_name (str)
+                Specifies the value column name.  Default value is ''.
+
+            pivoted_columns (list of str)
+                List of one or more values typically the column names of the
+                input table. All the columns in the source table must have the
+                same data type.  The user can provide a single element (which
+                will be automatically promoted to a list internally) or a list.
+
+            encoding (str)
+                Specifies the encoding for returned records.  Default value is
+                'binary'.
+                Allowed values are:
+
+                * **binary** --
+                  Indicates that the returned records should be binary encoded.
+
+                * **json** --
+                  Indicates that the returned records should be json encoded.
+
+                  The default value is 'binary'.
+
+            options (dict of str to str)
+                  Optional parameters.  Default value is an empty dict ( {} ).
+                  Allowed keys are:
+
+                  * **collection_name** --
+                    Name of a collection which is to contain the table
+                    specified in *result_table*, otherwise the table will be a
+                    top-level table. If the collection does not allow duplicate
+                    types and it contains a table of the same type as the given
+                    one, then this table creation request will fail.
+                    Additionally this option is invalid if input parameter
+                    *table_name* is a collection.
+
+                  * **result_table** --
+                    The name of the table used to store the results. Has the
+                    same naming restrictions as `tables
+                    <../../../concepts/tables.html>`_. If present, no results
+                    are returned in the response.
+
+                  * **result_table_persist** --
+                    If *true* then the result table specified in
+                    {result_table}@{key of input.options} will be persisted as
+                    a regular table (it will not be automatically cleared
+                    unless a *ttl* is provided, and the table data can be
+                    modified in subsequent operations). If *false* (the
+                    default) then the result table will be a read-only,
+                    memory-only temporary table.
+                    Allowed values are:
+
+                    * true
+                    * false
+
+                    The default value is 'false'.
+
+                  * **expression** --
+                    Filter expression to apply to the table prior to unpivot
+                    processing.
+
+                  * **order_by** --
+                    Comma-separated list of the columns to be sorted by; e.g.
+                    'timestamp asc, x desc'.  The columns specified must be
+                    present in input table.  If any alias is given for any
+                    column name, the alias must be used, rather than the
+                    original column name.
+
+                  * **chunk_size** --
+                    If provided this indicates the chunk size to be used for
+                    the result table. Must be used in combination with the
+                    *result_table* option.
+
+                  * **limit** --
+                    The number of records to keep.
+
+                  * **ttl** --
+                    Sets the TTL of the table specified in *result_table*. The
+                    value must be the desired TTL in minutes.
+
+        Returns:
+            A read-only GPUdbTable object if input options has "result_table";
+            otherwise the response from the server, which is a dict containing
+            the following entries--
+
+            table_name (str)
+                Typically shows the result-table name if provided in the
+                request (Ignore otherwise).
+
+            response_schema_str (str)
+                Avro schema of output parameter *binary_encoded_response* or
+                output parameter *json_encoded_response*.
+
+            binary_encoded_response (str)
+                Avro binary encoded response.
+
+            json_encoded_response (str)
+                Avro JSON encoded response.
+
+            total_number_of_records (long)
+                Total/Filtered number of records.
+
+            has_more_records (bool)
+                Too many records. Returned a partial set.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        if "result_table" in options:
+            result_table = options[ "result_table" ]
+        else:
+            result_table = None
+
+        response = self.db.aggregate_unpivot( self.name, variable_column_name,
+                                              value_column_name,
+                                              pivoted_columns, encoding, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        if result_table:
+            # Create a read-only table for the result table
+            return self.create_view( result_table )
+
+        # Decode the returned records
+        response = self.db.parse_dynamic_response( response, convert_nulls = False )
+
+        # Save the decoded data in a field called 'data' and delete the raw 
+        # data related fields
+        response[ "data" ] = response[ "response" ]
+        del response[ "response" ]
+        del response[ "binary_encoded_response" ]
+        del response[ "json_encoded_response" ]
+
+        return response
+    # end aggregate_unpivot
+
+
+    def alter_table( self, action = None, value = None, options = {} ):
+        """Apply various modifications to a table, view, or collection.  The
+        availble
+        modifications include the following:
+
+        Create or delete an index on a particular column. This can speed up
+        certain search queries
+        (such as :meth:`.get_records`, :meth:`.delete_records`,
+        :meth:`.update_records`)
+        when using expressions containing equality or relational operators on
+        indexed columns. This
+        only applies to tables.
+
+        Set the time-to-live (TTL). This can be applied to tables, views, or
+        collections.  When
+        applied to collections, every table & view within the collection will
+        have its TTL set to the
+        given value.
+
+        Set the global access mode (i.e. locking) for a table. The mode can be
+        set to 'no-access', 'read-only',
+        'write-only' or 'read-write'.
+
+        Make a table protected or not. Protected tables have their TTLs set to
+        not automatically
+        expire. This can be applied to tables, views, and collections.
+
+        Allow homogeneous tables within a collection.
+
+        Manage a table's columns--a column can be added, removed, or have its
+        `type and properties <../../../concepts/types.html>`_ modified.
+
+        Set or unset compression for a column.
+
+        Parameters:
+
+            action (str)
+                Modification operation to be applied
+                Allowed values are:
+
+                * **allow_homogeneous_tables** --
+                  Sets whether homogeneous tables are allowed in the given
+                  collection. This action is only valid if input parameter
+                  *table_name* is a collection. The input parameter *value*
+                  must be either 'true' or 'false'.
+
+                * **create_index** --
+                  Creates an index on the column name specified in input
+                  parameter *value*. If this column is already indexed, an
+                  error will be returned.
+
+                * **delete_index** --
+                  Deletes an existing index on the column name specified in
+                  input parameter *value*. If this column does not have
+                  indexing turned on, an error will be returned.
+
+                * **move_to_collection** --
+                  Move a table into a collection input parameter *value*.
+
+                * **protected** --
+                  Sets whether the given input parameter *table_name* should be
+                  protected or not. The input parameter *value* must be either
+                  'true' or 'false'.
+
+                * **rename_table** --
+                  Rename a table, view or collection to input parameter
+                  *value*. Has the same naming restrictions as `tables
+                  <../../../concepts/tables.html>`_.
+
+                * **ttl** --
+                  Sets the TTL of the table, view, or collection specified in
+                  input parameter *table_name*. The input parameter *value*
+                  must be the desired TTL in minutes.
+
+                * **add_column** --
+                  Add the column specified in input parameter *value* to the
+                  table specified in input parameter *table_name*.  Use
+                  *column_type* and *column_properties* in input parameter
+                  *options* to set the column's type and properties,
+                  respectively.
+
+                * **change_column** --
+                  Change type and properties of the column specified in input
+                  parameter *value*.  Use *column_type* and *column_properties*
+                  in input parameter *options* to set the column's type and
+                  properties, respectively.
+
+                * **set_column_compression** --
+                  Modify the compression setting on the column specified in
+                  input parameter *value*.
+
+                * **delete_column** --
+                  Delete the column specified in input parameter *value* from
+                  the table specified in input parameter *table_name*.
+
+                * **create_foreign_key** --
+                  Create a foreign key using the format 'source_column
+                  references target_table(primary_key_column) [ as
+                  <foreign_key_name> ]'.
+
+                * **delete_foreign_key** --
+                  Delete a foreign key.  The input parameter *value* should be
+                  the <foreign_key_name> or the string used to define the
+                  foreign key.
+
+                * **set_global_access_mode** --
+                  Set the global access mode (i.e. locking) for the table
+                  specified in input parameter *table_name*. Specify the access
+                  mode in input parameter *value*. Valid modes are 'no-access',
+                  'read-only', 'write-only' and 'read-write'.
+
+            value (str)
+                  The value of the modification. May be a column name, 'true'
+                  or 'false', a TTL, or the global access mode depending on
+                  input parameter *action*.
+
+            options (dict of str to str)
+                  Optional parameters.  Default value is an empty dict ( {} ).
+                  Allowed keys are:
+
+                  * **column_default_value** --
+                    When adding a column, set a default value for existing
+                    records.
+
+                  * **column_properties** --
+                    When adding or changing a column, set the column properties
+                    (strings, separated by a comma: data, store_only,
+                    text_search, char8, int8 etc).
+
+                  * **column_type** --
+                    When adding or changing a column, set the column type
+                    (strings, separated by a comma: int, double, string, null
+                    etc).
+
+                  * **compression_type** --
+                    When setting column compression (*set_column_compression*
+                    for input parameter *action*), compression type to use:
+                    *none* (to use no compression) or a valid compression type.
+                    Allowed values are:
+
+                    * none
+                    * snappy
+                    * lz4
+                    * lz4hc
+
+                    The default value is 'snappy'.
+
+                  * **copy_values_from_column** --
+                    When adding or changing a column, enter a column name from
+                    the same table being altered to use as a source for the
+                    column being added/changed; values will be copied from this
+                    source column into the new/modified column.
+
+                  * **rename_column** --
+                    When changing a column, specify new column name.
+
+                  * **validate_change_column** --
+                    When changing a column, validate the change before applying
+                    it. If *true*, then validate all values. A value too large
+                    (or too long) for the new type will prevent any change. If
+                    *false*, then when a value is too large or long, it will be
+                    truncated.
+                    Allowed values are:
+
+                    * **true** --
+                      true
+
+                    * **false** --
+                      false
+
+                      The default value is 'true'.
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            table_name (str)
+                Table on which the operation was performed.
+
+            action (str)
+                Modification operation that was performed.
+
+            value (str)
+                The value of the modification that was performed.
+
+            type_id (str)
+                return the type_id (when changing a table, a new type may be
+                created)
+
+            type_definition (str)
+                return the type_definition  (when changing a table, a new type
+                may be created)
+
+            properties (dict of str to lists of str)
+                return the type properties  (when changing a table, a new type
+                may be created)
+
+            label (str)
+                return the type label  (when changing a table, a new type may
+                be created)
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.alter_table( self.name, action, value, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end alter_table
+
+
+    def append_records( self, source_table_name = None, field_map = None,
+                        options = {} ):
+        """Append (or insert) all records from a source table (specified by input
+        parameter *source_table_name*) to a particular target table (specified
+        by input parameter *table_name*). The field map (specified by input
+        parameter *field_map*) holds the user specified map of target table
+        column names with their mapped source column names.
+
+        Parameters:
+
+            source_table_name (str)
+                The source table name to get records from. Must be an existing
+                table name.
+
+            field_map (dict of str to str)
+                Contains the mapping of column names from the target table
+                (specified by input parameter *table_name*) as the keys, and
+                corresponding column names from the source table (specified by
+                input parameter *source_table_name*). Must be existing column
+                names in source table and target table, and their types must be
+                matched.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **offset** --
+                  A positive integer indicating the number of initial results
+                  to skip from source table (specified by input parameter
+                  *source_table_name*). Default is 0. The minimum allowed value
+                  is 0. The maximum allowed value is MAX_INT.
+
+                * **limit** --
+                  A positive integer indicating the maximum number of results
+                  to be returned from source table (specified by input
+                  parameter *source_table_name*). Or END_OF_SET (-9999) to
+                  indicate that the max number of results should be returned.
+                  Default value is END_OF_SET (-9999).
+
+                * **expression** --
+                  Optional filter expression to apply to the source table
+                  (specified by input parameter *source_table_name*). Empty by
+                  default.
+
+                * **order_by** --
+                  Comma-separated list of the columns to be sorted from source
+                  table (specified by input parameter *source_table_name*) by;
+                  e.g. 'timestamp asc, x desc'.  The columns specified must be
+                  present in input parameter *field_map*.  If any alias is
+                  given for any column name, the alias must be used, rather
+                  than the original column name.
+
+                * **update_on_existing_pk** --
+                  Specifies the record collision policy for inserting the
+                  source table records (specified by input parameter
+                  *source_table_name*) into the target table (specified by
+                  input parameter *table_name*) table with a `primary key
+                  <../../../concepts/tables.html#primary-keys>`_.  If set to
+                  *true*, any existing target table record with primary key
+                  values that match those of a source table record being
+                  inserted will be replaced by that new record.  If set to
+                  *false*, any existing target table record with primary key
+                  values that match those of a source table record being
+                  inserted will remain unchanged and the new record discarded.
+                  If the specified table does not have a primary key, then this
+                  option is ignored.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            table_name (str)
+
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.append_records( self.name, source_table_name,
+                                           field_map, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end append_records
+
+
+    def clear( self, authorization = '', options = {} ):
+        """Clears (drops) one or all tables in the database cluster. The operation
+        is synchronous meaning that the table will be cleared before the
+        function returns. The response payload returns the status of the
+        operation along with the name of the table that was cleared.
+
+        Parameters:
+
+            authorization (str)
+                No longer used. User can pass an empty string.  Default value
+                is ''.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **no_error_if_not_exists** --
+                  If *true* and if the table specified in input parameter
+                  *table_name* does not exist no error is returned. If *false*
+                  and if the table specified in input parameter *table_name*
+                  does not exist then an error is returned.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            table_name (str)
+                Value of input parameter *table_name* for a given table, or
+                'ALL CLEARED' in case of clearing all tables.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.clear_table( self.name, authorization, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end clear
+
+
+    def create_projection( self, column_names = None, options = {},
+                           projection_name = None ):
+        """Creates a new `projection <../../../concepts/projections.html>`_ of an
+        existing table. A projection represents a subset of the columns
+        (potentially including derived columns) of a table.
+
+        Notes:
+
+        A moving average can be calculated on a given column using the
+        following syntax in the input parameter *column_names* parameter:
+
+        'moving_average(column_name,num_points_before,num_points_after) as
+        new_column_name'
+
+        For each record in the moving_average function's 'column_name'
+        parameter, it computes the average over the previous
+        'num_points_before' records and the subsequent 'num_points_after'
+        records.
+
+        Note that moving average relies on *order_by*, and *order_by* requires
+        that all the data being ordered resides on the same processing node, so
+        it won't make sense to use *order_by* without moving average.
+
+        Also, a projection can be created with a different shard key than the
+        source table.  By specifying *shard_key*, the projection will be
+        sharded according to the specified columns, regardless of how the
+        source table is sharded.  The source table can even be unsharded or
+        replicated.
+
+        Parameters:
+
+            column_names (list of str)
+                List of columns from input parameter *table_name* to be
+                included in the projection. Can include derived columns. Can be
+                specified as aliased via the syntax 'column_name as alias'.
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a `collection <../../../concepts/collections.html>`_
+                  to which the projection is to be assigned as a child. If the
+                  collection provided is non-existent, the collection will be
+                  automatically created.
+
+                * **expression** --
+                  An optional filter `expression
+                  <../../../concepts/expressions.html>`_ to be applied to the
+                  source table prior to the projection.
+
+                * **limit** --
+                  The number of records to keep.
+
+                * **order_by** --
+                  Comma-separated list of the columns to be sorted by; e.g.
+                  'timestamp asc, x desc'.  The columns specified must be
+                  present in input parameter *column_names*.  If any alias is
+                  given for any column name, the alias must be used, rather
+                  than the original column name.
+
+                * **materialize_on_gpu** --
+                  If *true* then the columns of the projection will be cached
+                  on the GPU.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **chunk_size** --
+                  If provided this indicates the chunk size to be used for this
+                  table.
+
+                * **ttl** --
+                  Sets the TTL of the table, view, or collection specified in
+                  input parameter *projection_name*. The value must be the
+                  desired TTL in minutes.
+
+                * **shard_key** --
+                  Comma-separated list of the columns to be sharded on; e.g.
+                  'column1, column2'.  The columns specified must be present in
+                  input parameter *column_names*.  If any alias is given for
+                  any column name, the alias must be used, rather than the
+                  original column name.
+
+                * **persist** --
+                  If *true* then the projection will be persisted as a regular
+                  table (it will not be automatically cleared unless a *ttl* is
+                  provided, and the table data can be modified in subsequent
+                  operations). If *false* then the projection will be a
+                  read-only, memory-only temporary table.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+            projection_name (str)
+                  Name of the projection to be created. Has the same naming
+                  restrictions as `tables <../../../concepts/tables.html>`_.
+
+        Returns:
+            A read-only GPUdbTable object.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        projection_name = self.__process_view_name( projection_name )
+
+        response = self.db.create_projection( self.name, projection_name,
+                                              column_names, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return self.create_view( projection_name )
+    # end create_projection
+
+
+    def create_table_monitor( self, options = {} ):
+        """Creates a monitor that watches for new records inserted into a
+        particular table (identified by input parameter *table_name*) and
+        forwards copies to subscribers via ZMQ. After this call completes,
+        subscribe to the returned output parameter *topic_id* on the ZMQ table
+        monitor port (default 9002). Each time an insert operation on the table
+        completes, a multipart message is published for that topic; the first
+        part contains only the topic ID, and each subsequent part contains one
+        binary-encoded Avro object that was inserted. The monitor will continue
+        to run (regardless of whether or not there are any subscribers) until
+        deactivated with :meth:`.clear_table_monitor`.
+
+        Parameters:
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            topic_id (str)
+                The ZMQ topic ID to subscribe to for inserted records.
+
+            table_name (str)
+                Value of input parameter *table_name*.
+
+            type_schema (str)
+                JSON Avro schema of the table, for use in decoding published
+                records.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.create_table_monitor( self.name, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end create_table_monitor
+
+
+    def delete_records( self, expressions = None, options = {} ):
+        """Deletes record(s) matching the provided criteria from the given table.
+        The record selection criteria can either be one or more  input
+        parameter *expressions* (matching multiple records) or a single record
+        identified by *record_id* options.  Note that the two selection
+        criteria are mutually exclusive.  This operation cannot be run on a
+        collection or a view.  The operation is synchronous meaning that a
+        response will not be available until the request is completely
+        processed and all the matching records are deleted.
+
+        Parameters:
+
+            expressions (list of str)
+                A list of the actual predicates, one for each select; format
+                should follow the guidelines provided :meth:`here <.filter>`.
+                Specifying one or more input parameter *expressions* is
+                mutually exclusive to specifying *record_id* in the input
+                parameter *options*.  The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **global_expression** --
+                  An optional global expression to reduce the search space of
+                  the input parameter *expressions*.
+
+                * **record_id** --
+                  A record id identifying a single record, obtained at the time
+                  of :meth:`insertion of the record <.insert_records>` or by
+                  calling :meth:`.get_records_from_collection` with the
+                  *return_record_ids* option.
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            count_deleted (long)
+                Total number of records deleted across all expressions.
+
+            counts_deleted (list of longs)
+                Total number of records deleted per expression.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.delete_records( self.name, expressions, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end delete_records
+
+
+    def filter( self, expression = None, options = {}, view_name = '' ):
+        """Filters data based on the specified expression.  The results are stored
+        in a result set with the given input parameter *view_name*.
+
+        For details see `concepts <../../../concepts/expressions.html>`_.
+
+        The response message contains the number of points for which the
+        expression evaluated to be true, which is equivalent to the size of the
+        result view.
+
+        Parameters:
+
+            expression (str)
+                The select expression to filter the specified table.  For
+                details see `concepts <../../../concepts/expressions.html>`_.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view, otherwise the view will be a top-level table. If the
+                  collection does not allow duplicate types and it contains a
+                  table of the same type as the given one, then this table
+                  creation request will fail.
+
+                * **ttl** --
+                  Sets the TTL of the view specified in input parameter
+                  *view_name*. The value must be the desired TTL in minutes.
+
+            view_name (str)
+                  If provided, then this will be the name of the view
+                  containing the results. Has the same naming restrictions as
+                  `tables <../../../concepts/tables.html>`_.  Default value is
+                  ''.
+
+        Returns:
+            A read-only GPUdbTable object.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        view_name = self.__process_view_name( view_name )
+
+        response = self.db.filter( self.name, view_name, expression, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter
+
+
+    def filter_by_area( self, x_column_name = None, x_vector = None,
+                        y_column_name = None, y_vector = None, options = {},
+                        view_name = '' ):
+        """Calculates which objects from a table are within a named area of
+        interest (NAI/polygon). The operation is synchronous, meaning that a
+        response will not be returned until all the matching objects are fully
+        available. The response payload provides the count of the resulting
+        set. A new resultant set (view) which satisfies the input NAI
+        restriction specification is created with the name input parameter
+        *view_name* passed in as part of the input.
+
+        Parameters:
+
+            x_column_name (str)
+                Name of the column containing the x values to be filtered.
+
+            x_vector (list of floats)
+                List of x coordinates of the vertices of the polygon
+                representing the area to be filtered.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            y_column_name (str)
+                Name of the column containing the y values to be filtered.
+
+            y_vector (list of floats)
+                List of y coordinates of the vertices of the polygon
+                representing the area to be filtered.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+            view_name (str)
+                If provided, then this will be the name of the view containing
+                the results. Has the same naming restrictions as `tables
+                <../../../concepts/tables.html>`_.  Default value is ''.
+
+        Returns:
+            A read-only GPUdbTable object.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        view_name = self.__process_view_name( view_name )
+
+        response = self.db.filter_by_area( self.name, view_name, x_column_name,
+                                           x_vector, y_column_name, y_vector,
+                                           options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_area
+
+
+    def filter_by_area_geometry( self, column_name = None, x_vector = None,
+                                 y_vector = None, options = {}, view_name = ''
+                                 ):
+        """Calculates which geospatial geometry objects from a table intersect a
+        named area of interest (NAI/polygon). The operation is synchronous,
+        meaning that a response will not be returned until all the matching
+        objects are fully available. The response payload provides the count of
+        the resulting set. A new resultant set (view) which satisfies the input
+        NAI restriction specification is created with the name input parameter
+        *view_name* passed in as part of the input.
+
+        Parameters:
+
+            column_name (str)
+                Name of the geospatial geometry column to be filtered.
+
+            x_vector (list of floats)
+                List of x coordinates of the vertices of the polygon
+                representing the area to be filtered.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            y_vector (list of floats)
+                List of y coordinates of the vertices of the polygon
+                representing the area to be filtered.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+            view_name (str)
+                If provided, then this will be the name of the view containing
+                the results. Must not be an already existing collection, table
+                or view.  Default value is ''.
+
+        Returns:
+            A read-only GPUdbTable object.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        view_name = self.__process_view_name( view_name )
+
+        response = self.db.filter_by_area_geometry( self.name, view_name,
+                                                    column_name, x_vector,
+                                                    y_vector, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_area_geometry
+
+
+    def filter_by_box( self, x_column_name = None, min_x = None, max_x = None,
+                       y_column_name = None, min_y = None, max_y = None, options
+                       = {}, view_name = '' ):
+        """Calculates how many objects within the given table lie in a rectangular
+        box. The operation is synchronous, meaning that a response will not be
+        returned until all the objects are fully available. The response
+        payload provides the count of the resulting set. A new resultant set
+        which satisfies the input NAI restriction specification is also created
+        when a input parameter *view_name* is passed in as part of the input
+        payload.
+
+        Parameters:
+
+            x_column_name (str)
+                Name of the column on which to perform the bounding box query.
+                Must be a valid numeric column.
+
+            min_x (float)
+                Lower bound for the column chosen by input parameter
+                *x_column_name*.  Must be less than or equal to input parameter
+                *max_x*.
+
+            max_x (float)
+                Upper bound for input parameter *x_column_name*.  Must be
+                greater than or equal to input parameter *min_x*.
+
+            y_column_name (str)
+                Name of a column on which to perform the bounding box query.
+                Must be a valid numeric column.
+
+            min_y (float)
+                Lower bound for input parameter *y_column_name*. Must be less
+                than or equal to input parameter *max_y*.
+
+            max_y (float)
+                Upper bound for input parameter *y_column_name*. Must be
+                greater than or equal to input parameter *min_y*.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+            view_name (str)
+                Optional name of the result view that will be created
+                containing the results of the query. Has the same naming
+                restrictions as `tables <../../../concepts/tables.html>`_.
+                Default value is ''.
+
+        Returns:
+            A read-only GPUdbTable object.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        view_name = self.__process_view_name( view_name )
+
+        response = self.db.filter_by_box( self.name, view_name, x_column_name,
+                                          min_x, max_x, y_column_name, min_y,
+                                          max_y, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_box
+
+
+    def filter_by_box_geometry( self, column_name = None, min_x = None, max_x =
+                                None, min_y = None, max_y = None, options = {},
+                                view_name = '' ):
+        """Calculates which geospatial geometry objects from a table intersect a
+        rectangular box. The operation is synchronous, meaning that a response
+        will not be returned until all the objects are fully available. The
+        response payload provides the count of the resulting set. A new
+        resultant set which satisfies the input NAI restriction specification
+        is also created when a input parameter *view_name* is passed in as part
+        of the input payload.
+
+        Parameters:
+
+            column_name (str)
+                Name of the geospatial geometry column to be filtered.
+
+            min_x (float)
+                Lower bound for the x-coordinate of the rectangular box.  Must
+                be less than or equal to input parameter *max_x*.
+
+            max_x (float)
+                Upper bound for the x-coordinate of the rectangular box.  Must
+                be greater than or equal to input parameter *min_x*.
+
+            min_y (float)
+                Lower bound for the y-coordinate of the rectangular box. Must
+                be less than or equal to input parameter *max_y*.
+
+            max_y (float)
+                Upper bound for the y-coordinate of the rectangular box. Must
+                be greater than or equal to input parameter *min_y*.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+            view_name (str)
+                Optional name of the result view that will be created
+                containing the results of the query. Must not be an already
+                existing collection, table or view.  Default value is ''.
+
+        Returns:
+            A read-only GPUdbTable object.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        view_name = self.__process_view_name( view_name )
+
+        response = self.db.filter_by_box_geometry( self.name, view_name,
+                                                   column_name, min_x, max_x,
+                                                   min_y, max_y, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_box_geometry
+
+
+    def filter_by_geometry( self, column_name = None, input_wkt = '', operation
+                            = None, options = {}, view_name = '' ):
+        """Applies a geometry filter against a geospatial geometry column in a
+        given table, collection or view. The filtering geometry is provided by
+        input parameter *input_wkt*.
+
+        Parameters:
+
+            column_name (str)
+                Name of the column to be used in the filter. Must be a
+                geospatial geometry column.
+
+            input_wkt (str)
+                A geometry in WKT format that will be used to filter the
+                objects in input parameter *table_name*.  Default value is ''.
+
+            operation (str)
+                The geometric filtering operation to perform
+                Allowed values are:
+
+                * **contains** --
+                  Matches records that contain the given WKT in input parameter
+                  *input_wkt*, i.e. the given WKT is within the bounds of a
+                  record's geometry.
+
+                * **crosses** --
+                  Matches records that cross the given WKT.
+
+                * **disjoint** --
+                  Matches records that are disjoint from the given WKT.
+
+                * **equals** --
+                  Matches records that are the same as the given WKT.
+
+                * **intersects** --
+                  Matches records that intersect the given WKT.
+
+                * **overlaps** --
+                  Matches records that overlap the given WKT.
+
+                * **touches** --
+                  Matches records that touch the given WKT.
+
+                * **within** --
+                  Matches records that are within the given WKT.
+
+            options (dict of str to str)
+                  Optional parameters.  Default value is an empty dict ( {} ).
+
+            view_name (str)
+                  If provided, then this will be the name of the view
+                  containing the results. Has the same naming restrictions as
+                  `tables <../../../concepts/tables.html>`_.  Default value is
+                  ''.
+
+        Returns:
+            A read-only GPUdbTable object.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        view_name = self.__process_view_name( view_name )
+
+        response = self.db.filter_by_geometry( self.name, view_name,
+                                               column_name, input_wkt,
+                                               operation, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_geometry
+
+
+    def filter_by_list( self, column_values_map = None, options = {}, view_name
+                        = '' ):
+        """Calculates which records from a table have values in the given list for
+        the corresponding column. The operation is synchronous, meaning that a
+        response will not be returned until all the objects are fully
+        available. The response payload provides the count of the resulting
+        set. A new resultant set (view) which satisfies the input filter
+        specification is also created if a input parameter *view_name* is
+        passed in as part of the request.
+
+        For example, if a type definition has the columns 'x' and 'y', then a
+        filter by list query with the column map {"x":["10.1", "2.3"],
+        "y":["0.0", "-31.5", "42.0"]} will return the count of all data points
+        whose x and y values match both in the respective x- and y-lists, e.g.,
+        "x = 10.1 and y = 0.0", "x = 2.3 and y = -31.5", etc. However, a record
+        with "x = 10.1 and y = -31.5" or "x = 2.3 and y = 0.0" would not be
+        returned because the values in the given lists do not correspond.
+
+        Parameters:
+
+            column_values_map (dict of str to lists of str)
+                List of values for the corresponding column in the table
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **filter_mode** --
+                  String indicating the filter mode, either 'in_list' or
+                  'not_in_list'.
+                  Allowed values are:
+
+                  * **in_list** --
+                    The filter will match all items that are in the provided
+                    list(s).
+
+                  * **not_in_list** --
+                    The filter will match all items that are not in the
+                    provided list(s).
+
+                    The default value is 'in_list'.
+
+            view_name (str)
+                  If provided, then this will be the name of the view
+                  containing the results. Has the same naming restrictions as
+                  `tables <../../../concepts/tables.html>`_.  Default value is
+                  ''.
+
+        Returns:
+            A read-only GPUdbTable object.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        view_name = self.__process_view_name( view_name )
+
+        response = self.db.filter_by_list( self.name, view_name,
+                                           column_values_map, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_list
+
+
+    def filter_by_radius( self, x_column_name = None, x_center = None,
+                          y_column_name = None, y_center = None, radius = None,
+                          options = {}, view_name = '' ):
+        """Calculates which objects from a table lie within a circle with the
+        given radius and center point (i.e. circular NAI). The operation is
+        synchronous, meaning that a response will not be returned until all the
+        objects are fully available. The response payload provides the count of
+        the resulting set. A new resultant set (view) which satisfies the input
+        circular NAI restriction specification is also created if a input
+        parameter *view_name* is passed in as part of the request.
+
+        For track data, all track points that lie within the circle plus one
+        point on either side of the circle (if the track goes beyond the
+        circle) will be included in the result.
+
+        Parameters:
+
+            x_column_name (str)
+                Name of the column to be used for the x-coordinate (the
+                longitude) of the center.
+
+            x_center (float)
+                Value of the longitude of the center. Must be within [-180.0,
+                180.0].  The minimum allowed value is -180. The maximum allowed
+                value is 180.
+
+            y_column_name (str)
+                Name of the column to be used for the y-coordinate-the
+                latitude-of the center.
+
+            y_center (float)
+                Value of the latitude of the center. Must be within [-90.0,
+                90.0].  The minimum allowed value is -90. The maximum allowed
+                value is 90.
+
+            radius (float)
+                The radius of the circle within which the search will be
+                performed. Must be a non-zero positive value. It is in meters;
+                so, for example, a value of '42000' means 42 km.  The minimum
+                allowed value is 0. The maximum allowed value is MAX_INT.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+            view_name (str)
+                If provided, then this will be the name of the view containing
+                the results. Has the same naming restrictions as `tables
+                <../../../concepts/tables.html>`_.  Default value is ''.
+
+        Returns:
+            A read-only GPUdbTable object.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        view_name = self.__process_view_name( view_name )
+
+        response = self.db.filter_by_radius( self.name, view_name,
+                                             x_column_name, x_center,
+                                             y_column_name, y_center, radius,
+                                             options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_radius
+
+
+    def filter_by_radius_geometry( self, column_name = None, x_center = None,
+                                   y_center = None, radius = None, options = {},
+                                   view_name = '' ):
+        """Calculates which geospatial geometry objects from a table intersect a
+        circle with the given radius and center point (i.e. circular NAI). The
+        operation is synchronous, meaning that a response will not be returned
+        until all the objects are fully available. The response payload
+        provides the count of the resulting set. A new resultant set (view)
+        which satisfies the input circular NAI restriction specification is
+        also created if a input parameter *view_name* is passed in as part of
+        the request.
+
+        Parameters:
+
+            column_name (str)
+                Name of the geospatial geometry column to be filtered.
+
+            x_center (float)
+                Value of the longitude of the center. Must be within [-180.0,
+                180.0].  The minimum allowed value is -180. The maximum allowed
+                value is 180.
+
+            y_center (float)
+                Value of the latitude of the center. Must be within [-90.0,
+                90.0].  The minimum allowed value is -90. The maximum allowed
+                value is 90.
+
+            radius (float)
+                The radius of the circle within which the search will be
+                performed. Must be a non-zero positive value. It is in meters;
+                so, for example, a value of '42000' means 42 km.  The minimum
+                allowed value is 0. The maximum allowed value is MAX_INT.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+            view_name (str)
+                If provided, then this will be the name of the view containing
+                the results. Must not be an already existing collection, table
+                or view.  Default value is ''.
+
+        Returns:
+            A read-only GPUdbTable object.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        view_name = self.__process_view_name( view_name )
+
+        response = self.db.filter_by_radius_geometry( self.name, view_name,
+                                                      column_name, x_center,
+                                                      y_center, radius, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_radius_geometry
+
+
+    def filter_by_range( self, column_name = None, lower_bound = None,
+                         upper_bound = None, options = {}, view_name = '' ):
+        """Calculates which objects from a table have a column that is within the
+        given bounds. An object from the table identified by input parameter
+        *table_name* is added to the view input parameter *view_name* if its
+        column is within [input parameter *lower_bound*, input parameter
+        *upper_bound*] (inclusive). The operation is synchronous. The response
+        provides a count of the number of objects which passed the bound
+        filter.  Although this functionality can also be accomplished with the
+        standard filter function, it is more efficient.
+
+        For track objects, the count reflects how many points fall within the
+        given bounds (which may not include all the track points of any given
+        track).
+
+        Parameters:
+
+            column_name (str)
+                Name of a column on which the operation would be applied.
+
+            lower_bound (float)
+                Value of the lower bound (inclusive).
+
+            upper_bound (float)
+                Value of the upper bound (inclusive).
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+            view_name (str)
+                If provided, then this will be the name of the view containing
+                the results. Has the same naming restrictions as `tables
+                <../../../concepts/tables.html>`_.  Default value is ''.
+
+        Returns:
+            A read-only GPUdbTable object.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        view_name = self.__process_view_name( view_name )
+
+        response = self.db.filter_by_range( self.name, view_name, column_name,
+                                            lower_bound, upper_bound, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_range
+
+
+    def filter_by_series( self, track_id = None, target_track_ids = None,
+                          options = {}, view_name = '' ):
+        """Filters objects matching all points of the given track (works only on
+        track type data).  It allows users to specify a particular track to
+        find all other points in the table that fall within specified
+        ranges-spatial and temporal-of all points of the given track.
+        Additionally, the user can specify another track to see if the two
+        intersect (or go close to each other within the specified ranges). The
+        user also has the flexibility of using different metrics for the
+        spatial distance calculation: Euclidean (flat geometry) or Great Circle
+        (spherical geometry to approximate the Earth's surface distances). The
+        filtered points are stored in a newly created result set. The return
+        value of the function is the number of points in the resultant set
+        (view).
+
+        This operation is synchronous, meaning that a response will not be
+        returned until all the objects are fully available.
+
+        Parameters:
+
+            track_id (str)
+                The ID of the track which will act as the filtering points.
+                Must be an existing track within the given table.
+
+            target_track_ids (list of str)
+                Up to one track ID to intersect with the "filter" track. If any
+                provided, it must be an valid track ID within the given set.
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **spatial_radius** --
+                  A positive number passed as a string representing the radius
+                  of the search area centered around each track point's
+                  geospatial coordinates. The value is interpreted in meters.
+                  Required parameter.
+
+                * **time_radius** --
+                  A positive number passed as a string representing the maximum
+                  allowable time difference between the timestamps of a
+                  filtered object and the given track's points. The value is
+                  interpreted in seconds. Required parameter.
+
+                * **spatial_distance_metric** --
+                  A string representing the coordinate system to use for the
+                  spatial search criteria. Acceptable values are 'euclidean'
+                  and 'great_circle'. Optional parameter; default is
+                  'euclidean'.
+                  Allowed values are:
+
+                  * euclidean
+                  * great_circle
+
+            view_name (str)
+                  If provided, then this will be the name of the view
+                  containing the results. Has the same naming restrictions as
+                  `tables <../../../concepts/tables.html>`_.  Default value is
+                  ''.
+
+        Returns:
+            A read-only GPUdbTable object.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        view_name = self.__process_view_name( view_name )
+
+        response = self.db.filter_by_series( self.name, view_name, track_id,
+                                             target_track_ids, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_series
+
+
+    def filter_by_string( self, expression = None, mode = None, column_names =
+                          None, options = {}, view_name = '' ):
+        """Calculates which objects from a table, collection, or view match a
+        string expression for the given string columns. The options
+        'case_sensitive' can be used to modify the behavior for all modes
+        except 'search'. For 'search' mode details and limitations, see `Full
+        Text Search <../../../concepts/full_text_search.html>`_.
+
+        Parameters:
+
+            expression (str)
+                The expression with which to filter the table.
+
+            mode (str)
+                The string filtering mode to apply. See below for details.
+                Allowed values are:
+
+                * **search** --
+                  Full text search query with wildcards and boolean operators.
+                  Note that for this mode, no column can be specified in input
+                  parameter *column_names*; all string columns of the table
+                  that have text search enabled will be searched.
+
+                * **equals** --
+                  Exact whole-string match (accelerated).
+
+                * **contains** --
+                  Partial substring match (not accelerated).  If the column is
+                  a string type (non-charN) and the number of records is too
+                  large, it will return 0.
+
+                * **starts_with** --
+                  Strings that start with the given expression (not
+                  accelerated). If the column is a string type (non-charN) and
+                  the number of records is too large, it will return 0.
+
+                * **regex** --
+                  Full regular expression search (not accelerated). If the
+                  column is a string type (non-charN) and the number of records
+                  is too large, it will return 0.
+
+            column_names (list of str)
+                  List of columns on which to apply the filter. Ignored for
+                  'search' mode.  The user can provide a single element (which
+                  will be automatically promoted to a list internally) or a
+                  list.
+
+            options (dict of str to str)
+                  Optional parameters.  Default value is an empty dict ( {} ).
+                  Allowed keys are:
+
+                  * **case_sensitive** --
+                    If 'false' then string filtering will ignore case. Does not
+                    apply to 'search' mode.
+                    Allowed values are:
+
+                    * true
+                    * false
+
+                    The default value is 'true'.
+
+            view_name (str)
+                    If provided, then this will be the name of the view
+                    containing the results. Has the same naming restrictions as
+                    `tables <../../../concepts/tables.html>`_.  Default value
+                    is ''.
+
+        Returns:
+            A read-only GPUdbTable object.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        view_name = self.__process_view_name( view_name )
+
+        response = self.db.filter_by_string( self.name, view_name, expression,
+                                             mode, column_names, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_string
+
+
+    def filter_by_table( self, column_name = None, source_table_name = None,
+                         source_table_column_name = None, options = {},
+                         view_name = '' ):
+        """Filters objects in one table based on objects in another table. The
+        user must specify matching column types from the two tables (i.e. the
+        target table from which objects will be filtered and the source table
+        based on which the filter will be created); the column names need not
+        be the same. If a input parameter *view_name* is specified, then the
+        filtered objects will then be put in a newly created view. The
+        operation is synchronous, meaning that a response will not be returned
+        until all objects are fully available in the result view. The return
+        value contains the count (i.e. the size) of the resulting view.
+
+        Parameters:
+
+            column_name (str)
+                Name of the column by whose value the data will be filtered
+                from the table designated by input parameter *table_name*.
+
+            source_table_name (str)
+                Name of the table whose data will be compared against in the
+                table called input parameter *table_name*. Must be an existing
+                table.
+
+            source_table_column_name (str)
+                Name of the column in the input parameter *source_table_name*
+                whose values will be used as the filter for table input
+                parameter *table_name*. Must be a geospatial geometry column if
+                in 'spatial' mode; otherwise, Must match the type of the input
+                parameter *column_name*.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **filter_mode** --
+                  String indicating the filter mode, either *in_table* or
+                  *not_in_table*.
+                  Allowed values are:
+
+                  * in_table
+                  * not_in_table
+
+                  The default value is 'in_table'.
+
+                * **mode** --
+                  Mode - should be either *spatial* or *normal*.
+                  Allowed values are:
+
+                  * normal
+                  * spatial
+
+                  The default value is 'normal'.
+
+                * **buffer** --
+                  Buffer size, in meters. Only relevant for *spatial* mode.
+
+                * **buffer_method** --
+                  Method used to buffer polygons.  Only relevant for *spatial*
+                  mode.
+                  Allowed values are:
+
+                  * **geos** --
+                    Use geos 1 edge per corner algorithm
+
+                    The default value is 'normal'.
+
+                * **max_partition_size** --
+                  Maximum number of points in a partition. Only relevant for
+                  *spatial* mode.
+
+                * **max_partition_score** --
+                  Maximum number of points * edges in a partition. Only
+                  relevant for *spatial* mode.
+
+                * **x_column_name** --
+                  Name of column containing x value of point being filtered in
+                  *spatial* mode.
+
+                * **y_column_name** --
+                  Name of column containing y value of point being filtered in
+                  *spatial* mode.
+
+            view_name (str)
+                  If provided, then this will be the name of the view
+                  containing the results. Has the same naming restrictions as
+                  `tables <../../../concepts/tables.html>`_.  Default value is
+                  ''.
+
+        Returns:
+            A read-only GPUdbTable object.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        view_name = self.__process_view_name( view_name )
+
+        response = self.db.filter_by_table( self.name, view_name, column_name,
+                                            source_table_name,
+                                            source_table_column_name, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_table
+
+
+    def filter_by_value( self, is_string = None, value = 0, value_str = '',
+                         column_name = None, options = {}, view_name = '' ):
+        """Calculates which objects from a table has a particular value for a
+        particular column. The input parameters provide a way to specify either
+        a String or a Double valued column and a desired value for the column
+        on which the filter is performed. The operation is synchronous, meaning
+        that a response will not be returned until all the objects are fully
+        available. The response payload provides the count of the resulting
+        set. A new result view which satisfies the input filter restriction
+        specification is also created with a view name passed in as part of the
+        input payload.  Although this functionality can also be accomplished
+        with the standard filter function, it is more efficient.
+
+        Parameters:
+
+            is_string (bool)
+                Indicates whether the value being searched for is string or
+                numeric.
+
+            value (float)
+                The value to search for.  Default value is 0.
+
+            value_str (str)
+                The string value to search for.  Default value is ''.
+
+            column_name (str)
+                Name of a column on which the filter by value would be applied.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+            view_name (str)
+                If provided, then this will be the name of the view containing
+                the results. Has the same naming restrictions as `tables
+                <../../../concepts/tables.html>`_.  Default value is ''.
+
+        Returns:
+            A read-only GPUdbTable object.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        view_name = self.__process_view_name( view_name )
+
+        response = self.db.filter_by_value( self.name, view_name, is_string,
+                                            value, value_str, column_name,
+                                            options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return self.create_view( view_name, response[ "count" ] )
+    # end filter_by_value
+
+
+    def lock_table( self, lock_type = 'status', options = {} ):
+        """Manages global access to a table's data.  By default a table has a
+        input parameter *lock_type* of *read-write*, indicating all operations
+        are permitted.  A user may request a *read-only* or a *write-only*
+        lock, after which only read or write operations, respectively, are
+        permitted on the table until the lock is removed.  When input parameter
+        *lock_type* is *no-access* then no operations are permitted on the
+        table.  The lock status can be queried by setting input parameter
+        *lock_type* to *status*.
+
+        Parameters:
+
+            lock_type (str)
+                The type of lock being applied to the table. Setting it to
+                *status* will return the current lock status of the table
+                without changing it.  Default value is 'status'.
+                Allowed values are:
+
+                * **status** --
+                  Show locked status
+
+                * **no-access** --
+                  Allow no read/write operations
+
+                * **read-only** --
+                  Allow only read operations
+
+                * **write-only** --
+                  Allow only write operations
+
+                * **read-write** --
+                  Allow all read/write operations
+
+                  The default value is 'status'.
+
+            options (dict of str to str)
+                  Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            lock_type (str)
+                Returns the lock state of the table.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.lock_table( self.name, lock_type, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end lock_table
+
+
+    def revoke_permission_table( self, permission = None, table_name = None,
+                                 options = None ):
+        """Revokes a table-level permission from a user or role.
+
+        Parameters:
+
+            permission (str)
+                Permission to revoke from the user or role.
+                Allowed values are:
+
+                * **table_admin** --
+                  Full read/write and administrative access to the table.
+
+                * **table_insert** --
+                  Insert access to the table.
+
+                * **table_update** --
+                  Update access to the table.
+
+                * **table_delete** --
+                  Delete access to the table.
+
+                * **table_read** --
+                  Read access to the table.
+
+            table_name (str)
+                  Name of the table to which the permission grants access. Must
+                  be an existing table, collection, or view.
+
+            options (dict of str to str)
+                  Optional parameters.
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            name (str)
+                Value of input parameter *name*.
+
+            permission (str)
+                Value of input parameter *permission*.
+
+            table_name (str)
+                Value of input parameter *table_name*.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.revoke_permission_table( self.name, permission,
+                                                    table_name, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end revoke_permission_table
+
+
+    def show_table( self, options = {} ):
+        """Retrieves detailed information about a table, view, or collection,
+        specified in input parameter *table_name*. If the supplied input
+        parameter *table_name* is a collection, the call can return information
+        about either the collection itself or the tables and views it contains.
+        If input parameter *table_name* is empty, information about all
+        collections and top-level tables and views can be returned.
+
+        If the option *get_sizes* is set to *true*, then the sizes (objects and
+        elements) of each table are returned (in output parameter *sizes* and
+        output parameter *full_sizes*), along with the total number of objects
+        in the requested table (in output parameter *total_size* and output
+        parameter *total_full_size*).
+
+        For a collection, setting the *show_children* option to *false* returns
+        only information about the collection itself; setting *show_children*
+        to *true* returns a list of tables and views contained in the
+        collection, along with their description, type id, schema, type label,
+        type properties, and additional information including TTL.
+
+        Parameters:
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **get_sizes** --
+                  If *true* then the table sizes will be returned; blank,
+                  otherwise.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **show_children** --
+                  If input parameter *table_name* is a collection, then *true*
+                  will return information about the children of the collection,
+                  and *false* will return information about the collection
+                  itself. If input parameter *table_name* is a table or view,
+                  *show_children* must be *false*. If input parameter
+                  *table_name* is empty, then *show_children* must be *true*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **no_error_if_not_exists** --
+                  If *false* will return an error if the provided input
+                  parameter *table_name* does not exist. If *true* then it will
+                  return an empty result.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **get_column_info** --
+                  If *true* then column info (memory usage, etc) will be
+                  returned.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            table_name (str)
+                Value of input parameter *table_name*.
+
+            table_names (list of str)
+                If input parameter *table_name* is a table or view, then the
+                single element of the array is input parameter *table_name*. If
+                input parameter *table_name* is a collection and
+                *show_children* is set to *true*, then this array is populated
+                with the names of all tables and views contained by the given
+                collection; if *show_children* is *false* then this array will
+                only include the collection name itself. If input parameter
+                *table_name* is an empty string, then the array contains the
+                names of all collections and top-level tables.
+
+            table_descriptions (list of lists of str)
+                List of descriptions for the respective tables in output
+                parameter *table_names*.
+                Allowed values are:
+
+                * COLLECTION
+                * VIEW
+                * REPLICATED
+                * JOIN
+                * RESULT_TABLE
+
+            type_ids (list of str)
+                Type ids of the respective tables in output parameter
+                *table_names*.
+
+            type_schemas (list of str)
+                Type schemas of the respective tables in output parameter
+                *table_names*.
+
+            type_labels (list of str)
+                Type labels of the respective tables in output parameter
+                *table_names*.
+
+            properties (list of dicts of str to lists of str)
+                Property maps of the respective tables in output parameter
+                *table_names*.
+
+            additional_info (list of dicts of str to str)
+                Additional information about the respective tables in output
+                parameter *table_names*.
+                Allowed values are:
+
+                * @INNER_STRUCTURE
+
+            sizes (list of longs)
+                Empty array if the *get_sizes* option is *false*. Otherwise,
+                sizes of the respective tables represented in output parameter
+                *table_names*. For all but track data types, this is simply the
+                number of total objects in a table. For track types, since each
+                track semantically contains many individual objects, the output
+                parameter *sizes* are the counts of conceptual tracks (each of
+                which may be associated with multiple objects).
+
+            full_sizes (list of longs)
+                Empty array if the *get_sizes* option is *false*. Otherwise,
+                number of total objects in the respective tables represented in
+                output parameter *table_names*. For all but track data types,
+                this is the same as output parameter *sizes*. For track types,
+                since each track semantically contains many individual objects,
+                output parameter *full_sizes* is the count of total objects.
+
+            join_sizes (list of floats)
+                Empty array if the *get_sizes* option is *false*. Otherwise,
+                number of unfiltered objects in the cross product of the
+                sub-tables in the joined-tables represented in output parameter
+                *table_names*. For simple tables, this number will be the same
+                as output parameter *sizes*.  For join-tables this value gives
+                the number of joined-table rows that must be processed by any
+                aggregate functions operating on the table.
+
+            total_size (long)
+                -1 if the *get_sizes* option is *false*. Otherwise, the sum of
+                the elements of output parameter *sizes*.
+
+            total_full_size (long)
+                -1 if the *get_sizes* option is *false*. The sum of the
+                elements of output parameter *full_sizes*.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.show_table( self.name, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end show_table
+
+
+    def update_records( self, expressions = None, new_values_maps = None,
+                        records_to_insert = [], records_to_insert_str = [],
+                        record_encoding = 'binary', options = {} ):
+        """Runs multiple predicate-based updates in a single call.  With the list
+        of given expressions, any matching record's column values will be
+        updated as provided in input parameter *new_values_maps*.  There is
+        also an optional 'upsert' capability where if a particular predicate
+        doesn't match any existing record, then a new record can be inserted.
+
+        Note that this operation can only be run on an original table and not
+        on a collection or a result view.
+
+        This operation can update primary key values.  By default only 'pure
+        primary key' predicates are allowed when updating primary key values.
+        If the primary key for a table is the column 'attr1', then the
+        operation will only accept predicates of the form: "attr1 == 'foo'" if
+        the attr1 column is being updated.  For a composite primary key (e.g.
+        columns 'attr1' and 'attr2') then this operation will only accept
+        predicates of the form: "(attr1 == 'foo') and (attr2 == 'bar')".
+        Meaning, all primary key columns must appear in an equality predicate
+        in the expressions.  Furthermore each 'pure primary key' predicate must
+        be unique within a given request.  These restrictions can be removed by
+        utilizing some available options through input parameter *options*.
+
+        Parameters:
+
+            expressions (list of str)
+                A list of the actual predicates, one for each update; format
+                should follow the guidelines :meth:`here <.filter>`.  The user
+                can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
+
+            new_values_maps (list of dicts of str to str and/or None)
+                List of new values for the matching records.  Each element is a
+                map with (key, value) pairs where the keys are the names of the
+                columns whose values are to be updated; the values are the new
+                values.  The number of elements in the list should match the
+                length of input parameter *expressions*.  The user can provide
+                a single element (which will be automatically promoted to a
+                list internally) or a list.
+
+            records_to_insert (list of str)
+                An *optional* list of new binary-avro encoded records to
+                insert, one for each update.  If one of input parameter
+                *expressions* does not yield a matching record to be updated,
+                then the corresponding element from this list will be added to
+                the table.  The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
+                Default value is an empty list ( [] ).
+
+            records_to_insert_str (list of str)
+                An optional list of new json-avro encoded objects to insert,
+                one for each update, to be added to the set if the particular
+                update did not affect any objects.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.  Default value is an empty list ( [] ).
+
+            record_encoding (str)
+                Identifies which of input parameter *records_to_insert* and
+                input parameter *records_to_insert_str* should be used.
+                Default value is 'binary'.
+                Allowed values are:
+
+                * binary
+                * json
+
+                The default value is 'binary'.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **global_expression** --
+                  An optional global expression to reduce the search space of
+                  the predicates listed in input parameter *expressions*.
+
+                * **bypass_safety_checks** --
+                  When set to 'true', all predicates are available for primary
+                  key updates.  Keep in mind that it is possible to destroy
+                  data in this case, since a single predicate may match
+                  multiple objects (potentially all of records of a table), and
+                  then updating all of those records to have the same primary
+                  key will, due to the primary key uniqueness constraints,
+                  effectively delete all but one of those updated records.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **update_on_existing_pk** --
+                  Can be used to customize behavior when the updated primary
+                  key value already exists, as described in
+                  :meth:`.insert_records`.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **record_id** --
+                  ID of a single record to be updated (returned in the call to
+                  :meth:`.insert_records` or
+                  :meth:`.get_records_from_collection`).
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            count_updated (long)
+                Total number of records updated.
+
+            counts_updated (list of longs)
+                Total number of records updated per predicate in input
+                parameter *expressions*.
+
+            count_inserted (long)
+                Total number of records inserted (due to expressions not
+                matching any existing records).
+
+            counts_inserted (list of longs)
+                Total number of records inserted per predicate in input
+                parameter *expressions* (will be either 0 or 1 for each
+                expression).
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.update_records( self.name, expressions,
+                                           new_values_maps, records_to_insert,
+                                           records_to_insert_str,
+                                           record_encoding, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end update_records
+
+
+    def update_records_by_series( self, world_table_name = None, view_name = '',
+                                  reserved = [], options = {} ):
+        """Updates the view specified by input parameter *table_name* to include
+        full series (track) information from the input parameter
+        *world_table_name* for the series (tracks) present in the input
+        parameter *view_name*.
+
+        Parameters:
+
+            world_table_name (str)
+                Name of the table containing the complete series (track)
+                information.
+
+            view_name (str)
+                Optional name of the view containing the series (tracks) which
+                have to be updated.  Default value is ''.
+
+            reserved (list of str)
+                  The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+                Default value is an empty list ( [] ).
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            count (int)
+
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.update_records_by_series( self.name,
+                                                     world_table_name,
+                                                     view_name, reserved,
+                                                     options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end update_records_by_series
+
+
+    def visualize_image_labels( self, x_column_name = None, y_column_name =
+                                None, x_offset = '', y_offset = '', text_string
+                                = None, font = '', text_color = '', text_angle =
+                                '', text_scale = '', draw_box = '', draw_leader
+                                = '', line_width = '', line_color = '',
+                                fill_color = '', leader_x_column_name = '',
+                                leader_y_column_name = '', filter = '', min_x =
+                                None, max_x = None, min_y = None, max_y = None,
+                                width = None, height = None, projection =
+                                'PLATE_CARREE', options = {} ):
+
+        response = self.db.visualize_image_labels( self.name, x_column_name,
+                                                   y_column_name, x_offset,
+                                                   y_offset, text_string, font,
+                                                   text_color, text_angle,
+                                                   text_scale, draw_box,
+                                                   draw_leader, line_width,
+                                                   line_color, fill_color,
+                                                   leader_x_column_name,
+                                                   leader_y_column_name, filter,
+                                                   min_x, max_x, min_y, max_y,
+                                                   width, height, projection,
+                                                   options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end visualize_image_labels
+
+
+
+# end class GPUdbTable
+
+
+
+# ---------------------------------------------------------------------------
+# GPUdbTableIterator - Iterator Class to iterate over records in a table
+# ---------------------------------------------------------------------------
+class GPUdbTableIterator( Iterator ):
+    """Iterates over a chunk of records of a given table.  Once the initial
+    chunk of records have been iterated over, a new iterator object must
+    be instantiated since there is no way to guarantee that getting another
+    chunk would yield the 'next' set of records without duplicates or skipping
+    over records.  GPUdb does not guarantee any order or returned records via
+    /get/records/\*.
+    """
+    def __init__( self, table, offset = 0, limit = 10000, db = None ):
+        """Initiate the iterator with the given table, offset, and limit.
+
+        Parameters:
+            table (GPUdbTable)
+                A GPUdbTable object or a name of a table
+            offset (int)
+                An integer value greater than or equal to 0.
+            limit (int)
+                An integer value greater than or equal to 1.
+            db (GPUdb)
+                Optional GPUdb object
+        """
+        # Validate and set the offset
+        if not isinstance( offset, (int, long) ) or (offset < 0):
+            raise GPUdbException( "Offset must be >= 0; given {0}"
+                                  "".format( offset ) )
+        self.offset = offset
+
+        if not isinstance( limit, (int, long) ) or (limit < 1):
+            raise GPUdbException( "Limit must be >= 1; given {0}"
+                                  "".format( limit ) )
+        self.limit = limit
+
+        # Save the table name and the GPUdb object
+        if isinstance( table, GPUdbTable ):
+            self.table = table
+        elif isinstance( table, (str, unicode) ):
+            if not isinstance( db, GPUdb ):
+                raise GPUdbException( "Argument 'db' must be a GPUdb object "
+                                      "if 'table' is the table name; given "
+                                      "{0}".format( type( db ) ) )
+            # Create the table object
+            self.table = GPUdbTable( None, table, db = db )
+        else:
+            raise GPUdbException( "Argument 'table' must be a GPUdbTable object"
+                                  " or a string; given {0}".format( table ) )
+
+        self.cursor = 0
+
+        # Call /get/records to get the batch of records
+        records = self.table.get_records( offset = self.offset,
+                                          limit  = self.limit )
+        self.records = records
+    # end __init__
+
+
+    def __iter__( self ):
+        return self
+
+
+    def next( self ):
+        return self.__next__()
+    # end next
+
+
+    def __next__( self ): # For python3
+        if (self.cursor == len( self.records ) ):
+            raise StopIteration()
+
+        cursor = self.cursor
+        self.cursor += 1
+        return self.records[ cursor ]
+    # end __next__
+
+# end class GPUdbTableIterator
+
+
+
+# ---------------------------------------------------------------------------
+# GPUdbTableOptions - Class to handle GPUdb table creation options
+# ---------------------------------------------------------------------------
+class GPUdbTableOptions(object):
+    """
+    Encapsulates the various options used to create a table.  The same object
+    can be used on multiple tables and state modifications are chained together:
+
+    ::
+
+        opts = GPUdbTableOptions.default().collection_name('coll_name')
+        table1 = Table( None, options = opts )
+        table2 = Table( None, options = opts.replicated( True ) )
+
+    """
+
+    __no_error_if_exists          = "no_error_if_exists"
+    __collection_name             = "collection_name"
+    __is_collection               = "is_collection"
+    __disallow_homogeneous_tables = "disallow_homogeneous_tables"
+    __is_replicated               = "is_replicated"
+    __foreign_keys                = "foreign_keys"
+    __foreign_shard_key           = "foreign_shard_key"
+    __ttl                         = "ttl"
+    __chunk_size                  = "chunk_size"
+    __is_result_table             = "is_result_table"
+
+    _supported_options = [ __no_error_if_exists,
+                           __collection_name,
+                           __is_collection,
+                           __disallow_homogeneous_tables,
+                           __is_replicated,
+                           __foreign_keys,
+                           __foreign_shard_key,
+                           __ttl,
+                           __chunk_size,
+                           __is_result_table
+    ]
+
+
+    @staticmethod
+    def default():
+        return GPUdbTableOptions()
+
+
+    def __init__(self, _dict = None):
+        """Create a default set of options for create_table().
+
+        Parameters:
+            _dict (dict)
+                Optional dictionary with options already loaded.
+
+        Returns:
+            A GPUdbTableOptions object.
+        """
+        # Set default values
+        self._no_error_if_exists          = False
+        self._collection_name             = None
+        self._is_collection               = False
+        self._disallow_homogeneous_tables = False
+        self._is_replicated               = False
+        self._foreign_keys                = None
+        self._foreign_shard_key           = None
+        self._ttl                         = None
+        self._chunk_size                  = None
+        self._is_result_table             = None
+
+        if (_dict is None):
+            return # nothing to do
+
+        if not isinstance( _dict, dict ):
+            raise GPUdbException( "Argument '_dict' must be a dict; given '%s'."
+                                  % type( _dict ) )
+
+        # Else,_dict is a dict; extract options from within it
+        # Check for invalid options
+        unsupported_options = set( _dict.keys() ).difference( self._supported_options )
+        if unsupported_options:
+            raise GPUdbException( "Invalid options: %s" % unsupported_options )
+
+        # Extract and save each option
+        for (key, val) in _dict.items():
+            getattr( self, key )( val )
+    # end __init__
+
+
+    def as_json(self):
+        """Return the options as a JSON for using directly in create_table()"""
+        result = {}
+        if self._is_replicated is not None:
+            result[ self.__is_replicated      ] = "true" if self._is_replicated else "false"
+        if self._collection_name is not None:
+            result[ self.__collection_name    ] = str( self._collection_name )
+        if self._no_error_if_exists is not None:
+            result[ self.__no_error_if_exists ] = "true" if self._no_error_if_exists else "false"
+        if self._chunk_size is not None:
+            result[ self.__chunk_size         ] = str( self._chunk_size )
+        if self._is_collection is not None:
+            result[ self.__is_collection      ] = "true" if self._is_collection else "false"
+        if self._foreign_keys is not None:
+            result[ self.__foreign_keys       ] = str( self._foreign_keys )
+        if self._foreign_shard_key is not None:
+            result[ self.__foreign_shard_key  ] = str( self._foreign_shard_key )
+        if self._ttl is not None:
+            result[ self.__ttl                ] = str( self._ttl )
+        if self._disallow_homogeneous_tables is not None:
+            result[ self.__disallow_homogeneous_tables ] = "true" if self._disallow_homogeneous_tables else "false"
+        return result
+    # end as_json
+
+
+    def as_dict(self):
+        """Return the options as a dict for using directly in create_table()"""
+        return self.as_json()
+
+
+    def no_error_if_exists(self, val):
+        if isinstance( val, bool ):
+            self._no_error_if_exists = val
+        elif val.lower() in ["true", "false"]:
+            self._no_error_if_exists = True if (val == "true") else False
+        return self
+
+
+    def collection_name(self, val):
+        if (val and not isinstance( val, basestring )):
+            raise GPUdbException( "'collection_name' must be a string value; given '%s'" % val )
+        self._collection_name = val
+        return self
+
+
+    def is_collection(self, val):
+        if isinstance( val, bool ):
+            self._is_collection = val
+        elif val.lower() in ["true", "false"]:
+            self._is_collection = True if (val == "true") else False
+        return self
+
+
+    def disallow_homogeneous_tables(self, val):
+        if isinstance( val, bool ):
+            self._disallow_homogeneous_tables = val
+        elif val.lower() in ["true", "false"]:
+            self._disallow_homogeneous_tables = True if (val == "true") else False
+        return self
+
+
+    def is_replicated(self, val):
+        if isinstance( val, bool ):
+            self._is_replicated = val
+        elif val.lower() in ["true", "false"]:
+            self._is_replicated = True if (val == "true") else False
+        return self
+
+
+    def foreign_keys(self, val):
+        self._foreign_keys = val
+        return self
+
+
+    def foreign_shard_key(self, val):
+        self._foreign_shard_key = val
+        return self
+
+
+    def ttl(self, val):
+        self._ttl = val
+        return self
+
+
+    def chunk_size(self, val):
+        self._chunk_size = val
+        return self
+
+
+    def is_result_table(self, val):
+        self._is_result_table = val
+        return self
+
+# end class GPUdbTableOptions
+
 
 

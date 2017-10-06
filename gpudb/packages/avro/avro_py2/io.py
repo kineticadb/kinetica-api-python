@@ -46,11 +46,6 @@ try:
 except ImportError:
 	import simplejson as json
 
-if sys.version_info >= (2, 7):
-    import collections
-else:
-    import ordereddict as collections # a separate package
-
 #
 # Constants
 #
@@ -161,6 +156,12 @@ class BinaryDecoder(object):
     """
     Read n bytes.
     """
+    #curframe = inspect.currentframe()
+    #calframe = inspect.getouterframes(curframe, 2)
+    #print('caller name:' + calframe[1][3])
+    #result = self.reader.read(n)
+    #print("read(" + str(n) + ")='" + str(result) + "'")
+    #return result
     return self.reader.read(n)
 
   def read_null(self):
@@ -688,8 +689,7 @@ class DatumReader(object):
     """
     # schema resolution
     readers_fields_dict = readers_schema.fields_dict
-    #read_record = {}
-    read_record = collections.OrderedDict()
+    read_record = {}
     for field in writers_schema.fields:
       readers_field = readers_fields_dict.get(field.name)
       if readers_field is not None:

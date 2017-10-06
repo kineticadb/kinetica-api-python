@@ -1,7 +1,11 @@
 # Install the GPUdb python API to the system module path.
 
+from setuptools import setup, find_packages
+
 from distutils.core import setup
 import os
+import sys
+
 
 # Get a list of files in the subdirectories only.
 # File paths are relative the input directory.
@@ -11,6 +15,12 @@ def package_files(directory):
     paths = []
     for (path, directories, filenames) in os.walk(directory):
         if os.path.normpath(path) == directory :
+            continue
+
+        if (sys.version_info.major >= 3) and ("avro_py2" in path):
+            continue
+
+        if (sys.version_info.major == 2) and ("avro_py3" in path):
             continue
 
         for filename in filenames:
@@ -27,11 +37,13 @@ def package_files(directory):
 current_path = os.path.dirname(os.path.abspath(__file__))
 extra_files = package_files(current_path+'/gpudb')
 
+
 setup(
-    name='gpudb',
-    version='6.0.1',
-    description='Python client for GPUdb',
-    packages=['gpudb'],
-    package_data={'gpudb': extra_files},
-    url='http://gpudb.com',
+    name = 'gpudb',
+    version = '6.1.0',
+    description = 'Python client for GPUdb',
+    packages = ['gpudb'],
+    package_data = {'gpudb': extra_files},
+    url = 'http://www.kinetica.com',
+    download_url = 'https://github.com/kineticadb/kinetica-api-python'
 )

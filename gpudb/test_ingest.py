@@ -1,7 +1,12 @@
-from gpudb import GPUdb
-from gpudb_ingestor import GPUdbIngestor
+from __future__ import print_function
+
+
+from gpudb import GPUdb, GPUdbTable, GPUdbRecordType
+from gpudb_ingestor import GPUdbIngestor, GPUdbWorkerList
+import datetime
 import json
 import random
+import string
 import sys
 import time
 from multiprocessing import Pool
@@ -14,62 +19,140 @@ else:
     import ordereddict as collections # a separate package
 
 
+# Override datetime's strftime which in python does not accept
+# years before 1900--annoying!
+
+import re, time
+
+# remove the unsupposed "%s" command.  But don't
+# do it if there's an even number of %s before the s
+# because those are all escaped.  Can't simply
+# remove the s because the result of
+#  %sY
+# should be %Y if %s isn't supported, not the
+# 4 digit year.
+_illegal_s = re.compile(r"((^|[^%])(%%)*%s)")
+
+def _findall(text, substr):
+     # Also finds overlaps
+     sites = []
+     i = 0
+     while 1:
+         j = text.find(substr, i)
+         if j == -1:
+             break
+         sites.append(j)
+         i=j+1
+     return sites
+# end _findall
+
+
+# Every 28 years the calendar repeats, except through century leap
+# years where it's 6 years.  But only if you're using the Gregorian
+# calendar.  ;)
+
+def strftime(dt, fmt):
+    if _illegal_s.search(fmt):
+        raise TypeError("This strftime implementation does not handle %s")
+    if dt.year > 1900:
+        return dt.strftime(fmt)
+
+    year = dt.year
+    # For every non-leap year century, advance by
+    # 6 years to get into the 28-year repeat cycle
+    delta = 2000 - year
+    off = 6*(delta // 100 + delta // 400)
+    year = year + off
+
+    # Move to around the year 2000
+    year = year + ((2000 - year)//28)*28
+    timetuple = dt.timetuple()
+    s1 = time.strftime(fmt, (year,) + timetuple[1:])
+    sites1 = _findall(s1, str(year))
+    
+    s2 = time.strftime(fmt, (year+28,) + timetuple[1:])
+    sites2 = _findall(s2, str(year+28))
+
+    sites = []
+    for site in sites1:
+        if site in sites2:
+            sites.append(site)
+            
+    s = s1
+    syear = "%4d" % (dt.year,)
+    for site in sites:
+        s = s[:site] + syear + s[site+4:]
+    return s
+# end strftime
+
+# ----------- end override ------------------
+
+
+
+
+
 # global variable needed for multiprocessing
 gpudb_ingestor = None
 
 def test_gpudb_ingestor():
     global gpudb_ingestor
 
-    gpudb = GPUdb( encoding='BINARY', host = '127.0.0.1', port = '9191')
+    gpudb = GPUdb( encoding='BINARY', host = '127.0.0.1', port = '9191' )
 
     table_name = "test_ingest_table"
+
     # Clear table if exists
     gpudb.clear_table( table_name )
 
-    # Create the table schema and the table
-    table_type_schema_json = {
-        "type": "record",
-        "name": "ingest_test_type",
-        "fields" :
-        [
-            { "name" : "d1", "type": "double" },
-            { "name" : "d2", "type": "double" },
-            { "name" : "l", "type": "long" },
-            { "name" : "s", "type": "string" }
-        ]
-    }
-    table_type_schema_str = json.dumps( table_type_schema_json )
-    table_type_schema = schema.parse( table_type_schema_str )
-    # Column names
-    d1 = "d1"
-    d2 = "d2"
-    l  = "l"
-    s  = "s"
+    # The table type/schema
+    _type = [ ["i1",          "int"                                       ],
+              ["i2",          "int", "shard_key", "nullable"              ],
+              ["i8",          "int", "shard_key", "nullable", "int8"      ],
+              ["i16",         "int", "shard_key", "nullable", "int16"     ],
+              ["d1",       "double", "shard_key", "nullable"              ],
+              ["f1",        "float", "shard_key", "nullable"              ],
+              ["l1",         "long", "shard_key", "nullable"              ],
+              ["timestamp",  "long", "shard_key", "nullable", "timestamp" ],
+              ["s1",       "string", "shard_key", "nullable"              ],
+              ["date",     "string", "shard_key", "nullable", "date"      ],
+              ["datetime", "string", "shard_key", "nullable", "datetime"  ],
+              ["decimal",  "string", "shard_key", "nullable", "decimal"   ],
+              ["ipv4",     "string", "shard_key", "nullable", "ipv4"      ],
+              ["time",     "string", "shard_key", "nullable", "time"      ],
+              ["c1",       "string", "shard_key", "nullable", "char1"     ],
+              ["c2",       "string", "shard_key", "nullable", "char2"     ],
+              ["c4",       "string", "shard_key", "nullable", "char4"     ],
+              ["c8",       "string", "shard_key", "nullable", "char8"     ],
+              ["c16",      "string", "shard_key", "nullable", "char16"    ],
+              ["c32",      "string", "shard_key", "nullable", "char32"    ],
+              ["c64",      "string", "shard_key", "nullable", "char64"    ],
+              ["c128",     "string", "shard_key", "nullable", "char128"   ],
+              ["c256",     "string", "shard_key", "nullable", "char256"   ] ]
+    table = GPUdbTable( _type, table_name, db = gpudb )
 
-    table_column_properties = {}
+    print ("Table Name:", table_name)
 
-    type_id = gpudb.create_type( type_definition = table_type_schema_str,
-                                 label = "",
-                                 properties = table_column_properties )[ "type_id" ]
-    
-    gpudb.create_table( table_name = table_name,
-                        type_id = type_id, )
+    record_type = table.get_table_type()
 
-    print "Table Name:", table_name
 
     # Instantiate a gpudb ingestor object
-    batch_size = 7000
+    ingestor_batch_size = 200
     options = {}
-    # workers = None
-    workers = GPUdbIngestor.WorkerList( gpudb )
-    print "Workers: ", workers.worker_urls, "\n" 
-    gpudb_ingestor = GPUdbIngestor( gpudb, table_name, batch_size, options, workers )
+    workers = GPUdbWorkerList( gpudb )
+    print ("Workers: ", workers.worker_urls, "\n")
+    gpudb_ingestor = GPUdbIngestor( gpudb, table_name, record_type, ingestor_batch_size, options, workers )
 
     # Generate records to insert
-    num_batches =   50
-    batch_size  = 10000
-    num_pools = 5
-    num_pool_batches = 5
+    # num_batches =    1
+    # batch_size  = 2000
+    # num_pools   =    1
+    # num_pool_batches = 1
+    num_batches =    5
+    batch_size  = 1000
+    num_pools   =    5
+    num_pool_batches = 10
+
+    # generate_and_insert_data( [batch_size, num_batches] ) # debug~~~~~~
 
     # Generate and insert data parallelly in a pool of 5
     for i in range(0, num_pool_batches):
@@ -83,12 +166,15 @@ def test_gpudb_ingestor():
 
 
     # Flush the ingestor
+    # NOTE: Was not seeing any record in the queues due to python's
+    # multithreading issues... need to flush from the function below
     gpudb_ingestor.flush()
 
     num_records = num_batches * batch_size * num_pools * num_pool_batches
-    print
-    print "Total # objects inserted:", num_records
-    print
+    print ()
+    print ("Table name:", table_name)
+    print ("Total # objects inserted:", num_records)
+    print ()
 # end test_gpudb_ingestor
 
 
@@ -106,19 +192,77 @@ def generate_and_insert_data( inputs ):
 
     my_id = int(random.random() * 100)
 
+    null_percentage = 0.1
+    alphanum = (string.ascii_letters + string.digits)
+
     for i in range(0, num_batches):
-        print "thread {_id:>5} outer loop: {i:>5}".format( _id = my_id, i = i )
+        print ("thread {_id:>5} outer loop: {i:>5}".format( _id = my_id, i = i ))
         for j in range(0, batch_size):
             _i_plus_j = (i + j)
             record = collections.OrderedDict()
-            record[ "d1" ] = i * j * 1.0
-            record[ "d2" ] = _i_plus_j * 0.2
-            record[ "l" ] = (i % 100)
-            record[ "s" ] = str( _i_plus_j % 100 )
+            record[ "i1"  ] = i * j
+            record[ "i2"  ] = random.randint( -_i_plus_j, _i_plus_j ) if (random.random() >= null_percentage) else None
+            record[ "i8"  ] = random.randint( -128, 127 ) if (random.random() >= null_percentage) else None
+            record[ "i16" ] = random.randint( -32768, 32767 ) if (random.random() >= null_percentage) else None
+            record[ "d1"   ] = (random.random() * _i_plus_j ) if (random.random() >= null_percentage) else None
+            record[ "f1"   ] = (random.random() * _i_plus_j ) if (random.random() >= null_percentage) else None
+            record[ "l1"   ] = (random.randint( 0,_i_plus_j ) * _i_plus_j ) if (random.random() >= null_percentage) else None
+            record[ "timestamp" ] = random.randint( -30610239758979, 29379542399999 ) if (random.random() >= null_percentage) else None
+            record[ "s1"   ] = None if (random.random() < null_percentage) \
+                               else ''.join( [random.choice( alphanum ) for n in range( 0, random.randint( 2, 200 ) )] )
+            record[ "date" ] = None if (random.random() < null_percentage) \
+                               else strftime( datetime.date( random.randint( 1000, 2900 ), # year
+                                                             random.randint( 1, 12 ), # month
+                                                             random.randint( 1, 28 ) # day
+                                                         ), "%Y-%m-%d" )
+            record[ "datetime" ] = None if (random.random() < null_percentage) \
+                                   else ( strftime( datetime.date( random.randint( 1000, 2900 ), # year
+                                                                 random.randint( 1, 12 ), # month
+                                                                 random.randint( 1, 28 ) # day
+                                                             ), "%Y-%m-%d" ) \
+                                          + " "
+                                          + ( datetime.time( random.randint( 0, 23 ), # hour
+                                                             random.randint( 0, 59 ), # minute
+                                                             random.randint( 0, 59 ) # seconds
+                                                         ).strftime( "%H:%M:%S" ) )
+                                          + (".%d" % random.randint( 0, 999 ) ) )  # milliseconds
+            record[ "decimal" ] = None if (random.random() < null_percentage) \
+                                  else ( str( random.randint( -922337203685477, 922337203685477 ) )
+                                         + "." + str( random.randint( 0, 9999 ) ) )
+            record[ "ipv4" ] = None if (random.random() < null_percentage) \
+                               else '.'.join( [ str( random.randint( 0, 255 ) ) for n in range(0, 4)] )
+            record[ "time" ] = None if (random.random() < null_percentage) \
+                               else ( datetime.time( random.randint( 0, 23 ), # hour
+                                                     random.randint( 0, 59 ), # minute
+                                                     random.randint( 0, 59 ) # seconds
+                                                 ).strftime( "%H:%M:%S" ) \
+                                      + (".%d" % random.randint( 0, 999 ) ) )  # milliseconds
+            record[ "c1"  ] = None if (random.random() < null_percentage) \
+                              else random.choice( alphanum )
+            record[ "c2"  ] = None if (random.random() < null_percentage) \
+                              else ''.join( [random.choice( alphanum ) for n in range( 0, random.randint( 0, 2 ) )] )
+            record[ "c4"  ] = None if (random.random() < null_percentage) \
+                              else ''.join( [random.choice( alphanum ) for n in range( 0, random.randint( 0, 4 ) )] )
+            record[ "c8"  ] = None if (random.random() < null_percentage) \
+                              else ''.join( [random.choice( alphanum ) for n in range( 0, random.randint( 0, 8 ) )] )
+            record[ "c16" ] = None if (random.random() < null_percentage) \
+                              else ''.join( [random.choice( alphanum ) for n in range( 0, random.randint( 0, 16 ) )] )
+            record[ "c32" ] = None if (random.random() < null_percentage) \
+                              else ''.join( [random.choice( alphanum ) for n in range( 0, random.randint( 0, 32 ) )] )
+            record[ "c64" ] = None if (random.random() < null_percentage) \
+                              else ''.join( [random.choice( alphanum ) for n in range( 0, random.randint( 0, 64 ) )] )
+            record[ "c128"] = None if (random.random() < null_percentage) \
+                              else ''.join( [random.choice( alphanum ) for n in range( 0, random.randint( 0, 128 ) )] )
+            record[ "c256"] = None if (random.random() < null_percentage) \
+                              else ''.join( [random.choice( alphanum ) for n in range( 0, random.randint( 0, 256 ) )] )
 
             # Add the record to the ingestor
             gpudb_ingestor.insert_record( record )
+        # end for loop
     # end generating data
+
+
+    gpudb_ingestor.flush()
 # end generate_and_insert_data
 
 
@@ -131,11 +275,11 @@ if __name__ == '__main__':
     end_time = time.time()
     elapsed_time = (end_time - start_time)
 
-    print
-    print "***************************************"
-    print "*******Total elapsed time: %0.6f" % elapsed_time
-    print "***************************************"
-    print
+    print ()
+    print ("***************************************")
+    print ("*******Total elapsed time: %0.6f" % elapsed_time)
+    print ("***************************************")
+    print ()
 
 
 
