@@ -11,7 +11,12 @@
 
 from __future__ import print_function
 
-from gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, GPUdbException
+import sys
+
+if sys.version_info.major >= 3:
+    from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, GPUdbException
+else:
+    from gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, GPUdbException
 
 from avro import schema, datafile, io
 import datetime
@@ -19,7 +24,6 @@ import json
 import random
 import re
 import struct
-import sys
 
 
 try:
@@ -415,6 +419,9 @@ class _RecordKey:
         def add_charN( self, val, N ):
             """Add a charN string to the buffer (can be null)--N bytes.
             """
+            if (len( val ) > N):
+                raise GPUdbException( "Char{N} given too long a value: {val}"
+                                      "".format( N = N, val = val ) )
             # charN is N bytes long
             self.__will_buffer_overflow( N )
 
@@ -447,6 +454,10 @@ class _RecordKey:
         def add_charN( self, val, N ):
             """Add a charN string to the buffer (can be null)--N bytes.
             """
+            if (len( val ) > N):
+                raise GPUdbException( "Char{N} given too long a value: {val}"
+                                      "".format( N = N, val = val ) )
+            
             # charN is N bytes long
             self.__will_buffer_overflow( N )
 
@@ -1778,11 +1789,25 @@ class GPUdbIngestor:
 
         Parameters:
             gpudb (GPUdb)
+                The client handle through which the ingestion process
+                is to be conducted.
             table_name (str)
+                The name of the table into which records will be ingested.
+                Must be an existing table.
             record_type (GPUdbRecordType)
+                The type for the records which will be ingested; must match
+                the type of the given table.
             batch_size (int)
+                The size of the queues; when any queue (one per worker rank of the
+                database server) attains the given size, the queued records
+                will be automatically flushed.  Until then, those records will
+                be held client-side and not actually ingested.  (Unless
+                :meth:`.flush` is called, of course.)
             options (dict of str to str)
+                Any insertion options to be passed onto the GPUdb server.  Optional
+                parameter.
             workers (GPUdbWorkerList)
+                Optional parameter.  A list of GPUdb worker rank addresses.
         """
 
         # Validate input parameter 'gpudb'
@@ -1825,20 +1850,6 @@ class GPUdbIngestor:
         self.count_inserted = 0
         self.count_updated  = 0
 
-
-        # # Get the schema for the records for this table from GPUdb
-        # show_table_rsp = self.gpudb.show_table( table_name )
-        # assert (show_table_rsp[ C._info ][ C._status ] == C._ok), \
-        #     show_table_rsp[ C._info ][ C._msg ]
-        # assert (show_table_rsp[ C._table_names ][ 0 ] == table_name), \
-        #     ("Table name doesn't match; given: '%s', received '%s'"
-        #      "" % (table_name, show_table_rsp[ C._table_names ][ 0 ]))
-        # assert (show_table_rsp[ C._table_descriptions ][ 0 ] is not C._COLLECTION ), \
-        #     ("Cannot instantiate a RecordKeyBuilder for a 'collection' type"
-        #      " table; table name: '%s'" % table_name)
-        # record_schema_str = show_table_rsp[ C._type_schemas ][ 0 ]
-        # self.record_schema = schema.parse( record_schema_str )
-
         # Create the primary and shard key builders
         self.shard_key_builder   = _RecordKeyBuilder( self.record_type )
         self.primary_key_builder = _RecordKeyBuilder( self.record_type,
@@ -1858,26 +1869,7 @@ class GPUdbIngestor:
                 self.shard_key_builder = None
         # end saving the key builders
 
-        # shard_key_builder   = _RecordKeyBuilder( self.record_type )
-        # primary_key_builder = _RecordKeyBuilder( self.record_type,
-        #                                          is_primary_key = True )
-        # self.primary_key_builder = None
-        # self.shard_key_builder = None
-
-        # # Save the appropriate key builders
-        # if primary_key_builder.has_key():
-        #     self.primary_key_builder = primary_key_builder
-
-        #     # If both pk and shard keys exist; check that they're not the same
-        #     if (shard_key_builder.has_key()
-        #         and (not shard_key_builder.has_same_key( primary_key_builder ))):
-        #         self.shard_key_builder = shard_key_builder
-        # elif shard_key_builder.has_key():
-        #     self.shard_key_builder = shard_key_builder
-        # # end saving the key builders
-
         has_primary_key = (self.primary_key_builder is not None)
-
 
         # Set up the worker queues
         # ------------------------
@@ -1903,10 +1895,6 @@ class GPUdbIngestor:
                                    has_primary_key = has_primary_key,
                                    update_on_existing_pk = update_on_existing_pk )
                 self.worker_queues.append( wq )
-
-                # # Create a gpudb per worker
-                # worker_host, sep, worker_port = worker.rpartition( ":" )
-                # # worker_host, worker_port = worker.split( ":" )
             except Exception as e:
                 raise
         # end loop over workers
@@ -2016,9 +2004,6 @@ class GPUdbIngestor:
         worker_queue = None
 
         # Get the index of the worker to be used
-        # if (not self.routing_table):
-        #     worker_index = 0
-        # elif (not shard_key):
         if (not shard_key):
             worker_index = random.randint( 0, (self.num_ranks - 1) )
         else:
@@ -2031,7 +2016,6 @@ class GPUdbIngestor:
 
         # Encode the object into binary if not already encoded
         if record_encoding == "binary":
-            # encoded_record = self.gpudb.write_datum( self.record_schema, record )
             if isinstance( record, GPUdbRecord ):
                 encoded_record = record.binary_data
             else:

@@ -12,6 +12,7 @@ from __future__ import print_function
 
 from gpudb import GPUdb
 
+import getpass
 import os
 import sys
 import argparse
@@ -35,6 +36,12 @@ def gpudb_cmd( argv ):
     parser = argparse.ArgumentParser()
     parser.add_argument( '-g', '--gpudb', nargs = '?', default = "127.0.0.1:9191",
                          help = "IP address and port of GPUdb in the format: IP_ADDRESS:PORT (default 127.0.0.1:9191)" )
+    parser.add_argument( '--username', nargs = '?', default = "",
+                         help = "Username used when connecting to GPUdb." )
+    parser.add_argument( '--password', nargs = '?', default = "",
+                         help = "Password used when connecting to GPUdb." )
+    parser.add_argument( '--ask-password', action = "store_true",
+                         help = "Ask for the password to use when connecting to GPUdb (more secure than --password)" )
     parser.add_argument( '--json-encoding', action = "store_true",
                          help = "Use avro JSON encoding of request message to GPUdb (default is avro binary)" )
     parser.add_argument( '-f', '--format', action = 'store', dest = "format", default = "json",
@@ -67,8 +74,11 @@ def gpudb_cmd( argv ):
     # --------------------------------------
     # Set up GPUdb
     GPUdb_IP, GPUdb_Port = args.gpudb.split( ":" )
+    password = args.password
+    if args.ask_password:
+        password = getpass.getpass("GPUdb password:")
     encoding = 'JSON' if args.json_encoding else 'BINARY'
-    gpudb = GPUdb( encoding = encoding, host = GPUdb_IP, port = GPUdb_Port )
+    gpudb = GPUdb( encoding = encoding, host = GPUdb_IP, port = GPUdb_Port, username = args.username, password = password )
 
     # Get a list of all endpoint names
     query_names = sorted( gpudb.gpudb_schemas.keys() )

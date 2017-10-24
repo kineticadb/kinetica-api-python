@@ -682,7 +682,26 @@ class GPUdbRecordColumn(object):
 
     def __eq__( self, other ):
         if isinstance(other, self.__class__):
-            return self.__dict__ == other.__dict__
+            if ( self._name != other.name ):
+                return False
+            if ( self._column_type != other.column_type ):
+                return False
+            if ( self._is_nullable != other.is_nullable ):
+                return False
+            if ( self._column_properties == other.column_properties ):
+                return True
+
+            # The column properties are tricky; need to disregard
+            # 'data' and 'text_search'
+            disregarded_props = [ GPUdbColumnProperty.TEXT_SEARCH, GPUdbColumnProperty.DATA ]
+            LHS_column_properties = [ prop for prop in self._column_properties \
+                                      if prop not in disregarded_props ]
+            RHS_column_properties = [ prop for prop in other.column_properties \
+                                      if prop not in disregarded_props ]
+            if (LHS_column_properties == RHS_column_properties):
+                return True
+
+            return False # Column properties did not match
         else:
             return False
     # end __eq__
@@ -804,6 +823,7 @@ class GPUdbRecordType(object):
             # Extract the column's properties, if any
             if col.column_properties:
                 self._column_properties[ col.name ] = sorted( col.column_properties )
+            # done handling column props
 
             # Create the field for the schema string
             field_type = '"{_type}"'.format( _type = col.column_type )
@@ -818,7 +838,7 @@ class GPUdbRecordType(object):
         fields = ", ".join( fields )
 
         # Generate the avro schema string
-        self._schema_string = """
+        schema_string = """
         {{
             "type" : "record",
             "name" : "{_label}",
@@ -826,10 +846,13 @@ class GPUdbRecordType(object):
         }}
         """.format( _label  = self.name,
                     _fields = fields )
-        self._schema_string = self._schema_string.replace( " ", "" ).replace( "\n", "" )
+        schema_string = schema_string.replace( " ", "" ).replace( "\n", "" )
 
         # Generate the avro schema and save it
-        self._record_schema = schema.parse( self._schema_string )
+        self._record_schema = schema.parse( schema_string )
+
+        # Save this version of the schema string so that it is standard
+        self._schema_string = json.dumps( self._record_schema.to_json() )
 
         return
     # end __initiate_from_columns
@@ -853,40 +876,13 @@ class GPUdbRecordType(object):
         self._record_schema = schema.parse( schema_string )
 
         # Rename the schema with a generic name just like the database
-        self._record_schema.set_prop( "name", self.name )
+        self._record_schema._props[ "name" ] = self.name
 
         # If no exception was thrown above, then save the schema string
         self._schema_string = json.dumps( self._record_schema.to_json() )
 
         # Save the column properties, if any
         self._column_properties = column_properties if column_properties else {}
-        
-        # Delete the 'data' and 'text_search' properties, if they exist. 'data'
-        # is useless and gets in the way of comparing properties with other
-        # types; 'text_search' is not quite useless, but the default DB behavior
-        # is to add it by default whenever text search is on; so we can ignore
-        # it for now.
-        for col in list(self._column_properties.keys()):
-            props = self._column_properties[ col ]
-
-            # Ignore the 'data' property
-            if GPUdbColumnProperty.DATA in props:
-                props.remove( GPUdbColumnProperty.DATA )
-                if not ( props ): # now empty
-                    del self._column_properties[ col ]
-            # end if
-
-            # Ignore the 'text_search' property
-            if GPUdbColumnProperty.TEXT_SEARCH in props:
-                props.remove( GPUdbColumnProperty.TEXT_SEARCH )
-                if not ( props ): # now empty
-                    del self._column_properties[ col ]
-            # end if
-
-            # Sort the column properties for equivalency tests
-            if props:
-                self._column_properties[ col ] = sorted( props )
-        # end loop
 
         # Now, deduce the columns from the schema string
         schema_json = self._record_schema.to_json()
@@ -991,6 +987,9 @@ class GPUdbRecordType(object):
             options = {}
 
         response = gpudb.create_type( self._schema_string, self._label, self._column_properties, options )
+        if not _Util.is_ok( response ): # problem creating the type
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
         self._type_id = response[ "type_id" ]
         return self._type_id
     # end create_type
@@ -998,7 +997,38 @@ class GPUdbRecordType(object):
 
     def __eq__( self, other ):
         if isinstance(other, self.__class__):
-            return (self.__dict__ == other.__dict__)
+            # Match all but the column properties (which need special treatment)
+            lhs_ = { k:v for k,v in self.__dict__.items() \
+                     if (k != "_column_properties")}
+            rhs_ = { k:v for k,v in other.__dict__.items() \
+                     if (k != "_column_properties")}
+            if (lhs_ != rhs_): # some mismatch
+                return False
+
+            # So, other properties matched.  Now compare the properties
+            # (need to disregard 'data' and 'text_search')
+            disregarded_props = [ GPUdbColumnProperty.TEXT_SEARCH, GPUdbColumnProperty.DATA ]
+
+            # Get the sanitized column properties
+            lhs_col_props = {}
+            for name, props in self._column_properties.items():
+                sanitized_props = [ prop for prop in props  if (prop not in disregarded_props) ]
+                if sanitized_props:
+                    lhs_col_props[ name ] = sanitized_props
+            # end loop
+
+            # Get the sanitized column properties
+            rhs_col_props = {}
+            for name, props in other.column_properties.items():
+                sanitized_props = [ prop for prop in props  if (prop not in disregarded_props) ]
+                if sanitized_props:
+                    rhs_col_props[ name ] = sanitized_props
+            # end loop
+
+            if (lhs_col_props == rhs_col_props):
+                return True # distilled props matched
+
+            return False # properties did not match
         else:
             return False
     # end __eq__
@@ -2854,7 +2884,7 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
         name = "visualize_image_heatmap"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_heatmap_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"value_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"style_options","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_heatmap_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"value_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"style_options","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_heatmap_response","fields":[{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"}]}"""
         ENDPOINT = "/visualize/image/heatmap"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -3515,7 +3545,9 @@ class GPUdb(object):
 
         Any column(s) can be grouped on, and all column types except
         unrestricted-length strings may be used for computing applicable
-        aggregates.
+        aggregates; columns marked as `store-only
+        <../../../concepts/types.html#data-handling>`_ are unable to be used in
+        grouping or aggregation.
 
         The results can be paged via the input parameter *offset* and input
         parameter *limit* parameters. For example, to get 10 groups with the
@@ -3539,14 +3571,18 @@ class GPUdb(object):
         The response is returned as a dynamic schema. For details see: `dynamic
         schemas documentation <../../../concepts/dynamic_schemas.html>`_.
 
-        If a *result_table* name is specified in the options, the results are
-        stored in a new table with that name.  No results are returned in the
-        response.  If the source table's `shard key
+        If a *result_table* name is specified in the input parameter *options*,
+        the results are stored in a new table with that name--no results are
+        returned in the response.  Both the table name and resulting column
+        names must adhere to `standard naming conventions
+        <../../../concepts/tables.html#table>`_; column/aggregation expressions
+        will need to be aliased.  If the source table's `shard key
         <../../../concepts/tables.html#shard-keys>`_ is used as the grouping
         column(s), the result table will be sharded, in all other cases it will
         be replicated.  Sorting will properly function only if the result table
         is replicated or if there is only one processing node and should not be
-        relied upon in other cases.
+        relied upon in other cases.  Not available when any of the values of
+        input parameter *column_names* is an unrestricted-length string.
 
         Parameters:
 
@@ -3556,11 +3592,8 @@ class GPUdb(object):
 
             column_names (list of str)
                 List of one or more column names, expressions, and aggregate
-                expressions. Must include at least one 'grouping' column or
-                expression.  If no aggregate is included, count(*) will be
-                computed as a default.  The user can provide a single element
-                (which will be automatically promoted to a list internally) or
-                a list.
+                expressions.  The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
 
             offset (long)
                 A positive integer indicating the number of initial results to
@@ -3652,13 +3685,12 @@ class GPUdb(object):
                     is an unrestricted string (i.e.; not charN) type.
 
                   * **result_table_persist** --
-                    If *true* then the result table specified in
-                    {result_table}@{key of input.options} will be persisted as
-                    a regular table (it will not be automatically cleared
-                    unless a *ttl* is provided, and the table data can be
-                    modified in subsequent operations). If *false* (the
-                    default) then the result table will be a read-only,
-                    memory-only temporary table.
+                    If *true* then the result table specified in *result_table*
+                    will be persisted as a regular table (it will not be
+                    automatically cleared unless a *ttl* is provided, and the
+                    table data can be modified in subsequent operations). If
+                    *false* (the default) then the result table will be a
+                    read-only, memory-only temporary table.
                     Allowed values are:
 
                     * true
@@ -3997,29 +4029,41 @@ class GPUdb(object):
     # begin aggregate_statistics
     def aggregate_statistics( self, table_name = None, column_name = None, stats =
                               None, options = {} ):
-        """Calculates the requested statistics of a given column in a given table.
+        """Calculates the requested statistics of the given column(s) in a given
+        table.
 
-        The available statistics are count (number of total objects), mean,
-        stdv (standard deviation), variance, skew, kurtosis, sum,
-        sum_of_squares, min, max, weighted_average, cardinality (unique count),
-        estimated cardinality, percentile and percentile_rank.
+        The available statistics are *count* (number of total objects), *mean*,
+        *stdv* (standard deviation), *variance*, *skew*, *kurtosis*, *sum*,
+        *min*, *max*, *weighted_average*, *cardinality* (unique count),
+        *estimated_cardinality*, *percentile* and *percentile_rank*.
 
         Estimated cardinality is calculated by using the hyperloglog
         approximation technique.
 
-        Percentiles and percentile_ranks are approximate and are calculated
+        Percentiles and percentile ranks are approximate and are calculated
         using the t-digest algorithm. They must include the desired
-        percentile/percentile_rank. To compute multiple percentiles each value
-        must be specified separately (i.e.
+        *percentile*/*percentile_rank*. To compute multiple percentiles each
+        value must be specified separately (i.e.
         'percentile(75.0),percentile(99.0),percentile_rank(1234.56),percentile_rank(-5)').
 
-        The weighted average statistic requires a weight_attribute to be
+        The weighted average statistic requires a *weight_column_name* to be
         specified in input parameter *options*. The weighted average is then
         defined as the sum of the products of input parameter *column_name*
-        times the weight attribute divided by the sum of the weight attribute.
+        times the *weight_column_name* values divided by the sum of the
+        *weight_column_name* values.
 
-        The response includes a list of the statistics requested along with the
-        count of the number of items in the given set.
+        Additional columns can be used in the calculation of statistics via the
+        *additional_column_names* option.  Values in these columns will be
+        included in the overall aggregate calculation--individual aggregates
+        will not be calculated per additional column.  For instance, requesting
+        the *count* & *mean* of input parameter *column_name* x and
+        *additional_column_names* y & z, where x holds the numbers 1-10, y
+        holds 11-20, and z holds 21-30, would return the total number of x, y,
+        & z values (30), and the single average value across all x, y, & z
+        values (15.5).
+
+        The response includes a list of key/value pairs of each statistic
+        requested and its corresponding value.
 
         Parameters:
 
@@ -4028,7 +4072,7 @@ class GPUdb(object):
                 performed.
 
             column_name (str)
-                Name of the column for which the statistics are to be
+                Name of the primary column for which the statistics are to be
                 calculated.
 
             stats (str)
@@ -4037,7 +4081,7 @@ class GPUdb(object):
                 Allowed values are:
 
                 * **count** --
-                  Number of objects (independent of the given column).
+                  Number of objects (independent of the given column(s)).
 
                 * **mean** --
                   Arithmetic mean (average), equivalent to sum/count.
@@ -4055,37 +4099,35 @@ class GPUdb(object):
                   Kurtosis (fourth standardized moment).
 
                 * **sum** --
-                  Sum of all values in the column.
-
-                * **sum_of_squares** --
-                  Sum of the squares of all values in the column.
+                  Sum of all values in the column(s).
 
                 * **min** --
-                  Minimum value of the column.
+                  Minimum value of the column(s).
 
                 * **max** --
-                  Maximum value of the column.
+                  Maximum value of the column(s).
 
                 * **weighted_average** --
                   Weighted arithmetic mean (using the option
-                  'weight_column_name' as the weighting column).
+                  *weight_column_name* as the weighting column).
 
                 * **cardinality** --
-                  Number of unique values in the column.
+                  Number of unique values in the column(s).
 
                 * **estimated_cardinality** --
                   Estimate (via hyperloglog technique) of the number of unique
-                  values in the column.
+                  values in the column(s).
 
                 * **percentile** --
-                  Estimate (via t-digest) of the given percentile of the column
-                  (percentile(50.0) will be an approximation of the median).
+                  Estimate (via t-digest) of the given percentile of the
+                  column(s) (percentile(50.0) will be an approximation of the
+                  median).
 
                 * **percentile_rank** --
                   Estimate (via t-digest) of the percentile rank of the given
-                  value in the column (if the given value is the median of the
-                  column, percentile_rank([median]) will return approximately
-                  50.0).
+                  value in the column(s) (if the given value is the median of
+                  the column(s), percentile_rank(<median>) will return
+                  approximately 50.0).
 
             options (dict of str to str)
                   Optional parameters.  Default value is an empty dict ( {} ).
@@ -4094,7 +4136,10 @@ class GPUdb(object):
                   * **additional_column_names** --
                     A list of comma separated column names over which
                     statistics can be accumulated along with the primary
-                    column.
+                    column.  All columns listed and input parameter
+                    *column_name* must be of the same type.  Must not include
+                    the column specified in input parameter *column_name* and
+                    no column can be listed twice.
 
                   * **weight_column_name** --
                     Name of column used as weighting attribute for the weighted
@@ -4254,24 +4299,34 @@ class GPUdb(object):
         numeric column the values will be in output parameter
         *binary_encoded_response*. Otherwise if input parameter *column_name*
         is a string column the values will be in output parameter
-        *json_encoded_response*.  input parameter *offset* and input parameter
-        *limit* are used to page through the results if there are large numbers
-        of unique values. To get the first 10 unique values sorted in
-        descending order input parameter *options* would be::
+        *json_encoded_response*.  The results can be paged via the input
+        parameter *offset* and input parameter *limit* parameters.
+
+        Columns marked as `store-only
+        <../../../concepts/types.html#data-handling>`_ are unable to be used
+        with this function.
+
+        To get the first 10 unique values sorted in descending order input
+        parameter *options* would be::
 
         {"limit":"10","sort_order":"descending"}.
 
         The response is returned as a dynamic schema. For details see: `dynamic
         schemas documentation <../../../concepts/dynamic_schemas.html>`_.
 
-        If a *result_table* name is specified in the options, the results are
-        stored in a new table with that name.  No results are returned in the
-        response.  If the source table's `shard key
+        If a *result_table* name is specified in the input parameter *options*,
+        the results are stored in a new table with that name--no results are
+        returned in the response.  Both the table name and resulting column
+        name must adhere to `standard naming conventions
+        <../../../concepts/tables.html#table>`_; any column expression will
+        need to be aliased.  If the source table's `shard key
         <../../../concepts/tables.html#shard-keys>`_ is used as the input
         parameter *column_name*, the result table will be sharded, in all other
         cases it will be replicated.  Sorting will properly function only if
         the result table is replicated or if there is only one processing node
-        and should not be relied upon in other cases.
+        and should not be relied upon in other cases.  Not available when the
+        value of input parameter *column_name* is an unrestricted-length
+        string.
 
         Parameters:
 
@@ -4331,9 +4386,9 @@ class GPUdb(object):
                     The default value is 'ascending'.
 
                   * **result_table** --
-                    The name of the table used to store the results. If present
-                    no results are returned in the response. Has the same
-                    naming restrictions as `tables
+                    The name of the table used to store the results. If
+                    present, no results are returned in the response. Has the
+                    same naming restrictions as `tables
                     <../../../concepts/tables.html>`_.
 
                   * **result_table_persist** --
@@ -4702,7 +4757,7 @@ class GPUdb(object):
     def alter_table( self, table_name = None, action = None, value = None, options =
                      {} ):
         """Apply various modifications to a table, view, or collection.  The
-        availble
+        available
         modifications include the following:
 
         Create or delete an index on a particular column. This can speed up
@@ -5500,11 +5555,11 @@ class GPUdb(object):
         that all the data being ordered resides on the same processing node, so
         it won't make sense to use *order_by* without moving average.
 
-        Also, a projection can be created with a different shard key than the
-        source table.  By specifying *shard_key*, the projection will be
-        sharded according to the specified columns, regardless of how the
-        source table is sharded.  The source table can even be unsharded or
-        replicated.
+        Also, a projection can be created with a different `shard key
+        <../../../concepts/tables.html#shard-keys>`_ than the source table.  By
+        specifying *shard_key*, the projection will be sharded according to the
+        specified columns, regardless of how the source table is sharded.  The
+        source table can even be unsharded or replicated.
 
         Parameters:
 
@@ -5723,14 +5778,13 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **foreign_keys** --
-                  Semicolon-separated list of foreign key constraints, of the
-                  format 'source_column references
-                  target_table(primary_key_column) [ as <foreign_key_name> ]'.
+                  Semicolon-separated list of foreign keys, of the format
+                  'source_column references target_table(primary_key_column) [
+                  as <foreign_key_name> ]'.
 
                 * **foreign_shard_key** --
-                  Foreign shard key description of the format: <fk_foreign_key>
-                  references <pk_column_name> from
-                  <pk_table_name>(<pk_primary_key>)
+                  Foreign shard key of the format 'source_column references
+                  shard_by_column from target_table(primary_key_column)'
 
                 * **ttl** --
                   Sets the TTL of the table or collection specified in input
@@ -10468,15 +10522,17 @@ class GPUdb(object):
     # begin visualize_image_heatmap
     def visualize_image_heatmap( self, table_names = None, x_column_name = None,
                                  y_column_name = None, value_column_name = None,
-                                 min_x = None, max_x = None, min_y = None, max_y
-                                 = None, width = None, height = None, projection
-                                 = 'PLATE_CARREE', style_options = None, options
-                                 = {} ):
+                                 geometry_column_name = None, min_x = None,
+                                 max_x = None, min_y = None, max_y = None, width
+                                 = None, height = None, projection =
+                                 'PLATE_CARREE', style_options = None, options =
+                                 {} ):
 
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
         assert isinstance( x_column_name, (basestring)), "visualize_image_heatmap(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
         assert isinstance( y_column_name, (basestring)), "visualize_image_heatmap(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
         assert isinstance( value_column_name, (basestring)), "visualize_image_heatmap(): Argument 'value_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( value_column_name ).__name__
+        assert isinstance( geometry_column_name, (basestring)), "visualize_image_heatmap(): Argument 'geometry_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( geometry_column_name ).__name__
         assert isinstance( min_x, (int, long, float)), "visualize_image_heatmap(): Argument 'min_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_x ).__name__
         assert isinstance( max_x, (int, long, float)), "visualize_image_heatmap(): Argument 'max_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_x ).__name__
         assert isinstance( min_y, (int, long, float)), "visualize_image_heatmap(): Argument 'min_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_y ).__name__
@@ -10494,6 +10550,7 @@ class GPUdb(object):
         obj['x_column_name'] = x_column_name
         obj['y_column_name'] = y_column_name
         obj['value_column_name'] = value_column_name
+        obj['geometry_column_name'] = geometry_column_name
         obj['min_x'] = min_x
         obj['max_x'] = max_x
         obj['min_y'] = min_y
@@ -10700,12 +10757,22 @@ class GPUdb(object):
 
 # ---------------------------------------------------------------------------
 # Import GPUdbIngestor; try from an installed package first, if not, try local
-try:
-    from gpudb import GPUdbIngestor
-except:
-    if not gpudb_module_path in sys.path :
-        sys.path.insert(1, gpudb_module_path)
-    from gpudb_ingestor import GPUdbIngestor
+if sys.version_info.major >= 3:
+    try:
+        from gpudb.gpudb import GPUdbIngestor
+    except:
+        if not gpudb_module_path in sys.path :
+            sys.path.insert(1, gpudb_module_path)
+        from gpudb_ingestor import GPUdbIngestor
+else:
+    try:
+        from gpudb import GPUdbIngestor
+    except:
+        if not gpudb_module_path in sys.path :
+            sys.path.insert(1, gpudb_module_path)
+        from gpudb_ingestor import GPUdbIngestor
+# done importing GPUdbIngestor
+
 
 
 
@@ -10736,7 +10803,7 @@ class GPUdbTable( object ):
                   create_views = True,
                   use_multihead_ingest = False,
                   multihead_ingest_batch_size = 10000,
-                  flush_multi_head_ingest_per_insertion = True ):
+                  flush_multi_head_ingest_per_insertion = False ):
         """
         Parameters:
             _type (GPUdbRecordType or list of lists of str)
@@ -10892,6 +10959,9 @@ class GPUdbTable( object ):
         if self.db.has_table( self.name )["table_exists"]:
             # Check that the given type agrees with the existing table's type, if any given
             show_table_rsp = self.db.show_table( self.name, options = {"get_sizes": "true"} )
+            if not _Util.is_ok( show_table_rsp ): # problem creating the table
+                raise GPUdbException( "Problem creating the table: " + _Util.get_error_msg( show_table_rsp ) )
+
             if (len( show_table_rsp["type_schemas"] ) > 0): # not a collection
                 table_type = GPUdbRecordType( None, "", show_table_rsp["type_schemas"][0],
                                               show_table_rsp["properties"][0] )
@@ -10975,6 +11045,8 @@ class GPUdbTable( object ):
         
         # Not a read-only table; get the current size
         show_table_rsp = self.db.show_table( self.name, options = {"get_sizes": "true"} )
+        if not _Util.is_ok( show_table_rsp ):
+            return 0
         return show_table_rsp[ C._total_full_size ]
     # end __len__
 
@@ -12357,7 +12429,9 @@ class GPUdbTable( object ):
 
         Any column(s) can be grouped on, and all column types except
         unrestricted-length strings may be used for computing applicable
-        aggregates.
+        aggregates; columns marked as `store-only
+        <../../../concepts/types.html#data-handling>`_ are unable to be used in
+        grouping or aggregation.
 
         The results can be paged via the input parameter *offset* and input
         parameter *limit* parameters. For example, to get 10 groups with the
@@ -12381,24 +12455,25 @@ class GPUdbTable( object ):
         The response is returned as a dynamic schema. For details see: `dynamic
         schemas documentation <../../../concepts/dynamic_schemas.html>`_.
 
-        If a *result_table* name is specified in the options, the results are
-        stored in a new table with that name.  No results are returned in the
-        response.  If the source table's `shard key
+        If a *result_table* name is specified in the input parameter *options*,
+        the results are stored in a new table with that name--no results are
+        returned in the response.  Both the table name and resulting column
+        names must adhere to `standard naming conventions
+        <../../../concepts/tables.html#table>`_; column/aggregation expressions
+        will need to be aliased.  If the source table's `shard key
         <../../../concepts/tables.html#shard-keys>`_ is used as the grouping
         column(s), the result table will be sharded, in all other cases it will
         be replicated.  Sorting will properly function only if the result table
         is replicated or if there is only one processing node and should not be
-        relied upon in other cases.
+        relied upon in other cases.  Not available when any of the values of
+        input parameter *column_names* is an unrestricted-length string.
 
         Parameters:
 
             column_names (list of str)
                 List of one or more column names, expressions, and aggregate
-                expressions. Must include at least one 'grouping' column or
-                expression.  If no aggregate is included, count(*) will be
-                computed as a default.  The user can provide a single element
-                (which will be automatically promoted to a list internally) or
-                a list.
+                expressions.  The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
 
             offset (long)
                 A positive integer indicating the number of initial results to
@@ -12490,13 +12565,12 @@ class GPUdbTable( object ):
                     is an unrestricted string (i.e.; not charN) type.
 
                   * **result_table_persist** --
-                    If *true* then the result table specified in
-                    {result_table}@{key of input.options} will be persisted as
-                    a regular table (it will not be automatically cleared
-                    unless a *ttl* is provided, and the table data can be
-                    modified in subsequent operations). If *false* (the
-                    default) then the result table will be a read-only,
-                    memory-only temporary table.
+                    If *true* then the result table specified in *result_table*
+                    will be persisted as a regular table (it will not be
+                    automatically cleared unless a *ttl* is provided, and the
+                    table data can be modified in subsequent operations). If
+                    *false* (the default) then the result table will be a
+                    read-only, memory-only temporary table.
                     Allowed values are:
 
                     * true
@@ -12815,34 +12889,46 @@ class GPUdbTable( object ):
 
     def aggregate_statistics( self, column_name = None, stats = None, options =
                               {} ):
-        """Calculates the requested statistics of a given column in a given table.
+        """Calculates the requested statistics of the given column(s) in a given
+        table.
 
-        The available statistics are count (number of total objects), mean,
-        stdv (standard deviation), variance, skew, kurtosis, sum,
-        sum_of_squares, min, max, weighted_average, cardinality (unique count),
-        estimated cardinality, percentile and percentile_rank.
+        The available statistics are *count* (number of total objects), *mean*,
+        *stdv* (standard deviation), *variance*, *skew*, *kurtosis*, *sum*,
+        *min*, *max*, *weighted_average*, *cardinality* (unique count),
+        *estimated_cardinality*, *percentile* and *percentile_rank*.
 
         Estimated cardinality is calculated by using the hyperloglog
         approximation technique.
 
-        Percentiles and percentile_ranks are approximate and are calculated
+        Percentiles and percentile ranks are approximate and are calculated
         using the t-digest algorithm. They must include the desired
-        percentile/percentile_rank. To compute multiple percentiles each value
-        must be specified separately (i.e.
+        *percentile*/*percentile_rank*. To compute multiple percentiles each
+        value must be specified separately (i.e.
         'percentile(75.0),percentile(99.0),percentile_rank(1234.56),percentile_rank(-5)').
 
-        The weighted average statistic requires a weight_attribute to be
+        The weighted average statistic requires a *weight_column_name* to be
         specified in input parameter *options*. The weighted average is then
         defined as the sum of the products of input parameter *column_name*
-        times the weight attribute divided by the sum of the weight attribute.
+        times the *weight_column_name* values divided by the sum of the
+        *weight_column_name* values.
 
-        The response includes a list of the statistics requested along with the
-        count of the number of items in the given set.
+        Additional columns can be used in the calculation of statistics via the
+        *additional_column_names* option.  Values in these columns will be
+        included in the overall aggregate calculation--individual aggregates
+        will not be calculated per additional column.  For instance, requesting
+        the *count* & *mean* of input parameter *column_name* x and
+        *additional_column_names* y & z, where x holds the numbers 1-10, y
+        holds 11-20, and z holds 21-30, would return the total number of x, y,
+        & z values (30), and the single average value across all x, y, & z
+        values (15.5).
+
+        The response includes a list of key/value pairs of each statistic
+        requested and its corresponding value.
 
         Parameters:
 
             column_name (str)
-                Name of the column for which the statistics are to be
+                Name of the primary column for which the statistics are to be
                 calculated.
 
             stats (str)
@@ -12851,7 +12937,7 @@ class GPUdbTable( object ):
                 Allowed values are:
 
                 * **count** --
-                  Number of objects (independent of the given column).
+                  Number of objects (independent of the given column(s)).
 
                 * **mean** --
                   Arithmetic mean (average), equivalent to sum/count.
@@ -12869,37 +12955,35 @@ class GPUdbTable( object ):
                   Kurtosis (fourth standardized moment).
 
                 * **sum** --
-                  Sum of all values in the column.
-
-                * **sum_of_squares** --
-                  Sum of the squares of all values in the column.
+                  Sum of all values in the column(s).
 
                 * **min** --
-                  Minimum value of the column.
+                  Minimum value of the column(s).
 
                 * **max** --
-                  Maximum value of the column.
+                  Maximum value of the column(s).
 
                 * **weighted_average** --
                   Weighted arithmetic mean (using the option
-                  'weight_column_name' as the weighting column).
+                  *weight_column_name* as the weighting column).
 
                 * **cardinality** --
-                  Number of unique values in the column.
+                  Number of unique values in the column(s).
 
                 * **estimated_cardinality** --
                   Estimate (via hyperloglog technique) of the number of unique
-                  values in the column.
+                  values in the column(s).
 
                 * **percentile** --
-                  Estimate (via t-digest) of the given percentile of the column
-                  (percentile(50.0) will be an approximation of the median).
+                  Estimate (via t-digest) of the given percentile of the
+                  column(s) (percentile(50.0) will be an approximation of the
+                  median).
 
                 * **percentile_rank** --
                   Estimate (via t-digest) of the percentile rank of the given
-                  value in the column (if the given value is the median of the
-                  column, percentile_rank([median]) will return approximately
-                  50.0).
+                  value in the column(s) (if the given value is the median of
+                  the column(s), percentile_rank(<median>) will return
+                  approximately 50.0).
 
             options (dict of str to str)
                   Optional parameters.  Default value is an empty dict ( {} ).
@@ -12908,7 +12992,10 @@ class GPUdbTable( object ):
                   * **additional_column_names** --
                     A list of comma separated column names over which
                     statistics can be accumulated along with the primary
-                    column.
+                    column.  All columns listed and input parameter
+                    *column_name* must be of the same type.  Must not include
+                    the column specified in input parameter *column_name* and
+                    no column can be listed twice.
 
                   * **weight_column_name** --
                     Name of column used as weighting attribute for the weighted
@@ -13051,24 +13138,34 @@ class GPUdbTable( object ):
         numeric column the values will be in output parameter
         *binary_encoded_response*. Otherwise if input parameter *column_name*
         is a string column the values will be in output parameter
-        *json_encoded_response*.  input parameter *offset* and input parameter
-        *limit* are used to page through the results if there are large numbers
-        of unique values. To get the first 10 unique values sorted in
-        descending order input parameter *options* would be::
+        *json_encoded_response*.  The results can be paged via the input
+        parameter *offset* and input parameter *limit* parameters.
+
+        Columns marked as `store-only
+        <../../../concepts/types.html#data-handling>`_ are unable to be used
+        with this function.
+
+        To get the first 10 unique values sorted in descending order input
+        parameter *options* would be::
 
         {"limit":"10","sort_order":"descending"}.
 
         The response is returned as a dynamic schema. For details see: `dynamic
         schemas documentation <../../../concepts/dynamic_schemas.html>`_.
 
-        If a *result_table* name is specified in the options, the results are
-        stored in a new table with that name.  No results are returned in the
-        response.  If the source table's `shard key
+        If a *result_table* name is specified in the input parameter *options*,
+        the results are stored in a new table with that name--no results are
+        returned in the response.  Both the table name and resulting column
+        name must adhere to `standard naming conventions
+        <../../../concepts/tables.html#table>`_; any column expression will
+        need to be aliased.  If the source table's `shard key
         <../../../concepts/tables.html#shard-keys>`_ is used as the input
         parameter *column_name*, the result table will be sharded, in all other
         cases it will be replicated.  Sorting will properly function only if
         the result table is replicated or if there is only one processing node
-        and should not be relied upon in other cases.
+        and should not be relied upon in other cases.  Not available when the
+        value of input parameter *column_name* is an unrestricted-length
+        string.
 
         Parameters:
 
@@ -13124,9 +13221,9 @@ class GPUdbTable( object ):
                     The default value is 'ascending'.
 
                   * **result_table** --
-                    The name of the table used to store the results. If present
-                    no results are returned in the response. Has the same
-                    naming restrictions as `tables
+                    The name of the table used to store the results. If
+                    present, no results are returned in the response. Has the
+                    same naming restrictions as `tables
                     <../../../concepts/tables.html>`_.
 
                   * **result_table_persist** --
@@ -13377,7 +13474,7 @@ class GPUdbTable( object ):
 
     def alter_table( self, action = None, value = None, options = {} ):
         """Apply various modifications to a table, view, or collection.  The
-        availble
+        available
         modifications include the following:
 
         Create or delete an index on a particular column. This can speed up
@@ -13755,11 +13852,11 @@ class GPUdbTable( object ):
         that all the data being ordered resides on the same processing node, so
         it won't make sense to use *order_by* without moving average.
 
-        Also, a projection can be created with a different shard key than the
-        source table.  By specifying *shard_key*, the projection will be
-        sharded according to the specified columns, regardless of how the
-        source table is sharded.  The source table can even be unsharded or
-        replicated.
+        Also, a projection can be created with a different `shard key
+        <../../../concepts/tables.html#shard-keys>`_ than the source table.  By
+        specifying *shard_key*, the projection will be sharded according to the
+        specified columns, regardless of how the source table is sharded.  The
+        source table can even be unsharded or replicated.
 
         Parameters:
 
