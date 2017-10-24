@@ -67,6 +67,12 @@ def gpudb_example():
     except gpudb.GPUdbException as e:
         print ( "Table creation failure: {}".format( str(e) ) )
 
+
+    # We can also create a GPUdbTable object for a table that already exists in
+    # the database.  All we need is the table name (and a GPUdb object).  Note how
+    # we pass None for the type argument
+    weather_table_duplicate = gpudb.GPUdbTable( None, weather_table_name, db = h_db )
+
     print ( "\n")
     print ( "INSERTING DATA")
     print ( "--------------")
@@ -209,9 +215,10 @@ def gpudb_example():
 
     ### Filter Example 4
     
-    """ Filter by list where country name is USA, Brazil, or Australia """
+    """ Filter by list where country name is USA, Brazil, or Australia.  Here we
+        use the duplicate GPUdbTable object (but it points to the same DB table). """
     country_map = {"country": ["USA", "Brazil", "Australia"]}
-    view3 = weather_table.filter_by_list( column_values_map = country_map )
+    view3 = weather_table_duplicate.filter_by_list( column_values_map = country_map )
     print ( "Number of records where country name is USA, Brazil, or Australia:  {}"
             "".format( view3.size() ))
 
@@ -383,8 +390,10 @@ def gpudb_example():
 
     weather_table.delete_records( expressions = [ deleteExpression ] )
 
-    num_records_post_delete = weather_table.filter( expression = deleteExpression ).count
-    print ( "Number of records that meet deletion criteria after deleting:  {}".format( num_records_post_delete ))
+    # Note that we're using the duplicate GPUdbTable object which points to the
+    # same table in the DB
+    num_records_post_delete = weather_table_duplicate.filter( expression = deleteExpression ).count
+    print ( "Number of records that meet deletion criteria after deleting (expect 0):  {}".format( num_records_post_delete ))
     print ()
 
 
