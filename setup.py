@@ -47,6 +47,6 @@ setup(
     author_email = 'mmahmud@kinetica.com',
     package_data = {'gpudb': extra_files},
     url = 'http://www.kinetica.com',
-    download_url = 'https://github.com/kineticadb/kinetica-api-python/archive/6.1.0.tar.gz'
+    download_url = 'https://github.com/kineticadb/kinetica-api-python/archive/v6.1.0.tar.gz'
     # download_url = 'https://github.com/kineticadb/kinetica-api-python'
 )
