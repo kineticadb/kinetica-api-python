@@ -94,17 +94,22 @@ def strftime(dt, fmt):
 # global variable needed for multiprocessing
 gpudb_ingestor = None
 
+
+
 def test_gpudb_ingestor():
+    """Tries to stress out Kinetica's multi-head ingestion mode.  Tests
+       all possible sharding under the sun.
+    """
     global gpudb_ingestor
 
     gpudb = GPUdb( encoding='BINARY', host = '127.0.0.1', port = '9191' )
 
-    table_name = "test_ingest_table"
+    table_name = "test_ingest_table2"
 
     # Clear table if exists
-    gpudb.clear_table( table_name )
+    gpudb.clear_table( table_name, options = {"no_error_if_not_exists": "true"} )
 
-    # The table type/schema
+    # The table type/schema-- want all possibly type/properties to be sharded and nullable
     _type = [ ["i1",          "int"                                       ],
               ["i2",          "int", "shard_key", "nullable"              ],
               ["i8",          "int", "shard_key", "nullable", "int8"      ],
@@ -135,7 +140,8 @@ def test_gpudb_ingestor():
     record_type = table.get_table_type()
 
 
-    # Instantiate a gpudb ingestor object
+    # Instantiate a gpudb ingestor object; pay attention to the batch size.
+    # Realistic cases would have higher batch sizes.
     ingestor_batch_size = 200
     options = {}
     workers = GPUdbWorkerList( gpudb )
@@ -143,18 +149,16 @@ def test_gpudb_ingestor():
     gpudb_ingestor = GPUdbIngestor( gpudb, table_name, record_type, ingestor_batch_size, options, workers )
 
     # Generate records to insert
-    # num_batches =    1
-    # batch_size  = 2000
-    # num_pools   =    1
-    # num_pool_batches = 1
-    num_batches =    5
-    batch_size  = 1000
-    num_pools   =    5
-    num_pool_batches = 10
+    num_batches      =    5  # Passed to generate_and_insert_data()
+    batch_size       = 1000  # Passed to generate_and_insert_data()
+    num_pools        =    5  # Number of threads spawned in a single Pool call
+    num_pool_batches =   10  # Number of times Pool is invoked
 
-    # generate_and_insert_data( [batch_size, num_batches] ) # debug~~~~~~
-
-    # Generate and insert data parallelly in a pool of 5
+    # # In case someone wants to call the function directly
+    # generate_and_insert_data( [batch_size, num_batches] ) # debug~~~~~~~~~~~~
+    
+    # Generate and insert data parallelly; total number of processes
+    # spawned: (num_pools * num_pool_batches)
     for i in range(0, num_pool_batches):
         pool = Pool( processes = num_pools )
         results = pool.map_async( generate_and_insert_data, [[batch_size, num_batches]] * num_pools)
@@ -163,12 +167,10 @@ def test_gpudb_ingestor():
         pool.join()
     # end multithreaded data generation and insertion
 
-
-
-    # Flush the ingestor
-    # NOTE: Was not seeing any record in the queues due to python's
-    # multithreading issues... need to flush from the function below
-    gpudb_ingestor.flush()
+    # # Flush the ingestor
+    # # NOTE: Was not seeing any record in the queues due to python's
+    # # multithreading issues... need to flush from the function below
+    # gpudb_ingestor.flush()
 
     num_records = num_batches * batch_size * num_pools * num_pool_batches
     print ()
@@ -195,8 +197,12 @@ def generate_and_insert_data( inputs ):
     null_percentage = 0.1
     alphanum = (string.ascii_letters + string.digits)
 
+    # Nested loop
+    # Outer loop controls how many batches of records are added to the ingestor
     for i in range(0, num_batches):
         print ("thread {_id:>5} outer loop: {i:>5}".format( _id = my_id, i = i ))
+        records = []
+        # Inner loop generated records for this batch
         for j in range(0, batch_size):
             _i_plus_j = (i + j)
             record = collections.OrderedDict()
@@ -256,12 +262,17 @@ def generate_and_insert_data( inputs ):
             record[ "c256"] = None if (random.random() < null_percentage) \
                               else ''.join( [random.choice( alphanum ) for n in range( 0, random.randint( 0, 256 ) )] )
 
-            # Add the record to the ingestor
-            gpudb_ingestor.insert_record( record )
+            # Add the record to the list of records
+            records.append( record )
         # end for loop
+
+        # Add the records to the ingestor
+        gpudb_ingestor.insert_records( records )
     # end generating data
 
 
+    # Need to flush here since the gpudb_ingestor of the parent
+    # thread won't get this child thread's state
     gpudb_ingestor.flush()
 # end generate_and_insert_data
 

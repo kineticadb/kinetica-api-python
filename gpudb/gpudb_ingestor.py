@@ -419,7 +419,7 @@ class _RecordKey:
         def add_charN( self, val, N ):
             """Add a charN string to the buffer (can be null)--N bytes.
             """
-            if (len( val ) > N):
+            if (val and (len( val ) > N)): # not a null and too long
                 raise GPUdbException( "Char{N} given too long a value: {val}"
                                       "".format( N = N, val = val ) )
             # charN is N bytes long
@@ -454,7 +454,7 @@ class _RecordKey:
         def add_charN( self, val, N ):
             """Add a charN string to the buffer (can be null)--N bytes.
             """
-            if (len( val ) > N):
+            if (val and (len( val ) > N)): # not a null and too long
                 raise GPUdbException( "Char{N} given too long a value: {val}"
                                       "".format( N = N, val = val ) )
             
