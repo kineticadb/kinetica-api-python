@@ -17,11 +17,11 @@ def package_files(directory):
         if os.path.normpath(path) == directory :
             continue
 
-        if (sys.version_info.major >= 3) and ("avro_py2" in path):
-            continue
+        # if (sys.version_info.major >= 3) and ("avro_py2" in path):
+        #     continue
 
-        if (sys.version_info.major == 2) and ("avro_py3" in path):
-            continue
+        # if (sys.version_info.major == 2) and ("avro_py3" in path):
+        #     continue
 
         for filename in filenames:
             file_basename, file_extension = os.path.splitext(filename)
