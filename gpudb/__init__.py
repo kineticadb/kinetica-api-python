@@ -12,6 +12,8 @@ if (sys.version_info.major == 3):
     from gpudb.gpudb import GPUdbTableIterator
     from gpudb.gpudb import GPUdbTableOptions
 
+    from gpudb.gpudb import AttrDict
+
     from gpudb.gpudb_ingestor import GPUdbWorkerList, GPUdbIngestor, InsertionException
 
     from gpudb.gpudb import collections
@@ -25,6 +27,8 @@ else:
     from gpudb import GPUdbTable
     from gpudb import GPUdbTableIterator
     from gpudb import GPUdbTableOptions
+
+    from gpudb import AttrDict
 
     from gpudb_ingestor import GPUdbWorkerList, GPUdbIngestor, InsertionException
 
