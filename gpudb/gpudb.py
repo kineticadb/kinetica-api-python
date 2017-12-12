@@ -30,7 +30,7 @@ import uuid
 from collections import Iterator
 from decimal import Decimal
 
-if sys.version_info.major >= 3:
+if sys.version_info[0] >= 3: # checking the major component
     long = int
     basestring = str
     class unicode:
@@ -200,11 +200,11 @@ class _Util(object):
                  or isinstance( arg, collections.OrderedDict ) )
     # end is_list_or_dict
 
-    if sys.version_info.major >= 3:
+    if sys.version_info[0] >= 3: # checking the major component
         # Declaring the python 3 version of this static method
         @staticmethod
         def str_to_bytes(value):
-            if sys.version_info.major <= 2:
+            if sys.version_info[0] <= 2: # checking the major component
                 data = bytes()
                 for c in value:
                     data += chr(ord(c))
@@ -998,10 +998,11 @@ class GPUdbRecordType(object):
     def __eq__( self, other ):
         if isinstance(other, self.__class__):
             # Match all but the column properties (which need special treatment)
-            lhs_ = { k:v for k,v in self.__dict__.items() \
-                     if (k != "_column_properties")}
-            rhs_ = { k:v for k,v in other.__dict__.items() \
-                     if (k != "_column_properties")}
+            # (must use the dict constructor to support python 2.6)
+            lhs_ = dict( [ (k, v) for (k, v) in self.__dict__.items() \
+                     if (k != "_column_properties") ] )
+            rhs_ = dict( [ (k, v) for (k, v) in other.__dict__.items() \
+                     if (k != "_column_properties") ] )
             if (lhs_ != rhs_): # some mismatch
                 return False
 
@@ -1503,7 +1504,7 @@ class GPUdb(object):
         # Set up the credentials to be used per POST
         self.auth = None
         if len(self.username) != 0:
-            if sys.version_info.major >= 3: # Python 3.x
+            if sys.version_info[0] >= 3: # Python 3.x
                 # base64 encode the username and password
                 self.auth = ('%s:%s' % (self.username, self.password) )
                 self.auth = _Util.str_to_bytes( self.auth )
@@ -1711,7 +1712,7 @@ class GPUdb(object):
                     resp_data = resp.read()
                     resp_time = resp.getheader('x-request-time-secs',None)
                 except: # some error occurred; return a message
-                    loop_error = GPUdbException( "Timeout Error: No response received from %s" % conn_token._host )
+                    loop_error = GPUdbException( "Timeout Error: No response received from %s:%s" % (conn_token._host, conn_token._port) )
                 # end except
 
             if loop_error:
@@ -1722,11 +1723,7 @@ class GPUdb(object):
             cond = error and (self._current_conn_token_index != initial_index)
 
         if error:
-            if type(error) is Exception:
-                raise error
-            else:
-                print(error)
-                raise
+            raise error
 
         return  resp_data, resp_time
     # end __post_to_gpudb_read
@@ -2875,7 +2872,7 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
         name = "visualize_image_classbreak"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"cb_column_name1","type":"string"},{"name":"cb_vals1","type":{"type":"array","items":"string"}},{"name":"cb_column_name2","type":{"type":"array","items":"string"}},{"name":"cb_vals2","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"cb_column_name","type":"string"},{"name":"cb_vals","type":{"type":"array","items":"string"}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"}]}"""
         ENDPOINT = "/visualize/image/classbreak"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -3155,6 +3152,14 @@ class GPUdb(object):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **flush_to_disk** --
+                  Flush to disk when going offline
+                  Allowed values are:
+
+                  * true
+                  * false
 
         Returns:
             A dict with the following entries--
@@ -3625,10 +3630,9 @@ class GPUdb(object):
 
                   * **collection_name** --
                     Name of a collection which is to contain the table
-                    specified in *result_table*, otherwise the table will be a
-                    top-level table. If the collection does not allow duplicate
-                    types and it contains a table of the same type as the given
-                    one, then this table creation request will fail.
+                    specified in *result_table*. If the collection provided is
+                    non-existent, the collection will be automatically created.
+                    If empty, then the table will be a top-level table.
                     Additionally this option is invalid if input parameter
                     *table_name* is a collection.
 
@@ -3685,12 +3689,11 @@ class GPUdb(object):
                     is an unrestricted string (i.e.; not charN) type.
 
                   * **result_table_persist** --
-                    If *true* then the result table specified in *result_table*
-                    will be persisted as a regular table (it will not be
-                    automatically cleared unless a *ttl* is provided, and the
-                    table data can be modified in subsequent operations). If
-                    *false* (the default) then the result table will be a
-                    read-only, memory-only temporary table.
+                    If *true*, then the result table specified in
+                    *result_table* will be persisted and will not expire unless
+                    a *ttl* is specified.   If *false*, then the result table
+                    will be an in-memory table and will expire unless a *ttl*
+                    is specified otherwise.
                     Allowed values are:
 
                     * true
@@ -3708,13 +3711,23 @@ class GPUdb(object):
                     be used in combination with the *result_table* option.
 
                   * **ttl** --
-                    Sets the TTL of the table specified in *result_table*. The
-                    value must be the desired TTL in minutes.
+                    Sets the `TTL <../../../concepts/ttl.html>`_ of the table
+                    specified in *result_table*.
 
                   * **chunk_size** --
-                    If provided this indicates the chunk size to be used for
-                    the result table. Must be used in combination with the
+                    Indicates the chunk size to be used for the result table.
+                    Must be used in combination with the *result_table* option.
+
+                  * **materialize_on_gpu** --
+                    If *true* then the columns of the groupby result table will
+                    be cached on the GPU. Must be used in combination with the
                     *result_table* option.
+                    Allowed values are:
+
+                    * true
+                    * false
+
+                    The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -4368,10 +4381,11 @@ class GPUdb(object):
 
                   * **collection_name** --
                     Name of a collection which is to contain the table
-                    specified in 'result_table', otherwise the table will be a
-                    top-level table. If the collection does not allow duplicate
-                    types and it contains a table of the same type as the given
-                    one, then this table creation request will fail.
+                    specified in *result_table*. If the collection provided is
+                    non-existent, the collection will be automatically created.
+                    If empty, then the table will be a top-level table.
+                    Additionally this option is invalid if input parameter
+                    *table_name* is a collection.
 
                   * **expression** --
                     Optional filter expression to apply to the table.
@@ -4392,12 +4406,11 @@ class GPUdb(object):
                     <../../../concepts/tables.html>`_.
 
                   * **result_table_persist** --
-                    If *true* then the result table specified in *result_table*
-                    will be persisted as a regular table (it will not be
-                    automatically cleared unless a *ttl* is provided, and the
-                    table data can be modified in subsequent operations). If
-                    *false* (the default) then the result table will be a
-                    read-only, memory-only temporary table.
+                    If *true*, then the result table specified in
+                    *result_table* will be persisted and will not expire unless
+                    a *ttl* is specified.   If *false*, then the result table
+                    will be an in-memory table and will expire unless a *ttl*
+                    is specified otherwise.
                     Allowed values are:
 
                     * true
@@ -4408,20 +4421,19 @@ class GPUdb(object):
                   * **result_table_force_replicated** --
                     Force the result table to be replicated (ignores any
                     sharding). Must be used in combination with the
-                    'result_table' option.
+                    *result_table* option.
 
                   * **result_table_generate_pk** --
                     If 'true' then set a primary key for the result table. Must
-                    be used in combination with the 'result_table' option.
+                    be used in combination with the *result_table* option.
 
                   * **ttl** --
-                    Sets the TTL of the table specified in 'result_table'. The
-                    value must be the desired TTL in minutes.
+                    Sets the `TTL <../../../concepts/ttl.html>`_ of the table
+                    specified in *result_table*.
 
                   * **chunk_size** --
-                    If provided this indicates the chunk size to be used for
-                    the result table. Must be used in combination with the
-                    *result_table* option.
+                    Indicates the chunk size to be used for the result table.
+                    Must be used in combination with the *result_table* option.
 
         Returns:
             A dict with the following entries--
@@ -4518,12 +4530,9 @@ class GPUdb(object):
 
                   * **collection_name** --
                     Name of a collection which is to contain the table
-                    specified in *result_table*, otherwise the table will be a
-                    top-level table. If the collection does not allow duplicate
-                    types and it contains a table of the same type as the given
-                    one, then this table creation request will fail.
-                    Additionally this option is invalid if input parameter
-                    *table_name* is a collection.
+                    specified in *result_table*. If the collection provided is
+                    non-existent, the collection will be automatically created.
+                    If empty, then the table will be a top-level table.
 
                   * **result_table** --
                     The name of the table used to store the results. Has the
@@ -4532,13 +4541,11 @@ class GPUdb(object):
                     are returned in the response.
 
                   * **result_table_persist** --
-                    If *true* then the result table specified in
-                    {result_table}@{key of input.options} will be persisted as
-                    a regular table (it will not be automatically cleared
-                    unless a *ttl* is provided, and the table data can be
-                    modified in subsequent operations). If *false* (the
-                    default) then the result table will be a read-only,
-                    memory-only temporary table.
+                    If *true*, then the result table specified in
+                    *result_table* will be persisted and will not expire unless
+                    a *ttl* is specified.   If *false*, then the result table
+                    will be an in-memory table and will expire unless a *ttl*
+                    is specified otherwise.
                     Allowed values are:
 
                     * true
@@ -4558,16 +4565,15 @@ class GPUdb(object):
                     original column name.
 
                   * **chunk_size** --
-                    If provided this indicates the chunk size to be used for
-                    the result table. Must be used in combination with the
-                    *result_table* option.
+                    Indicates the chunk size to be used for the result table.
+                    Must be used in combination with the *result_table* option.
 
                   * **limit** --
                     The number of records to keep.
 
                   * **ttl** --
-                    Sets the TTL of the table specified in *result_table*. The
-                    value must be the desired TTL in minutes.
+                    Sets the `TTL <../../../concepts/ttl.html>`_ of the table
+                    specified in *result_table*.
 
         Returns:
             A dict with the following entries--
@@ -4760,34 +4766,37 @@ class GPUdb(object):
         available
         modifications include the following:
 
-        Create or delete an index on a particular column. This can speed up
-        certain search queries
-        (such as :meth:`.get_records`, :meth:`.delete_records`,
-        :meth:`.update_records`)
-        when using expressions containing equality or relational operators on
-        indexed columns. This
-        only applies to tables.
+        Create or delete an `index
+        <../../../concepts/indexes.html#column-index>`_ on a
+        particular column. This can speed up certain operations when using
+        expressions
+        containing equality or relational operators on indexed columns. This
+        only
+        applies to tables.
 
-        Set the time-to-live (TTL). This can be applied to tables, views, or
-        collections.  When
-        applied to collections, every table & view within the collection will
-        have its TTL set to the
-        given value.
+        Set the `time-to-live (TTL) <../../../concepts/ttl.html>`_. This can be
+        applied
+        to tables, views, or collections.  When applied to collections, every
+        contained
+        table & view that is not protected will have its TTL set to the given
+        value.
 
         Set the global access mode (i.e. locking) for a table. The mode can be
-        set to 'no-access', 'read-only',
-        'write-only' or 'read-write'.
+        set to
+        'no_access', 'read_only', 'write_only' or 'read_write'.
 
-        Make a table protected or not. Protected tables have their TTLs set to
-        not automatically
-        expire. This can be applied to tables, views, and collections.
+        Change the `protection <../../../concepts/protection.html>`_ mode to
+        prevent or
+        allow automatic expiration. This can be applied to tables, views, and
+        collections.
 
         Allow homogeneous tables within a collection.
 
         Manage a table's columns--a column can be added, removed, or have its
         `type and properties <../../../concepts/types.html>`_ modified.
 
-        Set or unset compression for a column.
+        Set or unset `compression <../../../concepts/compression.html>`_ for a
+        column.
 
         Parameters:
 
@@ -4806,69 +4815,75 @@ class GPUdb(object):
                   must be either 'true' or 'false'.
 
                 * **create_index** --
-                  Creates an index on the column name specified in input
-                  parameter *value*. If this column is already indexed, an
-                  error will be returned.
+                  Creates an `index
+                  <../../../concepts/indexes.html#column-index>`_ on the column
+                  name specified in input parameter *value*. If this column is
+                  already indexed, an error will be returned.
 
                 * **delete_index** --
-                  Deletes an existing index on the column name specified in
-                  input parameter *value*. If this column does not have
-                  indexing turned on, an error will be returned.
+                  Deletes an existing `index
+                  <../../../concepts/indexes.html#column-index>`_ on the column
+                  name specified in input parameter *value*. If this column
+                  does not have indexing turned on, an error will be returned.
 
                 * **move_to_collection** --
-                  Move a table into a collection input parameter *value*.
+                  Moves a table into a collection input parameter *value*.
 
                 * **protected** --
                   Sets whether the given input parameter *table_name* should be
-                  protected or not. The input parameter *value* must be either
-                  'true' or 'false'.
+                  `protected <../../../concepts/protection.html>`_ or not. The
+                  input parameter *value* must be either 'true' or 'false'.
 
                 * **rename_table** --
-                  Rename a table, view or collection to input parameter
+                  Renames a table, view or collection to input parameter
                   *value*. Has the same naming restrictions as `tables
                   <../../../concepts/tables.html>`_.
 
                 * **ttl** --
-                  Sets the TTL of the table, view, or collection specified in
-                  input parameter *table_name*. The input parameter *value*
-                  must be the desired TTL in minutes.
+                  Sets the `TTL <../../../concepts/ttl.html>`_ of the table,
+                  view, or collection specified in input parameter
+                  *table_name*.
 
                 * **add_column** --
-                  Add the column specified in input parameter *value* to the
+                  Adds the column specified in input parameter *value* to the
                   table specified in input parameter *table_name*.  Use
                   *column_type* and *column_properties* in input parameter
                   *options* to set the column's type and properties,
                   respectively.
 
                 * **change_column** --
-                  Change type and properties of the column specified in input
+                  Changes type and properties of the column specified in input
                   parameter *value*.  Use *column_type* and *column_properties*
                   in input parameter *options* to set the column's type and
                   properties, respectively.
 
                 * **set_column_compression** --
-                  Modify the compression setting on the column specified in
-                  input parameter *value*.
+                  Modifies the `compression
+                  <../../../concepts/compression.html>`_ setting on the column
+                  specified in input parameter *value*.
 
                 * **delete_column** --
-                  Delete the column specified in input parameter *value* from
+                  Deletes the column specified in input parameter *value* from
                   the table specified in input parameter *table_name*.
 
                 * **create_foreign_key** --
-                  Create a foreign key using the format 'source_column
-                  references target_table(primary_key_column) [ as
-                  <foreign_key_name> ]'.
+                  Creates a `foreign key
+                  <../../../concepts/tables.html#foreign-key>`_ using the
+                  format 'source_column references
+                  target_table(primary_key_column) [ as <foreign_key_name> ]'.
 
                 * **delete_foreign_key** --
-                  Delete a foreign key.  The input parameter *value* should be
-                  the <foreign_key_name> or the string used to define the
-                  foreign key.
+                  Deletes a `foreign key
+                  <../../../concepts/tables.html#foreign-key>`_.  The input
+                  parameter *value* should be the <foreign_key_name> specified
+                  when creating the key or the complete string used to define
+                  it.
 
                 * **set_global_access_mode** --
-                  Set the global access mode (i.e. locking) for the table
+                  Sets the global access mode (i.e. locking) for the table
                   specified in input parameter *table_name*. Specify the access
-                  mode in input parameter *value*. Valid modes are 'no-access',
-                  'read-only', 'write-only' and 'read-write'.
+                  mode in input parameter *value*. Valid modes are 'no_access',
+                  'read_only', 'write_only' and 'read_write'.
 
             value (str)
                   The value of the modification. May be a column name, 'true'
@@ -5116,7 +5131,6 @@ class GPUdb(object):
                   to be returned from source table (specified by input
                   parameter *source_table_name*). Or END_OF_SET (-9999) to
                   indicate that the max number of results should be returned.
-                  Default value is END_OF_SET (-9999).
 
                 * **expression** --
                   Optional filter expression to apply to the source table
@@ -5309,7 +5323,7 @@ class GPUdb(object):
 
             table_names (list of str)
                 The list of table names composing the join.  Corresponds to a
-                SQL statement FROM clause  The user can provide a single
+                SQL statement FROM clause.  The user can provide a single
                 element (which will be automatically promoted to a list
                 internally) or a list.  Default value is an empty list ( [] ).
 
@@ -5408,9 +5422,8 @@ class GPUdb(object):
                     The default value is 'no_refresh'.
 
                 * **ttl** --
-                  Sets the TTL of the table specified in input parameter
-                  *join_table_name*. The value must be the desired TTL in
-                  minutes.
+                  Sets the `TTL <../../../concepts/ttl.html>`_ of the join
+                  table specified in input parameter *join_table_name*.
 
         Returns:
             A dict with the following entries--
@@ -5586,7 +5599,8 @@ class GPUdb(object):
                   Name of a `collection <../../../concepts/collections.html>`_
                   to which the projection is to be assigned as a child. If the
                   collection provided is non-existent, the collection will be
-                  automatically created.
+                  automatically created. If empty, then the projection will be
+                  at the top level.
 
                 * **expression** --
                   An optional filter `expression
@@ -5614,13 +5628,11 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **chunk_size** --
-                  If provided this indicates the chunk size to be used for this
-                  table.
+                  Indicates the chunk size to be used for this table.
 
                 * **ttl** --
-                  Sets the TTL of the table, view, or collection specified in
-                  input parameter *projection_name*. The value must be the
-                  desired TTL in minutes.
+                  Sets the `TTL <../../../concepts/ttl.html>`_ of the
+                  projection specified in input parameter *projection_name*.
 
                 * **shard_key** --
                   Comma-separated list of the columns to be sharded on; e.g.
@@ -5630,11 +5642,11 @@ class GPUdb(object):
                   original column name.
 
                 * **persist** --
-                  If *true* then the projection will be persisted as a regular
-                  table (it will not be automatically cleared unless a *ttl* is
-                  provided, and the table data can be modified in subsequent
-                  operations). If *false* then the projection will be a
-                  read-only, memory-only temporary table.
+                  If *true*, then the projection specified in input parameter
+                  *projection_name* will be persisted and will not expire
+                  unless a *ttl* is specified.   If *false*, then the
+                  projection will be an in-memory table and will expire unless
+                  a *ttl* is specified otherwise.
                   Allowed values are:
 
                   * true
@@ -5741,10 +5753,9 @@ class GPUdb(object):
 
                 * **collection_name** --
                   Name of a collection which is to contain the newly created
-                  table. If empty, then the newly created table will be a
-                  top-level table. If the collection does not allow duplicate
-                  types and it contains a table of the same type as the given
-                  one, then this table creation request will fail.
+                  table. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created table will be a top-level table.
 
                 * **is_collection** --
                   Indicates whether the new table to be created will be a
@@ -5767,9 +5778,17 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **is_replicated** --
-                  For a table, indicates whether the table is to be replicated
-                  to all the database ranks. This may be necessary when the
-                  table is to be joined with other tables in a query.
+                  For a table, indicates the `distribution scheme
+                  <../../../concepts/tables.html#distribution>`_ for the
+                  table's data.  If true, the table will be `replicated
+                  <../../../concepts/tables.html#replication>`_.  If false, the
+                  table will be `sharded
+                  <../../../concepts/tables.html#sharding>`_ according to the
+                  `shard key <../../../concepts/tables.html#shard-keys>`_
+                  specified in the given input parameter *type_id*, or
+                  `randomly sharded
+                  <../../../concepts/tables.html#random-sharding>`_, if no
+                  shard key is specified.
                   Allowed values are:
 
                   * true
@@ -5778,7 +5797,8 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **foreign_keys** --
-                  Semicolon-separated list of foreign keys, of the format
+                  Semicolon-separated list of `foreign keys
+                  <../../../concepts/tables.html#foreign-keys>`_, of the format
                   'source_column references target_table(primary_key_column) [
                   as <foreign_key_name> ]'.
 
@@ -5787,22 +5807,17 @@ class GPUdb(object):
                   shard_by_column from target_table(primary_key_column)'
 
                 * **ttl** --
-                  Sets the TTL of the table or collection specified in input
-                  parameter *table_name*. The value must be the desired TTL in
-                  minutes.
+                  For a table, sets the `TTL <../../../concepts/ttl.html>`_ of
+                  the table specified in input parameter *table_name*.
 
                 * **chunk_size** --
-                  If provided this indicates the chunk size to be used for this
-                  table.
+                  Indicates the chunk size to be used for this table.
 
                 * **is_result_table** --
-                  For a table, indicates whether the table is a non-persistent,
-                  memory-only table that will store the output of a proc
-                  executed with :meth:`.execute_proc`. A result table cannot
-                  contain store_only, text_search, or string columns (char
-                  columns are acceptable), records cannot be inserted into it
-                  directly, and it will not be retained if the server is
-                  restarted.
+                  For a table, indicates whether the table is an in-memory
+                  table. A result table cannot contain store_only, text_search,
+                  or string columns (charN columns are acceptable), and it will
+                  not be retained if the server is restarted.
                   Allowed values are:
 
                   * true
@@ -6139,7 +6154,7 @@ class GPUdb(object):
                       options = {} ):
         """Performs a `union <../../../concepts/unions.html>`_ (concatenation) of
         one or more existing tables or views, the results of which are stored
-        in a new view. It is equivalent to the SQL UNION ALL operator.
+        in a new table. It is equivalent to the SQL UNION ALL operator.
         Non-charN 'string' and 'bytes' column types cannot be included in a
         union, neither can columns with the property 'store_only'. Though not
         explicitly unions, `intersect <../../../concepts/intersect.html>`_ and
@@ -6214,7 +6229,10 @@ class GPUdb(object):
 
                   * **merge_views** --
                     Merge two or more views (or views of views) of the same
-                    base data set into a new view. The resulting view would
+                    base data set into a new view. If this mode is selected
+                                                          input parameter
+                    *input_column_names* AND input parameter
+                    *output_column_names* are ignored The resulting view would
                     match the results of a SQL OR operation, e.g., if filter 1
                     creates a view using the expression 'x = 10' and filter 2
                     creates a view using the expression 'x <= 10', then the
@@ -6224,19 +6242,18 @@ class GPUdb(object):
                     The default value is 'union_all'.
 
                 * **chunk_size** --
-                  If provided this indicates the chunk size to be used for this
-                  table.
+                  Indicates the chunk size to be used for this table.
 
                 * **ttl** --
-                  Sets the TTL of the table specified in input parameter
-                  *table_name*. The value must be the desired TTL in minutes.
+                  Sets the `TTL <../../../concepts/ttl.html>`_ of the table
+                  specified in input parameter *table_name*.
 
                 * **persist** --
-                  If *true* then the union will be persisted as a regular table
-                  (it will not be automatically cleared unless a *ttl* is
-                  provided, and the table data can be modified in subsequent
-                  operations). If *false* (the default) then the union will be
-                  a read-only, memory-only temporary table.
+                  If *true*, then the union specified in input parameter
+                  *table_name* will be persisted and will not expire unless a
+                  *ttl* is specified.   If *false*, then the union will be an
+                  in-memory table and will expire unless a *ttl* is specified
+                  otherwise.
                   Allowed values are:
 
                   * true
@@ -6647,14 +6664,13 @@ class GPUdb(object):
 
                 * **collection_name** --
                   Name of a collection which is to contain the newly created
-                  view, otherwise the view will be a top-level table. If the
-                  collection does not allow duplicate types and it contains a
-                  table of the same type as the given one, then this table
-                  creation request will fail.
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
                 * **ttl** --
-                  Sets the TTL of the view specified in input parameter
-                  *view_name*. The value must be the desired TTL in minutes.
+                  Sets the `TTL <../../../concepts/ttl.html>`_ of the view
+                  specified in input parameter *view_name*.
 
         Returns:
             A dict with the following entries--
@@ -7854,7 +7870,7 @@ class GPUdb(object):
 
             records_binary (list of str)
                 If the input parameter *encoding* was 'binary', then this list
-                contains the JSON encoded records retrieved from the set,
+                contains the binary encoded records retrieved from the set,
                 otherwise not populated.
 
             records_json (list of str)
@@ -7891,19 +7907,16 @@ class GPUdb(object):
     def get_records_by_column( self, table_name = None, column_names = None, offset
                                = None, limit = None, encoding = 'binary',
                                options = {} ):
-        """For a given table, retrieves the values of the given columns within a
-        given range. It returns maps of column name to the vector of values for
-        each supported data type (double, float, long, int and string). This
-        operation supports pagination feature, i.e. values that are retrieved
-        are those associated with the indices between the start (offset) and
-        end value (offset + limit) parameters (inclusive). If there are
-        num_points values in the table then each of the indices between 0 and
-        num_points-1 retrieves a unique value.
+        """For a given table, retrieves the values from the requested column(s).
+        Maps of column name to the array of values as well as the column data
+        type are returned. This endpoint supports pagination with the input
+        parameter *offset* and input parameter *limit* parameters.
 
-        Note that when using the pagination feature, if the table (or the
-        underlying table in case of a view) is updated (records are inserted,
-        deleted or modified) the records or values retrieved may differ between
-        calls (discontiguous or overlap) based on the type of the update.
+        When using pagination, if the table (or the underlying table in the
+        case of a view) is modified (records are inserted, updated, or deleted)
+        during a call to the endpoint, the records or values retrieved may
+        differ between calls based on the type of the update, e.g., the
+        contiguity across pages cannot be relied upon.
 
         The response is returned as a dynamic schema. For details see: `dynamic
         schemas documentation <../../../concepts/dynamic_schemas.html>`_.
@@ -8742,8 +8755,9 @@ class GPUdb(object):
                     default.
 
                 * **attr_name** --
-                  Set the following parameters for the column specified by the
-                  key. This overrides any parameter set by *all*.
+                  Use the desired column name in place of *attr_name*, and set
+                  the following parameters for the column specified. This
+                  overrides any parameter set by *all*.
                   Allowed keys are:
 
                   * **min** --
@@ -8964,11 +8978,11 @@ class GPUdb(object):
     # begin lock_table
     def lock_table( self, table_name = None, lock_type = 'status', options = {} ):
         """Manages global access to a table's data.  By default a table has a
-        input parameter *lock_type* of *read-write*, indicating all operations
-        are permitted.  A user may request a *read-only* or a *write-only*
+        input parameter *lock_type* of *read_write*, indicating all operations
+        are permitted.  A user may request a *read_only* or a *write_only*
         lock, after which only read or write operations, respectively, are
         permitted on the table until the lock is removed.  When input parameter
-        *lock_type* is *no-access* then no operations are permitted on the
+        *lock_type* is *no_access* then no operations are permitted on the
         table.  The lock status can be queried by setting input parameter
         *lock_type* to *status*.
 
@@ -8987,16 +9001,16 @@ class GPUdb(object):
                 * **status** --
                   Show locked status
 
-                * **no-access** --
+                * **no_access** --
                   Allow no read/write operations
 
-                * **read-only** --
+                * **read_only** --
                   Allow only read operations
 
-                * **write-only** --
+                * **write_only** --
                   Allow only write operations
 
-                * **read-write** --
+                * **read_write** --
                   Allow all read/write operations
 
                   The default value is 'status'.
@@ -9033,7 +9047,12 @@ class GPUdb(object):
         input parameter *source_table_names*) based on the field mapping
         information (specified by input parameter *field_maps*). The field map
         (specified by input parameter *field_maps*) holds the user specified
-        maps of target table column names to source table columns.
+        maps of target table column names to source table columns. The array of
+        input parameter *field_maps* must match one-to-one with the input
+        parameter *source_table_names*, e.g., there's a map present in input
+        parameter *field_maps* for each table listed in input parameter
+        *source_table_names*. Read more about Merge Records `here
+        <../../../concepts/merge_records.html>`_.
 
         Parameters:
 
@@ -9048,14 +9067,16 @@ class GPUdb(object):
                 a list.
 
             field_maps (list of dicts of str to str)
-                Contains the mapping of column names from result table
-                (specified by input parameter *table_name*) as the keys, and
-                corresponding column names from a table from source tables
-                (specified by input parameter *source_table_names*). Must be
-                existing column names in source table and target table, and
-                their types must be matched.  The user can provide a single
-                element (which will be automatically promoted to a list
-                internally) or a list.
+                Contains a list of source/target column mappings, one mapping
+                for each source table listed in input parameter
+                *source_table_names* being merged into the target table
+                specified by input parameter *table_name*.  Each mapping
+                contains the target column names (as keys) that the data in the
+                mapped source columns (as values) will be merged into.  All of
+                the source columns being merged into a given target column must
+                match in type, as that type will determine the type of the new
+                target column.  The user can provide a single element (which
+                will be automatically promoted to a list internally) or a list.
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
@@ -9063,17 +9084,19 @@ class GPUdb(object):
 
                 * **collection_name** --
                   Name of a collection which is to contain the newly created
-                  merged table (specified by input parameter *table_name*). If
-                  empty, then the newly created merged table will be a
-                  top-level table. If the collection does not allow duplicate
-                  types and it contains a table of the same type as the given
-                  one, then this table creation request will fail.
+                  merged table specified by input parameter *table_name*. If
+                  the collection provided is non-existent, the collection will
+                  be automatically created. If empty, then the newly created
+                  merged table will be a top-level table.
 
                 * **is_replicated** --
-                  For a merged table (specified by input parameter
-                  *table_name*), indicates whether the table is to be
-                  replicated to all the database ranks. This may be necessary
-                  when the table is to be joined with other tables in a query.
+                  Indicates the `distribution scheme
+                  <../../../concepts/tables.html#distribution>`_ for the data
+                  of the merged table specified in input parameter
+                  *table_name*.  If true, the table will be `replicated
+                  <../../../concepts/tables.html#replication>`_.  If false, the
+                  table will be `randomly sharded
+                  <../../../concepts/tables.html#random-sharding>`_.
                   Allowed values are:
 
                   * true
@@ -9082,13 +9105,12 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **ttl** --
-                  Sets the TTL of the merged table or collection (specified by
-                  input parameter *table_name*). The value must be the desired
-                  TTL in minutes.
+                  Sets the `TTL <../../../concepts/ttl.html>`_ of the merged
+                  table specified in input parameter *table_name*.
 
                 * **chunk_size** --
-                  If provided this indicates the chunk size to be used for the
-                  merged table.
+                  Indicates the chunk size to be used for the merged table
+                  specified in input parameter *table_name*.
 
         Returns:
             A dict with the following entries--
@@ -9639,8 +9661,7 @@ class GPUdb(object):
         For a collection, setting the *show_children* option to *false* returns
         only information about the collection itself; setting *show_children*
         to *true* returns a list of tables and views contained in the
-        collection, along with their description, type id, schema, type label,
-        type properties, and additional information including TTL.
+        collection, along with their corresponding detail.
 
         Parameters:
 
@@ -10462,8 +10483,7 @@ class GPUdb(object):
     def visualize_image_classbreak( self, table_names = None, world_table_names =
                                     None, x_column_name = None, y_column_name =
                                     None, geometry_column_name = None, track_ids
-                                    = None, cb_column_name1 = None, cb_vals1 =
-                                    None, cb_column_name2 = None, cb_vals2 =
+                                    = None, cb_column_name = None, cb_vals =
                                     None, min_x = None, max_x = None, min_y =
                                     None, max_y = None, width = None, height =
                                     None, projection = 'PLATE_CARREE', bg_color
@@ -10476,10 +10496,8 @@ class GPUdb(object):
         assert isinstance( y_column_name, (basestring)), "visualize_image_classbreak(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
         assert isinstance( geometry_column_name, (basestring)), "visualize_image_classbreak(): Argument 'geometry_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( geometry_column_name ).__name__
         track_ids = track_ids if isinstance( track_ids, list ) else ( [] if (track_ids is None) else [ track_ids ] )
-        assert isinstance( cb_column_name1, (basestring)), "visualize_image_classbreak(): Argument 'cb_column_name1' must be (one) of type(s) '(basestring)'; given %s" % type( cb_column_name1 ).__name__
-        cb_vals1 = cb_vals1 if isinstance( cb_vals1, list ) else ( [] if (cb_vals1 is None) else [ cb_vals1 ] )
-        cb_column_name2 = cb_column_name2 if isinstance( cb_column_name2, list ) else ( [] if (cb_column_name2 is None) else [ cb_column_name2 ] )
-        cb_vals2 = cb_vals2 if isinstance( cb_vals2, list ) else ( [] if (cb_vals2 is None) else [ cb_vals2 ] )
+        assert isinstance( cb_column_name, (basestring)), "visualize_image_classbreak(): Argument 'cb_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( cb_column_name ).__name__
+        cb_vals = cb_vals if isinstance( cb_vals, list ) else ( [] if (cb_vals is None) else [ cb_vals ] )
         assert isinstance( min_x, (int, long, float)), "visualize_image_classbreak(): Argument 'min_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_x ).__name__
         assert isinstance( max_x, (int, long, float)), "visualize_image_classbreak(): Argument 'max_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_x ).__name__
         assert isinstance( min_y, (int, long, float)), "visualize_image_classbreak(): Argument 'min_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_y ).__name__
@@ -10500,10 +10518,8 @@ class GPUdb(object):
         obj['y_column_name'] = y_column_name
         obj['geometry_column_name'] = geometry_column_name
         obj['track_ids'] = track_ids
-        obj['cb_column_name1'] = cb_column_name1
-        obj['cb_vals1'] = cb_vals1
-        obj['cb_column_name2'] = cb_column_name2
-        obj['cb_vals2'] = cb_vals2
+        obj['cb_column_name'] = cb_column_name
+        obj['cb_vals'] = cb_vals
         obj['min_x'] = min_x
         obj['max_x'] = max_x
         obj['min_y'] = min_y
@@ -10757,7 +10773,7 @@ class GPUdb(object):
 
 # ---------------------------------------------------------------------------
 # Import GPUdbIngestor; try from an installed package first, if not, try local
-if sys.version_info.major >= 3:
+if sys.version_info[0] >= 3: # checking the major component
     try:
         from gpudb.gpudb import GPUdbIngestor
     except:
@@ -12004,7 +12020,7 @@ class GPUdbTable( object ):
 
             table_names (list of str)
                 The list of table names composing the join.  Corresponds to a
-                SQL statement FROM clause  The user can provide a single
+                SQL statement FROM clause.  The user can provide a single
                 element (which will be automatically promoted to a list
                 internally) or a list.  Default value is an empty list ( [] ).
 
@@ -12103,9 +12119,8 @@ class GPUdbTable( object ):
                     The default value is 'no_refresh'.
 
                 * **ttl** --
-                  Sets the TTL of the table specified in input parameter
-                  *join_table_name*. The value must be the desired TTL in
-                  minutes.
+                  Sets the `TTL <../../../concepts/ttl.html>`_ of the join
+                  table specified in input parameter *join_table_name*.
 
         Returns:
             A read-only GPUdbTable object.
@@ -12142,7 +12157,7 @@ class GPUdbTable( object ):
                       options = {} ):
         """Performs a `union <../../../concepts/unions.html>`_ (concatenation) of
         one or more existing tables or views, the results of which are stored
-        in a new view. It is equivalent to the SQL UNION ALL operator.
+        in a new table. It is equivalent to the SQL UNION ALL operator.
         Non-charN 'string' and 'bytes' column types cannot be included in a
         union, neither can columns with the property 'store_only'. Though not
         explicitly unions, `intersect <../../../concepts/intersect.html>`_ and
@@ -12217,7 +12232,10 @@ class GPUdbTable( object ):
 
                   * **merge_views** --
                     Merge two or more views (or views of views) of the same
-                    base data set into a new view. The resulting view would
+                    base data set into a new view. If this mode is selected
+                                                          input parameter
+                    *input_column_names* AND input parameter
+                    *output_column_names* are ignored The resulting view would
                     match the results of a SQL OR operation, e.g., if filter 1
                     creates a view using the expression 'x = 10' and filter 2
                     creates a view using the expression 'x <= 10', then the
@@ -12227,19 +12245,18 @@ class GPUdbTable( object ):
                     The default value is 'union_all'.
 
                 * **chunk_size** --
-                  If provided this indicates the chunk size to be used for this
-                  table.
+                  Indicates the chunk size to be used for this table.
 
                 * **ttl** --
-                  Sets the TTL of the table specified in input parameter
-                  *table_name*. The value must be the desired TTL in minutes.
+                  Sets the `TTL <../../../concepts/ttl.html>`_ of the table
+                  specified in input parameter *table_name*.
 
                 * **persist** --
-                  If *true* then the union will be persisted as a regular table
-                  (it will not be automatically cleared unless a *ttl* is
-                  provided, and the table data can be modified in subsequent
-                  operations). If *false* (the default) then the union will be
-                  a read-only, memory-only temporary table.
+                  If *true*, then the union specified in input parameter
+                  *table_name* will be persisted and will not expire unless a
+                  *ttl* is specified.   If *false*, then the union will be an
+                  in-memory table and will expire unless a *ttl* is specified
+                  otherwise.
                   Allowed values are:
 
                   * true
@@ -12284,7 +12301,12 @@ class GPUdbTable( object ):
         input parameter *source_table_names*) based on the field mapping
         information (specified by input parameter *field_maps*). The field map
         (specified by input parameter *field_maps*) holds the user specified
-        maps of target table column names to source table columns.
+        maps of target table column names to source table columns. The array of
+        input parameter *field_maps* must match one-to-one with the input
+        parameter *source_table_names*, e.g., there's a map present in input
+        parameter *field_maps* for each table listed in input parameter
+        *source_table_names*. Read more about Merge Records `here
+        <../../../concepts/merge_records.html>`_.
 
         Parameters:
 
@@ -12299,14 +12321,16 @@ class GPUdbTable( object ):
                 a list.
 
             field_maps (list of dicts of str to str)
-                Contains the mapping of column names from result table
-                (specified by input parameter *table_name*) as the keys, and
-                corresponding column names from a table from source tables
-                (specified by input parameter *source_table_names*). Must be
-                existing column names in source table and target table, and
-                their types must be matched.  The user can provide a single
-                element (which will be automatically promoted to a list
-                internally) or a list.
+                Contains a list of source/target column mappings, one mapping
+                for each source table listed in input parameter
+                *source_table_names* being merged into the target table
+                specified by input parameter *table_name*.  Each mapping
+                contains the target column names (as keys) that the data in the
+                mapped source columns (as values) will be merged into.  All of
+                the source columns being merged into a given target column must
+                match in type, as that type will determine the type of the new
+                target column.  The user can provide a single element (which
+                will be automatically promoted to a list internally) or a list.
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
@@ -12314,17 +12338,19 @@ class GPUdbTable( object ):
 
                 * **collection_name** --
                   Name of a collection which is to contain the newly created
-                  merged table (specified by input parameter *table_name*). If
-                  empty, then the newly created merged table will be a
-                  top-level table. If the collection does not allow duplicate
-                  types and it contains a table of the same type as the given
-                  one, then this table creation request will fail.
+                  merged table specified by input parameter *table_name*. If
+                  the collection provided is non-existent, the collection will
+                  be automatically created. If empty, then the newly created
+                  merged table will be a top-level table.
 
                 * **is_replicated** --
-                  For a merged table (specified by input parameter
-                  *table_name*), indicates whether the table is to be
-                  replicated to all the database ranks. This may be necessary
-                  when the table is to be joined with other tables in a query.
+                  Indicates the `distribution scheme
+                  <../../../concepts/tables.html#distribution>`_ for the data
+                  of the merged table specified in input parameter
+                  *table_name*.  If true, the table will be `replicated
+                  <../../../concepts/tables.html#replication>`_.  If false, the
+                  table will be `randomly sharded
+                  <../../../concepts/tables.html#random-sharding>`_.
                   Allowed values are:
 
                   * true
@@ -12333,13 +12359,12 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **ttl** --
-                  Sets the TTL of the merged table or collection (specified by
-                  input parameter *table_name*). The value must be the desired
-                  TTL in minutes.
+                  Sets the `TTL <../../../concepts/ttl.html>`_ of the merged
+                  table specified in input parameter *table_name*.
 
                 * **chunk_size** --
-                  If provided this indicates the chunk size to be used for the
-                  merged table.
+                  Indicates the chunk size to be used for the merged table
+                  specified in input parameter *table_name*.
 
         Returns:
             A read-only GPUdbTable object.
@@ -12505,10 +12530,9 @@ class GPUdbTable( object ):
 
                   * **collection_name** --
                     Name of a collection which is to contain the table
-                    specified in *result_table*, otherwise the table will be a
-                    top-level table. If the collection does not allow duplicate
-                    types and it contains a table of the same type as the given
-                    one, then this table creation request will fail.
+                    specified in *result_table*. If the collection provided is
+                    non-existent, the collection will be automatically created.
+                    If empty, then the table will be a top-level table.
                     Additionally this option is invalid if input parameter
                     *table_name* is a collection.
 
@@ -12565,12 +12589,11 @@ class GPUdbTable( object ):
                     is an unrestricted string (i.e.; not charN) type.
 
                   * **result_table_persist** --
-                    If *true* then the result table specified in *result_table*
-                    will be persisted as a regular table (it will not be
-                    automatically cleared unless a *ttl* is provided, and the
-                    table data can be modified in subsequent operations). If
-                    *false* (the default) then the result table will be a
-                    read-only, memory-only temporary table.
+                    If *true*, then the result table specified in
+                    *result_table* will be persisted and will not expire unless
+                    a *ttl* is specified.   If *false*, then the result table
+                    will be an in-memory table and will expire unless a *ttl*
+                    is specified otherwise.
                     Allowed values are:
 
                     * true
@@ -12588,13 +12611,23 @@ class GPUdbTable( object ):
                     be used in combination with the *result_table* option.
 
                   * **ttl** --
-                    Sets the TTL of the table specified in *result_table*. The
-                    value must be the desired TTL in minutes.
+                    Sets the `TTL <../../../concepts/ttl.html>`_ of the table
+                    specified in *result_table*.
 
                   * **chunk_size** --
-                    If provided this indicates the chunk size to be used for
-                    the result table. Must be used in combination with the
+                    Indicates the chunk size to be used for the result table.
+                    Must be used in combination with the *result_table* option.
+
+                  * **materialize_on_gpu** --
+                    If *true* then the columns of the groupby result table will
+                    be cached on the GPU. Must be used in combination with the
                     *result_table* option.
+                    Allowed values are:
+
+                    * true
+                    * false
+
+                    The default value is 'false'.
 
         Returns:
             A read-only GPUdbTable object if input options has "result_table";
@@ -13203,10 +13236,11 @@ class GPUdbTable( object ):
 
                   * **collection_name** --
                     Name of a collection which is to contain the table
-                    specified in 'result_table', otherwise the table will be a
-                    top-level table. If the collection does not allow duplicate
-                    types and it contains a table of the same type as the given
-                    one, then this table creation request will fail.
+                    specified in *result_table*. If the collection provided is
+                    non-existent, the collection will be automatically created.
+                    If empty, then the table will be a top-level table.
+                    Additionally this option is invalid if input parameter
+                    *table_name* is a collection.
 
                   * **expression** --
                     Optional filter expression to apply to the table.
@@ -13227,12 +13261,11 @@ class GPUdbTable( object ):
                     <../../../concepts/tables.html>`_.
 
                   * **result_table_persist** --
-                    If *true* then the result table specified in *result_table*
-                    will be persisted as a regular table (it will not be
-                    automatically cleared unless a *ttl* is provided, and the
-                    table data can be modified in subsequent operations). If
-                    *false* (the default) then the result table will be a
-                    read-only, memory-only temporary table.
+                    If *true*, then the result table specified in
+                    *result_table* will be persisted and will not expire unless
+                    a *ttl* is specified.   If *false*, then the result table
+                    will be an in-memory table and will expire unless a *ttl*
+                    is specified otherwise.
                     Allowed values are:
 
                     * true
@@ -13243,20 +13276,19 @@ class GPUdbTable( object ):
                   * **result_table_force_replicated** --
                     Force the result table to be replicated (ignores any
                     sharding). Must be used in combination with the
-                    'result_table' option.
+                    *result_table* option.
 
                   * **result_table_generate_pk** --
                     If 'true' then set a primary key for the result table. Must
-                    be used in combination with the 'result_table' option.
+                    be used in combination with the *result_table* option.
 
                   * **ttl** --
-                    Sets the TTL of the table specified in 'result_table'. The
-                    value must be the desired TTL in minutes.
+                    Sets the `TTL <../../../concepts/ttl.html>`_ of the table
+                    specified in *result_table*.
 
                   * **chunk_size** --
-                    If provided this indicates the chunk size to be used for
-                    the result table. Must be used in combination with the
-                    *result_table* option.
+                    Indicates the chunk size to be used for the result table.
+                    Must be used in combination with the *result_table* option.
 
         Returns:
             A read-only GPUdbTable object if input options has "result_table";
@@ -13362,12 +13394,9 @@ class GPUdbTable( object ):
 
                   * **collection_name** --
                     Name of a collection which is to contain the table
-                    specified in *result_table*, otherwise the table will be a
-                    top-level table. If the collection does not allow duplicate
-                    types and it contains a table of the same type as the given
-                    one, then this table creation request will fail.
-                    Additionally this option is invalid if input parameter
-                    *table_name* is a collection.
+                    specified in *result_table*. If the collection provided is
+                    non-existent, the collection will be automatically created.
+                    If empty, then the table will be a top-level table.
 
                   * **result_table** --
                     The name of the table used to store the results. Has the
@@ -13376,13 +13405,11 @@ class GPUdbTable( object ):
                     are returned in the response.
 
                   * **result_table_persist** --
-                    If *true* then the result table specified in
-                    {result_table}@{key of input.options} will be persisted as
-                    a regular table (it will not be automatically cleared
-                    unless a *ttl* is provided, and the table data can be
-                    modified in subsequent operations). If *false* (the
-                    default) then the result table will be a read-only,
-                    memory-only temporary table.
+                    If *true*, then the result table specified in
+                    *result_table* will be persisted and will not expire unless
+                    a *ttl* is specified.   If *false*, then the result table
+                    will be an in-memory table and will expire unless a *ttl*
+                    is specified otherwise.
                     Allowed values are:
 
                     * true
@@ -13402,16 +13429,15 @@ class GPUdbTable( object ):
                     original column name.
 
                   * **chunk_size** --
-                    If provided this indicates the chunk size to be used for
-                    the result table. Must be used in combination with the
-                    *result_table* option.
+                    Indicates the chunk size to be used for the result table.
+                    Must be used in combination with the *result_table* option.
 
                   * **limit** --
                     The number of records to keep.
 
                   * **ttl** --
-                    Sets the TTL of the table specified in *result_table*. The
-                    value must be the desired TTL in minutes.
+                    Sets the `TTL <../../../concepts/ttl.html>`_ of the table
+                    specified in *result_table*.
 
         Returns:
             A read-only GPUdbTable object if input options has "result_table";
@@ -13477,34 +13503,37 @@ class GPUdbTable( object ):
         available
         modifications include the following:
 
-        Create or delete an index on a particular column. This can speed up
-        certain search queries
-        (such as :meth:`.get_records`, :meth:`.delete_records`,
-        :meth:`.update_records`)
-        when using expressions containing equality or relational operators on
-        indexed columns. This
-        only applies to tables.
+        Create or delete an `index
+        <../../../concepts/indexes.html#column-index>`_ on a
+        particular column. This can speed up certain operations when using
+        expressions
+        containing equality or relational operators on indexed columns. This
+        only
+        applies to tables.
 
-        Set the time-to-live (TTL). This can be applied to tables, views, or
-        collections.  When
-        applied to collections, every table & view within the collection will
-        have its TTL set to the
-        given value.
+        Set the `time-to-live (TTL) <../../../concepts/ttl.html>`_. This can be
+        applied
+        to tables, views, or collections.  When applied to collections, every
+        contained
+        table & view that is not protected will have its TTL set to the given
+        value.
 
         Set the global access mode (i.e. locking) for a table. The mode can be
-        set to 'no-access', 'read-only',
-        'write-only' or 'read-write'.
+        set to
+        'no_access', 'read_only', 'write_only' or 'read_write'.
 
-        Make a table protected or not. Protected tables have their TTLs set to
-        not automatically
-        expire. This can be applied to tables, views, and collections.
+        Change the `protection <../../../concepts/protection.html>`_ mode to
+        prevent or
+        allow automatic expiration. This can be applied to tables, views, and
+        collections.
 
         Allow homogeneous tables within a collection.
 
         Manage a table's columns--a column can be added, removed, or have its
         `type and properties <../../../concepts/types.html>`_ modified.
 
-        Set or unset compression for a column.
+        Set or unset `compression <../../../concepts/compression.html>`_ for a
+        column.
 
         Parameters:
 
@@ -13519,69 +13548,75 @@ class GPUdbTable( object ):
                   must be either 'true' or 'false'.
 
                 * **create_index** --
-                  Creates an index on the column name specified in input
-                  parameter *value*. If this column is already indexed, an
-                  error will be returned.
+                  Creates an `index
+                  <../../../concepts/indexes.html#column-index>`_ on the column
+                  name specified in input parameter *value*. If this column is
+                  already indexed, an error will be returned.
 
                 * **delete_index** --
-                  Deletes an existing index on the column name specified in
-                  input parameter *value*. If this column does not have
-                  indexing turned on, an error will be returned.
+                  Deletes an existing `index
+                  <../../../concepts/indexes.html#column-index>`_ on the column
+                  name specified in input parameter *value*. If this column
+                  does not have indexing turned on, an error will be returned.
 
                 * **move_to_collection** --
-                  Move a table into a collection input parameter *value*.
+                  Moves a table into a collection input parameter *value*.
 
                 * **protected** --
                   Sets whether the given input parameter *table_name* should be
-                  protected or not. The input parameter *value* must be either
-                  'true' or 'false'.
+                  `protected <../../../concepts/protection.html>`_ or not. The
+                  input parameter *value* must be either 'true' or 'false'.
 
                 * **rename_table** --
-                  Rename a table, view or collection to input parameter
+                  Renames a table, view or collection to input parameter
                   *value*. Has the same naming restrictions as `tables
                   <../../../concepts/tables.html>`_.
 
                 * **ttl** --
-                  Sets the TTL of the table, view, or collection specified in
-                  input parameter *table_name*. The input parameter *value*
-                  must be the desired TTL in minutes.
+                  Sets the `TTL <../../../concepts/ttl.html>`_ of the table,
+                  view, or collection specified in input parameter
+                  *table_name*.
 
                 * **add_column** --
-                  Add the column specified in input parameter *value* to the
+                  Adds the column specified in input parameter *value* to the
                   table specified in input parameter *table_name*.  Use
                   *column_type* and *column_properties* in input parameter
                   *options* to set the column's type and properties,
                   respectively.
 
                 * **change_column** --
-                  Change type and properties of the column specified in input
+                  Changes type and properties of the column specified in input
                   parameter *value*.  Use *column_type* and *column_properties*
                   in input parameter *options* to set the column's type and
                   properties, respectively.
 
                 * **set_column_compression** --
-                  Modify the compression setting on the column specified in
-                  input parameter *value*.
+                  Modifies the `compression
+                  <../../../concepts/compression.html>`_ setting on the column
+                  specified in input parameter *value*.
 
                 * **delete_column** --
-                  Delete the column specified in input parameter *value* from
+                  Deletes the column specified in input parameter *value* from
                   the table specified in input parameter *table_name*.
 
                 * **create_foreign_key** --
-                  Create a foreign key using the format 'source_column
-                  references target_table(primary_key_column) [ as
-                  <foreign_key_name> ]'.
+                  Creates a `foreign key
+                  <../../../concepts/tables.html#foreign-key>`_ using the
+                  format 'source_column references
+                  target_table(primary_key_column) [ as <foreign_key_name> ]'.
 
                 * **delete_foreign_key** --
-                  Delete a foreign key.  The input parameter *value* should be
-                  the <foreign_key_name> or the string used to define the
-                  foreign key.
+                  Deletes a `foreign key
+                  <../../../concepts/tables.html#foreign-key>`_.  The input
+                  parameter *value* should be the <foreign_key_name> specified
+                  when creating the key or the complete string used to define
+                  it.
 
                 * **set_global_access_mode** --
-                  Set the global access mode (i.e. locking) for the table
+                  Sets the global access mode (i.e. locking) for the table
                   specified in input parameter *table_name*. Specify the access
-                  mode in input parameter *value*. Valid modes are 'no-access',
-                  'read-only', 'write-only' and 'read-write'.
+                  mode in input parameter *value*. Valid modes are 'no_access',
+                  'read_only', 'write_only' and 'read_write'.
 
             value (str)
                   The value of the modification. May be a column name, 'true'
@@ -13723,7 +13758,6 @@ class GPUdbTable( object ):
                   to be returned from source table (specified by input
                   parameter *source_table_name*). Or END_OF_SET (-9999) to
                   indicate that the max number of results should be returned.
-                  Default value is END_OF_SET (-9999).
 
                 * **expression** --
                   Optional filter expression to apply to the source table
@@ -13875,7 +13909,8 @@ class GPUdbTable( object ):
                   Name of a `collection <../../../concepts/collections.html>`_
                   to which the projection is to be assigned as a child. If the
                   collection provided is non-existent, the collection will be
-                  automatically created.
+                  automatically created. If empty, then the projection will be
+                  at the top level.
 
                 * **expression** --
                   An optional filter `expression
@@ -13903,13 +13938,11 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **chunk_size** --
-                  If provided this indicates the chunk size to be used for this
-                  table.
+                  Indicates the chunk size to be used for this table.
 
                 * **ttl** --
-                  Sets the TTL of the table, view, or collection specified in
-                  input parameter *projection_name*. The value must be the
-                  desired TTL in minutes.
+                  Sets the `TTL <../../../concepts/ttl.html>`_ of the
+                  projection specified in input parameter *projection_name*.
 
                 * **shard_key** --
                   Comma-separated list of the columns to be sharded on; e.g.
@@ -13919,11 +13952,11 @@ class GPUdbTable( object ):
                   original column name.
 
                 * **persist** --
-                  If *true* then the projection will be persisted as a regular
-                  table (it will not be automatically cleared unless a *ttl* is
-                  provided, and the table data can be modified in subsequent
-                  operations). If *false* then the projection will be a
-                  read-only, memory-only temporary table.
+                  If *true*, then the projection specified in input parameter
+                  *projection_name* will be persisted and will not expire
+                  unless a *ttl* is specified.   If *false*, then the
+                  projection will be an in-memory table and will expire unless
+                  a *ttl* is specified otherwise.
                   Allowed values are:
 
                   * true
@@ -14078,14 +14111,13 @@ class GPUdbTable( object ):
 
                 * **collection_name** --
                   Name of a collection which is to contain the newly created
-                  view, otherwise the view will be a top-level table. If the
-                  collection does not allow duplicate types and it contains a
-                  table of the same type as the given one, then this table
-                  creation request will fail.
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
                 * **ttl** --
-                  Sets the TTL of the view specified in input parameter
-                  *view_name*. The value must be the desired TTL in minutes.
+                  Sets the `TTL <../../../concepts/ttl.html>`_ of the view
+                  specified in input parameter *view_name*.
 
             view_name (str)
                   If provided, then this will be the name of the view
@@ -15013,11 +15045,11 @@ class GPUdbTable( object ):
 
     def lock_table( self, lock_type = 'status', options = {} ):
         """Manages global access to a table's data.  By default a table has a
-        input parameter *lock_type* of *read-write*, indicating all operations
-        are permitted.  A user may request a *read-only* or a *write-only*
+        input parameter *lock_type* of *read_write*, indicating all operations
+        are permitted.  A user may request a *read_only* or a *write_only*
         lock, after which only read or write operations, respectively, are
         permitted on the table until the lock is removed.  When input parameter
-        *lock_type* is *no-access* then no operations are permitted on the
+        *lock_type* is *no_access* then no operations are permitted on the
         table.  The lock status can be queried by setting input parameter
         *lock_type* to *status*.
 
@@ -15032,16 +15064,16 @@ class GPUdbTable( object ):
                 * **status** --
                   Show locked status
 
-                * **no-access** --
+                * **no_access** --
                   Allow no read/write operations
 
-                * **read-only** --
+                * **read_only** --
                   Allow only read operations
 
-                * **write-only** --
+                * **write_only** --
                   Allow only write operations
 
-                * **read-write** --
+                * **read_write** --
                   Allow all read/write operations
 
                   The default value is 'status'.
@@ -15145,8 +15177,7 @@ class GPUdbTable( object ):
         For a collection, setting the *show_children* option to *false* returns
         only information about the collection itself; setting *show_children*
         to *true* returns a list of tables and views contained in the
-        collection, along with their description, type id, schema, type label,
-        type properties, and additional information including TTL.
+        collection, along with their corresponding detail.
 
         Parameters:
 
@@ -15695,22 +15726,34 @@ class GPUdbTableOptions(object):
         result = {}
         if self._is_replicated is not None:
             result[ self.__is_replicated      ] = "true" if self._is_replicated else "false"
+
+        if self._is_result_table is not None:
+            result[ self.__is_result_table      ] = "true" if self._is_result_table else "false"
+
         if self._collection_name is not None:
             result[ self.__collection_name    ] = str( self._collection_name )
+
         if self._no_error_if_exists is not None:
             result[ self.__no_error_if_exists ] = "true" if self._no_error_if_exists else "false"
+
         if self._chunk_size is not None:
             result[ self.__chunk_size         ] = str( self._chunk_size )
+
         if self._is_collection is not None:
             result[ self.__is_collection      ] = "true" if self._is_collection else "false"
+
         if self._foreign_keys is not None:
             result[ self.__foreign_keys       ] = str( self._foreign_keys )
+
         if self._foreign_shard_key is not None:
             result[ self.__foreign_shard_key  ] = str( self._foreign_shard_key )
+
         if self._ttl is not None:
             result[ self.__ttl                ] = str( self._ttl )
+
         if self._disallow_homogeneous_tables is not None:
             result[ self.__disallow_homogeneous_tables ] = "true" if self._disallow_homogeneous_tables else "false"
+
         return result
     # end as_json
 
@@ -15718,6 +15761,7 @@ class GPUdbTableOptions(object):
     def as_dict(self):
         """Return the options as a dict for using directly in create_table()"""
         return self.as_json()
+    # end as_dict
 
 
     def no_error_if_exists(self, val):
@@ -15725,14 +15769,19 @@ class GPUdbTableOptions(object):
             self._no_error_if_exists = val
         elif val.lower() in ["true", "false"]:
             self._no_error_if_exists = True if (val == "true") else False
+        else:
+            raise GPUdbException( "Value for 'no_error_if_exists' must be "
+                                  "boolean or one of ['true', 'false']; "
+                                  "given " + repr( val ) )
         return self
-
+    # end no_error_if_exists
 
     def collection_name(self, val):
         if (val and not isinstance( val, basestring )):
             raise GPUdbException( "'collection_name' must be a string value; given '%s'" % val )
         self._collection_name = val
         return self
+    # end collection_name
 
 
     def is_collection(self, val):
@@ -15740,48 +15789,73 @@ class GPUdbTableOptions(object):
             self._is_collection = val
         elif val.lower() in ["true", "false"]:
             self._is_collection = True if (val == "true") else False
+        else:
+            raise GPUdbException( "Value for 'is_collection' must be "
+                                  "boolean or one of ['true', 'false']; "
+                                  "given " + repr( val ) )
         return self
-
+    # end is_collection
 
     def disallow_homogeneous_tables(self, val):
         if isinstance( val, bool ):
             self._disallow_homogeneous_tables = val
         elif val.lower() in ["true", "false"]:
             self._disallow_homogeneous_tables = True if (val == "true") else False
+        else:
+            raise GPUdbException( "Value for 'disallow_homogeneous_tables' must be "
+                                  "boolean or one of ['true', 'false']; "
+                                  "given " + repr( val ) )
         return self
-
+    # end disallow_homogeneous_tables
 
     def is_replicated(self, val):
         if isinstance( val, bool ):
             self._is_replicated = val
         elif val.lower() in ["true", "false"]:
             self._is_replicated = True if (val == "true") else False
+        else:
+            raise GPUdbException( "Value for 'is_replicated' must be "
+                                  "boolean or one of ['true', 'false']; "
+                                  "given " + repr( val ) )
         return self
+    # end is_replicated
+
+
+    def is_result_table(self, val):
+        if isinstance( val, bool ):
+            self._is_result_table = val
+        elif val.lower() in ["true", "false"]:
+            self._is_result_table = True if (val == "true") else False
+        else:
+            raise GPUdbException( "Value for 'is_result_table' must be "
+                                  "boolean or one of ['true', 'false']; "
+                                  "given " + repr( val ) )
+        return self
+    # end is_result_table
 
 
     def foreign_keys(self, val):
         self._foreign_keys = val
         return self
+    # end foreign_keys
 
 
     def foreign_shard_key(self, val):
         self._foreign_shard_key = val
         return self
+    # end foreign_shard_key
 
 
     def ttl(self, val):
         self._ttl = val
         return self
+    # end ttl
 
 
     def chunk_size(self, val):
         self._chunk_size = val
         return self
-
-
-    def is_result_table(self, val):
-        self._is_result_table = val
-        return self
+    # end chunk_size
 
 # end class GPUdbTableOptions
 
