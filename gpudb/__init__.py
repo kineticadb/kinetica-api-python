@@ -1,7 +1,7 @@
 import sys
 
 
-if (sys.version_info.major == 3):
+if (sys.version_info[0] == 3): # checking the major component
     from gpudb.gpudb import GPUdb
     from gpudb.gpudb import GPUdbException
     from gpudb.gpudb import GPUdbRecordColumn
