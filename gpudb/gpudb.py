@@ -1618,7 +1618,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "6.1.0.0"
+    api_version   = "6.1.0.1"
 
     # constants
     END_OF_SET = -9999
