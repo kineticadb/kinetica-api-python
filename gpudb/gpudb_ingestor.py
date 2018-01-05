@@ -157,7 +157,7 @@ class GPUdbWorkerList:
         assert isinstance(gpudb, GPUdb), ("Parameter 'gpudb' must be of "
                                           "type GPUdb; given %s"
                                           % type(gpudb) )
-
+        
         self.worker_urls = []
 
         # Get system properties
@@ -214,16 +214,18 @@ class GPUdbWorkerList:
                     # so, include all IP addresses
                     self.worker_urls.append( url )
                     found = True
+                    # skip the rest of IP addresses for this rank
+                    break
                 else: # check for matching regex
                     match = re.match(ip_regex, ip_address)
                     if match: # match found
                         self.worker_urls.append( url )
                         found = True
                         # skip the rest of IP addresses for this rank
-                        continue
+                        break
                     # end found match
                 # end if-else
-            # end checking all IP addresses for this rank
+            # end inner loop
 
             # if no worker found for this rank, throw exception
             if not found:
