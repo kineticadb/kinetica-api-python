@@ -357,9 +357,9 @@ class GPUdbColumnProperty(object):
 
     STORE_ONLY = "store_only"
     """str: Persist the column value but do not make it available to queries (e.g.
-    :meth:`.filter_by_box`)-i.e. it is mutually exclusive to the 'data'
-    property. Any 'bytes' type column must have a 'store_only' property. This
-    property reduces system memory usage.
+    :meth:`.filter`)-i.e. it is mutually exclusive to the 'data' property. Any
+    'bytes' type column must have a 'store_only' property. This property
+    reduces system memory usage.
     """
 
 
@@ -2921,7 +2921,7 @@ class GPUdb(object):
     # begin admin_add_node
     def admin_add_node( self, host_name = None, gpu_index = None, options = {} ):
         """Add a new node to the GPUdb cluster. By default this will only add the
-        node to the cluster, but will not be assigned any data shards. Set the
+        node to the cluster but will not be assigned any data shards. Set the
         *reshard* option to *true* to move some shards from the other nodes in
         the cluster to this node.
 
@@ -3005,12 +3005,12 @@ class GPUdb(object):
 
     # begin admin_alter_jobs
     def admin_alter_jobs( self, job_ids = None, action = None, options = {} ):
-        """Perform the requested action on a list of one or more job(s) .
-        Currently only cancelling filter, aggregate and get records reqeusts
-        are supported. Based on the type of job and the current state of
-        execution, the action may not be successfully executed. The final
-        result of the attempted actions for each specified job is returned in
-        the status array of the response.
+        """Perform the requested action on a list of one or more job(s). Based on
+        the type of job and the current state of execution, the action may not
+        be successfully executed. The final result of the attempted actions for
+        each specified job is returned in the status array of the response. See
+        `Job Manager <../../../gpudbAdmin/job_manager.html>`_ for more
+        information.
 
         Parameters:
 
@@ -3087,13 +3087,13 @@ class GPUdb(object):
                 internally) or a list.
 
             index (list of ints)
-                the shard which is being moved.  When use_index is set to true,
-                size of this array must equal the size of rank/tom array.  The
-                user can provide a single element (which will be automatically
-                promoted to a list internally) or a list.
+                The shard being moved.  When use_index is set to true, size of
+                this array must equal the size of rank/tom array.  The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
 
             backup_map_list (list of ints)
-                List of rank_tom integers, for which backup toms are defined
+                List of rank_tom integers for which backup toms are defined
                 The user can provide a single element (which will be
                 automatically promoted to a list internally) or a list.
 
@@ -3191,7 +3191,7 @@ class GPUdb(object):
         Parameters:
 
             table_names (list of str)
-                Sepcify the tables here if only specific tables have to be
+                Specify the tables here if only specific tables have to be
                 rebalanced.  Leave this empty to rebalance all the tables.
                 Note that only the tables which have no primary or shard key
                 can be rebalanced.  The user can provide a single element
@@ -3493,8 +3493,8 @@ class GPUdb(object):
         Parameters:
 
             table_name (str)
-                Name of Table on which the operation will be performed. Must be
-                an existing table.  It can not be a collection.
+                Name of table on which the operation will be performed. Must be
+                an existing table.  It cannot be a collection.
 
             x_column_name (str)
                 Name of the column containing the x coordinates of the points
@@ -3676,7 +3676,7 @@ class GPUdb(object):
                       first sort by the first aggregate, then the second
                       aggregate, etc.
 
-                      The default value is 'key'.
+                      The default value is 'value'.
 
                   * **result_table** --
                     The name of the table used to store the results. Has the
@@ -5910,7 +5910,7 @@ class GPUdb(object):
         any record added to the listed tables(s) via :meth:`.insert_records`
         with the chosen columns' values falling within the specified region
         will trip the trigger. All such records will be queued at the trigger
-        port (by default '9001', but able to be retrieved via
+        port (by default '9001' but able to be retrieved via
         :meth:`.show_system_status`) for any listening client to collect.
         Active triggers can be cancelled by using the :meth:`.clear_trigger`
         endpoint or by clearing all relevant tables.
@@ -5992,7 +5992,7 @@ class GPUdb(object):
         listed tables(s) via :meth:`.insert_records` with the chosen
         column_name's value falling within the specified range will trip the
         trigger. All such records will be queued at the trigger port (by
-        default '9001', but able to be retrieved via
+        default '9001' but able to be retrieved via
         :meth:`.show_system_status`) for any listening client to collect.
         Active triggers can be cancelled by using the :meth:`.clear_trigger`
         endpoint or by clearing all relevant tables.
@@ -6230,13 +6230,12 @@ class GPUdb(object):
                   * **merge_views** --
                     Merge two or more views (or views of views) of the same
                     base data set into a new view. If this mode is selected
-                                                          input parameter
-                    *input_column_names* AND input parameter
-                    *output_column_names* are ignored The resulting view would
-                    match the results of a SQL OR operation, e.g., if filter 1
-                    creates a view using the expression 'x = 10' and filter 2
-                    creates a view using the expression 'x <= 10', then the
-                    merge views operation creates a new view using the
+                    input parameter *input_column_names* AND input parameter
+                    *output_column_names* must be empty. The resulting view
+                    would match the results of a SQL OR operation, e.g., if
+                    filter 1 creates a view using the expression 'x = 10' and
+                    filter 2 creates a view using the expression 'x <= 10',
+                    then the merge views operation creates a new view using the
                     expression 'x = 10 OR x <= 10'.
 
                     The default value is 'union_all'.
@@ -6412,12 +6411,12 @@ class GPUdb(object):
 
             expressions (list of str)
                 A list of the actual predicates, one for each select; format
-                should follow the guidelines provided :meth:`here <.filter>`.
-                Specifying one or more input parameter *expressions* is
-                mutually exclusive to specifying *record_id* in the input
-                parameter *options*.  The user can provide a single element
-                (which will be automatically promoted to a list internally) or
-                a list.
+                should follow the guidelines provided `here
+                <../../../concepts/expressions.html>`_. Specifying one or more
+                input parameter *expressions* is mutually exclusive to
+                specifying *record_id* in the input parameter *options*.  The
+                user can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
@@ -6633,9 +6632,10 @@ class GPUdb(object):
     def filter( self, table_name = None, view_name = '', expression = None, options
                 = {} ):
         """Filters data based on the specified expression.  The results are stored
-        in a result set with the given input parameter *view_name*.
+        in a `result set <../../../concepts/filtered_views.html>`_ with the
+        given input parameter *view_name*.
 
-        For details see `concepts <../../../concepts/expressions.html>`_.
+        For details see `Expressions <../../../concepts/expressions.html>`_.
 
         The response message contains the number of points for which the
         expression evaluated to be true, which is equivalent to the size of the
@@ -6656,7 +6656,8 @@ class GPUdb(object):
 
             expression (str)
                 The select expression to filter the specified table.  For
-                details see `concepts <../../../concepts/expressions.html>`_.
+                details see `Expressions
+                <../../../concepts/expressions.html>`_.
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
@@ -8879,10 +8880,10 @@ class GPUdb(object):
         data for the symbol, and any additional optional parameter (e.g.
         color). To have a symbol used for rendering create a table with a
         string column named 'SYMBOLCODE' (along with 'x' or 'y' for example).
-        Then when the table is rendered (via `WMS
-        <../../../api/rest/wms_rest.html>`_) if the 'dosymbology' parameter is
-        'true' then the value of the 'SYMBOLCODE' column is used to pick the
-        symbol displayed for each point.
+        Then when the table is rendered (via `WMS <../../rest/wms_rest.html>`_)
+        if the 'dosymbology' parameter is 'true' then the value of the
+        'SYMBOLCODE' column is used to pick the symbol displayed for each
+        point.
 
         Parameters:
 
@@ -10092,7 +10093,7 @@ class GPUdb(object):
 
                 * **update_on_existing_pk** --
                   Can be used to customize behavior when the updated primary
-                  key value already exists, as described in
+                  key value already exists as described in
                   :meth:`.insert_records`.
                   Allowed values are:
 
@@ -10367,11 +10368,12 @@ class GPUdb(object):
 
                 * **x_order_by** --
                   An expression or aggregate expression by which non-numeric x
-                  column values are sorted, e.g. avg(price).
+                  column values are sorted, e.g. "avg(price) descending".
 
                 * **y_order_by** --
                   An expression or aggregate expression by which non-numeric y
-                  column values are sorted, e.g. avg(price).
+                  column values are sorted, e.g. "avg(price)", which defaults
+                  to "avg(price) ascending".
 
                 * **jitter_x** --
                   Amplitude of horizontal jitter applied to non-numaric x
@@ -12233,13 +12235,12 @@ class GPUdbTable( object ):
                   * **merge_views** --
                     Merge two or more views (or views of views) of the same
                     base data set into a new view. If this mode is selected
-                                                          input parameter
-                    *input_column_names* AND input parameter
-                    *output_column_names* are ignored The resulting view would
-                    match the results of a SQL OR operation, e.g., if filter 1
-                    creates a view using the expression 'x = 10' and filter 2
-                    creates a view using the expression 'x <= 10', then the
-                    merge views operation creates a new view using the
+                    input parameter *input_column_names* AND input parameter
+                    *output_column_names* must be empty. The resulting view
+                    would match the results of a SQL OR operation, e.g., if
+                    filter 1 creates a view using the expression 'x = 10' and
+                    filter 2 creates a view using the expression 'x <= 10',
+                    then the merge views operation creates a new view using the
                     expression 'x = 10 OR x <= 10'.
 
                     The default value is 'union_all'.
@@ -12576,7 +12577,7 @@ class GPUdbTable( object ):
                       first sort by the first aggregate, then the second
                       aggregate, etc.
 
-                      The default value is 'key'.
+                      The default value is 'value'.
 
                   * **result_table** --
                     The name of the table used to store the results. Has the
@@ -14045,12 +14046,12 @@ class GPUdbTable( object ):
 
             expressions (list of str)
                 A list of the actual predicates, one for each select; format
-                should follow the guidelines provided :meth:`here <.filter>`.
-                Specifying one or more input parameter *expressions* is
-                mutually exclusive to specifying *record_id* in the input
-                parameter *options*.  The user can provide a single element
-                (which will be automatically promoted to a list internally) or
-                a list.
+                should follow the guidelines provided `here
+                <../../../concepts/expressions.html>`_. Specifying one or more
+                input parameter *expressions* is mutually exclusive to
+                specifying *record_id* in the input parameter *options*.  The
+                user can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
@@ -14091,9 +14092,10 @@ class GPUdbTable( object ):
 
     def filter( self, expression = None, options = {}, view_name = '' ):
         """Filters data based on the specified expression.  The results are stored
-        in a result set with the given input parameter *view_name*.
+        in a `result set <../../../concepts/filtered_views.html>`_ with the
+        given input parameter *view_name*.
 
-        For details see `concepts <../../../concepts/expressions.html>`_.
+        For details see `Expressions <../../../concepts/expressions.html>`_.
 
         The response message contains the number of points for which the
         expression evaluated to be true, which is equivalent to the size of the
@@ -14103,7 +14105,8 @@ class GPUdbTable( object ):
 
             expression (str)
                 The select expression to filter the specified table.  For
-                details see `concepts <../../../concepts/expressions.html>`_.
+                details see `Expressions
+                <../../../concepts/expressions.html>`_.
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
@@ -15422,7 +15425,7 @@ class GPUdbTable( object ):
 
                 * **update_on_existing_pk** --
                   Can be used to customize behavior when the updated primary
-                  key value already exists, as described in
+                  key value already exists as described in
                   :meth:`.insert_records`.
                   Allowed values are:
 
