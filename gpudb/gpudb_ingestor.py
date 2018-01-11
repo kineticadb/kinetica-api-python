@@ -1862,7 +1862,7 @@ class GPUdbIngestor:
             # If both pk and shard keys exist; check that they're not the same
             # If so, set them to be the same
             if ( not self.shard_key_builder.has_key()
-                 or shard_key_builder.has_same_key( self.primary_key_builder ) ):
+                 or self.shard_key_builder.has_same_key( self.primary_key_builder ) ):
                 self.shard_key_builder = self.primary_key_builder
         else:
             self.primary_key_builder = None
