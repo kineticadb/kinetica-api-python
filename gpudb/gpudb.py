@@ -1618,7 +1618,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "6.1.0.1"
+    api_version   = "6.1.0.3"
 
     # constants
     END_OF_SET = -9999
@@ -2007,15 +2007,6 @@ class GPUdb(object):
         RSP_SCHEMA_STR = """{"type":"record","name":"trigger_notification","fields":[{"name":"trigger_id","type":"string"},{"name":"set_id","type":"string"},{"name":"object_id","type":"string"},{"name":"object_data","type":"bytes"}]}"""
         self.gpudb_schemas[ name ] = { "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ) }
-        name = "admin_add_node"
-        REQ_SCHEMA_STR = """{"type":"record","name":"admin_add_node_request","fields":[{"name":"host_name","type":"string"},{"name":"gpu_index","type":"int"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_add_node_response","fields":[{"name":"rank","type":"int"}]}"""
-        ENDPOINT = "/admin/add/node"
-        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
-                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
-                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
-                                       "ENDPOINT" : ENDPOINT }
         name = "admin_alter_configuration"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_alter_configuration_request","fields":[{"name":"config_string","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"admin_alter_configuration_response","fields":[{"name":"status","type":"string"}]}"""
@@ -2034,37 +2025,10 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
-        name = "admin_alter_shards"
-        REQ_SCHEMA_STR = """{"type":"record","name":"admin_alter_shards_request","fields":[{"name":"version","type":"long"},{"name":"use_index","type":"boolean"},{"name":"rank","type":{"type":"array","items":"int"}},{"name":"tom","type":{"type":"array","items":"int"}},{"name":"index","type":{"type":"array","items":"int"}},{"name":"backup_map_list","type":{"type":"array","items":"int"}},{"name":"backup_map_values","type":{"type":"array","items":{"type":"array","items":"int"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_alter_shards_response","fields":[{"name":"version","type":"long"}]}"""
-        ENDPOINT = "/admin/alter/shards"
-        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
-                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
-                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
-                                       "ENDPOINT" : ENDPOINT }
         name = "admin_offline"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_offline_request","fields":[{"name":"offline","type":"boolean"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"admin_offline_response","fields":[{"name":"is_offline","type":"boolean"}]}"""
         ENDPOINT = "/admin/offline"
-        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
-                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
-                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
-                                       "ENDPOINT" : ENDPOINT }
-        name = "admin_rebalance"
-        REQ_SCHEMA_STR = """{"type":"record","name":"admin_rebalance_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"action","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_rebalance_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"message","type":{"type":"array","items":"string"}}]}"""
-        ENDPOINT = "/admin/rebalance"
-        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
-                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
-                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
-                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
-                                       "ENDPOINT" : ENDPOINT }
-        name = "admin_remove_node"
-        REQ_SCHEMA_STR = """{"type":"record","name":"admin_remove_node_request","fields":[{"name":"rank","type":"int"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_remove_node_response","fields":[{"name":"rank","type":"int"}]}"""
-        ENDPOINT = "/admin/remove/node"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
@@ -2918,59 +2882,6 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
     # end load_gpudb_schemas
 
-    # begin admin_add_node
-    def admin_add_node( self, host_name = None, gpu_index = None, options = {} ):
-        """Add a new node to the GPUdb cluster. By default this will only add the
-        node to the cluster but will not be assigned any data shards. Set the
-        *reshard* option to *true* to move some shards from the other nodes in
-        the cluster to this node.
-
-        Parameters:
-
-            host_name (str)
-                host name of the node being added to the system.
-
-            gpu_index (int)
-
-
-            options (dict of str to str)
-                Optional parameters.  Default value is an empty dict ( {} ).
-                Allowed keys are:
-
-                * **reshard** --
-                  If *true*, then some of the shards from all the existing
-                  nodes will be moved to the new node being added. Note that
-                  for big clusters, this data transfer could be time consuming
-                  and also result in delay in responding to queries for busy
-                  clusters.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
-        Returns:
-            A dict with the following entries--
-
-            rank (int)
-                number assigned to the newly added rank
-        """
-        assert isinstance( host_name, (basestring)), "admin_add_node(): Argument 'host_name' must be (one) of type(s) '(basestring)'; given %s" % type( host_name ).__name__
-        assert isinstance( gpu_index, (int, long, float)), "admin_add_node(): Argument 'gpu_index' must be (one) of type(s) '(int, long, float)'; given %s" % type( gpu_index ).__name__
-        assert isinstance( options, (dict)), "admin_add_node(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "admin_add_node" )
-
-        obj = collections.OrderedDict()
-        obj['host_name'] = host_name
-        obj['gpu_index'] = gpu_index
-        obj['options'] = self.__sanitize_dicts( options )
-
-        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/add/node' ) )
-    # end admin_add_node
-
-
     # begin admin_alter_configuration
     def admin_alter_configuration( self, config_string = None, options = {} ):
         """Update the system config file.  Updates to the config file are only
@@ -3055,87 +2966,6 @@ class GPUdb(object):
     # end admin_alter_jobs
 
 
-    # begin admin_alter_shards
-    def admin_alter_shards( self, version = None, use_index = None, rank = None, tom
-                            = None, index = None, backup_map_list = None,
-                            backup_map_values = None, options = {} ):
-        """Specify the mapping of the shards to the various ranks in the cluster.
-        In most cases, it should be sufficient to let the system automatically
-        distribute the shards evenly across the available ranks. However, this
-        endpoint can be used to move shards for various administrative reasons,
-        say in case of heterogeneous node clusters.  It should be noted that
-        the system may reassign the shards the when the number of nodes in the
-        cluster changes or the cluster is rebalanced.
-
-        Parameters:
-
-            version (long)
-
-
-            use_index (bool)
-                Set to true when only the shards being moved are specified in
-                the request.  The index must indicate the shards being moved.
-
-            rank (list of ints)
-                node to which the shard will be moved.  The user can provide a
-                single element (which will be automatically promoted to a list
-                internally) or a list.
-
-            tom (list of ints)
-                Toms to which the shard will be moved.   The user can provide a
-                single element (which will be automatically promoted to a list
-                internally) or a list.
-
-            index (list of ints)
-                The shard being moved.  When use_index is set to true, size of
-                this array must equal the size of rank/tom array.  The user can
-                provide a single element (which will be automatically promoted
-                to a list internally) or a list.
-
-            backup_map_list (list of ints)
-                List of rank_tom integers for which backup toms are defined
-                The user can provide a single element (which will be
-                automatically promoted to a list internally) or a list.
-
-            backup_map_values (list of lists of ints)
-                List of the backup rank_tom(s) for each rank_tom in
-                backup_map_list  The user can provide a single element (which
-                will be automatically promoted to a list internally) or a list.
-
-            options (dict of str to str)
-                Optional parameters.  Default value is an empty dict ( {} ).
-
-        Returns:
-            A dict with the following entries--
-
-            version (long)
-
-        """
-        assert isinstance( version, (int, long, float)), "admin_alter_shards(): Argument 'version' must be (one) of type(s) '(int, long, float)'; given %s" % type( version ).__name__
-        assert isinstance( use_index, (bool)), "admin_alter_shards(): Argument 'use_index' must be (one) of type(s) '(bool)'; given %s" % type( use_index ).__name__
-        rank = rank if isinstance( rank, list ) else ( [] if (rank is None) else [ rank ] )
-        tom = tom if isinstance( tom, list ) else ( [] if (tom is None) else [ tom ] )
-        index = index if isinstance( index, list ) else ( [] if (index is None) else [ index ] )
-        backup_map_list = backup_map_list if isinstance( backup_map_list, list ) else ( [] if (backup_map_list is None) else [ backup_map_list ] )
-        backup_map_values = backup_map_values if isinstance( backup_map_values, list ) else ( [] if (backup_map_values is None) else [ backup_map_values ] )
-        assert isinstance( options, (dict)), "admin_alter_shards(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "admin_alter_shards" )
-
-        obj = collections.OrderedDict()
-        obj['version'] = version
-        obj['use_index'] = use_index
-        obj['rank'] = rank
-        obj['tom'] = tom
-        obj['index'] = index
-        obj['backup_map_list'] = backup_map_list
-        obj['backup_map_values'] = backup_map_values
-        obj['options'] = self.__sanitize_dicts( options )
-
-        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/alter/shards' ) )
-    # end admin_alter_shards
-
-
     # begin admin_offline
     def admin_offline( self, offline = None, options = {} ):
         """Take the system offline. When the system is offline, no user operations
@@ -3178,132 +3008,6 @@ class GPUdb(object):
 
         return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/offline' ) )
     # end admin_offline
-
-
-    # begin admin_rebalance
-    def admin_rebalance( self, table_names = None, action = None, options = {} ):
-        """Rebalance the cluster so that all the nodes contain approximately equal
-        number of records.  The rebalance will also cause the shards to be (as
-        much as possible) equally distributed across all the ranks. Note that
-        the system may move any shards that were moved by system administrator
-        using :meth:`.admin_alter_shards`
-
-        Parameters:
-
-            table_names (list of str)
-                Specify the tables here if only specific tables have to be
-                rebalanced.  Leave this empty to rebalance all the tables.
-                Note that only the tables which have no primary or shard key
-                can be rebalanced.  The user can provide a single element
-                (which will be automatically promoted to a list internally) or
-                a list.
-
-            action (str)
-                Specify 'start' to start rebalancing the cluster or 'stop' to
-                prematurely stop a previsouly issued rebalance request.
-                Allowed values are:
-
-                * start
-                * stop
-
-            options (dict of str to str)
-                Optional parameters.  Default value is an empty dict ( {} ).
-                Allowed keys are:
-
-                * **reshard** --
-                  If *true*, then all the nodes in the cluster will be assigned
-                  approximately the same number of shards. Note that for big
-                  clusters, this data transfer could be time consuming and also
-                  result in delay in responding to queries for busy clusters.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
-        Returns:
-            A dict with the following entries--
-
-            table_names (list of str)
-                Names of the rebalanced tables.
-
-            message (list of str)
-                Error Messages from rebalancing the tables.
-        """
-        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
-        assert isinstance( action, (basestring)), "admin_rebalance(): Argument 'action' must be (one) of type(s) '(basestring)'; given %s" % type( action ).__name__
-        assert isinstance( options, (dict)), "admin_rebalance(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "admin_rebalance" )
-
-        obj = collections.OrderedDict()
-        obj['table_names'] = table_names
-        obj['action'] = action
-        obj['options'] = self.__sanitize_dicts( options )
-
-        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/rebalance' ) )
-    # end admin_rebalance
-
-
-    # begin admin_remove_node
-    def admin_remove_node( self, rank = None, options = {} ):
-        """Remove a node from the cluster.  Note that this operation could take a
-        long time to complete for big clusters.  The data is transferred to
-        other nodes in the cluster before the node is removed.
-
-        Parameters:
-
-            rank (int)
-                Rank number of the node being removed from the cluster.
-
-            options (dict of str to str)
-                Optional parameters.  Default value is an empty dict ( {} ).
-                Allowed keys are:
-
-                * **reshard** --
-                  When *true*, then the shards from nodes will be moved to the
-                  other nodes in the cluster. When false, then the node will
-                  only be removed from the cluster if the node does not contain
-                  any data shards, otherwise an error is returned.  Note that
-                  for big clusters, this data transfer could be time consuming
-                  and also result in delay in responding to queries for busy
-                  clusters.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
-                * **force** --
-                  When *true*, the rank is immediately shutdown and removed
-                  from the cluster.  This will result in loss of any data that
-                  is present in the node at the time of the request.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
-        Returns:
-            A dict with the following entries--
-
-            rank (int)
-                Node that was removed from the cluster.
-        """
-        assert isinstance( rank, (int, long, float)), "admin_remove_node(): Argument 'rank' must be (one) of type(s) '(int, long, float)'; given %s" % type( rank ).__name__
-        assert isinstance( options, (dict)), "admin_remove_node(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "admin_remove_node" )
-
-        obj = collections.OrderedDict()
-        obj['rank'] = rank
-        obj['options'] = self.__sanitize_dicts( options )
-
-        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/admin/remove/node' ) )
-    # end admin_remove_node
 
 
     # begin admin_show_configuration
@@ -3574,7 +3278,7 @@ class GPUdb(object):
         var, var_pop, var_samp, arg_min, arg_max and count_distinct.
 
         The response is returned as a dynamic schema. For details see: `dynamic
-        schemas documentation <../../../concepts/dynamic_schemas.html>`_.
+        schemas documentation <../../../api/index.html#dynamic-schemas>`_.
 
         If a *result_table* name is specified in the input parameter *options*,
         the results are stored in a new table with that name--no results are
@@ -4307,11 +4011,11 @@ class GPUdb(object):
                           None, limit = 10000, encoding = 'binary', options = {}
                           ):
         """Returns all the unique values from a particular column (specified by
-        input parameter *column_name*) of a particular table (specified by
-        input parameter *table_name*). If input parameter *column_name* is a
-        numeric column the values will be in output parameter
-        *binary_encoded_response*. Otherwise if input parameter *column_name*
-        is a string column the values will be in output parameter
+        input parameter *column_name*) of a particular table or collection
+        (specified by input parameter *table_name*). If input parameter
+        *column_name* is a numeric column the values will be in output
+        parameter *binary_encoded_response*. Otherwise if input parameter
+        *column_name* is a string column the values will be in output parameter
         *json_encoded_response*.  The results can be paged via the input
         parameter *offset* and input parameter *limit* parameters.
 
@@ -4325,7 +4029,7 @@ class GPUdb(object):
         {"limit":"10","sort_order":"descending"}.
 
         The response is returned as a dynamic schema. For details see: `dynamic
-        schemas documentation <../../../concepts/dynamic_schemas.html>`_.
+        schemas documentation <../../../api/index.html#dynamic-schemas>`_.
 
         If a *result_table* name is specified in the input parameter *options*,
         the results are stored in a new table with that name--no results are
@@ -4337,15 +4041,15 @@ class GPUdb(object):
         parameter *column_name*, the result table will be sharded, in all other
         cases it will be replicated.  Sorting will properly function only if
         the result table is replicated or if there is only one processing node
-        and should not be relied upon in other cases.  Not available when the
-        value of input parameter *column_name* is an unrestricted-length
-        string.
+        and should not be relied upon in other cases.  Not available if input
+        parameter *table_name* is a collection or when the value of input
+        parameter *column_name* is an unrestricted-length string.
 
         Parameters:
 
             table_name (str)
-                Name of the table on which the operation will be performed.
-                Must be an existing table.
+                Name of an existing table/collection on which the operation
+                will be performed.
 
             column_name (str)
                 Name of the column or an expression containing one or more
@@ -4403,7 +4107,9 @@ class GPUdb(object):
                     The name of the table used to store the results. If
                     present, no results are returned in the response. Has the
                     same naming restrictions as `tables
-                    <../../../concepts/tables.html>`_.
+                    <../../../concepts/tables.html>`_.  Not available if input
+                    parameter *table_name* is a collection or when input
+                    parameter *column_name* is an unrestricted-length string.
 
                   * **result_table_persist** --
                     If *true*, then the result table specified in
@@ -4490,7 +4196,7 @@ class GPUdb(object):
         respectively.
 
         The response is returned as a dynamic schema. For details see: `dynamic
-        schemas documentation <../../../concepts/dynamic_schemas.html>`_.
+        schemas documentation <../../../api/index.html#dynamic-schemas>`_.
 
         Parameters:
 
@@ -7920,7 +7626,7 @@ class GPUdb(object):
         contiguity across pages cannot be relied upon.
 
         The response is returned as a dynamic schema. For details see: `dynamic
-        schemas documentation <../../../concepts/dynamic_schemas.html>`_.
+        schemas documentation <../../../api/index.html#dynamic-schemas>`_.
 
         Parameters:
 
@@ -7968,8 +7674,8 @@ class GPUdb(object):
 
                 * **sort_order** --
                   String indicating how the returned values should be sorted -
-                  ascending or descending. Default is 'ascending'. If
-                  sort_order is provided, sort_by has to be provided.
+                  ascending or descending. If sort_order is provided, sort_by
+                  has to be provided.
                   Allowed values are:
 
                   * ascending
@@ -12479,7 +12185,7 @@ class GPUdbTable( object ):
         var, var_pop, var_samp, arg_min, arg_max and count_distinct.
 
         The response is returned as a dynamic schema. For details see: `dynamic
-        schemas documentation <../../../concepts/dynamic_schemas.html>`_.
+        schemas documentation <../../../api/index.html#dynamic-schemas>`_.
 
         If a *result_table* name is specified in the input parameter *options*,
         the results are stored in a new table with that name--no results are
@@ -13167,11 +12873,11 @@ class GPUdbTable( object ):
     def aggregate_unique( self, column_name = None, offset = None, limit =
                           10000, encoding = 'binary', options = {} ):
         """Returns all the unique values from a particular column (specified by
-        input parameter *column_name*) of a particular table (specified by
-        input parameter *table_name*). If input parameter *column_name* is a
-        numeric column the values will be in output parameter
-        *binary_encoded_response*. Otherwise if input parameter *column_name*
-        is a string column the values will be in output parameter
+        input parameter *column_name*) of a particular table or collection
+        (specified by input parameter *table_name*). If input parameter
+        *column_name* is a numeric column the values will be in output
+        parameter *binary_encoded_response*. Otherwise if input parameter
+        *column_name* is a string column the values will be in output parameter
         *json_encoded_response*.  The results can be paged via the input
         parameter *offset* and input parameter *limit* parameters.
 
@@ -13185,7 +12891,7 @@ class GPUdbTable( object ):
         {"limit":"10","sort_order":"descending"}.
 
         The response is returned as a dynamic schema. For details see: `dynamic
-        schemas documentation <../../../concepts/dynamic_schemas.html>`_.
+        schemas documentation <../../../api/index.html#dynamic-schemas>`_.
 
         If a *result_table* name is specified in the input parameter *options*,
         the results are stored in a new table with that name--no results are
@@ -13197,9 +12903,9 @@ class GPUdbTable( object ):
         parameter *column_name*, the result table will be sharded, in all other
         cases it will be replicated.  Sorting will properly function only if
         the result table is replicated or if there is only one processing node
-        and should not be relied upon in other cases.  Not available when the
-        value of input parameter *column_name* is an unrestricted-length
-        string.
+        and should not be relied upon in other cases.  Not available if input
+        parameter *table_name* is a collection or when the value of input
+        parameter *column_name* is an unrestricted-length string.
 
         Parameters:
 
@@ -13259,7 +12965,9 @@ class GPUdbTable( object ):
                     The name of the table used to store the results. If
                     present, no results are returned in the response. Has the
                     same naming restrictions as `tables
-                    <../../../concepts/tables.html>`_.
+                    <../../../concepts/tables.html>`_.  Not available if input
+                    parameter *table_name* is a collection or when input
+                    parameter *column_name* is an unrestricted-length string.
 
                   * **result_table_persist** --
                     If *true*, then the result table specified in
@@ -13359,7 +13067,7 @@ class GPUdbTable( object ):
         respectively.
 
         The response is returned as a dynamic schema. For details see: `dynamic
-        schemas documentation <../../../concepts/dynamic_schemas.html>`_.
+        schemas documentation <../../../api/index.html#dynamic-schemas>`_.
 
         Parameters:
 
