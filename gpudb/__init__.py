@@ -14,7 +14,7 @@ if (sys.version_info[0] == 3): # checking the major component
 
     from gpudb.gpudb import AttrDict
 
-    from gpudb.gpudb_ingestor import GPUdbWorkerList, GPUdbIngestor, InsertionException
+    from gpudb.gpudb_multihead_io import GPUdbWorkerList, GPUdbIngestor, InsertionException
 
     from gpudb.gpudb import collections
 else:
@@ -30,6 +30,6 @@ else:
 
     from gpudb import AttrDict
 
-    from gpudb_ingestor import GPUdbWorkerList, GPUdbIngestor, InsertionException
+    from gpudb_multihead_io import GPUdbWorkerList, GPUdbIngestor, InsertionException
 
     from gpudb import collections

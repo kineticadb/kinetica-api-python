@@ -1,6 +1,6 @@
 ###############################################################################
 #
-# gpudb_ingestor.py
+# gpudb_multihead_io.py
 #
 # Python API file for inserting multiple records into GPUdb via one or more
 # nodes/heads.
@@ -1408,6 +1408,11 @@ class _RecordKeyBuilder:
     _column_type_add_functions[ "timestamp" ] = _RecordKey.add_timestamp
 
 
+    # A dict for string types
+    _string_types = [ "char1",  "char2",  "char4",  "char8",
+                      "char16", "char32", "char64", "char128", "char256",
+                      "date", "datetime", "decimal", "ipv4", "time",
+                      "string" ]
 
     def __init__( self, record_type,
                   is_primary_key = False ):
@@ -1603,6 +1608,148 @@ class _RecordKeyBuilder:
     # end build()
 
 
+
+    def build_key_with_shard_values_only( self, key_values ):
+        """Builds a RecordKey object based on the input data and returns it.
+
+        Parameters:
+
+            key_values (list or dict)
+                Values for the sharding columns either in a list (then is
+                assumed to be in the order of the sharding keys in the record
+                type) or a dict.  Must not have any missing key value or any
+                extra column values.
+
+        Returns:
+            A _RecordKey object.
+        """
+        # Nothing to do if the key size is zero!
+        if (self._key_buffer_size == 0):
+            return None
+
+        # Type checking
+        if ( (not isinstance(key_values, list))
+             and (not isinstance(key_values, dict)) ):
+            raise GPUdbException( "Argument 'key_values' must be either a list "
+                                  "or a dict; given %s" % str(type( key_values )))
+
+        # Make sure that there are the correct number of values given
+        if ( len( key_values ) != len( self.key_columns_names ) ):
+            raise GPUdbException( "Incorrect number of key values specified; expected "
+                                  " %d, received %d" % ( len( self.key_columns_names ),
+                                                         len( key_values ) ) )
+
+        # If a dict is given, convert it into a list in the order of the key columns
+        if isinstance( key_values, dict ):
+            try:
+                key_values = [ key_values[ _name ] for _name in self.key_columns_names  ]
+            except KeyError as missing_key:
+                # Did not find a column in the given values
+                raise GPUdbException( "Missing value for column '%s' in input argument "
+                                      "'key_values'" % missing_key)
+        # end if
+
+
+        # Create and populate a RecordKey object
+        record_key = _RecordKey( self._key_buffer_size )
+
+        # Add each routing column's value to the key
+        for i in range( 0, len( self.routing_key_indices ) ):
+            # Extract the value for the relevant routing column
+            value = key_values[ i ]
+
+            # Based on the column's type, call the appropriate
+            # Record.add_xxx() function
+            col_type = self._key_types[ i ]
+            self._column_type_add_functions[ col_type ]( record_key, value )
+        # end loop
+
+        # Compute the key hash and return the key
+        record_key.compute_hashes()
+        return record_key
+    # end build_key_with_shard_values_only
+
+    
+
+    def build_expression_with_key_values_only( self, key_values ):
+        """Builds an expressiong of the format "(x = 1) and is_null(y) and ..."
+        where the column names would be the key's column names, and the values
+        would be key's values, using the function 'is_null()' for null values.
+
+        Parameters:
+
+            key_values (list or dict)
+                Values for the sharding columns either in a list (then is
+                assumed to be in the order of the sharding keys in the record
+                type) or a dict.  Must not have any missing key value or any
+                extra column values.
+
+        Returns:
+            A string with the expression built based on the input values.
+        """
+        # Nothing to do if the key size is zero!
+        if (self._key_buffer_size == 0):
+            return None
+
+        # Type checking
+        if ( (not isinstance(key_values, list))
+             and (not isinstance(key_values, dict)) ):
+            raise GPUdbException( "Argument 'key_values' must be either a list "
+                                  "or a dict; given %s" % str(type( key_values )))
+
+        # Make sure that there are the correct number of values given
+        if ( len( key_values ) != len( self.key_columns_names ) ):
+            raise GPUdbException( "Incorrect number of key values specified; expected "
+                                  " %d, received %d" % ( len( self.key_columns_names),
+                                                         len( key_values ) ) )
+
+        # If a dict is given, convert it into a list in the order of the key columns
+        if isinstance( key_values, dict ):
+            try:
+                key_values = [ key_values[ _name ] for _name in self.key_columns_names  ]
+            except KeyError as missing_key:
+                # Did not find a column in the given values
+                raise GPUdbException( "Missing value for column '%s' in input argument "
+                                      "'key_values'" % missing_key)
+        # end if
+
+
+        # Add the first column's value (use function 'is_null()' if the value is a null,
+        # otherwise just an equivalency, with double quotes for string types)
+        key_value = key_values[ 0 ]
+        col_type  = self._key_types[ 0 ]
+        col_name  = self.key_columns_names[ 0 ]
+        expression = ("is_null({n})".format( n = col_name) if (key_value == None)
+                      else ( '({n} = "{d}")'.format( n = col_name,
+                                                     d = key_value ) if (col_type in self._string_types)
+                             else '({n} = {d})'.format( n = col_name,
+                                                        d = key_value ) ) )
+
+        # Add the remaining columns' values, if any
+        for i in range( 1, len( self.routing_key_indices ) ) :
+        # for i, key_idx in enumerate( self.routing_key_indices[1 : ] ):
+            # Extract the value for the relevant routing column
+            key_value = key_values[ i ]
+            col_type = self._key_types[ i ]
+            col_name = self.key_columns_names[ i ]
+
+            # Add the column's value (use function 'is_null()' if the value is a null,
+            # otherwise just an equivalency, with double quotes for string types)
+            exp = ("is_null({n})".format( n = col_name) if (key_value == None)
+                   else ( '({n} = "{d}")'.format( n = col_name,
+                                                  d = key_value ) if (col_type in self._string_types)
+                          else '({n} = {d})'.format( n = col_name,
+                                                     d = key_value ) ) )
+
+            # Need an " and " in the expression
+            expression = (expression + " and " + exp)
+        # end loop
+
+        return expression
+    # end build_expression_with_key_values_only
+
+
+
     def has_key( self ):
         """Checks whether this record has any key associated with it.
         """
@@ -1670,7 +1817,7 @@ class _WorkerQueue:
                             connection = gpudb.connection, 
                             username = gpudb.username,
                             password = gpudb.password,
-                            using_multihead_ingestion = True )
+                            no_init_db_contact = True )
 
         # Initialize other members:
         # A queue for the data
@@ -2128,6 +2275,198 @@ class GPUdbIngestor:
 # end class GPUdbIngestor
 
 
+
+
+class RecordRetriever:
+    """Retrieves records from all worker ranks directly.  If multi-head
+    retrieval is not set up, then automatically retrieves records from the
+    head node.
+    """
+
+    def __init__( self,
+                  gpudb,
+                  table_name,
+                  record_type,
+                  workers = None ):
+        """Initializes the RecordRetriever instance.
+
+        Parameters:
+            gpudb (GPUdb)
+                The client handle through which the retrieval process
+                is to be conducted.
+            table_name (str)
+                The name of the table from which records will be fetched.
+                Must be an existing table.
+            record_type (GPUdbRecordType)
+                The type for the records which will be retrieved; must match
+                the type of the given table.
+            options (dict of str to str)
+                Any insertion options to be passed onto the GPUdb server.  Optional
+                parameter.
+            workers (GPUdbWorkerList)
+                Optional parameter.  A list of GPUdb worker rank addresses.
+        """
+
+        # Validate input parameter 'gpudb'
+        if not isinstance(gpudb, GPUdb):
+            raise GPUdbException( "Parameter 'gpudb' must be of "
+                                  "type GPUdb; given %s"
+                                  % str( type( gpudb ) ) )
+        # Validate input parameter 'table_name'
+        if not isinstance(table_name, basestring):
+            raise GPUdbException( "Parameter 'table_name' must be a"
+                                  "string; given %s"
+                                  % str( type( table_name ) ) )
+        # Validate input parameter 'record_type'
+        if not isinstance( record_type, GPUdbRecordType ):
+            raise GPUdbException( "Parameter 'record_type' must be of "
+                                  "type GPUdbRecordType; given %s"
+                                  % str( type( record_type ) ) )
+        # Validate input parameter 'workers'
+        if (workers and not isinstance(workers, GPUdbWorkerList)):
+            raise GPUdbException( "Parameter 'workers' must be of type "
+                                  "GPUdbWorkerList; given %s"
+                                  % str( type( workers ) ) )
+
+        # Save the parameter values
+        self.gpudb       = gpudb
+        self.table_name  = table_name
+        self.record_type = record_type
+
+        # Create the shard key builder
+        self.shard_key_builder   = _RecordKeyBuilder( self.record_type )
+
+        if not self.shard_key_builder.has_key():
+            self.shard_key_builder = None
+        # end saving the key builders
+
+
+        # Set up the worker queues
+        # ------------------------
+
+        # If no worker URLs are provided, get them from the server
+        if not workers:
+            workers = GPUdbWorkerList( self.gpudb )
+
+        # Create worker queues per worker URL
+        self.worker_queues = []
+        for worker in workers.get_worker_urls():
+            try:
+                worker_url = worker
+                wq = _WorkerQueue( worker_url, self.gpudb,
+                                   # self.batch_size,
+                                   1 ) # using one for now..........
+                self.worker_queues.append( wq )
+            except Exception as e:
+                raise
+        # end loop over workers
+
+        # Get the number of workers
+        if not workers:
+            self.num_ranks = 1
+        else:
+            self.num_ranks = len( workers.get_worker_urls() )
+
+        self.routing_table = None
+        if ( (self.num_ranks > 1)
+             and self.shard_key_builder ):
+            # Get the sharding assignment ranks
+            shard_info = self.gpudb.admin_show_shards()
+            # Subtract 1 from each value of the routing_table
+            # (because the 1st worker rank is the 0th element in the worker list)
+            self.routing_table = [(rank-1) for rank in shard_info[ C._shard_ranks ] ]
+
+            # Check that enough worker URLs are specified
+            for routing_table_entry in self.routing_table:
+                if (routing_table_entry > self.num_ranks):
+                    raise GPUdbException( "Not enough worker URLs specified." )
+        # end if
+    # end RecordRetriever __init__
+
+
+
+    def get_records_by_key( self, key_values, expression = "" ):
+        """Fetches the record(s) from the appropriate worker rank directly
+        (or, if multi-head record retrieval is not set up, then from the
+        head node) that map to the given shard key.
+
+        Parameters:
+
+            key_values (list or dict)
+                Values for the sharding columns of the record to fetch either in
+                a list (then it is assumed to be in the order of the sharding
+                keys in the record type) or a dict.  Must not have any missing
+                sharding/primary column value or any extra column values.
+
+            expression (str)
+                Optional parameter.  If given, it is passed to /get/records as
+                a filter expression.
+
+        Returns:
+            The decoded records.
+        """
+        # If there is no shard key, then we can't do this
+        if not self.shard_key_builder:
+            raise GPUdbException( "Cannot get key from unsharded table '%s'"
+                                  % self.table_name )
+
+        # Create the expression based on the record's sharded columns' values
+        # and any enveloping expression given by the user
+        if not expression:
+            expression = self.shard_key_builder.build_expression_with_key_values_only( key_values )
+        else:
+            expression = ( "(" + self.shard_key_builder.build_expression_with_key_values_only( key_values )
+                          + ") and (" + expression + ")" )
+        # end if
+
+        print() #  debug~~~~~~
+        print ("expression: ", expression) # debug~~~~~~~~~
+        print() #  debug~~~~~~
+        
+        # Set up the options
+        options = {}
+        options["expression"] = expression
+        options["fast_index_lookup"] = "true"
+
+        # Build the shard key
+        shard_key = self.shard_key_builder.build_key_with_shard_values_only( key_values )
+
+        # Get the appropriate worker
+        if not self.routing_table: # TODO: potentially change behavior
+            raise GPUdbException( "No routing table found; please check that multi-head retrieval is set up." )
+        worker_index = shard_key.route( self.routing_table )
+        worker_queue = self.worker_queues[ worker_index ]
+
+        # Fetch the record(s) that map to this shard key
+        gr_rsp = worker_queue.get_gpudb().get_records( self.table_name,
+                                                       limit = self.gpudb.END_OF_SET,
+                                                       options = options )
+
+        if not (gr_rsp['status_info']['status'] == 'OK'):
+            raise GPUdbException( gr_rsp['status_info']['message'] )
+
+        print (gr_rsp) # debug~~~~~~~~
+        
+        # Decode the records
+        records = GPUdbRecord.decode_binary_data( gr_rsp["type_schema"],
+                                                  gr_rsp["records_binary"] )
+        # if encoding == "binary":
+        #     records = GPUdbRecord.decode_binary_data( gr_rsp["type_schema"],
+        #                                               gr_rsp["records_binary"] )
+        # else:
+        #     records = GPUdbRecord.decode_json_string_data( gr_rsp["records_json"] )
+        # # end if-else
+        
+
+        # Replace the encoded records in the response with the decoded records
+        gr_rsp["data"] = records
+        # TODO: Potential desired behavior
+        # 1. return only the decoded records
+        # 2. delete records_binary/json field
+        return gr_rsp
+        # end get_records_by_key
+    
+# end class RecordRetriever
 
 
 

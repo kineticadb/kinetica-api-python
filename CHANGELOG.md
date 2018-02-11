@@ -1,6 +1,14 @@
 GPUdb Python API Changelog
 ==========================
 
+Version 6.2.0 - 2017-12-12
+--------------------------
+
+-  Renamed gpudb_ingestor.py to gpudb_multihead_io.py
+-  Added an opt-out mechanism for the GPUdb constructor such that no version check
+   or other communication is made with the server. 
+
+
 Version 6.1.0 - 2017-10-05
 --------------------------
 

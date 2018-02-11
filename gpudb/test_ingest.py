@@ -2,7 +2,7 @@ from __future__ import print_function
 
 
 from gpudb import GPUdb, GPUdbTable, GPUdbRecordType
-from gpudb_ingestor import GPUdbIngestor, GPUdbWorkerList
+from gpudb_multihead_io import GPUdbIngestor, GPUdbWorkerList
 import datetime
 import json
 import random

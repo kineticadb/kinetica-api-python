@@ -1433,6 +1433,7 @@ class GPUdb(object):
     def __init__(self, host = "127.0.0.1", port = "9191",
                        encoding = "BINARY", connection = 'HTTP',
                        username = "", password = "", timeout = None,
+                       no_init_db_contact = False,
                        **kwargs ):
         """
         Construct a new GPUdb client instance.
@@ -1470,6 +1471,11 @@ class GPUdb(object):
             timeout (int)
                 HTTP request timeout in seconds. Defaults to global socket
                 timeout.
+
+            no_init_db_contact (bool)
+                If True, the constructor won't communicate with the database
+                server (e.g. for checking version compatibility).  Default
+                is False.
         """
         if type(host) is list:
             if not type(port) is list:
@@ -1524,11 +1530,8 @@ class GPUdb(object):
         # Load all gpudb schemas
         self.load_gpudb_schemas()
 
-        # Get the multi-head ingestion related hidden input parameter, if given
-        using_multihead_ingestion = kwargs.get( "using_multihead_ingestion", None )
-
         # Make sure that a connection to the server can be established
-        if not using_multihead_ingestion:
+        if not no_init_db_contact:
             server_status_response = self.show_system_status()
             if not _Util.is_ok( server_status_response ):
                 raise GPUdbException( _Util.get_error_msg( server_status_response ) )
@@ -1536,18 +1539,36 @@ class GPUdb(object):
 
         # Check version compatibility with the server
         # -------------------------------------------
-        if not using_multihead_ingestion:
-            system_props = self.show_system_properties()
-            server_version = system_props[ C._property_map ][ C._gaia_version ]
-
-            # Extract the version for both server and client: major.minor.revision (ignore ABI)
-            server_version = ".".join( server_version.split( "." )[ 0 : 3 ] )
-            client_version = ".".join( self.api_version.split( "." )[ 0 : 3 ] )
-            if (server_version != client_version):
-                print ( "Warning: Client version ({0}) does not match that of the server ({1})"
-                        "".format( client_version, server_version ) )
+        if not no_init_db_contact:
+            self._perform_version_check()
     # end __init__
 
+
+    def _perform_version_check( self, do_print_warning = True ):
+        """Perform a version check with the database server.
+
+        Parameters:
+            do_print_warning (bool)
+                If True, print a warning on version mismatch.
+
+
+        @returns True if versions match, False otherwise.
+        """
+        system_props = self.show_system_properties()
+        server_version = system_props[ C._property_map ][ C._gaia_version ]
+
+        # Extract the version for both server and client: major.minor.revision (ignore ABI)
+        server_version = ".".join( server_version.split( "." )[ 0 : 3 ] )
+        client_version = ".".join( self.api_version.split( "." )[ 0 : 3 ] )
+        if (server_version != client_version):
+            if (do_print_warning == True):
+                print ( "Warning: Client version ({0}) does not match that of the server ({1})"
+                        "".format( client_version, server_version ) )
+            return True # all is well
+        # end if
+
+        return False # version mismatch!
+    # end _perform_version_check
 
 
     def _get_current_conn_token( self ):
@@ -1618,7 +1639,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "6.1.0.3"
+    api_version   = "6.2.0.0"
 
     # constants
     END_OF_SET = -9999
@@ -2214,6 +2235,15 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
+        name = "clear_statistics"
+        REQ_SCHEMA_STR = """{"type":"record","name":"clear_statistics_request","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"clear_statistics_response","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"}]}"""
+        ENDPOINT = "/clear/statistics"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "clear_table"
         REQ_SCHEMA_STR = """{"type":"record","name":"clear_table_request","fields":[{"name":"table_name","type":"string"},{"name":"authorization","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"clear_table_response","fields":[{"name":"table_name","type":"string"}]}"""
@@ -2241,10 +2271,37 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
+        name = "collect_statistics"
+        REQ_SCHEMA_STR = """{"type":"record","name":"collect_statistics_request","fields":[{"name":"table_name","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"collect_statistics_response","fields":[{"name":"table_name","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}}]}"""
+        ENDPOINT = "/collect/statistics"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "create_job"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_job_request","fields":[{"name":"endpoint","type":"string"},{"name":"request_encoding","type":"string"},{"name":"data","type":"bytes"},{"name":"data_str","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_job_response","fields":[{"name":"job_id","type":"int"}]}"""
+        ENDPOINT = "/create/job"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "create_join_table"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_join_table_request","fields":[{"name":"join_table_name","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"expressions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"create_join_table_response","fields":[{"name":"join_table_name","type":"string"},{"name":"count","type":"long"}]}"""
         ENDPOINT = "/create/jointable"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "create_materialized_view"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_materialized_view_request","fields":[{"name":"table_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_materialized_view_response","fields":[{"name":"table_name","type":"string"},{"name":"view_id","type":"string"}]}"""
+        ENDPOINT = "/create/materializedview"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
@@ -2520,6 +2577,15 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
                                        "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
                                        "ENDPOINT" : ENDPOINT }
+        name = "get_job"
+        REQ_SCHEMA_STR = """{"type":"record","name":"get_job_request","fields":[{"name":"job_id","type":"int"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"get_job_response","fields":[{"name":"endpoint","type":"string"},{"name":"job_status","type":"string"},{"name":"running","type":"boolean"},{"name":"progress","type":"int"},{"name":"successful","type":"boolean"},{"name":"response_encoding","type":"string"},{"name":"job_response","type":"bytes"},{"name":"job_response_str","type":"string"},{"name":"status_map","type":{"type":"map","values":"string"}}]}"""
+        ENDPOINT = "/get/job"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
         name = "get_records"
         REQ_SCHEMA_STR = """{"type":"record","name":"get_records_request","fields":[{"name":"table_name","type":"string"},{"name":"offset","type":"long"},{"name":"limit","type":"long"},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"get_records_response","fields":[{"name":"table_name","type":"string"},{"name":"type_name","type":"string"},{"name":"type_schema","type":"string"},{"name":"records_binary","type":{"type":"array","items":"bytes"}},{"name":"records_json","type":{"type":"array","items":"string"}},{"name":"total_number_of_records","type":"long"},{"name":"has_more_records","type":"boolean"}]}"""
@@ -2722,6 +2788,15 @@ class GPUdb(object):
         REQ_SCHEMA_STR = """{"type":"record","name":"show_security_request","fields":[{"name":"names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"show_security_response","fields":[{"name":"types","type":{"type":"map","values":"string"}},{"name":"roles","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"permissions","type":{"type":"map","values":{"type":"array","items":{"type":"map","values":"string"}}}}]}"""
         ENDPOINT = "/show/security"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
+                                       "RSP_SCHEMA" : schema.parse( RSP_SCHEMA_STR ),
+                                       "ENDPOINT" : ENDPOINT }
+        name = "show_statistics"
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_statistics_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_statistics_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"stastistics_map","type":{"type":"array","items":{"type":"array","items":{"type":"map","values":"string"}}}}]}"""
+        ENDPOINT = "/show/statistics"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : schema.parse( REQ_SCHEMA_STR ),
@@ -3421,6 +3496,9 @@ class GPUdb(object):
                   * **chunk_size** --
                     Indicates the chunk size to be used for the result table.
                     Must be used in combination with the *result_table* option.
+
+                  * **view_id** --
+                    view this result table is part of
 
                   * **materialize_on_gpu** --
                     If *true* then the columns of the groupby result table will
@@ -4141,6 +4219,9 @@ class GPUdb(object):
                     Indicates the chunk size to be used for the result table.
                     Must be used in combination with the *result_table* option.
 
+                  * **view_id** --
+                    view this result table is part of
+
         Returns:
             A dict with the following entries--
 
@@ -4591,6 +4672,26 @@ class GPUdb(object):
                   mode in input parameter *value*. Valid modes are 'no_access',
                   'read_only', 'write_only' and 'read_write'.
 
+                * **refresh** --
+                  Replay all the table creation commands required to create
+                  this view. Endpoints supported are filter, create_join_table,
+                  create_projection, create_union, aggregate_group_by, and
+                  aggregate_unique.
+
+                * **set_refresh_method** --
+                  Set the method by which this view is refreshed - one of
+                  manual, periodic, on_change, on_query.
+
+                * **set_refresh_start_time** --
+                  Set the time to start periodic refreshes to datetime string
+                  with format YYYY-MM-DD HH:MM:SS at which refresh is to be
+                  done.  Next refresh occurs at refresh_start_time +
+                  N*refresh_period
+
+                * **set_refresh_period** --
+                  Set the time interval at which to refresh this view - set
+                  refresh method to periodic if not alreay set.
+
             value (str)
                   The value of the modification. May be a column name, 'true'
                   or 'false', a TTL, or the global access mode depending on
@@ -4602,7 +4703,8 @@ class GPUdb(object):
 
                   * **column_default_value** --
                     When adding a column, set a default value for existing
-                    records.
+                    records.  For nullable columns, the default value will be
+                    null, regardless of data type.
 
                   * **column_properties** --
                     When adding or changing a column, set the column properties
@@ -4628,10 +4730,7 @@ class GPUdb(object):
                     The default value is 'snappy'.
 
                   * **copy_values_from_column** --
-                    When adding or changing a column, enter a column name from
-                    the same table being altered to use as a source for the
-                    column being added/changed; values will be copied from this
-                    source column into the new/modified column.
+                    please see add_column_expression instead.
 
                   * **rename_column** --
                     When changing a column, specify new column name.
@@ -4651,6 +4750,11 @@ class GPUdb(object):
                       false
 
                       The default value is 'true'.
+
+                  * **add_column_expression** --
+                    expression for new column's values (optional with
+                    add_column). Any valid expressions including existing
+                    columns.
 
         Returns:
             A dict with the following entries--
@@ -4748,8 +4852,7 @@ class GPUdb(object):
 
 
     # begin alter_user
-    def alter_user( self, name = None, action = None, value = None, options = None
-                    ):
+    def alter_user( self, name = None, action = None, value = None, options = {} ):
         """Alters a user.
 
         Parameters:
@@ -4770,7 +4873,7 @@ class GPUdb(object):
                   *action*.
 
             options (dict of str to str)
-                  Optional parameters.
+                  Optional parameters.  Default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -4895,6 +4998,48 @@ class GPUdb(object):
     # end append_records
 
 
+    # begin clear_statistics
+    def clear_statistics( self, table_name = '', column_name = '', options = None ):
+        """Clears (drops) one or all column statistics of a tables.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table to clear the statistics. Must be an existing
+                table.  Default value is ''.
+
+            column_name (str)
+                Name of the column to be cleared. Must be an existing table.
+                Empty string clears all available statistics of the table.
+                Default value is ''.
+
+            options (dict of str to str)
+                Optional parameters.
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                Value of input parameter *table_name* for a given table.
+
+            column_name (str)
+                Value of input parameter *column_name* for a given table
+        """
+        assert isinstance( table_name, (basestring)), "clear_statistics(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( column_name, (basestring)), "clear_statistics(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
+        assert isinstance( options, (dict)), "clear_statistics(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "clear_statistics" )
+
+        obj = collections.OrderedDict()
+        obj['table_name'] = table_name
+        obj['column_name'] = column_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/clear/statistics' ) )
+    # end clear_statistics
+
+
     # begin clear_table
     def clear_table( self, table_name = '', authorization = '', options = {} ):
         """Clears (drops) one or all tables in the database cluster. The operation
@@ -5015,6 +5160,119 @@ class GPUdb(object):
     # end clear_trigger
 
 
+    # begin collect_statistics
+    def collect_statistics( self, table_name = None, column_names = None, options =
+                            {} ):
+        """Collect the requested statistics of the given column(s) in a given
+        table.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table on which the statistics operation will be
+                performed.
+
+            column_names (list of str)
+                List of one or more column names.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                Value of input parameter *table_name*.
+
+            column_names (list of str)
+                Value of input parameter *column_names*.
+        """
+        assert isinstance( table_name, (basestring)), "collect_statistics(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        column_names = column_names if isinstance( column_names, list ) else ( [] if (column_names is None) else [ column_names ] )
+        assert isinstance( options, (dict)), "collect_statistics(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "collect_statistics" )
+
+        obj = collections.OrderedDict()
+        obj['table_name'] = table_name
+        obj['column_names'] = column_names
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/collect/statistics' ) )
+    # end collect_statistics
+
+
+    # begin create_job
+    def create_job( self, endpoint = None, request_encoding = 'binary', data = None,
+                    data_str = None, options = {} ):
+        """Create a job which will run asynchronously. The response returns a job
+        ID, which can be used to query the status and result of the job. The
+        status and the result of the job upon completion can be requested by
+        :meth:`.get_job`.
+
+        Parameters:
+
+            endpoint (str)
+                Indicates which endpoint to execute, e.g. '/alter/table'.
+
+            request_encoding (str)
+                The encoding of the request payload for the job.  Default value
+                is 'binary'.
+                Allowed values are:
+
+                * binary
+                * json
+                * snappy
+
+                The default value is 'binary'.
+
+            data (str)
+                Binary-encoded payload for the job to be run asynchronously.
+                The payload must contain the relevant input parameters for the
+                endpoint indicated in input parameter *endpoint*.  Please see
+                the documentation for the appropriate endpoint to see what
+                values must (or can) be specified.  If this parameter is used,
+                then input parameter *request_encoding* must be *binary* or
+                *snappy*.
+
+            data_str (str)
+                JSON-encoded payload for the job to be run asynchronously.  The
+                payload must contain the relevant input parameters for the
+                endpoint indicated in input parameter *endpoint*.  Please see
+                the documentation for the appropriate endpoint to see what
+                values must (or can) be specified.  If this parameter is used,
+                then input parameter *request_encoding* must be *json*.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            job_id (int)
+                An identifier for the job created by this call.
+        """
+        assert isinstance( endpoint, (basestring)), "create_job(): Argument 'endpoint' must be (one) of type(s) '(basestring)'; given %s" % type( endpoint ).__name__
+        assert isinstance( request_encoding, (basestring)), "create_job(): Argument 'request_encoding' must be (one) of type(s) '(basestring)'; given %s" % type( request_encoding ).__name__
+        assert isinstance( data, (basestring)), "create_job(): Argument 'data' must be (one) of type(s) '(basestring)'; given %s" % type( data ).__name__
+        assert isinstance( data_str, (basestring)), "create_job(): Argument 'data_str' must be (one) of type(s) '(basestring)'; given %s" % type( data_str ).__name__
+        assert isinstance( options, (dict)), "create_job(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "create_job" )
+
+        obj = collections.OrderedDict()
+        obj['endpoint'] = endpoint
+        obj['request_encoding'] = request_encoding
+        obj['data'] = data
+        obj['data_str'] = data_str
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/job' ) )
+    # end create_job
+
+
     # begin create_join_table
     def create_join_table( self, join_table_name = None, table_names = [],
                            column_names = [], expressions = [], options = {} ):
@@ -5131,6 +5389,9 @@ class GPUdb(object):
                   Sets the `TTL <../../../concepts/ttl.html>`_ of the join
                   table specified in input parameter *join_table_name*.
 
+                * **view_id** --
+                  view this projection is part of
+
         Returns:
             A dict with the following entries--
 
@@ -5158,6 +5419,106 @@ class GPUdb(object):
 
         return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/jointable' ) )
     # end create_join_table
+
+
+    # begin create_materialized_view
+    def create_materialized_view( self, table_name = None, options = {} ):
+        """The create materialized view request does not create the actual table
+        that will be the toplevel table of the view but instead registers the
+        table name so no other views or tables can be created with that name.
+        The response contains a a view_id that is used to label the table
+        creation requests (projection, union, group-by, filter, or join) that
+        describes the view.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table to be created that is the top-level table of
+                the materialized view.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created table will be a top-level table.
+
+                * **ttl** --
+                  Sets the `TTL <../../../concepts/ttl.html>`_ of the table
+                  specified in input parameter *table_name*.
+
+                * **persist** --
+                  If *true*, then the materialized view specified in input
+                  parameter *table_name* will be persisted and will not expire
+                  unless a *ttl* is specified.   If *false*, then the
+                  materialized view will be an in-memory table and will expire
+                  unless a *ttl* is specified otherwise.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **refresh_method** --
+                  Method by which the join can be refreshed when the data in
+                  underlying member tables have changed.
+                  Allowed values are:
+
+                  * **manual** --
+                    Refresh only occurs when manually requested by calling
+                    alter_table with action refresh_view
+
+                  * **on_query** --
+                    Incrementally refresh (refresh just those records added)
+                    whenever a new query is issued and new data is inserted
+                    into the base table.  A full refresh of all the records
+                    occurs when a new query is issued and there have been
+                    inserts to any non-base-tables since the last query
+
+                  * **on_change** --
+                    If possible, incrementally refresh (refresh just those
+                    records added) whenever an insert, update, delete or
+                    refresh of input table is done.  A full refresh on_query is
+                    done if an incremental refresh is not possible.
+
+                  * **periodic** --
+                    Refresh table periodically at rate specified by
+                    refresh_period option
+
+                    The default value is 'manual'.
+
+                * **refresh_period** --
+                  When refresh_method is periodic specifies the period in
+                  seconds at which refresh occurs
+
+                * **refresh_start_time** --
+                  First time at which a periodic refresh is to be done.  Value
+                  is a datatime string with format YYYY-MM-DD HH:MM:SS.
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                Value of input parameter *table_name*.
+
+            view_id (str)
+                Value of view_id.
+        """
+        assert isinstance( table_name, (basestring)), "create_materialized_view(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( options, (dict)), "create_materialized_view(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "create_materialized_view" )
+
+        obj = collections.OrderedDict()
+        obj['table_name'] = table_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/create/materializedview' ) )
+    # end create_materialized_view
 
 
     # begin create_proc
@@ -5222,6 +5583,11 @@ class GPUdb(object):
 
             options (dict of str to str)
                   Optional parameters.  Default value is an empty dict ( {} ).
+                  Allowed keys are:
+
+                  * **max_concurrency_per_node** --
+                    The maximum number of concurrent instances of the proc that
+                    will be executed per node. 0 allows unlimited concurrency.
 
         Returns:
             A dict with the following entries--
@@ -5359,6 +5725,9 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                * **view_id** --
+                  view this projection is part of
 
         Returns:
             A dict with the following entries--
@@ -5966,6 +6335,9 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **view_id** --
+                  view this union table is part of
+
         Returns:
             A dict with the following entries--
 
@@ -5992,7 +6364,7 @@ class GPUdb(object):
 
 
     # begin create_user_external
-    def create_user_external( self, name = None, options = None ):
+    def create_user_external( self, name = None, options = {} ):
         """Creates a new external user (a user whose credentials are managed by an
         external LDAP).
 
@@ -6004,7 +6376,7 @@ class GPUdb(object):
                 same name as an existing user.
 
             options (dict of str to str)
-                Optional parameters.
+                Optional parameters.  Default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -6026,7 +6398,7 @@ class GPUdb(object):
 
 
     # begin create_user_internal
-    def create_user_internal( self, name = None, password = None, options = None ):
+    def create_user_internal( self, name = None, password = None, options = {} ):
         """Creates a new internal user (a user whose credentials are managed by
         the database system).
 
@@ -6042,7 +6414,7 @@ class GPUdb(object):
                 string for no password.
 
             options (dict of str to str)
-                Optional parameters.
+                Optional parameters.  Default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -6163,7 +6535,7 @@ class GPUdb(object):
 
 
     # begin delete_role
-    def delete_role( self, name = None, options = None ):
+    def delete_role( self, name = None, options = {} ):
         """Deletes an existing role.
 
         Parameters:
@@ -6172,7 +6544,7 @@ class GPUdb(object):
                 Name of the role to be deleted. Must be an existing role.
 
             options (dict of str to str)
-                Optional parameters.
+                Optional parameters.  Default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -6194,7 +6566,7 @@ class GPUdb(object):
 
 
     # begin delete_user
-    def delete_user( self, name = None, options = None ):
+    def delete_user( self, name = None, options = {} ):
         """Deletes an existing user.
 
         Parameters:
@@ -6203,7 +6575,7 @@ class GPUdb(object):
                 Name of the user to be deleted. Must be an existing user.
 
             options (dict of str to str)
-                Optional parameters.
+                Optional parameters.  Default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -6374,6 +6746,9 @@ class GPUdb(object):
                   view. If the collection provided is non-existent, the
                   collection will be automatically created. If empty, then the
                   newly created view will be top-level.
+
+                * **view_id** --
+                  view this filtered-view is part of
 
                 * **ttl** --
                   Sets the `TTL <../../../concepts/ttl.html>`_ of the view
@@ -7484,6 +7859,96 @@ class GPUdb(object):
     # end filter_by_value
 
 
+    # begin get_job
+    def get_job( self, job_id = None, options = {} ):
+        """
+        Parameters:
+
+            job_id (int)
+                A unique identifier for the job whose status and result is to
+                be fetched.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            endpoint (str)
+                The endpoint which is being executed asynchronously.  E.g.
+                '/alter/table'.
+
+            job_status (str)
+                TODO
+                Allowed values are:
+
+                * **DONE** --
+                  TODO
+
+                * **RUNNING** --
+                  TODO
+
+                * **ERROR** --
+                  TODO
+
+                * **CANCELLED** --
+                  TODO
+
+            running (bool)
+                  TODO
+
+            progress (int)
+                  TODO
+
+            successful (bool)
+                  TODO
+
+            response_encoding (str)
+                  The encoding of the job result (contained in output parameter
+                  *job_response* or output parameter *job_response_str*.
+                  Allowed values are:
+
+                  * **binary** --
+                    The job result is binary-encoded.  It is contained in
+                    output parameter *job_response*.
+
+                  * **json** --
+                    The job result is json-encoded.  It is contained in output
+                    parameter *job_response_str*.
+
+            job_response (str)
+                    The binary-encoded response of the job.  This field is
+                    populated only when the job has completed and output
+                    parameter *response_encoding* is *binary*
+
+            job_response_str (str)
+                    The json-encoded response of the job.  This field is
+                    populated only when the job has completed and output
+                    parameter *response_encoding* is *json*
+
+            status_map (dict of str to str)
+                    TODO; please include all possible options along with their
+                    docstrings.
+                    Allowed keys are:
+
+                    * **error_message** --
+                      Explains what error occurred while running the job
+                      asynchronously.  This entry only exists when the job
+                      status is *ERROR*.
+        """
+        assert isinstance( job_id, (int, long, float)), "get_job(): Argument 'job_id' must be (one) of type(s) '(int, long, float)'; given %s" % type( job_id ).__name__
+        assert isinstance( options, (dict)), "get_job(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "get_job" )
+
+        obj = collections.OrderedDict()
+        obj['job_id'] = job_id
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/get/job' ) )
+    # end get_job
+
+
     # begin get_records
     def get_records( self, table_name = None, offset = 0, limit = 10000, encoding =
                      'binary', options = {} ):
@@ -7940,8 +8405,8 @@ class GPUdb(object):
 
 
     # begin grant_permission_system
-    def grant_permission_system( self, name = None, permission = None, options =
-                                 None ):
+    def grant_permission_system( self, name = None, permission = None, options = {}
+                                 ):
         """Grants a system-level permission to a user or role.
 
         Parameters:
@@ -7964,7 +8429,7 @@ class GPUdb(object):
                   Read-only access to all tables.
 
             options (dict of str to str)
-                  Optional parameters.
+                  Optional parameters.  Default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -7992,7 +8457,7 @@ class GPUdb(object):
 
     # begin grant_permission_table
     def grant_permission_table( self, name = None, permission = None, table_name =
-                                None, filter_expression = '', options = None ):
+                                None, filter_expression = '', options = {} ):
         """Grants a table-level permission to a user or role.
 
         Parameters:
@@ -8030,7 +8495,7 @@ class GPUdb(object):
                   Reserved for future use.  Default value is ''.
 
             options (dict of str to str)
-                  Optional parameters.
+                  Optional parameters.  Default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -8067,7 +8532,7 @@ class GPUdb(object):
 
 
     # begin grant_role
-    def grant_role( self, role = None, member = None, options = None ):
+    def grant_role( self, role = None, member = None, options = {} ):
         """Grants membership in a role to a user or role.
 
         Parameters:
@@ -8081,7 +8546,7 @@ class GPUdb(object):
                 input parameter *role*. Must be an existing user or role.
 
             options (dict of str to str)
-                Optional parameters.
+                Optional parameters.  Default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -8560,7 +9025,7 @@ class GPUdb(object):
                 Value of input parameter *table_name*.
 
             count (long)
-                Value of input parameter *count*.
+                Number of records inserted.
         """
         assert isinstance( table_name, (basestring)), "insert_records_random(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( count, (int, long, float)), "insert_records_random(): Argument 'count' must be (one) of type(s) '(int, long, float)'; given %s" % type( count ).__name__
@@ -8859,8 +9324,8 @@ class GPUdb(object):
 
 
     # begin revoke_permission_system
-    def revoke_permission_system( self, name = None, permission = None, options =
-                                  None ):
+    def revoke_permission_system( self, name = None, permission = None, options = {}
+                                  ):
         """Revokes a system-level permission from a user or role.
 
         Parameters:
@@ -8883,7 +9348,7 @@ class GPUdb(object):
                   Read-only access to all tables.
 
             options (dict of str to str)
-                  Optional parameters.
+                  Optional parameters.  Default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -8911,7 +9376,7 @@ class GPUdb(object):
 
     # begin revoke_permission_table
     def revoke_permission_table( self, name = None, permission = None, table_name =
-                                 None, options = None ):
+                                 None, options = {} ):
         """Revokes a table-level permission from a user or role.
 
         Parameters:
@@ -8944,7 +9409,7 @@ class GPUdb(object):
                   be an existing table, collection, or view.
 
             options (dict of str to str)
-                  Optional parameters.
+                  Optional parameters.  Default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -8976,7 +9441,7 @@ class GPUdb(object):
 
 
     # begin revoke_role
-    def revoke_role( self, role = None, member = None, options = None ):
+    def revoke_role( self, role = None, member = None, options = {} ):
         """Revokes membership in a role from a user or role.
 
         Parameters:
@@ -8990,7 +9455,7 @@ class GPUdb(object):
                 input parameter *role*. Must be an existing user or role.
 
             options (dict of str to str)
-                Optional parameters.
+                Optional parameters.  Default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -9186,7 +9651,7 @@ class GPUdb(object):
 
 
     # begin show_security
-    def show_security( self, names = None, options = None ):
+    def show_security( self, names = None, options = {} ):
         """Shows security information relating to users and/or roles. If the
         caller is not a system administrator, only information relating to the
         caller and their roles is returned.
@@ -9201,7 +9666,7 @@ class GPUdb(object):
                 to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.
+                Optional parameters.  Default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -9228,6 +9693,44 @@ class GPUdb(object):
 
         return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/security' ) )
     # end show_security
+
+
+    # begin show_statistics
+    def show_statistics( self, table_names = None, options = None ):
+        """Retrieves the collected column statistics for the specified table.
+
+        Parameters:
+
+            table_names (list of str)
+                Tables whose metadata will be fetched. All provided tables must
+                exist, or an error is returned.  The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.
+
+        Returns:
+            A dict with the following entries--
+
+            table_names (list of str)
+                Value of input parameter *table_names*.
+
+            stastistics_map (list of lists of dicts of str to str)
+                A list of maps which contain the column statistics of the table
+                input parameter *table_names*.
+        """
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        assert isinstance( options, (dict)), "show_statistics(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, REP_SCHEMA) = self.__get_schemas( "show_statistics" )
+
+        obj = collections.OrderedDict()
+        obj['table_names'] = table_names
+        obj['options'] = self.__sanitize_dicts( options )
+
+        return AttrDict( self.__post_then_get( REQ_SCHEMA, REP_SCHEMA, obj, '/show/statistics' ) )
+    # end show_statistics
 
 
     # begin show_system_properties
@@ -10483,18 +10986,18 @@ class GPUdb(object):
 # Import GPUdbIngestor; try from an installed package first, if not, try local
 if sys.version_info[0] >= 3: # checking the major component
     try:
-        from gpudb.gpudb import GPUdbIngestor
+        from gpudb.gpudb import GPUdbIngestor, RecordRetriever
     except:
         if not gpudb_module_path in sys.path :
             sys.path.insert(1, gpudb_module_path)
-        from gpudb_ingestor import GPUdbIngestor
+        from gpudb_multihead_io import GPUdbIngestor, RecordRetriever
 else:
     try:
-        from gpudb import GPUdbIngestor
+        from gpudb import GPUdbIngestor, RecordRetriever
     except:
         if not gpudb_module_path in sys.path :
             sys.path.insert(1, gpudb_module_path)
-        from gpudb_ingestor import GPUdbIngestor
+        from gpudb_multihead_io import GPUdbIngestor, RecordRetriever
 # done importing GPUdbIngestor
 
 
@@ -10525,6 +11028,7 @@ class GPUdbTable( object ):
                   delete_temporary_views = True,
                   temporary_view_names = None,
                   create_views = True,
+                  use_multihead_io = False,
                   use_multihead_ingest = False,
                   multihead_ingest_batch_size = 10000,
                   flush_multi_head_ingest_per_insertion = False ):
@@ -10581,12 +11085,19 @@ class GPUdbTable( object ):
                 Optional list of temporary view names (that ought
                 to be deleted upon terminal queries)
 
+            use_multihead_io (bool)
+                Indicates whether or not to use multi-head input and output
+                (meaning ingestion and lookup).  Default is False.
+                Note that multi-head ingestion is more computation intensive
+                for sharded tables, and it it probably advisable only if there
+                is a heavy ingestion load.  Choose carefully.  
+
             use_multihead_ingest (bool)
                 Indicates whether or not to use multi-head ingestion, if
                 available upon insertion.  Note that multi-head ingestion
                 is more computation intensive for sharded tables, and it
                 it probably advisable only if there is a heavy ingestion
-                load.  Choose carefully.
+                load.  Default is False.  Will be deprecated in version 7.0.
 
             multihead_ingest_batch_size (int)
                 Used only in conjunction with *use_multihead_ingest*;
@@ -10723,12 +11234,19 @@ class GPUdbTable( object ):
 
 
         # Set up multi-head ingestion, if needed
-        self._multihead_ingestor = None
+
+        if not isinstance( use_multihead_io, bool ):
+            raise GPUdbException( "Argument 'use_multihead_io' must be "
+                                  "a bool; given '%s'"
+                                  % str( type( use_multihead_io ) ) )
+
         if not isinstance( use_multihead_ingest, bool ):
             raise GPUdbException( "Argument 'use_multihead_ingest' must be "
                                   "a bool; given '%s'"
                                   % str( type( use_multihead_ingest ) ) )
-        if use_multihead_ingest:
+
+        self._multihead_ingestor = None
+        if use_multihead_ingest or use_multihead_io:
             # Check multihead_ingest_batch_size
             if ( not isinstance( multihead_ingest_batch_size, (int, long) )
                  or (multihead_ingest_batch_size < 1) ):
@@ -10749,6 +11267,20 @@ class GPUdbTable( object ):
             # Set the function used by the regular insertion for encoding records
             self._record_encoding_function = lambda vals: self.__encode_data_for_insertion( vals )
         # end if
+
+        # Set up multi-head record retriever
+        self._multihead_retriever = None
+        if use_multihead_io:
+            self._multihead_retriever = RecordRetriever( self.db, self.name,
+                                                         self.record_type )
+
+            # Set the function used by multihead ingestor for encoding records
+            self._record_encoding_function = lambda vals: GPUdbRecord( self.record_type, vals )
+        else: # no multi-head ingestion
+            # Set the function used by the regular insertion for encoding records
+            self._record_encoding_function = lambda vals: self.__encode_data_for_insertion( vals )
+        # end if
+        
     # end __init__
 
 
@@ -11339,6 +11871,35 @@ class GPUdbTable( object ):
 
 
 
+    def get_records_by_key( self, key_values, expression = "" ):
+        """Fetches the record(s) from the appropriate worker rank directly
+        (or, if multi-head record retrieval is not set up, then from the
+        head node) that map to the given shard key.
+
+        Parameters:
+
+            key_values (list or dict)
+                Values for the sharding columns of the record to fetch either in
+                a list (then it is assumed to be in the order of the sharding
+                keys in the record type) or a dict.  Must not have any missing
+                sharding/primary column value or any extra column values.
+
+            expression (str)
+                Optional parameter.  If given, it is passed to /get/records as
+                a filter expression.
+
+        Returns:
+            The decoded records.
+        """
+        if not self._multihead_retriever:
+            raise GPUdebException( "Record retrieval by sharding/primary keys "
+                                   "is not set up for this table." )
+        
+        return self._multihead_retriever.get_records_by_key( key_values, expression )
+    # end get_records_by_key
+
+
+    
     def get_records( self, offset = 0, limit = 10000,
                      encoding = 'binary', options = {} ):
         """Retrieves records from a given table, optionally filtered by an
@@ -11830,6 +12391,9 @@ class GPUdbTable( object ):
                   Sets the `TTL <../../../concepts/ttl.html>`_ of the join
                   table specified in input parameter *join_table_name*.
 
+                * **view_id** --
+                  view this projection is part of
+
         Returns:
             A read-only GPUdbTable object.
 
@@ -11970,6 +12534,9 @@ class GPUdbTable( object ):
                   * false
 
                   The default value is 'false'.
+
+                * **view_id** --
+                  view this union table is part of
 
         Returns:
             A read-only GPUdbTable object.
@@ -12324,6 +12891,9 @@ class GPUdbTable( object ):
                   * **chunk_size** --
                     Indicates the chunk size to be used for the result table.
                     Must be used in combination with the *result_table* option.
+
+                  * **view_id** --
+                    view this result table is part of
 
                   * **materialize_on_gpu** --
                     If *true* then the columns of the groupby result table will
@@ -12999,6 +13569,9 @@ class GPUdbTable( object ):
                     Indicates the chunk size to be used for the result table.
                     Must be used in combination with the *result_table* option.
 
+                  * **view_id** --
+                    view this result table is part of
+
         Returns:
             A read-only GPUdbTable object if input options has "result_table";
             otherwise the response from the server, which is a dict containing
@@ -13327,6 +13900,26 @@ class GPUdbTable( object ):
                   mode in input parameter *value*. Valid modes are 'no_access',
                   'read_only', 'write_only' and 'read_write'.
 
+                * **refresh** --
+                  Replay all the table creation commands required to create
+                  this view. Endpoints supported are filter, create_join_table,
+                  create_projection, create_union, aggregate_group_by, and
+                  aggregate_unique.
+
+                * **set_refresh_method** --
+                  Set the method by which this view is refreshed - one of
+                  manual, periodic, on_change, on_query.
+
+                * **set_refresh_start_time** --
+                  Set the time to start periodic refreshes to datetime string
+                  with format YYYY-MM-DD HH:MM:SS at which refresh is to be
+                  done.  Next refresh occurs at refresh_start_time +
+                  N*refresh_period
+
+                * **set_refresh_period** --
+                  Set the time interval at which to refresh this view - set
+                  refresh method to periodic if not alreay set.
+
             value (str)
                   The value of the modification. May be a column name, 'true'
                   or 'false', a TTL, or the global access mode depending on
@@ -13338,7 +13931,8 @@ class GPUdbTable( object ):
 
                   * **column_default_value** --
                     When adding a column, set a default value for existing
-                    records.
+                    records.  For nullable columns, the default value will be
+                    null, regardless of data type.
 
                   * **column_properties** --
                     When adding or changing a column, set the column properties
@@ -13364,10 +13958,7 @@ class GPUdbTable( object ):
                     The default value is 'snappy'.
 
                   * **copy_values_from_column** --
-                    When adding or changing a column, enter a column name from
-                    the same table being altered to use as a source for the
-                    column being added/changed; values will be copied from this
-                    source column into the new/modified column.
+                    please see add_column_expression instead.
 
                   * **rename_column** --
                     When changing a column, specify new column name.
@@ -13387,6 +13978,11 @@ class GPUdbTable( object ):
                       false
 
                       The default value is 'true'.
+
+                  * **add_column_expression** --
+                    expression for new column's values (optional with
+                    add_column). Any valid expressions including existing
+                    columns.
 
         Returns:
             The response from the server which is a dict containing the
@@ -13523,6 +14119,42 @@ class GPUdbTable( object ):
     # end append_records
 
 
+    def clear_statistics( self, column_name = '', options = None ):
+        """Clears (drops) one or all column statistics of a tables.
+
+        Parameters:
+
+            column_name (str)
+                Name of the column to be cleared. Must be an existing table.
+                Empty string clears all available statistics of the table.
+                Default value is ''.
+
+            options (dict of str to str)
+                Optional parameters.
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            table_name (str)
+                Value of input parameter *table_name* for a given table.
+
+            column_name (str)
+                Value of input parameter *column_name* for a given table
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.clear_statistics( self.name, column_name, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end clear_statistics
+
+
     def clear( self, authorization = '', options = {} ):
         """Clears (drops) one or all tables in the database cluster. The operation
         is synchronous meaning that the table will be cleared before the
@@ -13570,6 +14202,43 @@ class GPUdbTable( object ):
 
         return response
     # end clear
+
+
+    def collect_statistics( self, column_names = None, options = {} ):
+        """Collect the requested statistics of the given column(s) in a given
+        table.
+
+        Parameters:
+
+            column_names (list of str)
+                List of one or more column names.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            table_name (str)
+                Value of input parameter *table_name*.
+
+            column_names (list of str)
+                Value of input parameter *column_names*.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.collect_statistics( self.name, column_names, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end collect_statistics
 
 
     def create_projection( self, column_names = None, options = {},
@@ -13672,6 +14341,9 @@ class GPUdbTable( object ):
                   * false
 
                   The default value is 'false'.
+
+                * **view_id** --
+                  view this projection is part of
 
             projection_name (str)
                   Name of the projection to be created. Has the same naming
@@ -13825,6 +14497,9 @@ class GPUdbTable( object ):
                   view. If the collection provided is non-existent, the
                   collection will be automatically created. If empty, then the
                   newly created view will be top-level.
+
+                * **view_id** --
+                  view this filtered-view is part of
 
                 * **ttl** --
                   Sets the `TTL <../../../concepts/ttl.html>`_ of the view
@@ -14813,7 +15488,7 @@ class GPUdbTable( object ):
 
 
     def revoke_permission_table( self, permission = None, table_name = None,
-                                 options = None ):
+                                 options = {} ):
         """Revokes a table-level permission from a user or role.
 
         Parameters:
@@ -14842,7 +15517,7 @@ class GPUdbTable( object ):
                   be an existing table, collection, or view.
 
             options (dict of str to str)
-                  Optional parameters.
+                  Optional parameters.  Default value is an empty dict ( {} ).
 
         Returns:
             The response from the server which is a dict containing the
