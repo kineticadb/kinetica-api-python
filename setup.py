@@ -35,11 +35,11 @@ extra_files = package_files(current_path+'/gpudb')
 setup(
     name = 'gpudb',
     packages = ['gpudb'],
-    version = '6.1.0.2',
+    version = '6.1.0.3',
     description = 'Python client for GPUdb',
     author = 'Kinetica DB Inc.',
     author_email = 'mmahmud@kinetica.com',
     package_data = {'gpudb': extra_files},
     url = 'http://www.kinetica.com',
-    download_url = 'https://github.com/kineticadb/kinetica-api-python/archive/v6.1.0.2.tar.gz'
+    download_url = 'https://github.com/kineticadb/kinetica-api-python/archive/v6.1.0.3.tar.gz'
 )
