@@ -19,6 +19,16 @@
 # limitations under the License.
 
 """RPC/IPC support."""
+from __future__ import unicode_literals
+from __future__ import print_function
+from __future__ import division
+from __future__ import absolute_import
+from builtins import open
+from builtins import super
+from builtins import str
+from future import standard_library
+from future.utils import with_metaclass
+standard_library.install_aliases()
 
 import abc
 import http.client
@@ -95,7 +105,7 @@ class ConnectionClosedException(schema.AvroException):
 # Base IPC Classes (Requestor/Responder)
 
 
-class BaseRequestor(object, metaclass=abc.ABCMeta):
+class BaseRequestor( with_metaclass( abc.ABCMeta, object ) ):
   """Base class for the client side of a protocol interaction."""
 
   def __init__(self, local_protocol, transceiver):
@@ -311,7 +321,7 @@ class Requestor(BaseRequestor):
 # ------------------------------------------------------------------------------
 
 
-class Responder(object, metaclass=abc.ABCMeta):
+class Responder( with_metaclass( abc.ABCMeta, object ) ):
   """Base class for the server side of a protocol interaction."""
 
   def __init__(self, local_protocol):
@@ -553,7 +563,7 @@ class FramedWriter(object):
 # Transceiver (send/receive channel)
 
 
-class Transceiver(object, metaclass=abc.ABCMeta):
+class Transceiver( with_metaclass( abc.ABCMeta, object ) ):
   @abc.abstractproperty
   def remote_name(self):
     pass

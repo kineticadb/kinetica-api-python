@@ -1,6 +1,7 @@
 # Install the GPUdb python API to the system module path.
 
-from setuptools import setup, find_packages
+from setuptools import setup, find_packages, Extension
+
 
 from distutils.core import setup
 import os
@@ -35,11 +36,20 @@ extra_files = package_files(current_path+'/gpudb')
 setup(
     name = 'gpudb',
     packages = ['gpudb'],
-    version = '6.2.0',
+    version = '6.2.0.0',
     description = 'Python client for GPUdb',
     author = 'Kinetica DB Inc.',
     author_email = 'mmahmud@kinetica.com',
     package_data = {'gpudb': extra_files},
     url = 'http://www.kinetica.com',
-    download_url = 'https://github.com/kineticadb/kinetica-api-python/archive/v6.2.0.tar.gz'
+    download_url = 'https://github.com/kineticadb/kinetica-api-python/archive/v6.2.0.0.tar.gz',
+    install_requires = [ "future" ],
+    ext_modules = [ Extension( "gpudb.protocol",
+                               sources = ["protocol/avro.c",
+                                          "protocol/bufferrange.c",
+                                          "protocol/common.c",
+                                          "protocol/dt.c",
+                                          "protocol/protocol.c",
+                                          "protocol/record.c",
+                                          "protocol/schema.c"] ) ]
 )

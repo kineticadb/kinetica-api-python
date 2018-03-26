@@ -1,5 +1,10 @@
 import sys
 
+# C-extension package for avro encoding
+from .protocol import RecordColumn
+from .protocol import RecordType
+from .protocol import Record
+
 
 if (sys.version_info[0] == 3): # checking the major component
     from gpudb.gpudb import GPUdb

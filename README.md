@@ -3,7 +3,7 @@ Kinetica Python API
 
 This is the 6.2.0 version of the client-side Python API for Kinetica.
 
-To install this package, run 'sudo pip install .' in the root directory of
+To install this package, run 'sudo setup.py install' in the root directory of
 the repo.
 
 There is also an example file in the example directory.

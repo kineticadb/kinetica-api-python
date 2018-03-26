@@ -49,10 +49,14 @@ except:
     import pymmh3 as mmh3
 # end try block
 
+
+# Python version dependent imports
 if sys.version_info >= (2, 7):
     import collections
+    from urllib.parse import urlparse
 else:
     import ordereddict as collections # a separate package
+    from urlparse import urlparse
 
 
 # Handle basestring in python3
@@ -100,6 +104,7 @@ class C:
     # GPUdb /system/properties response dict keys
     _sys_properties    = "property_map"
     _multihead_enabled = "conf.enable_worker_http_servers"
+    _worker_URLs       = "conf.worker_http_server_urls"
     _worker_IPs        = "conf.worker_http_server_ips"
     _worker_ports      = "conf.worker_http_server_ports"
 
@@ -178,60 +183,105 @@ class GPUdbWorkerList:
             self.worker_urls.append( gpudb.get_url() )
             return # nothing to do
 
-        # Get the worker IP addresses (per rank)
-        if C._worker_IPs not in system_properties:
-            raise ValueError( "Missing value for %s" % C._worker_IPs)
+        # Get the worker URLs (per rank)
+        if C._worker_URLs in system_properties:
+            self.worker_URLs_per_rank = system_properties[ C._worker_URLs ].split( ";" )
 
-        self.worker_IPs_per_rank = system_properties[ C._worker_IPs ].split( ";" )
+            # Process the URLs per worker rank (ignoring rank-0)
+            for i in range(1, len(self.worker_URLs_per_rank)):
+                urls_per_rank = self.worker_URLs_per_rank[ i ]
+                url_addresses_for_this_rank = urls_per_rank.split( "," )
+                found = False
 
-        # Get the worker ports
-        if C._worker_ports not in system_properties:
-            raise ValueError( "Missing value for %s" % C._worker_ports)
+                # Check each URL
+                for url_str in url_addresses_for_this_rank:
+                    # Parse the URL
+                    url = urlparse( url_str )
+                    if ((not url.scheme) or (not url.hostname) or (not url.port)):
+                        raise GPUdbException("Malformed URL: {}".format( url_str ) )
 
-        self.worker_ports = system_properties[ C._worker_ports ].split( ";" )
+                    if (ip_regex == ""): # no regex given
+                        # so, include all IP addresses
+                        self.worker_urls.append( url_str )
+                        found = True
+                        # skip the rest of IP addresses for this rank
+                        break
+                    else: # check for matching regex
+                        match = re.match(ip_regex, url_str)
+                        if match: # match found
+                            self.worker_urls.append( url_str )
+                            found = True
+                            # skip the rest of IP addresses for this rank
+                            break
+                        # end found match
+                    # end if-else
+                # end inner loop
 
-        # Check that the IP and port list lengths match
-        if (len(self.worker_IPs_per_rank) != len(self.worker_ports)):
-            raise ValueError("Inconsistent number of values for %s and %s."
-                             % (C._worker_IPs_per_rank, C._worker_ports) )
+                # if no worker found for this rank, throw exception
+                if not found:
+                    raise ValueError("No matching URL found for worker"
+                                     "%d." % i)
+            # end inner loop
+        else: # Need to process the separately given IP addresses and ports
 
-        # Process the IP addresses per worker rank (ignoring rank-0)
-        for i in range(1, len(self.worker_IPs_per_rank)):
-            ips_per_rank = self.worker_IPs_per_rank[ i ]
-            ip_addresses_for_this_rank = ips_per_rank.split( "," )
-            found = False
+            # Get the worker IP addresses (per rank)
+            if C._worker_IPs not in system_properties:
+                raise ValueError( "Missing value for %s" % C._worker_IPs)
 
-            # Check each IP address
-            for ip_address in ip_addresses_for_this_rank:
-                # Validate the IP address's syntax
-                if not self.validate_ip_address( ip_address ):
-                    raise ValueError( "Malformed IP address: %s" % ip_address )
+            self.worker_IPs_per_rank = system_properties[ C._worker_IPs ].split( ";" )
 
-                # Generate the URL using the IP address and the port
-                url = ("http://" + ip_address + ":" + self.worker_ports[i])
+            # Get the worker ports
+            if C._worker_ports not in system_properties:
+                raise ValueError( "Missing value for %s" % C._worker_ports)
 
-                if (ip_regex == ""): # no regex given
-                    # so, include all IP addresses
-                    self.worker_urls.append( url )
-                    found = True
-                    # skip the rest of IP addresses for this rank
-                    break
-                else: # check for matching regex
-                    match = re.match(ip_regex, ip_address)
-                    if match: # match found
+            self.worker_ports = system_properties[ C._worker_ports ].split( ";" )
+
+            # Check that the IP and port list lengths match
+            if (len(self.worker_IPs_per_rank) != len(self.worker_ports)):
+                raise ValueError("Inconsistent number of values for %s and %s."
+                                 % (C._worker_IPs_per_rank, C._worker_ports) )
+
+            # Get the protocol used for the client (HTTP or HTTPS?)
+            protocol = "https://" if (gpudb.connection == "HTTPS") else "http://"
+
+            # Process the IP addresses per worker rank (ignoring rank-0)
+            for i in range(1, len(self.worker_IPs_per_rank)):
+                ips_per_rank = self.worker_IPs_per_rank[ i ]
+                ip_addresses_for_this_rank = ips_per_rank.split( "," )
+                found = False
+
+                # Check each IP address
+                for ip_address in ip_addresses_for_this_rank:
+                    # Validate the IP address's syntax
+                    if not self.validate_ip_address( ip_address ):
+                        raise ValueError( "Malformed IP address: %s" % ip_address )
+
+                    # Generate the URL using the IP address and the port
+                    url = (protocol + ip_address + ":" + self.worker_ports[i])
+
+                    if (ip_regex == ""): # no regex given
+                        # so, include all IP addresses
                         self.worker_urls.append( url )
                         found = True
                         # skip the rest of IP addresses for this rank
                         break
-                    # end found match
-                # end if-else
-            # end inner loop
+                    else: # check for matching regex
+                        match = re.match(ip_regex, ip_address)
+                        if match: # match found
+                            self.worker_urls.append( url )
+                            found = True
+                            # skip the rest of IP addresses for this rank
+                            break
+                        # end found match
+                    # end if-else
+                # end inner loop
 
-            # if no worker found for this rank, throw exception
-            if not found:
-                raise ValueError("No matching IP address found for worker"
-                                 "%d." % i)
-        # end outer loop of processing worker IPs
+                # if no worker found for this rank, throw exception
+                if not found:
+                    raise ValueError("No matching IP address found for worker"
+                                     "%d." % i)
+            # end inner loop
+        # end if-else
 
         # if no worker found, throw error
         if not self.worker_urls:
@@ -472,6 +522,8 @@ class _RecordKey:
 
             # Convert the string to little endian
             # -----------------------------------
+            if isinstance( val, unicode ):
+                val = str( val )
             byte_count = len( val )
 
             # Trim the string if longer than
@@ -1810,9 +1862,7 @@ class _WorkerQueue:
         self.update_on_existing_pk = update_on_existing_pk
 
         # Create a gpudb instance
-        worker_host, sep, worker_port = url.rpartition( ":" )
-        self.gpudb = GPUdb( host = worker_host,
-                            port = int(worker_port),
+        self.gpudb = GPUdb( host = url,
                             encoding = gpudb.encoding,
                             connection = gpudb.connection, 
                             username = gpudb.username,
@@ -2116,7 +2166,7 @@ class GPUdbIngestor:
         being inserted if needed (for example, to retry).
 
         Parameters:
-            record (GPUdbRecord, collections.OrderedDict)
+            record (dict, GPUdbRecord, collections.OrderedDict)
                 The record to insert.
 
             record_encoding (str)
@@ -2129,6 +2179,10 @@ class GPUdbIngestor:
 
         @throws InsertionException if an error occurs while inserting.
         """
+        # If a dict is given, convert it into a GPUdbRecord object
+        if isinstance( record, dict ):
+            record = GPUdbRecord( self.record_type, record )
+        
         if not isinstance(record, (GPUdbRecord, collections.OrderedDict)):
             raise GPUdbException( "Input parameter 'record' must be a GPUdbRecord or an "
                                   "OrderedDict; given %s" % str(type(record)) )
@@ -2419,10 +2473,6 @@ class RecordRetriever:
                           + ") and (" + expression + ")" )
         # end if
 
-        print() #  debug~~~~~~
-        print ("expression: ", expression) # debug~~~~~~~~~
-        print() #  debug~~~~~~
-        
         # Set up the options
         options = {}
         options["expression"] = expression
@@ -2440,54 +2490,25 @@ class RecordRetriever:
         # Fetch the record(s) that map to this shard key
         gr_rsp = worker_queue.get_gpudb().get_records( self.table_name,
                                                        limit = self.gpudb.END_OF_SET,
-                                                       options = options )
+                                                       options = options,
+                                                       get_record_type = False )
 
         if not (gr_rsp['status_info']['status'] == 'OK'):
             raise GPUdbException( gr_rsp['status_info']['message'] )
 
-        print (gr_rsp) # debug~~~~~~~~
         
         # Decode the records
         records = GPUdbRecord.decode_binary_data( gr_rsp["type_schema"],
                                                   gr_rsp["records_binary"] )
-        # if encoding == "binary":
-        #     records = GPUdbRecord.decode_binary_data( gr_rsp["type_schema"],
-        #                                               gr_rsp["records_binary"] )
-        # else:
-        #     records = GPUdbRecord.decode_json_string_data( gr_rsp["records_json"] )
-        # # end if-else
-        
 
         # Replace the encoded records in the response with the decoded records
-        gr_rsp["data"] = records
+        gr_rsp["data"]    = records
+        gr_rsp["records"] = records
         # TODO: Potential desired behavior
         # 1. return only the decoded records
-        # 2. delete records_binary/json field
         return gr_rsp
         # end get_records_by_key
     
 # end class RecordRetriever
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 

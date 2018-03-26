@@ -1,8 +1,18 @@
 GPUdb Schemas Changelog
 =======================
 
-Version 6.1.0 - TBD
--------------------
+Version 6.2.0 - 2018-02-11
+--------------------------
+
+-   New endpoints to submit ssynchronously running jobs and retrieve the results of the job
+    - /create/job
+    - /get/job
+-   New  /create/materializedview endpoint
+-   /create/proc has new option 'max_concurrency_per_node'
+-   /
+
+Version 6.1.0 - 2018-01-08
+--------------------------
 
 -   /create/type has new column property: wkt
 -   Endpoints no longer support operations on geometry columns

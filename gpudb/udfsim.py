@@ -809,7 +809,7 @@ group = output_parser.add_argument_group(title="Basic parameters")
 group.add_argument("-d", "--dry-run", dest="dryrun", action="store_true", help="Display output only, do not write to Kinetica")
 
 group = output_parser.add_argument_group(title="Kinetica connection")
-group.add_argument("-K", "--url", default="http://localhost:9191", help="Kinetuca URL")
+group.add_argument("-K", "--url", default="http://localhost:9191", help="Kinetica URL")
 group.add_argument("-U", "--username", default="", help="Kinetica username")
 group.add_argument("-P", "--password", default="", help="Kinetica password")
 
