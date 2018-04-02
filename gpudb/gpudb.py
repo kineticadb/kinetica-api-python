@@ -124,7 +124,7 @@ class C:
 class _ConnectionToken(object):
     """Internal wrapper class to handle multiple server logic."""
     def __init__(self, host, port, connection):
-        assert (type(host) is str), "Expected a string host address, got: '"+str(host)+"'"
+        assert (isinstance(host, (basestring, unicode))), "Expected a string host address, got: '"+str(host)+"'"
 
         # host may take the form of :
         #  - "https://user:password@domain.com:port/path/"
@@ -2240,7 +2240,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "6.2.0.0"
+    api_version   = "6.2.0.2"
 
     # constants
     END_OF_SET = -9999
@@ -2357,7 +2357,12 @@ class GPUdb(object):
             cond = error and (self._current_conn_token_index != initial_index)
 
         if error:
-            raise GPUdbException( error )
+            if isinstance( error, (basestring, unicode)):
+                raise GPUdbException( error )
+            elif isinstance( error, GPUdbException ):
+                raise error
+            else:
+                raise GPUdbException( error )
 
         return  resp_data, resp_time
     # end __post_to_gpudb_read
@@ -3280,9 +3285,9 @@ class GPUdb(object):
                                        "RSP_SCHEMA_CEXT" : RSP_SCHEMA_CEXT,
                                        "ENDPOINT" : ENDPOINT }
         name = "/aggregate/unpivot"
-        REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_unpivot_request","fields":[{"name":"table_name","type":"string"},{"name":"variable_column_name","type":"string"},{"name":"value_column_name","type":"string"},{"name":"pivoted_columns","type":{"type":"array","items":"string"}},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_unpivot_request","fields":[{"name":"table_name","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"variable_column_name","type":"string"},{"name":"value_column_name","type":"string"},{"name":"pivoted_columns","type":{"type":"array","items":"string"}},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_unpivot_response","fields":[{"name":"table_name","type":"string"},{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"},{"name":"total_number_of_records","type":"long"},{"name":"has_more_records","type":"boolean"}]}"""
-        REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("variable_column_name", "string"), ("value_column_name", "string"), ("pivoted_columns", "array", [("string")]), ("encoding", "string"), ("options", "map", [("string")])] )
+        REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("column_names", "array", [("string")]), ("variable_column_name", "string"), ("value_column_name", "string"), ("pivoted_columns", "array", [("string")]), ("encoding", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("response_schema_str", "string"), ("binary_encoded_response", "bytes"), ("json_encoded_response", "string"), ("total_number_of_records", "long"), ("has_more_records", "boolean")] )
         RSP_SCHEMA_CEXT = Schema( "record", [("table_name", "string"), ("response_schema_str", "string"), ("binary_encoded_response", "object"), ("json_encoded_response", "string"), ("total_number_of_records", "long"), ("has_more_records", "boolean")] )
         ENDPOINT = "/aggregate/unpivot"
@@ -6389,9 +6394,10 @@ class GPUdb(object):
 
 
     # begin aggregate_unpivot
-    def aggregate_unpivot( self, table_name = None, variable_column_name = '',
-                           value_column_name = '', pivoted_columns = None,
-                           encoding = 'binary', options = {} ):
+    def aggregate_unpivot( self, table_name = None, column_names = None,
+                           variable_column_name = '', value_column_name = '',
+                           pivoted_columns = None, encoding = 'binary', options
+                           = {} ):
         """Rotate the column values into rows values.
 
         For unpivot details and examples, see `Unpivot
@@ -6413,6 +6419,12 @@ class GPUdb(object):
             table_name (str)
                 Name of the table on which the operation will be performed.
                 Must be an existing table/view.
+
+            column_names (list of str)
+                List of column names or expressions. A wildcard '*' can be used
+                to include all the non-pivoted columns from the source table.
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
 
             variable_column_name (str)
                 Specifies the variable/parameter column name.  Default value is
@@ -6532,6 +6544,7 @@ class GPUdb(object):
                 If JSON encodingis used, then None.
         """
         assert isinstance( table_name, (basestring)), "aggregate_unpivot(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        column_names = column_names if isinstance( column_names, list ) else ( [] if (column_names is None) else [ column_names ] )
         assert isinstance( variable_column_name, (basestring)), "aggregate_unpivot(): Argument 'variable_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( variable_column_name ).__name__
         assert isinstance( value_column_name, (basestring)), "aggregate_unpivot(): Argument 'value_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( value_column_name ).__name__
         pivoted_columns = pivoted_columns if isinstance( pivoted_columns, list ) else ( [] if (pivoted_columns is None) else [ pivoted_columns ] )
@@ -6542,6 +6555,7 @@ class GPUdb(object):
 
         obj = {}
         obj['table_name'] = table_name
+        obj['column_names'] = column_names
         obj['variable_column_name'] = variable_column_name
         obj['value_column_name'] = value_column_name
         obj['pivoted_columns'] = pivoted_columns
@@ -6564,12 +6578,12 @@ class GPUdb(object):
 
 
     # begin aggregate_unpivot_and_decode
-    def aggregate_unpivot_and_decode( self, table_name = None, variable_column_name
-                                      = '', value_column_name = '',
-                                      pivoted_columns = None, encoding =
-                                      'binary', options = {}, record_type =
-                                      None, get_ordered_dicts = True,
-                                      get_column_major = True ):
+    def aggregate_unpivot_and_decode( self, table_name = None, column_names = None,
+                                      variable_column_name = '',
+                                      value_column_name = '', pivoted_columns =
+                                      None, encoding = 'binary', options = {},
+                                      record_type = None, get_ordered_dicts =
+                                      True, get_column_major = True ):
         """Rotate the column values into rows values.
 
         For unpivot details and examples, see `Unpivot
@@ -6591,6 +6605,12 @@ class GPUdb(object):
             table_name (str)
                 Name of the table on which the operation will be performed.
                 Must be an existing table/view.
+
+            column_names (list of str)
+                List of column names or expressions. A wildcard '*' can be used
+                to include all the non-pivoted columns from the source table.
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
 
             variable_column_name (str)
                 Specifies the variable/parameter column name.  Default value is
@@ -6722,6 +6742,7 @@ class GPUdb(object):
                 records.
         """
         assert isinstance( table_name, (basestring)), "aggregate_unpivot_and_decode(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        column_names = column_names if isinstance( column_names, list ) else ( [] if (column_names is None) else [ column_names ] )
         assert isinstance( variable_column_name, (basestring)), "aggregate_unpivot_and_decode(): Argument 'variable_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( variable_column_name ).__name__
         assert isinstance( value_column_name, (basestring)), "aggregate_unpivot_and_decode(): Argument 'value_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( value_column_name ).__name__
         pivoted_columns = pivoted_columns if isinstance( pivoted_columns, list ) else ( [] if (pivoted_columns is None) else [ pivoted_columns ] )
@@ -6739,6 +6760,7 @@ class GPUdb(object):
 
         obj = {}
         obj['table_name'] = table_name
+        obj['column_names'] = column_names
         obj['variable_column_name'] = variable_column_name
         obj['value_column_name'] = value_column_name
         obj['pivoted_columns'] = pivoted_columns
@@ -7697,6 +7719,11 @@ class GPUdb(object):
 
                 * **view_id** --
                   view this projection is part of
+
+                * **no_count** --
+                  return a count of 0 for the join table for logging and for
+                  show_table. optimization needed for large overlapped
+                  equi-join stencils
 
         Returns:
             A dict with the following entries--
@@ -9204,6 +9231,13 @@ class GPUdb(object):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created.  If empty, then the
+                  newly created view will be top-level.
 
         Returns:
             A dict with the following entries--
@@ -9278,6 +9312,13 @@ class GPUdb(object):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
         Returns:
             A dict with the following entries--
@@ -9359,6 +9400,13 @@ class GPUdb(object):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
         Returns:
             A dict with the following entries--
@@ -9439,6 +9487,13 @@ class GPUdb(object):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
         Returns:
             A dict with the following entries--
@@ -9533,6 +9588,13 @@ class GPUdb(object):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
         Returns:
             A dict with the following entries--
@@ -9601,6 +9663,12 @@ class GPUdb(object):
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
                 Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
                 * **filter_mode** --
                   String indicating the filter mode, either 'in_list' or
@@ -9695,6 +9763,13 @@ class GPUdb(object):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
         Returns:
             A dict with the following entries--
@@ -9774,6 +9849,13 @@ class GPUdb(object):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
         Returns:
             A dict with the following entries--
@@ -9845,6 +9927,13 @@ class GPUdb(object):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
         Returns:
             A dict with the following entries--
@@ -9919,6 +10008,12 @@ class GPUdb(object):
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
                 Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
                 * **spatial_radius** --
                   A positive number passed as a string representing the radius
@@ -10030,6 +10125,12 @@ class GPUdb(object):
                 Optional parameters.  Default value is an empty dict ( {} ).
                 Allowed keys are:
 
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
+
                 * **case_sensitive** --
                   If 'false' then string filtering will ignore case. Does not
                   apply to 'search' mode.
@@ -10113,6 +10214,12 @@ class GPUdb(object):
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
                 Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
                 * **filter_mode** --
                   String indicating the filter mode, either *in_table* or
@@ -10234,6 +10341,13 @@ class GPUdb(object):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
         Returns:
             A dict with the following entries--
@@ -12409,6 +12523,19 @@ class GPUdb(object):
                 * **ttl** --
                   Sets the `TTL <../../../concepts/ttl.html>`_ of the merged
                   table specified in input parameter *table_name*.
+
+                * **persist** --
+                  If *true*, then the table specified in input parameter
+                  *table_name* will be persisted and will not expire unless a
+                  *ttl* is specified.   If *false*, then the table will be an
+                  in-memory table and will expire unless a *ttl* is specified
+                  otherwise.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
                 * **chunk_size** --
                   Indicates the chunk size to be used for the merged table
@@ -15775,6 +15902,11 @@ class GPUdbTable( object ):
                 * **view_id** --
                   view this projection is part of
 
+                * **no_count** --
+                  return a count of 0 for the join table for logging and for
+                  show_table. optimization needed for large overlapped
+                  equi-join stencils
+
         Returns:
             A read-only GPUdbTable object.
 
@@ -16042,6 +16174,19 @@ class GPUdbTable( object ):
                 * **ttl** --
                   Sets the `TTL <../../../concepts/ttl.html>`_ of the merged
                   table specified in input parameter *table_name*.
+
+                * **persist** --
+                  If *true*, then the table specified in input parameter
+                  *table_name* will be persisted and will not expire unless a
+                  *ttl* is specified.   If *false*, then the table will be an
+                  in-memory table and will expire unless a *ttl* is specified
+                  otherwise.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
                 * **chunk_size** --
                   Indicates the chunk size to be used for the merged table
@@ -17108,10 +17253,10 @@ class GPUdbTable( object ):
     # end aggregate_unique
 
 
-    def aggregate_unpivot( self, variable_column_name = '', value_column_name =
-                           '', pivoted_columns = None, encoding = 'binary',
-                           options = {}, get_ordered_dicts = True,
-                           get_column_major = True ):
+    def aggregate_unpivot( self, column_names = None, variable_column_name = '',
+                           value_column_name = '', pivoted_columns = None,
+                           encoding = 'binary', options = {}, get_ordered_dicts
+                           = True, get_column_major = True ):
         """Rotate the column values into rows values.
 
         For unpivot details and examples, see `Unpivot
@@ -17129,6 +17274,10 @@ class GPUdbTable( object ):
         schemas documentation <../../../api/index.html#dynamic-schemas>`_.
 
         Parameters:
+
+            column_names (list of str)
+                List of column names or expressions. A wildcard '*' can be used
+                to include all the non-pivoted columns from the source table.
 
             variable_column_name (str)
                 Specifies the variable/parameter column name.  Default value is
@@ -17269,6 +17418,7 @@ class GPUdbTable( object ):
             result_table = None
 
         response = self.db.aggregate_unpivot_and_decode( self.name,
+                                                         column_names,
                                                          variable_column_name,
                                                          value_column_name,
                                                          pivoted_columns,
@@ -18015,6 +18165,13 @@ class GPUdbTable( object ):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created.  If empty, then the
+                  newly created view will be top-level.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -18071,6 +18228,13 @@ class GPUdbTable( object ):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -18137,6 +18301,13 @@ class GPUdbTable( object ):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
             view_name (str)
                 Optional name of the result view that will be created
@@ -18198,6 +18369,13 @@ class GPUdbTable( object ):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
             view_name (str)
                 Optional name of the result view that will be created
@@ -18272,6 +18450,13 @@ class GPUdbTable( object ):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -18324,6 +18509,12 @@ class GPUdbTable( object ):
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
                 Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
                 * **filter_mode** --
                   String indicating the filter mode, either 'in_list' or
@@ -18407,6 +18598,13 @@ class GPUdbTable( object ):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -18469,6 +18667,13 @@ class GPUdbTable( object ):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -18523,6 +18728,13 @@ class GPUdbTable( object ):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -18581,6 +18793,12 @@ class GPUdbTable( object ):
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
                 Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
                 * **spatial_radius** --
                   A positive number passed as a string representing the radius
@@ -18678,6 +18896,12 @@ class GPUdbTable( object ):
                 Optional parameters.  Default value is an empty dict ( {} ).
                 Allowed keys are:
 
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
+
                 * **case_sensitive** --
                   If 'false' then string filtering will ignore case. Does not
                   apply to 'search' mode.
@@ -18746,6 +18970,12 @@ class GPUdbTable( object ):
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
                 Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
                 * **filter_mode** --
                   String indicating the filter mode, either *in_table* or
@@ -18850,6 +19080,13 @@ class GPUdbTable( object ):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  view. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created view will be top-level.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
