@@ -2240,7 +2240,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "6.2.0.2"
+    api_version   = "6.2.0.3"
 
     # constants
     END_OF_SET = -9999
@@ -4999,10 +4999,22 @@ class GPUdb(object):
                   Force the result table to be replicated (ignores any
                   sharding). Must be used in combination with the
                   *result_table* option.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **result_table_generate_pk** --
                   If 'true' then set a primary key for the result table. Must
                   be used in combination with the *result_table* option.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **ttl** --
                   Sets the `TTL <../../../concepts/ttl.html>`_ of the table
@@ -5288,10 +5300,22 @@ class GPUdb(object):
                   Force the result table to be replicated (ignores any
                   sharding). Must be used in combination with the
                   *result_table* option.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **result_table_generate_pk** --
                   If 'true' then set a primary key for the result table. Must
                   be used in combination with the *result_table* option.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **ttl** --
                   Sets the `TTL <../../../concepts/ttl.html>`_ of the table
@@ -6095,10 +6119,22 @@ class GPUdb(object):
                   Force the result table to be replicated (ignores any
                   sharding). Must be used in combination with the
                   *result_table* option.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **result_table_generate_pk** --
                   If 'true' then set a primary key for the result table. Must
                   be used in combination with the *result_table* option.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **ttl** --
                   Sets the `TTL <../../../concepts/ttl.html>`_ of the table
@@ -6291,10 +6327,22 @@ class GPUdb(object):
                   Force the result table to be replicated (ignores any
                   sharding). Must be used in combination with the
                   *result_table* option.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **result_table_generate_pk** --
                   If 'true' then set a primary key for the result table. Must
                   be used in combination with the *result_table* option.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **ttl** --
                   Sets the `TTL <../../../concepts/ttl.html>`_ of the table
@@ -7410,7 +7458,9 @@ class GPUdb(object):
 
             table_name (str)
                 Name of the table to be cleared. Must be an existing table.
-                Empty string clears all available tables.  Default value is ''.
+                Empty string clears all available tables, though this behavior
+                is be prevented by default via gpudb.conf parameter
+                'disable_clear_all'.  Default value is ''.
 
             authorization (str)
                 No longer used. User can pass an empty string.  Default value
@@ -13128,6 +13178,16 @@ class GPUdb(object):
                 Optional parameters.  Default value is an empty dict ( {} ).
                 Allowed keys are:
 
+                * **force_synchronous** --
+                  If *true* then the table sizes will wait for read lock before
+                  returning.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
                 * **get_sizes** --
                   If *true* then the table sizes will be returned; blank,
                   otherwise.
@@ -16451,10 +16511,22 @@ class GPUdbTable( object ):
                   Force the result table to be replicated (ignores any
                   sharding). Must be used in combination with the
                   *result_table* option.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **result_table_generate_pk** --
                   If 'true' then set a primary key for the result table. Must
                   be used in combination with the *result_table* option.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **ttl** --
                   Sets the `TTL <../../../concepts/ttl.html>`_ of the table
@@ -17170,10 +17242,22 @@ class GPUdbTable( object ):
                   Force the result table to be replicated (ignores any
                   sharding). Must be used in combination with the
                   *result_table* option.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **result_table_generate_pk** --
                   If 'true' then set a primary key for the result table. Must
                   be used in combination with the *result_table* option.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **ttl** --
                   Sets the `TTL <../../../concepts/ttl.html>`_ of the table
@@ -19254,6 +19338,16 @@ class GPUdbTable( object ):
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
                 Allowed keys are:
+
+                * **force_synchronous** --
+                  If *true* then the table sizes will wait for read lock before
+                  returning.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
                 * **get_sizes** --
                   If *true* then the table sizes will be returned; blank,
