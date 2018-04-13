@@ -4,7 +4,7 @@ from setuptools import setup, find_packages, Extension
 
 
 from distutils.core import setup
-import distutils
+import distutils.sysconfig
 import os
 import subprocess
 import sys
