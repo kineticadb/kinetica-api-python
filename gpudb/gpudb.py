@@ -2240,7 +2240,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "6.2.0.3"
+    api_version   = "6.2.0.4"
 
     # constants
     END_OF_SET = -9999
@@ -5458,7 +5458,8 @@ class GPUdb(object):
         bin is the number of records in it, except when a column name is
         provided as a *value_column* in input parameter *options*.  In this
         latter case the sum of the values corresponding to the *value_column*
-        is used as the result instead.
+        is used as the result instead.  The total number of bins requested
+        cannot exceed 10,000.
 
         Parameters:
 
@@ -8127,6 +8128,16 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **preserve_dict_encoding** --
+                  If *true*, then columns that were dict encoded in the source
+                  table will be dict encoded in the projection table.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
                 * **view_id** --
                   view this projection is part of
 
@@ -10533,8 +10544,8 @@ class GPUdb(object):
         """Retrieves records from a given table, optionally filtered by an
         expression and/or sorted by a column. This operation can be performed
         on tables, views, or on homogeneous collections (collections containing
-        tables of all the same type). Records can be returned encoded as binary
-        or json.
+        tables of all the same type). Records can be returned encoded as
+        binary, json or geojson.
 
         This operation supports paging through the data via the input parameter
         *offset* and input parameter *limit* parameters. Note that when paging
@@ -10567,6 +10578,7 @@ class GPUdb(object):
 
                 * binary
                 * json
+                * geojson
 
                 The default value is 'binary'.
 
@@ -10624,13 +10636,15 @@ class GPUdb(object):
 
             records_binary (list of str)
                 If the input parameter *encoding* was 'binary', then this list
-                contains the binary encoded records retrieved from the set,
+                contains the binary encoded records retrieved from the table,
                 otherwise not populated.
 
             records_json (list of str)
                 If the input parameter *encoding* was 'json', then this list
-                contains the JSON encoded records retrieved from the set,
-                otherwise not populated.
+                contains the JSON encoded records retrieved from the table. If
+                the input parameter *encoding* was 'geojson' this list contains
+                a single entry consisting of a GeoJSON FeatureCollection
+                containing a feature per record. Otherwise not populated.
 
             total_number_of_records (long)
                 Total/Filtered number of records.
@@ -10680,8 +10694,8 @@ class GPUdb(object):
         """Retrieves records from a given table, optionally filtered by an
         expression and/or sorted by a column. This operation can be performed
         on tables, views, or on homogeneous collections (collections containing
-        tables of all the same type). Records can be returned encoded as binary
-        or json.
+        tables of all the same type). Records can be returned encoded as
+        binary, json or geojson.
 
         This operation supports paging through the data via the input parameter
         *offset* and input parameter *limit* parameters. Note that when paging
@@ -10714,6 +10728,7 @@ class GPUdb(object):
 
                 * binary
                 * json
+                * geojson
 
                 The default value is 'binary'.
 
@@ -16650,7 +16665,8 @@ class GPUdbTable( object ):
         bin is the number of records in it, except when a column name is
         provided as a *value_column* in input parameter *options*.  In this
         latter case the sum of the values corresponding to the *value_column*
-        is used as the result instead.
+        is used as the result instead.  The total number of bins requested
+        cannot exceed 10,000.
 
         Parameters:
 
@@ -18029,6 +18045,16 @@ class GPUdbTable( object ):
                   * false
 
                   The default value is 'false'.
+
+                * **preserve_dict_encoding** --
+                  If *true*, then columns that were dict encoded in the source
+                  table will be dict encoded in the projection table.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
                 * **view_id** --
                   view this projection is part of
