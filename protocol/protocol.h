@@ -6,6 +6,7 @@
 #define _PROTOCOL_H_
 
 #include <Python.h>
+#include "platform.h"
 
 /*----------------------------------------------------------------------------*/
 
@@ -59,7 +60,7 @@ ProtocolState;
     #define GET_STATE() Protocol_get_state()
     #define GET_STATE_MODULE(m) ((ProtocolState*)PyModule_GetState(m))
 #else
-    ProtocolState Protocol_state;
+    extern ProtocolState Protocol_state;
 
     #define GET_STATE() &Protocol_state
     #define GET_STATE_MODULE(m) &Protocol_state

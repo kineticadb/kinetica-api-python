@@ -6,22 +6,7 @@
 #define _AVRO_H_
 
 #include <Python.h>
-
-/*----------------------------------------------------------------------------*/
-
-/* Defines for some Visual C++ versions which do not include the stdint
-   types. */
-
-#if defined(_MSC_VER)
-    typedef signed __int8 int8_t;
-    typedef signed __int32 int32_t;
-    typedef signed __int64 int64_t;
-    typedef unsigned __int8 uint8_t;
-    typedef unsigned __int32 uint32_t;
-    typedef unsigned __int64 uint64_t;
-#else
-    #include <stdint.h>
-#endif
+#include "platform.h"
 
 /*----------------------------------------------------------------------------*/
 

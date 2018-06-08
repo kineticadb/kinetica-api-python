@@ -36,33 +36,35 @@ current_path = os.path.dirname(os.path.abspath(__file__))
 extra_files = package_files(current_path+'/gpudb')
 
 
-# Check whether GCC is available
-gcc_proc         = subprocess.Popen(["which", "gcc"], stdout = subprocess.PIPE)
-gcc_proc_results = gcc_proc.communicate()
-does_gcc_exist   = (gcc_proc_results[0] != "")
-if not does_gcc_exist:
-    print ("")
-    print ("********************************************************")
-    print ("WARNING: Could not find gcc; please install it before")
-    print ("         attempting to install the GPUdb Python API")
-    print ("         module.")
-    print ("********************************************************")
-    print ("")
+# If we are not on Windows test for the existence of gcc
+if os.name != 'nt':
+    # Check whether GCC is available
+    gcc_proc         = subprocess.Popen(["which", "gcc"], stdout = subprocess.PIPE)
+    gcc_proc_results = gcc_proc.communicate()
+    does_gcc_exist   = (gcc_proc_results[0] != "")
+    if not does_gcc_exist:
+        print ("")
+        print ("********************************************************")
+        print ("WARNING: Could not find gcc; please install it before")
+        print ("         attempting to install the GPUdb Python API")
+        print ("         module.")
+        print ("********************************************************")
+        print ("")
 
 
-# Check whether the Python developer's package is available
-# (i.e. if Python.h exists)
-python_dev_path          = distutils.sysconfig.get_python_inc()
-python_header_filename   = os.path.join( python_dev_path, "Python.h" )
-does_python_header_exist = os.path.isfile( python_header_filename )
-if not does_python_header_exist:
-    print ("")
-    print ("********************************************************")
-    print ("WARNING: Could not find Python.h; please install the")
-    print ("         Python developers' package before attempting" )
-    print ("         to install the GPUdb Python API module.")
-    print ("********************************************************")
-    print ("")
+    # Check whether the Python developer's package is available
+    # (i.e. if Python.h exists)
+    python_dev_path          = distutils.sysconfig.get_python_inc()
+    python_header_filename   = os.path.join( python_dev_path, "Python.h" )
+    does_python_header_exist = os.path.isfile( python_header_filename )
+    if not does_python_header_exist:
+        print ("")
+        print ("********************************************************")
+        print ("WARNING: Could not find Python.h; please install the")
+        print ("         Python developers' package before attempting" )
+        print ("         to install the GPUdb Python API module.")
+        print ("********************************************************")
+        print ("")
 
 
 
@@ -79,14 +81,14 @@ c_avro_module = Extension( "gpudb.protocol",
 setup(
     name = 'gpudb',
     packages = ['gpudb'],
-    version = '6.2.0.4',
+    version = '6.2.0.5',
     description = 'Python client for GPUdb',
     long_description = "The client-side Python API for Kinetica.  Create, store, retrieve, and query data with ease and speed.",
     author = 'Kinetica DB Inc.',
     author_email = 'mmahmud@kinetica.com',
     package_data = {'gpudb': extra_files},
     url = 'http://www.kinetica.com',
-    download_url = 'https://github.com/kineticadb/kinetica-api-python/archive/v6.2.0.4.tar.gz',
+    download_url = 'https://github.com/kineticadb/kinetica-api-python/archive/v6.2.0.5.tar.gz',
     install_requires = [ "future" ],
     ext_modules = [ c_avro_module ]
 )

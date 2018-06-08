@@ -1,7 +1,7 @@
 GPUdb Python API Changelog
 ==========================
 
-Version 6.2.0 - 2018-03-25
+Version 6.2.0 - 2018-05-09
 --------------------------
 
 -   New RecordRetriever class to support multi-head record lookup by
@@ -11,6 +11,8 @@ Version 6.2.0 - 2018-03-25
     or other communication is made with the server. 
 -   Added an in-house compiled C-module named protcol for avro encoding and
     decoding to drastically increase record ingestion and retrieval speed.
+-   Added a convenience method get_geo_json() to GPUdbTable that returns a
+    GeoJSON object from a table.
 
 
 Version 6.1.0 - 2017-10-05

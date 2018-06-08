@@ -34,7 +34,7 @@ from collections import Iterator
 from decimal import Decimal
 
 
-if sys.version_info[0] >= 3: # checking the major component
+if sys.version_info.major >= 3: # checking the major component
     long = int
     basestring = str
     class unicode:
@@ -78,7 +78,7 @@ else:
 
 
 # Override some python3 avro things
-if sys.version_info >= (3, 0):
+if sys.version_info.major >= 3:
     schema.parse = schema.Parse
     schema.RecordSchema.fields_dict = schema.RecordSchema.field_map
 
@@ -216,7 +216,7 @@ class _Util(object):
                  or isinstance( arg, collections.OrderedDict ) )
     # end is_list_or_dict
 
-    if sys.version_info[0] >= 3: # checking the major component
+    if sys.version_info.major >= 3: # checking the major component
         # Declaring the python 3 version of this static method
         @staticmethod
         def str_to_bytes(value):
@@ -710,6 +710,7 @@ class GPUdbException( Exception ):
 
     def __init__( self, value ):
         self.value = value
+        self.message = value
     # end __init__
 
     def __str__( self ):
@@ -744,14 +745,14 @@ class GPUdbColumnProperty(object):
 
     STORE_ONLY = "store_only"
     """str: Persist the column value but do not make it available to queries (e.g.
-    :meth:`.filter`)-i.e. it is mutually exclusive to the 'data' property. Any
-    'bytes' type column must have a 'store_only' property. This property
+    :meth:`.filter`)-i.e. it is mutually exclusive to the *data* property. Any
+    'bytes' type column must have a *store_only* property. This property
     reduces system memory usage.
     """
 
 
     DISK_OPTIMIZED = "disk_optimized"
-    """str: Works in conjunction with the 'data' property for string columns. This
+    """str: Works in conjunction with the *data* property for string columns. This
     property reduces system disk usage by disabling reverse string lookups.
     Queries like :meth:`.filter`, :meth:`.filter_by_list`, and
     :meth:`.filter_by_value` work as usual but :meth:`.aggregate_unique`,
@@ -773,7 +774,7 @@ class GPUdbColumnProperty(object):
     4) data type.  There can be up to 15 digits before the decimal point and up
     to four digits in the fractional part.  The value can be positive or
     negative (indicated by a minus sign at the beginning).  This property is
-    mutually exclusive with the 'text_search' property.
+    mutually exclusive with the *text_search* property.
     """
 
 
@@ -805,63 +806,63 @@ class GPUdbColumnProperty(object):
     CHAR1 = "char1"
     """str: This property provides optimized memory, disk and query performance
     for string columns. Strings with this property must be no longer than 1
-    character. This property cannot be combined with *text_search*
+    character.
     """
 
 
     CHAR2 = "char2"
     """str: This property provides optimized memory, disk and query performance
     for string columns. Strings with this property must be no longer than 2
-    characters. This property cannot be combined with *text_search*
+    characters.
     """
 
 
     CHAR4 = "char4"
     """str: This property provides optimized memory, disk and query performance
     for string columns. Strings with this property must be no longer than 4
-    characters. This property cannot be combined with *text_search*
+    characters.
     """
 
 
     CHAR8 = "char8"
     """str: This property provides optimized memory, disk and query performance
     for string columns. Strings with this property must be no longer than 8
-    characters. This property cannot be combined with *text_search*
+    characters.
     """
 
 
     CHAR16 = "char16"
     """str: This property provides optimized memory, disk and query performance
     for string columns. Strings with this property must be no longer than 16
-    characters. This property cannot be combined with *text_search*
+    characters.
     """
 
 
     CHAR32 = "char32"
     """str: This property provides optimized memory, disk and query performance
     for string columns. Strings with this property must be no longer than 32
-    characters. This property cannot be combined with *text_search*
+    characters.
     """
 
 
     CHAR64 = "char64"
     """str: This property provides optimized memory, disk and query performance
     for string columns. Strings with this property must be no longer than 64
-    characters. This property cannot be combined with *text_search*
+    characters.
     """
 
 
     CHAR128 = "char128"
     """str: This property provides optimized memory, disk and query performance
     for string columns. Strings with this property must be no longer than 128
-    characters. This property cannot be combined with *text_search*
+    characters.
     """
 
 
     CHAR256 = "char256"
     """str: This property provides optimized memory, disk and query performance
     for string columns. Strings with this property must be no longer than 256
-    characters. This property cannot be combined with *text_search*
+    characters.
     """
 
 
@@ -895,13 +896,13 @@ class GPUdbColumnProperty(object):
 
     PRIMARY_KEY = "primary_key"
     """str: This property indicates that this column will be part of (or the
-    entire) primary key.
+    entire) `primary key <../../../concepts/tables.html#primary-keys>`_.
     """
 
 
     SHARD_KEY = "shard_key"
     """str: This property indicates that this column will be part of (or the
-    entire) shard key.
+    entire) `shard key <../../../concepts/tables.html#shard-keys>`_.
     """
 
 
@@ -915,7 +916,7 @@ class GPUdbColumnProperty(object):
     'null'].
 
     The C++, C#, Java, and Python APIs have built-in convenience for bypassing
-    setting the avro schema by hand.  For those two languages, one can use this
+    setting the avro schema by hand.  For those languages, one can use this
     property as usual and not have to worry about the avro schema for the
     record.
     """
@@ -1575,6 +1576,98 @@ class GPUdbRecord( object ):
     # end decode_json_string_data
 
 
+    @staticmethod
+    def decode_dynamic_json_data_column_major( dynamic_json_data, dynamic_schema ):
+        """Decode JSON encoded data (generally returned by GPUdb) using
+        the embedded dynamic schema for the data.  Return the decoded data.
+
+        Parameters:
+            dynamic_json_data (dict)
+                The JSON encoded data with a dynamic schema.
+            dynamic_schema (str)
+                The schema string for the data
+
+        Returns:
+            The decoded data (a single object or a list)
+        """
+        # Convert the dynamic schema to an Avro schema
+        dynamic_schema = schema.parse( dynamic_schema )
+        
+        decoded_data = collections.OrderedDict()
+
+        column_names = dynamic_json_data['column_headers']
+
+        for i, column_name in enumerate( column_names ):
+            column_index_name = "column_{}".format( i+1 )
+
+            # Double/float conversion here
+            #get the datatype of the underlying data
+            column_type = dynamic_schema.fields_dict[ column_index_name ].type.items.type
+
+            if ( (column_type == 'double') or (column_type == 'float') ):
+                decoded_data[ column_name ] = [float(x) for x in dynamic_json_data[ column_index_name ] ]
+            else:
+                decoded_data[ column_name ] = dynamic_json_data[column_index_name]
+
+        return decoded_data
+    # end decode_dynamic_json_data_column_major
+
+
+    @staticmethod
+    def decode_dynamic_json_data_row_major( dynamic_json_data, dynamic_schema ):
+        """Decode JSON encoded data (generally returned by GPUdb) using
+        the embedded dynamic schema for the data.  Return the decoded data.
+
+        Parameters:
+            dynamic_json_data (dict)
+                The JSON encoded data with a dynamic schema.
+            dynamic_schema (str)
+                The schema string for the data
+
+        Returns:
+            The decoded data in row-format (a single object or a list).
+        """
+        # Convert the dynamic schema to an Avro schema
+        dynamic_schema = schema.parse( dynamic_schema )
+        
+        decoded_records = []
+
+        # Get the actual column names
+        column_names     = dynamic_json_data['column_headers']
+
+        # Get the index-based column names
+        idx_column_names = [ name for name in dynamic_json_data.keys()
+                             if name not in ['column_headers', 'column_datatypes'] ]
+
+        # Get the column types
+        column_types = [ dynamic_schema.fields_dict[ n ].type.items.type for n in idx_column_names ]
+
+        # How many records in total do we have?
+        num_records = len( dynamic_json_data["column_1"] )
+
+        # Create all the records
+        for i in range(0, num_records):
+            record = collections.OrderedDict()
+
+            # Create a single record
+            for (col_name, col_idx_name, col_type) in zip(column_names, idx_column_names, column_types):
+                # Get the column value
+                col_val = dynamic_json_data[ col_idx_name ][ i ]
+
+                # Convert double/float
+                if ( (col_type == 'double') or (col_type == 'float') ):
+                    col_val = float( col_val )
+
+                record[ col_name ] = col_val
+            # end inner loop
+            
+            # Add this record to the list
+            decoded_records.append( record )
+        # end loop
+
+        return decoded_records
+    # end decode_dynamic_json_data_row_major
+
 
     @staticmethod
     def convert_data_col_major_to_row_major( col_major_data, col_major_schema_str ):
@@ -1973,6 +2066,63 @@ class GPUdb(object):
                 server (e.g. for checking version compatibility).  Default
                 is False.
         """
+        # Call the internal function to initialize the object
+        self.__construct( host = host, port = port,
+                          encoding = encoding, connection = connection,
+                          username = username, password = password,
+                          timeout = timeout,
+                          no_init_db_contact = no_init_db_contact,
+                          **kwargs )
+    # end __init__
+
+
+    def __construct(self, host = "127.0.0.1", port = "9191",
+                       encoding = "BINARY", connection = 'HTTP',
+                       username = "", password = "", timeout = None,
+                       no_init_db_contact = False,
+                       **kwargs ):
+        """
+        Construct a new GPUdb client instance.
+
+        Parameters:
+
+            host (str)
+                The IP address of the GPUdb server. May be provided as a list
+                to support HA.  Also, can include the port following a colon
+                (the *port* argument then should be unused).  Host may take
+                the form "https://user:password@domain.com:port/path/".
+
+            port (str)
+                The port of the GPUdb server at the given IP address. May be
+                provided as a list in conjunction with host; but if using the
+                same port for all hosts, then a single port value is OK.  Also,
+                can be omitted entirely if the host already contains the port.
+                If the *host* does include a port, then this argument will be
+                ignored.
+
+            encoding (str)
+                Type of Avro encoding to use, "BINARY", "JSON" or "SNAPPY".
+
+            connection (str)
+                Connection type, currently only "HTTP" or "HTTPS" supported.
+                May be provided as a list in conjunction with host; but if using
+                the same port for all hosts, then a single port value is OK.
+
+            username (str)
+                An optional http username.
+
+            password (str)
+                The http password for the username.
+
+            timeout (int)
+                HTTP request timeout in seconds. Defaults to global socket
+                timeout.
+
+            no_init_db_contact (bool)
+                If True, the constructor won't communicate with the database
+                server (e.g. for checking version compatibility).  Default
+                is False.
+        """
         if type(host) is list:
             if not type(port) is list:
                 port = [port]*len(host)
@@ -2006,7 +2156,7 @@ class GPUdb(object):
         # Set up the credentials to be used per POST
         self.auth = None
         if len(self.username) != 0:
-            if sys.version_info[0] >= 3: # Python 3.x
+            if sys.version_info.major >= 3: # Python 3.x
                 # base64 encode the username and password
                 self.auth = ('%s:%s' % (self.username, self.password) )
                 self.auth = _Util.str_to_bytes( self.auth )
@@ -2024,6 +2174,7 @@ class GPUdb(object):
         }
 
         # Load all gpudb schemas
+        self.__load_logger_schemas()
         self.load_gpudb_schemas()
 
         # Load the mapping of function names to endpoints
@@ -2034,7 +2185,8 @@ class GPUdb(object):
 
 
         # Make sure that a connection to the server can be established
-        if not no_init_db_contact:
+        self.no_init_db_contact = no_init_db_contact
+        if not self.no_init_db_contact:
             server_status_response = self.show_system_status()
             if not _Util.is_ok( server_status_response ):
                 raise GPUdbException( _Util.get_error_msg( server_status_response ) )
@@ -2044,7 +2196,7 @@ class GPUdb(object):
         # -------------------------------------------
         if not no_init_db_contact:
             self._perform_version_check()
-    # end __init__
+    # end __construct
 
 
     def __eq__( self, other ):
@@ -2079,6 +2231,37 @@ class GPUdb(object):
         return True
     # end __eq__
 
+
+    def __getstate__( self ):
+        """Defines how to pickle the GPUdb object.
+        """
+        pickle_this = { "host":       self.host,
+                        "port":       self.port,
+                        "encoding":   self.encoding,
+                        "connection": self.connection,
+                        "username":   self.username,
+                        "password":   self.password,
+                        "timeout":    self.timeout,
+                        "no_init_db_contact": self.no_init_db_contact
+        }
+        return pickle_this
+    # end __getstate__
+
+
+    def __setstate__( self, state ):
+        """Re-creates a GPUdb object from the pickled state.  For a
+        description of the pickled state, see :meth:`.__getstate__`.
+        """
+        # Call the internal function to initialize the object
+        self.__construct( host       = state["host"],
+                          port       = state["port"],
+                          encoding   = state["encoding"],
+                          connection = state["connection"],
+                          username   = state["username"],
+                          password   = state["password"],
+                          timeout    = state["timeout"],
+                          no_init_db_contact = state["no_init_db_contact"] )
+    # end __setstate__
 
 
     def _perform_version_check( self, do_print_warning = True ):
@@ -2240,7 +2423,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "6.2.0.4"
+    api_version   = "6.2.0.5"
 
     # constants
     END_OF_SET = -9999
@@ -2248,37 +2431,39 @@ class GPUdb(object):
     set are desired)--generally used for /get/records/\* functions.
     """
 
-    # Some other schemas for internal work
-    logger_request_schema_str = """
-        {
-            "type" : "record",
-            "name" : "logger_request",
-            "fields" : [
-                {"name" : "ranks", "type" : {"type" : "array", "items" : "int"}},
-                {"name" : "log_levels", "type" : {"type" : "map", "values" : "string"}}
-            ]
-        }
-    """.replace("\n", "").replace(" ", "")
-    logger_response_schema_str = """
-        {
-            "type" : "record",
-            "name" : "logger_response",
-            "fields" : [
-                {"name" : "status" , "type" : "string"},
-                {"name" : "log_levels", "type" : {"type" : "map", "values" : "string"}}
-            ]
-        }
-    """.replace("\n", "").replace(" ", "")
-    logger_request_schema = Schema( "record",
-                                    [
-                                        ("ranks", "array", [("int")]),
-                                        ("log_levels", "map", [("string")] )
-                                    ] )
-    logger_response_schema = Schema( "record",
-                                     [
-                                         ("status" , "string"),
-                                         ("log_levels", "map", [("string")] )
-                                     ] )
+    def __load_logger_schemas( self ):
+        # Some other schemas for internal work
+        self.logger_request_schema_str = """
+            {
+                "type" : "record",
+                "name" : "logger_request",
+                "fields" : [
+                    {"name" : "ranks", "type" : {"type" : "array", "items" : "int"}},
+                    {"name" : "log_levels", "type" : {"type" : "map", "values" : "string"}}
+                ]
+            }
+        """.replace("\n", "").replace(" ", "")
+        self.logger_response_schema_str = """
+            {
+                "type" : "record",
+                "name" : "logger_response",
+                "fields" : [
+                    {"name" : "status" , "type" : "string"},
+                    {"name" : "log_levels", "type" : {"type" : "map", "values" : "string"}}
+                ]
+            }
+        """.replace("\n", "").replace(" ", "")
+        self.logger_request_schema = Schema( "record",
+                                             [
+                                                 ("ranks", "array", [("int")]),
+                                                 ("log_levels", "map", [("string")] )
+                                             ] )
+        self.logger_response_schema = Schema( "record",
+                                              [
+                                                  ("status" , "string"),
+                                                  ("log_levels", "map", [("string")] )
+                                              ] )
+    # end __load_logger_schemas
 
     # -----------------------------------------------------------------------
     # Helper functions
@@ -4385,40 +4570,6 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["visualize_video_heatmap"] = "/visualize/video/heatmap"
     # end load_gpudb_func_to_endpoint_map
 
-    # begin admin_alter_configuration
-    def admin_alter_configuration( self, config_string = None, options = {} ):
-        """Update the system config file.  Updates to the config file are only
-        permitted when the system is stopped.
-
-        Parameters:
-
-            config_string (str)
-                updated contents of the config file.
-
-            options (dict of str to str)
-                Optional parameters.  Default value is an empty dict ( {} ).
-
-        Returns:
-            A dict with the following entries--
-
-            status (str)
-                Default value is an empty dict ( {} ).
-        """
-        assert isinstance( config_string, (basestring)), "admin_alter_configuration(): Argument 'config_string' must be (one) of type(s) '(basestring)'; given %s" % type( config_string ).__name__
-        assert isinstance( options, (dict)), "admin_alter_configuration(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/admin/alter/configuration" )
-
-        obj = {}
-        obj['config_string'] = config_string
-        obj['options'] = self.__sanitize_dicts( options )
-
-        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/admin/alter/configuration' )
-
-        return AttrDict( response )
-    # end admin_alter_configuration
-
-
     # begin admin_alter_jobs
     def admin_alter_jobs( self, job_ids = None, action = None, options = {} ):
         """Perform the requested action on a list of one or more job(s). Based on
@@ -4523,6 +4674,15 @@ class GPUdb(object):
     def admin_show_alerts( self, num_alerts = None, options = None ):
         """Retrieves a list of the most recent alerts generated.  The number of
         alerts to retrieve is specified in this request.
+
+        Important: This endpoint is accessed via the host manager port rather
+        than the primary database port; the default ports for host manager and
+        the primary database can be found `here
+        <../../../install/index.html#default-ports>`_.  If you are invoking
+        this endpoint via a GPUdb API object, you must instantiate that object
+        using the host manager port instead of the database port. The same IP
+        address is used for both ports.
+
         Returns lists of alert data, earliest to latest
 
         Parameters:
@@ -4569,34 +4729,6 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end admin_show_alerts
-
-
-    # begin admin_show_configuration
-    def admin_show_configuration( self, options = {} ):
-        """Show the current system configuration file.
-
-        Parameters:
-
-            options (dict of str to str)
-                Optional parameters.  Default value is an empty dict ( {} ).
-
-        Returns:
-            A dict with the following entries--
-
-            config_string (str)
-                contents of the file
-        """
-        assert isinstance( options, (dict)), "admin_show_configuration(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/admin/show/configuration" )
-
-        obj = {}
-        obj['options'] = self.__sanitize_dicts( options )
-
-        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/admin/show/configuration' )
-
-        return AttrDict( response )
-    # end admin_show_configuration
 
 
     # begin admin_show_jobs
@@ -5024,6 +5156,11 @@ class GPUdb(object):
                   Indicates the chunk size to be used for the result table.
                   Must be used in combination with the *result_table* option.
 
+                * **create_indexes** --
+                  Comma-separated list of columns on which to create indexes on
+                  the result table. Must be used in combination with the
+                  *result_table* option.
+
                 * **view_id** --
                   view this result table is part of
 
@@ -5119,8 +5256,8 @@ class GPUdb(object):
     def aggregate_group_by_and_decode( self, table_name = None, column_names = None,
                                        offset = None, limit = 1000, encoding =
                                        'binary', options = {}, record_type =
-                                       None, get_ordered_dicts = True,
-                                       get_column_major = True ):
+                                       None, force_primitive_return_types =
+                                       True, get_column_major = True ):
         """Calculates unique combinations (groups) of values for the given columns
         in a given table/view/collection and computes aggregates on each unique
         combination. This is somewhat analogous to an SQL-style SELECT...GROUP
@@ -5325,6 +5462,11 @@ class GPUdb(object):
                   Indicates the chunk size to be used for the result table.
                   Must be used in combination with the *result_table* option.
 
+                * **create_indexes** --
+                  Comma-separated list of columns on which to create indexes on
+                  the result table. Must be used in combination with the
+                  *result_table* option.
+
                 * **view_id** --
                   view this result table is part of
 
@@ -5366,13 +5508,20 @@ class GPUdb(object):
                 providing thismay improve performance in binary mode. Not used
                 in JSON mode.The default value is None.
 
-            get_ordered_dicts (bool)
-                Indicates if the decoded records will be returned as is, or
-                converted to OrderedDicts.  If Records are returned, then some
-                columns, e.g. those with the property 'datetime' will be
-                relevant python structures. If converted to OrderedDicts, they
-                will be converted to the avro primitive type, in the case of
-                'datetime', it would be string.  Default value is True.
+            force_primitive_return_types (bool)
+                If `True`, then `OrderedDict` objects will be returned, where
+                string sub-type columns will have their values converted back
+                to strings; for example, the Python `datetime` structs, used
+                for datetime type columns would have their values returned as
+                strings. If `False`, then :class:`Record` objects will be
+                returned, which for string sub-types, will return native or
+                custom structs; no conversion to string takes place. String
+                conversions, when returning `OrderedDicts`, incur a speed
+                penalty, and it is strongly recommended to use the
+                :class:`Record` object option instead. If `True`, but none of
+                the returned columns require a conversion, then the original
+                :class:`Record` objects will be returned. Default value is
+                True.
 
             get_column_major (bool)
                 Indicates if the decoded records will be transposed to be
@@ -5403,13 +5552,15 @@ class GPUdb(object):
         assert isinstance( encoding, (basestring)), "aggregate_group_by_and_decode(): Argument 'encoding' must be (one) of type(s) '(basestring)'; given %s" % type( encoding ).__name__
         assert isinstance( options, (dict)), "aggregate_group_by_and_decode(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
         assert ( (record_type == None) or isinstance(record_type, RecordType) ), "aggregate_group_by_and_decode: Argument 'record_type' must be either RecordType or None; given %s" % type( record_type ).__name__
-        assert isinstance(get_ordered_dicts, bool), "aggregate_group_by_and_decode: Argument 'get_ordered_dicts' must be bool; given %s" % type( get_ordered_dicts ).__name__
+        assert isinstance(force_primitive_return_types, bool), "aggregate_group_by_and_decode: Argument 'force_primitive_return_types' must be bool; given %s" % type( force_primitive_return_types ).__name__
         assert isinstance(get_column_major, bool), "aggregate_group_by_and_decode: Argument 'get_column_major' must be bool; given %s" % type( get_column_major ).__name__
 
         (REQ_SCHEMA, RSP_SCHEMA_CEXT) = self.__get_schemas( "/aggregate/groupby", get_rsp_cext = True )
 
-        # Force JSON encoding if client encoding is json
-        if (self.encoding == "JSON"):
+        # Force JSON encoding if client encoding is json and method encoding
+        # is binary (checking for binary so that we do not accidentally override
+        # the GeoJSON encoding)
+        if ( (self.encoding == "JSON") and (encoding == "binary") ):
             encoding = "json"
 
         obj = {}
@@ -5425,19 +5576,27 @@ class GPUdb(object):
             return AttrDict( response )
 
         # Decode the data
-        if encoding == "json":
-            response["records"] = json.loads( response["json_encoded_response"] )
-        else:
+        if (encoding == 'binary'):
             record_type = record_type if record_type else RecordType.from_dynamic_schema( response["response_schema_str"], raw_response, response["binary_encoded_response"] )
             records = record_type.decode_dynamic_records( raw_response, response["binary_encoded_response"] )
-            if get_ordered_dicts:
+            if force_primitive_return_types:
                 records = _Util.convert_cext_records_to_ordered_dicts( records )
+
+            # Transpose the data to column-major, if requested by the user
+            if get_column_major:
+                records = GPUdbRecord.transpose_data_to_col_major( records )
+
+            response["records"] = records
+        else:
+            records = json.loads( response["json_encoded_response"] )
+            if get_column_major:
+                # Get column-major data
+                records = GPUdbRecord.decode_dynamic_json_data_column_major( records, response["response_schema_str"] )
+            else:
+                # Get row-major data
+                records = GPUdbRecord.decode_dynamic_json_data_row_major( records, response["response_schema_str"] )
             response["records"] = records
         # end if
-
-        # Transpose the data, if requested by the user
-        if get_column_major:
-            response["records"] = GPUdbRecord.transpose_data_to_col_major( response["records"] )
 
         del response["binary_encoded_response"]
         del response["json_encoded_response"]
@@ -5745,10 +5904,9 @@ class GPUdb(object):
         value must be specified separately (i.e.
         'percentile(75.0),percentile(99.0),percentile_rank(1234.56),percentile_rank(-5)').
 
-        A second, comma-separated value can be added to the
-        {percentile}@{choise of input stats} statistic to calculate percentile
-        resolution, e.g., a 50th percentile with 200 resolution would be
-        'percentile(50,200)'.
+        A second, comma-separated value can be added to the *percentile*
+        statistic to calculate percentile resolution, e.g., a 50th percentile
+        with 200 resolution would be 'percentile(50,200)'.
 
         The weighted average statistic requires a *weight_column_name* to be
         specified in input parameter *options*. The weighted average is then
@@ -6208,8 +6366,8 @@ class GPUdb(object):
     def aggregate_unique_and_decode( self, table_name = None, column_name = None,
                                      offset = None, limit = 10000, encoding =
                                      'binary', options = {}, record_type = None,
-                                     get_ordered_dicts = True, get_column_major
-                                     = True ):
+                                     force_primitive_return_types = True,
+                                     get_column_major = True ):
         """Returns all the unique values from a particular column (specified by
         input parameter *column_name*) of a particular table or collection
         (specified by input parameter *table_name*). If input parameter
@@ -6362,13 +6520,20 @@ class GPUdb(object):
                 providing thismay improve performance in binary mode. Not used
                 in JSON mode.The default value is None.
 
-            get_ordered_dicts (bool)
-                Indicates if the decoded records will be returned as is, or
-                converted to OrderedDicts.  If Records are returned, then some
-                columns, e.g. those with the property 'datetime' will be
-                relevant python structures. If converted to OrderedDicts, they
-                will be converted to the avro primitive type, in the case of
-                'datetime', it would be string.  Default value is True.
+            force_primitive_return_types (bool)
+                If `True`, then `OrderedDict` objects will be returned, where
+                string sub-type columns will have their values converted back
+                to strings; for example, the Python `datetime` structs, used
+                for datetime type columns would have their values returned as
+                strings. If `False`, then :class:`Record` objects will be
+                returned, which for string sub-types, will return native or
+                custom structs; no conversion to string takes place. String
+                conversions, when returning `OrderedDicts`, incur a speed
+                penalty, and it is strongly recommended to use the
+                :class:`Record` object option instead. If `True`, but none of
+                the returned columns require a conversion, then the original
+                :class:`Record` objects will be returned. Default value is
+                True.
 
             get_column_major (bool)
                 Indicates if the decoded records will be transposed to be
@@ -6399,13 +6564,15 @@ class GPUdb(object):
         assert isinstance( encoding, (basestring)), "aggregate_unique_and_decode(): Argument 'encoding' must be (one) of type(s) '(basestring)'; given %s" % type( encoding ).__name__
         assert isinstance( options, (dict)), "aggregate_unique_and_decode(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
         assert ( (record_type == None) or isinstance(record_type, RecordType) ), "aggregate_unique_and_decode: Argument 'record_type' must be either RecordType or None; given %s" % type( record_type ).__name__
-        assert isinstance(get_ordered_dicts, bool), "aggregate_unique_and_decode: Argument 'get_ordered_dicts' must be bool; given %s" % type( get_ordered_dicts ).__name__
+        assert isinstance(force_primitive_return_types, bool), "aggregate_unique_and_decode: Argument 'force_primitive_return_types' must be bool; given %s" % type( force_primitive_return_types ).__name__
         assert isinstance(get_column_major, bool), "aggregate_unique_and_decode: Argument 'get_column_major' must be bool; given %s" % type( get_column_major ).__name__
 
         (REQ_SCHEMA, RSP_SCHEMA_CEXT) = self.__get_schemas( "/aggregate/unique", get_rsp_cext = True )
 
-        # Force JSON encoding if client encoding is json
-        if (self.encoding == "JSON"):
+        # Force JSON encoding if client encoding is json and method encoding
+        # is binary (checking for binary so that we do not accidentally override
+        # the GeoJSON encoding)
+        if ( (self.encoding == "JSON") and (encoding == "binary") ):
             encoding = "json"
 
         obj = {}
@@ -6421,19 +6588,27 @@ class GPUdb(object):
             return AttrDict( response )
 
         # Decode the data
-        if encoding == "json":
-            response["records"] = json.loads( response["json_encoded_response"] )
-        else:
+        if (encoding == 'binary'):
             record_type = record_type if record_type else RecordType.from_dynamic_schema( response["response_schema_str"], raw_response, response["binary_encoded_response"] )
             records = record_type.decode_dynamic_records( raw_response, response["binary_encoded_response"] )
-            if get_ordered_dicts:
+            if force_primitive_return_types:
                 records = _Util.convert_cext_records_to_ordered_dicts( records )
+
+            # Transpose the data to column-major, if requested by the user
+            if get_column_major:
+                records = GPUdbRecord.transpose_data_to_col_major( records )
+
+            response["records"] = records
+        else:
+            records = json.loads( response["json_encoded_response"] )
+            if get_column_major:
+                # Get column-major data
+                records = GPUdbRecord.decode_dynamic_json_data_column_major( records, response["response_schema_str"] )
+            else:
+                # Get row-major data
+                records = GPUdbRecord.decode_dynamic_json_data_row_major( records, response["response_schema_str"] )
             response["records"] = records
         # end if
-
-        # Transpose the data, if requested by the user
-        if get_column_major:
-            response["records"] = GPUdbRecord.transpose_data_to_col_major( response["records"] )
 
         del response["binary_encoded_response"]
         del response["json_encoded_response"]
@@ -6631,8 +6806,9 @@ class GPUdb(object):
                                       variable_column_name = '',
                                       value_column_name = '', pivoted_columns =
                                       None, encoding = 'binary', options = {},
-                                      record_type = None, get_ordered_dicts =
-                                      True, get_column_major = True ):
+                                      record_type = None,
+                                      force_primitive_return_types = True,
+                                      get_column_major = True ):
         """Rotate the column values into rows values.
 
         For unpivot details and examples, see `Unpivot
@@ -6756,13 +6932,20 @@ class GPUdb(object):
                 providing thismay improve performance in binary mode. Not used
                 in JSON mode.The default value is None.
 
-            get_ordered_dicts (bool)
-                Indicates if the decoded records will be returned as is, or
-                converted to OrderedDicts.  If Records are returned, then some
-                columns, e.g. those with the property 'datetime' will be
-                relevant python structures. If converted to OrderedDicts, they
-                will be converted to the avro primitive type, in the case of
-                'datetime', it would be string.  Default value is True.
+            force_primitive_return_types (bool)
+                If `True`, then `OrderedDict` objects will be returned, where
+                string sub-type columns will have their values converted back
+                to strings; for example, the Python `datetime` structs, used
+                for datetime type columns would have their values returned as
+                strings. If `False`, then :class:`Record` objects will be
+                returned, which for string sub-types, will return native or
+                custom structs; no conversion to string takes place. String
+                conversions, when returning `OrderedDicts`, incur a speed
+                penalty, and it is strongly recommended to use the
+                :class:`Record` object option instead. If `True`, but none of
+                the returned columns require a conversion, then the original
+                :class:`Record` objects will be returned. Default value is
+                True.
 
             get_column_major (bool)
                 Indicates if the decoded records will be transposed to be
@@ -6798,13 +6981,15 @@ class GPUdb(object):
         assert isinstance( encoding, (basestring)), "aggregate_unpivot_and_decode(): Argument 'encoding' must be (one) of type(s) '(basestring)'; given %s" % type( encoding ).__name__
         assert isinstance( options, (dict)), "aggregate_unpivot_and_decode(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
         assert ( (record_type == None) or isinstance(record_type, RecordType) ), "aggregate_unpivot_and_decode: Argument 'record_type' must be either RecordType or None; given %s" % type( record_type ).__name__
-        assert isinstance(get_ordered_dicts, bool), "aggregate_unpivot_and_decode: Argument 'get_ordered_dicts' must be bool; given %s" % type( get_ordered_dicts ).__name__
+        assert isinstance(force_primitive_return_types, bool), "aggregate_unpivot_and_decode: Argument 'force_primitive_return_types' must be bool; given %s" % type( force_primitive_return_types ).__name__
         assert isinstance(get_column_major, bool), "aggregate_unpivot_and_decode: Argument 'get_column_major' must be bool; given %s" % type( get_column_major ).__name__
 
         (REQ_SCHEMA, RSP_SCHEMA_CEXT) = self.__get_schemas( "/aggregate/unpivot", get_rsp_cext = True )
 
-        # Force JSON encoding if client encoding is json
-        if (self.encoding == "JSON"):
+        # Force JSON encoding if client encoding is json and method encoding
+        # is binary (checking for binary so that we do not accidentally override
+        # the GeoJSON encoding)
+        if ( (self.encoding == "JSON") and (encoding == "binary") ):
             encoding = "json"
 
         obj = {}
@@ -6821,19 +7006,27 @@ class GPUdb(object):
             return AttrDict( response )
 
         # Decode the data
-        if encoding == "json":
-            response["records"] = json.loads( response["json_encoded_response"] )
-        else:
+        if (encoding == 'binary'):
             record_type = record_type if record_type else RecordType.from_dynamic_schema( response["response_schema_str"], raw_response, response["binary_encoded_response"] )
             records = record_type.decode_dynamic_records( raw_response, response["binary_encoded_response"] )
-            if get_ordered_dicts:
+            if force_primitive_return_types:
                 records = _Util.convert_cext_records_to_ordered_dicts( records )
+
+            # Transpose the data to column-major, if requested by the user
+            if get_column_major:
+                records = GPUdbRecord.transpose_data_to_col_major( records )
+
+            response["records"] = records
+        else:
+            records = json.loads( response["json_encoded_response"] )
+            if get_column_major:
+                # Get column-major data
+                records = GPUdbRecord.decode_dynamic_json_data_column_major( records, response["response_schema_str"] )
+            else:
+                # Get row-major data
+                records = GPUdbRecord.decode_dynamic_json_data_row_major( records, response["response_schema_str"] )
             response["records"] = records
         # end if
-
-        # Transpose the data, if requested by the user
-        if get_column_major:
-            response["records"] = GPUdbRecord.transpose_data_to_col_major( response["records"] )
 
         del response["binary_encoded_response"]
         del response["json_encoded_response"]
@@ -6959,6 +7152,13 @@ class GPUdb(object):
                   Enable JobManager to enforce processing of requests in the
                   order received.
 
+                * **chunk_cache_enabled** --
+                  Enable chunk level query caching. Flushes the chunk cache
+                  when value is false
+
+                * **chunk_cache_size** --
+                  Size of the chunk cache in bytes.
+
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
 
@@ -7006,9 +7206,13 @@ class GPUdb(object):
         table & view that is not protected will have its TTL set to the given
         value.
 
-        Set the global access mode (i.e. locking) for a table. The mode can be
-        set to
-        'no_access', 'read_only', 'write_only' or 'read_write'.
+        Set the global access mode (i.e. locking) for a table. This setting
+        trumps any
+        role-based access controls that may be in place; e.g., a user with
+        write access
+        to a table marked read-only will not be able to insert records into it.
+        The mode
+        can be set to read-only, write-only, read/write, and no access.
 
         Change the `protection <../../../concepts/protection.html>`_ mode to
         prevent or
@@ -7065,9 +7269,17 @@ class GPUdb(object):
                   <../../../concepts/tables.html>`_.
 
                 * **ttl** --
-                  Sets the `TTL <../../../concepts/ttl.html>`_ of the table,
-                  view, or collection specified in input parameter
-                  *table_name*.
+                  Sets the `time-to-live <../../../concepts/ttl.html>`_ in
+                  minutes of the table, view, or collection specified in input
+                  parameter *table_name*.
+
+                * **memory_ttl** --
+                  Sets the time-to-live in minutes for the individual chunks of
+                  the columns of the table, view, or collection specified in
+                  input parameter *table_name* to free their memory if unused
+                  longer than the given time. Specify an empty string to
+                  restore the global memory_ttl setting and a value of '-1' for
+                  an infinite timeout.
 
                 * **add_column** --
                   Adds the column specified in input parameter *value* to the
@@ -7080,7 +7292,12 @@ class GPUdb(object):
                   Changes type and properties of the column specified in input
                   parameter *value*.  Use *column_type* and *column_properties*
                   in input parameter *options* to set the column's type and
-                  properties, respectively.
+                  properties, respectively. Note that primary key and/or shard
+                  key columns cannot be changed. All unchanging column
+                  properties must be listed for the change to take place, e.g.,
+                  to add dictionary encoding to an existing 'char4' column,
+                  both 'char4' and 'dict' must be specified in the input
+                  parameter *options* map.
 
                 * **set_column_compression** --
                   Modifies the `compression
@@ -7112,25 +7329,28 @@ class GPUdb(object):
                   'read_only', 'write_only' and 'read_write'.
 
                 * **refresh** --
-                  Replay all the table creation commands required to create
-                  this view. Endpoints supported are :meth:`.filter`,
-                  :meth:`.create_join_table`, :meth:`.create_projection`,
-                  :meth:`.create_union`, :meth:`.aggregate_group_by`, and
-                  :meth:`.aggregate_unique`.
+                  Replays all the table creation commands required to create
+                  this `materialized view
+                  <../../../concepts/materialized_views.html>`_.
 
                 * **set_refresh_method** --
-                  Set the method by which this view is refreshed - one of
-                  'manual', 'periodic', 'on_change', 'on_query'.
+                  Sets the method by which this `materialized view
+                  <../../../concepts/materialized_views.html>`_ is refreshed -
+                  one of 'manual', 'periodic', 'on_change'.
 
                 * **set_refresh_start_time** --
-                  Set the time to start periodic refreshes to datetime string
-                  with format YYYY-MM-DD HH:MM:SS at which refresh is to be
-                  done.  Next refresh occurs at refresh_start_time +
-                  N*refresh_period
+                  Sets the time to start periodic refreshes of this
+                  `materialized view
+                  <../../../concepts/materialized_views.html>`_ to datetime
+                  string with format 'YYYY-MM-DD HH:MM:SS'.  Subsequent
+                  refreshes occur at the specified time + N * the refresh
+                  period.
 
                 * **set_refresh_period** --
-                  Set the time interval in seconds at which to refresh this
-                  view - sets the refresh method to periodic if not alreay set.
+                  Sets the time interval in seconds at which to refresh this
+                  `materialized view
+                  <../../../concepts/materialized_views.html>`_.  Also, sets
+                  the refresh method to periodic if not alreay set.
 
             value (str)
                 The value of the modification. May be a column name, 'true' or
@@ -7676,7 +7896,7 @@ class GPUdb(object):
                 alias.  Columns can be aliased via the syntax 'column_name as
                 alias'. Wild cards '*' can be used to include all columns
                 across member tables or 'table_id.*' for all of a single
-                table's columns.  Columns and column expressions comprising the
+                table's columns.  Columns and column expressions composing the
                 join must be uniquely named or aliased--therefore, the '*' wild
                 card cannot be used if column names aren't unique across all
                 tables.  Default value is an empty list ( [] ).   The user can
@@ -7731,14 +7951,18 @@ class GPUdb(object):
                     whenever a new query is issued and new data is inserted
                     into the base table.  A full refresh of all the records
                     occurs when a new query is issued and there have been
-                    inserts to any non-base-tables since the last query
+                    inserts to any non-base-tables since the last query.  `TTL
+                    <../../../concepts/ttl.html>`_ will be set to not expire;
+                    any *ttl* specified will be ignored.
 
                   * **on_insert** --
                     incrementally refresh (refresh just those records added)
                     whenever new data is inserted into a base table.  A full
                     refresh of all the records occurs when a new query is
                     issued and there have been inserts to any non-base-tables
-                    since the last query
+                    since the last query.  `TTL <../../../concepts/ttl.html>`_
+                    will be set to not expire; any *ttl* specified will be
+                    ignored.
 
                   The default value is 'manual'.
 
@@ -7767,6 +7991,8 @@ class GPUdb(object):
                 * **ttl** --
                   Sets the `TTL <../../../concepts/ttl.html>`_ of the join
                   table specified in input parameter *join_table_name*.
+                  Ignored if *refresh_method* is either *on_insert* or
+                  *on_query*.
 
                 * **view_id** --
                   view this projection is part of
@@ -7817,7 +8043,7 @@ class GPUdb(object):
         <../../../concepts/materialized_views.html>`_.
 
         The response contains output parameter *view_id*, which is used to tag
-        each subsequent operation (projection, union, group-by, filter, or
+        each subsequent operation (projection, union, aggregation, filter, or
         join) that will compose the view.
 
         Parameters:
@@ -7860,34 +8086,31 @@ class GPUdb(object):
 
                   * **manual** --
                     Refresh only occurs when manually requested by calling
-                    alter_table with action refresh_view
+                    :meth:`.alter_table` with an 'action' of 'refresh'
 
                   * **on_query** --
-                    Incrementally refresh (refresh just those records added)
-                    whenever a new query is issued and new data is inserted
-                    into the base table.  A full refresh of all the records
-                    occurs when a new query is issued and there have been
-                    inserts to any non-base-tables since the last query
+                    For future use.
 
                   * **on_change** --
                     If possible, incrementally refresh (refresh just those
                     records added) whenever an insert, update, delete or
-                    refresh of input table is done.  A full refresh on_query is
-                    done if an incremental refresh is not possible.
+                    refresh of input table is done.  A full refresh is done if
+                    an incremental refresh is not possible.
 
                   * **periodic** --
                     Refresh table periodically at rate specified by
-                    refresh_period option
+                    *refresh_period*
 
                   The default value is 'manual'.
 
                 * **refresh_period** --
-                  When refresh_method is periodic specifies the period in
+                  When *refresh_method* is *periodic*, specifies the period in
                   seconds at which refresh occurs
 
                 * **refresh_start_time** --
-                  First time at which a periodic refresh is to be done.  Value
-                  is a datatime string with format YYYY-MM-DD HH:MM:SS.
+                  When *refresh_method* is *periodic*, specifies the first time
+                  at which a refresh is to be done.  Value is a datetime string
+                  with format 'YYYY-MM-DD HH:MM:SS'.
 
         Returns:
             A dict with the following entries--
@@ -8081,6 +8304,16 @@ class GPUdb(object):
                   <../../../concepts/expressions.html>`_ to be applied to the
                   source table prior to the projection.
 
+                * **is_replicated** --
+                  If *true* then the projection will be replicated even if the
+                  source table is not.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **limit** --
                   The number of records to keep.
 
@@ -8103,6 +8336,13 @@ class GPUdb(object):
 
                 * **chunk_size** --
                   Indicates the chunk size to be used for this table.
+
+                * **create_indexes** --
+                  Comma-separated list of columns on which to create indexes on
+                  the output table.  The columns specified must be present in
+                  input parameter *column_names*.  If any alias is given for
+                  any column name, the alias must be used, rather than the
+                  original column name.
 
                 * **ttl** --
                   Sets the `TTL <../../../concepts/ttl.html>`_ of the
@@ -8564,14 +8804,15 @@ class GPUdb(object):
         any given column simultaneously.  One example of mutually exclusive
         properties are *data* and *store_only*.
 
-        To set a *primary key* on one or more columns include the property
-        'primary_key' on the desired column_names. If a primary key is
-        specified, then a uniqueness constraint is enforced, in that only a
-        single object can exist with a given primary key. When :meth:`inserting
+        A single `primary key <../../../concepts/tables.html#primary-keys>`_
+        and/or single `shard key <../../../concepts/tables.html#shard-keys>`_
+        can be set across one or more columns. If a primary key is specified,
+        then a uniqueness constraint is enforced, in that only a single object
+        can exist with a given primary key. When :meth:`inserting
         <.insert_records>` data into a table with a primary key, depending on
-        the parameters in the request, incoming objects with primary keys that
-        match existing objects will either overwrite (i.e. update) the existing
-        object or will be skipped and not added into the set.
+        the parameters in the request, incoming objects with primary key values
+        that match existing objects will either overwrite (i.e. update) the
+        existing object or will be skipped and not added into the set.
 
         Example of a type definition with some of the parameters::
 
@@ -8610,6 +8851,167 @@ class GPUdb(object):
                 property overrides the default properties for that column
                 (which is based on the column's data type).  Default value is
                 an empty dict ( {} ).
+                Allowed values are:
+
+                * **data** --
+                  Default property for all numeric and string type columns;
+                  makes the column available for GPU queries.
+
+                * **text_search** --
+                  Valid only for 'string' columns. Enables full text search for
+                  string columns. Can be set independently of *data* and
+                  *store_only*.
+
+                * **store_only** --
+                  Persist the column value but do not make it available to
+                  queries (e.g. :meth:`.filter`)-i.e. it is mutually exclusive
+                  to the *data* property. Any 'bytes' type column must have a
+                  *store_only* property. This property reduces system memory
+                  usage.
+
+                * **disk_optimized** --
+                  Works in conjunction with the *data* property for string
+                  columns. This property reduces system disk usage by disabling
+                  reverse string lookups. Queries like :meth:`.filter`,
+                  :meth:`.filter_by_list`, and :meth:`.filter_by_value` work as
+                  usual but :meth:`.aggregate_unique`,
+                  :meth:`.aggregate_group_by` and
+                  :meth:`.get_records_by_column` are not allowed on columns
+                  with this property.
+
+                * **timestamp** --
+                  Valid only for 'long' columns. Indicates that this field
+                  represents a timestamp and will be provided in milliseconds
+                  since the Unix epoch: 00:00:00 Jan 1 1970.  Dates represented
+                  by a timestamp must fall between the year 1000 and the year
+                  2900.
+
+                * **decimal** --
+                  Valid only for 'string' columns.  It represents a SQL type
+                  NUMERIC(19, 4) data type.  There can be up to 15 digits
+                  before the decimal point and up to four digits in the
+                  fractional part.  The value can be positive or negative
+                  (indicated by a minus sign at the beginning).  This property
+                  is mutually exclusive with the *text_search* property.
+
+                * **date** --
+                  Valid only for 'string' columns.  Indicates that this field
+                  represents a date and will be provided in the format
+                  'YYYY-MM-DD'.  The allowable range is 1000-01-01 through
+                  2900-01-01.  This property is mutually exclusive with the
+                  *text_search* property.
+
+                * **time** --
+                  Valid only for 'string' columns.  Indicates that this field
+                  represents a time-of-day and will be provided in the format
+                  'HH:MM:SS.mmm'.  The allowable range is 00:00:00.000 through
+                  23:59:59.999.  This property is mutually exclusive with the
+                  *text_search* property.
+
+                * **datetime** --
+                  Valid only for 'string' columns.  Indicates that this field
+                  represents a datetime and will be provided in the format
+                  'YYYY-MM-DD HH:MM:SS.mmm'.  The allowable range is 1000-01-01
+                  00:00:00.000 through 2900-01-01 23:59:59.999.  This property
+                  is mutually exclusive with the *text_search* property.
+
+                * **char1** --
+                  This property provides optimized memory, disk and query
+                  performance for string columns. Strings with this property
+                  must be no longer than 1 character.
+
+                * **char2** --
+                  This property provides optimized memory, disk and query
+                  performance for string columns. Strings with this property
+                  must be no longer than 2 characters.
+
+                * **char4** --
+                  This property provides optimized memory, disk and query
+                  performance for string columns. Strings with this property
+                  must be no longer than 4 characters.
+
+                * **char8** --
+                  This property provides optimized memory, disk and query
+                  performance for string columns. Strings with this property
+                  must be no longer than 8 characters.
+
+                * **char16** --
+                  This property provides optimized memory, disk and query
+                  performance for string columns. Strings with this property
+                  must be no longer than 16 characters.
+
+                * **char32** --
+                  This property provides optimized memory, disk and query
+                  performance for string columns. Strings with this property
+                  must be no longer than 32 characters.
+
+                * **char64** --
+                  This property provides optimized memory, disk and query
+                  performance for string columns. Strings with this property
+                  must be no longer than 64 characters.
+
+                * **char128** --
+                  This property provides optimized memory, disk and query
+                  performance for string columns. Strings with this property
+                  must be no longer than 128 characters.
+
+                * **char256** --
+                  This property provides optimized memory, disk and query
+                  performance for string columns. Strings with this property
+                  must be no longer than 256 characters.
+
+                * **int8** --
+                  This property provides optimized memory and query performance
+                  for int columns. Ints with this property must be between -128
+                  and +127 (inclusive)
+
+                * **int16** --
+                  This property provides optimized memory and query performance
+                  for int columns. Ints with this property must be between
+                  -32768 and +32767 (inclusive)
+
+                * **ipv4** --
+                  This property provides optimized memory, disk and query
+                  performance for string columns representing IPv4 addresses
+                  (i.e. 192.168.1.1). Strings with this property must be of the
+                  form: A.B.C.D where A, B, C and D are in the range of 0-255.
+
+                * **wkt** --
+                  Valid only for 'string' and 'bytes' columns. Indicates that
+                  this field contains geospatial geometry objects in Well-Known
+                  Text (WKT) or Well-Known Binary (WKB) format.
+
+                * **primary_key** --
+                  This property indicates that this column will be part of (or
+                  the entire) `primary key
+                  <../../../concepts/tables.html#primary-keys>`_.
+
+                * **shard_key** --
+                  This property indicates that this column will be part of (or
+                  the entire) `shard key
+                  <../../../concepts/tables.html#shard-keys>`_.
+
+                * **nullable** --
+                  This property indicates that this column is nullable.
+                  However, setting this property is insufficient for making the
+                  column nullable.  The user must declare the type of the
+                  column as a union between its regular type and 'null' in the
+                  avro schema for the record type in input parameter
+                  *type_definition*.  For example, if a column is of type
+                  integer and is nullable, then the entry for the column in the
+                  avro schema must be: ['int', 'null'].
+                  The C++, C#, Java, and Python APIs have built-in convenience
+                  for bypassing setting the avro schema by hand.  For those
+                  languages, one can use this property as usual and not have to
+                  worry about the avro schema for the record.
+
+                * **dict** --
+                  This property indicates that this column should be dictionary
+                  encoded. It can only be used in conjunction with string
+                  columns marked with a charN property. This property is
+                  appropriate for columns where the cardinality (the number of
+                  unique values) is expected to be low, and can save a large
+                  amount of memory.
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
@@ -8769,6 +9171,11 @@ class GPUdb(object):
 
                 * **chunk_size** --
                   Indicates the chunk size to be used for this table.
+
+                * **create_indexes** --
+                  Comma-separated list of columns on which to create indexes on
+                  the output table.  The columns specified must be present in
+                  input parameter *output_column_names*.
 
                 * **ttl** --
                   Sets the `TTL <../../../concepts/ttl.html>`_ of the table
@@ -8934,12 +9341,13 @@ class GPUdb(object):
     def delete_records( self, table_name = None, expressions = None, options = {} ):
         """Deletes record(s) matching the provided criteria from the given table.
         The record selection criteria can either be one or more  input
-        parameter *expressions* (matching multiple records) or a single record
-        identified by *record_id* options.  Note that the two selection
-        criteria are mutually exclusive.  This operation cannot be run on a
-        collection or a view.  The operation is synchronous meaning that a
-        response will not be available until the request is completely
-        processed and all the matching records are deleted.
+        parameter *expressions* (matching multiple records), a single record
+        identified by *record_id* options, or all records when using
+        *delete_all_records*.  Note that the three selection criteria are
+        mutually exclusive.  This operation cannot be run on a collection or a
+        view.  The operation is synchronous meaning that a response will not be
+        available until the request is completely processed and all the
+        matching records are deleted.
 
         Parameters:
 
@@ -8969,6 +9377,16 @@ class GPUdb(object):
                   of :meth:`insertion of the record <.insert_records>` or by
                   calling :meth:`.get_records_from_collection` with the
                   *return_record_ids* option.
+
+                * **delete_all_records** --
+                  If set to *true*, all records in the table will be deleted.
+                  If set to *false*, then the option is effectively ignored.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -9140,6 +9558,13 @@ class GPUdb(object):
                   same table was cached for multiple specified run IDs, the
                   cached data from the first run ID specified in the list that
                   includes that table will be used.
+
+                * **kifs_input_dirs** --
+                  A comma-delimited list of KiFS directories whose local files
+                  will be made directly accessible to the proc through the API.
+                  (All KiFS files, local or not, are also accessible through
+                  the file system below the KiFS mount point.) Each name
+                  specified must the name of an existing KiFS directory.
 
         Returns:
             A dict with the following entries--
@@ -10048,8 +10473,8 @@ class GPUdb(object):
 
             table_name (str)
                 Name of the table on which the filter by track operation will
-                be performed. Must be a currently existing table with track
-                semantic type.
+                be performed. Must be a currently existing table with a `track
+                <../../../geospatial/geo_objects.html>`_ present.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -10690,7 +11115,7 @@ class GPUdb(object):
     # begin get_records_and_decode
     def get_records_and_decode( self, table_name = None, offset = 0, limit = 10000,
                                 encoding = 'binary', options = {}, record_type =
-                                None, get_ordered_dicts = True ):
+                                None, force_primitive_return_types = True ):
         """Retrieves records from a given table, optionally filtered by an
         expression and/or sorted by a column. This operation can be performed
         on tables, views, or on homogeneous collections (collections containing
@@ -10773,13 +11198,20 @@ class GPUdb(object):
                 providing thismay improve performance in binary mode. Not used
                 in JSON mode.The default value is None.
 
-            get_ordered_dicts (bool)
-                Indicates if the decoded records will be returned as is, or
-                converted to OrderedDicts.  If Records are returned, then some
-                columns, e.g. those with the property 'datetime' will be
-                relevant python structures. If converted to OrderedDicts, they
-                will be converted to the avro primitive type, in the case of
-                'datetime', it would be string.  Default value is True.
+            force_primitive_return_types (bool)
+                If `True`, then `OrderedDict` objects will be returned, where
+                string sub-type columns will have their values converted back
+                to strings; for example, the Python `datetime` structs, used
+                for datetime type columns would have their values returned as
+                strings. If `False`, then :class:`Record` objects will be
+                returned, which for string sub-types, will return native or
+                custom structs; no conversion to string takes place. String
+                conversions, when returning `OrderedDicts`, incur a speed
+                penalty, and it is strongly recommended to use the
+                :class:`Record` object option instead. If `True`, but none of
+                the returned columns require a conversion, then the original
+                :class:`Record` objects will be returned. Default value is
+                True.
 
         Returns:
             A dict with the following entries--
@@ -10810,12 +11242,14 @@ class GPUdb(object):
         assert isinstance( encoding, (basestring)), "get_records_and_decode(): Argument 'encoding' must be (one) of type(s) '(basestring)'; given %s" % type( encoding ).__name__
         assert isinstance( options, (dict)), "get_records_and_decode(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
         assert ( (record_type == None) or isinstance(record_type, RecordType) ), "get_records_and_decode: Argument 'record_type' must be either RecordType or None; given %s" % type( record_type ).__name__
-        assert isinstance(get_ordered_dicts, bool), "get_records_and_decode: Argument 'get_ordered_dicts' must be bool; given %s" % type( get_ordered_dicts ).__name__
+        assert isinstance(force_primitive_return_types, bool), "get_records_and_decode: Argument 'force_primitive_return_types' must be bool; given %s" % type( force_primitive_return_types ).__name__
 
         (REQ_SCHEMA, RSP_SCHEMA_CEXT) = self.__get_schemas( "/get/records", get_rsp_cext = True )
 
-        # Force JSON encoding if client encoding is json
-        if (self.encoding == "JSON"):
+        # Force JSON encoding if client encoding is json and method encoding
+        # is binary (checking for binary so that we do not accidentally override
+        # the GeoJSON encoding)
+        if ( (self.encoding == "JSON") and (encoding == "binary") ):
             encoding = "json"
 
         obj = {}
@@ -10830,15 +11264,15 @@ class GPUdb(object):
             return AttrDict( response )
 
         # Decode the data
-        if encoding == "json":
-            response["records"] = [ json.loads(_r, object_pairs_hook = collections.OrderedDict)
-                                     for _r in response["records_json"] ]
-        else:
+        if (encoding == 'binary'):
             record_type = record_type if record_type else self.get_known_type( response["type_name"] )
             records = record_type.decode_records( raw_response, response["records_binary"] )
-            if get_ordered_dicts:
+            if force_primitive_return_types:
                 records = _Util.convert_cext_records_to_ordered_dicts( records )
             response["records"] = records
+        else:
+            response["records"] = [ json.loads(_r, object_pairs_hook = collections.OrderedDict)
+                                     for _r in response["records_json"] ]
         # end if
 
         del response["records_binary"]
@@ -10994,8 +11428,9 @@ class GPUdb(object):
     def get_records_by_column_and_decode( self, table_name = None, column_names =
                                           None, offset = None, limit = None,
                                           encoding = 'binary', options = {},
-                                          record_type = None, get_ordered_dicts
-                                          = True, get_column_major = True ):
+                                          record_type = None,
+                                          force_primitive_return_types = True,
+                                          get_column_major = True ):
         """For a given table, retrieves the values from the requested column(s).
         Maps of column name to the array of values as well as the column data
         type are returned. This endpoint supports pagination with the input
@@ -11081,13 +11516,20 @@ class GPUdb(object):
                 providing thismay improve performance in binary mode. Not used
                 in JSON mode.The default value is None.
 
-            get_ordered_dicts (bool)
-                Indicates if the decoded records will be returned as is, or
-                converted to OrderedDicts.  If Records are returned, then some
-                columns, e.g. those with the property 'datetime' will be
-                relevant python structures. If converted to OrderedDicts, they
-                will be converted to the avro primitive type, in the case of
-                'datetime', it would be string.  Default value is True.
+            force_primitive_return_types (bool)
+                If `True`, then `OrderedDict` objects will be returned, where
+                string sub-type columns will have their values converted back
+                to strings; for example, the Python `datetime` structs, used
+                for datetime type columns would have their values returned as
+                strings. If `False`, then :class:`Record` objects will be
+                returned, which for string sub-types, will return native or
+                custom structs; no conversion to string takes place. String
+                conversions, when returning `OrderedDicts`, incur a speed
+                penalty, and it is strongly recommended to use the
+                :class:`Record` object option instead. If `True`, but none of
+                the returned columns require a conversion, then the original
+                :class:`Record` objects will be returned. Default value is
+                True.
 
             get_column_major (bool)
                 Indicates if the decoded records will be transposed to be
@@ -11121,13 +11563,15 @@ class GPUdb(object):
         assert isinstance( encoding, (basestring)), "get_records_by_column_and_decode(): Argument 'encoding' must be (one) of type(s) '(basestring)'; given %s" % type( encoding ).__name__
         assert isinstance( options, (dict)), "get_records_by_column_and_decode(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
         assert ( (record_type == None) or isinstance(record_type, RecordType) ), "get_records_by_column_and_decode: Argument 'record_type' must be either RecordType or None; given %s" % type( record_type ).__name__
-        assert isinstance(get_ordered_dicts, bool), "get_records_by_column_and_decode: Argument 'get_ordered_dicts' must be bool; given %s" % type( get_ordered_dicts ).__name__
+        assert isinstance(force_primitive_return_types, bool), "get_records_by_column_and_decode: Argument 'force_primitive_return_types' must be bool; given %s" % type( force_primitive_return_types ).__name__
         assert isinstance(get_column_major, bool), "get_records_by_column_and_decode: Argument 'get_column_major' must be bool; given %s" % type( get_column_major ).__name__
 
         (REQ_SCHEMA, RSP_SCHEMA_CEXT) = self.__get_schemas( "/get/records/bycolumn", get_rsp_cext = True )
 
-        # Force JSON encoding if client encoding is json
-        if (self.encoding == "JSON"):
+        # Force JSON encoding if client encoding is json and method encoding
+        # is binary (checking for binary so that we do not accidentally override
+        # the GeoJSON encoding)
+        if ( (self.encoding == "JSON") and (encoding == "binary") ):
             encoding = "json"
 
         obj = {}
@@ -11143,19 +11587,27 @@ class GPUdb(object):
             return AttrDict( response )
 
         # Decode the data
-        if encoding == "json":
-            response["records"] = json.loads( response["json_encoded_response"] )
-        else:
+        if (encoding == 'binary'):
             record_type = record_type if record_type else RecordType.from_dynamic_schema( response["response_schema_str"], raw_response, response["binary_encoded_response"] )
             records = record_type.decode_dynamic_records( raw_response, response["binary_encoded_response"] )
-            if get_ordered_dicts:
+            if force_primitive_return_types:
                 records = _Util.convert_cext_records_to_ordered_dicts( records )
+
+            # Transpose the data to column-major, if requested by the user
+            if get_column_major:
+                records = GPUdbRecord.transpose_data_to_col_major( records )
+
+            response["records"] = records
+        else:
+            records = json.loads( response["json_encoded_response"] )
+            if get_column_major:
+                # Get column-major data
+                records = GPUdbRecord.decode_dynamic_json_data_column_major( records, response["response_schema_str"] )
+            else:
+                # Get row-major data
+                records = GPUdbRecord.decode_dynamic_json_data_row_major( records, response["response_schema_str"] )
             response["records"] = records
         # end if
-
-        # Transpose the data, if requested by the user
-        if get_column_major:
-            response["records"] = GPUdbRecord.transpose_data_to_col_major( response["records"] )
 
         del response["binary_encoded_response"]
         del response["json_encoded_response"]
@@ -11287,7 +11739,7 @@ class GPUdb(object):
     def get_records_by_series_and_decode( self, table_name = None, world_table_name
                                           = None, offset = 0, limit = 250,
                                           encoding = 'binary', options = {},
-                                          get_ordered_dicts = True ):
+                                          force_primitive_return_types = True ):
         """Retrieves the complete series/track records from the given input
         parameter *world_table_name* based on the partial track information
         contained in the input parameter *table_name*.
@@ -11340,13 +11792,20 @@ class GPUdb(object):
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
 
-            get_ordered_dicts (bool)
-                Indicates if the decoded records will be returned as is, or
-                converted to OrderedDicts.  If Records are returned, then some
-                columns, e.g. those with the property 'datetime' will be
-                relevant python structures. If converted to OrderedDicts, they
-                will be converted to the avro primitive type, in the case of
-                'datetime', it would be string.  Default value is True.
+            force_primitive_return_types (bool)
+                If `True`, then `OrderedDict` objects will be returned, where
+                string sub-type columns will have their values converted back
+                to strings; for example, the Python `datetime` structs, used
+                for datetime type columns would have their values returned as
+                strings. If `False`, then :class:`Record` objects will be
+                returned, which for string sub-types, will return native or
+                custom structs; no conversion to string takes place. String
+                conversions, when returning `OrderedDicts`, incur a speed
+                penalty, and it is strongly recommended to use the
+                :class:`Record` object option instead. If `True`, but none of
+                the returned columns require a conversion, then the original
+                :class:`Record` objects will be returned. Default value is
+                True.
 
         Returns:
             A dict with the following entries--
@@ -11375,12 +11834,14 @@ class GPUdb(object):
         assert isinstance( limit, (int, long, float)), "get_records_by_series_and_decode(): Argument 'limit' must be (one) of type(s) '(int, long, float)'; given %s" % type( limit ).__name__
         assert isinstance( encoding, (basestring)), "get_records_by_series_and_decode(): Argument 'encoding' must be (one) of type(s) '(basestring)'; given %s" % type( encoding ).__name__
         assert isinstance( options, (dict)), "get_records_by_series_and_decode(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-        assert isinstance(get_ordered_dicts, bool), "get_records_by_series_and_decode: Argument 'get_ordered_dicts' must be bool; given %s" % type( get_ordered_dicts ).__name__
+        assert isinstance(force_primitive_return_types, bool), "get_records_by_series_and_decode: Argument 'force_primitive_return_types' must be bool; given %s" % type( force_primitive_return_types ).__name__
 
         (REQ_SCHEMA, RSP_SCHEMA_CEXT) = self.__get_schemas( "/get/records/byseries", get_rsp_cext = True )
 
-        # Force JSON encoding if client encoding is json
-        if (self.encoding == "JSON"):
+        # Force JSON encoding if client encoding is json and method encoding
+        # is binary (checking for binary so that we do not accidentally override
+        # the GeoJSON encoding)
+        if ( (self.encoding == "JSON") and (encoding == "binary") ):
             encoding = "json"
 
         obj = {}
@@ -11396,16 +11857,16 @@ class GPUdb(object):
             return AttrDict( response )
 
         # Decode the data
-        if encoding == "json":
-            response["records"] = [ [ json.loads(_record, object_pairs_hook = collections.OrderedDict) for _record in _records ]
-                        for _records in response["list_records_json"] ]
-        else:
+        if (encoding == 'binary'):
             _record_types = [ self.get_known_type( _type_id ) for _type_id in response["type_names"] ]
             records = [ _rt.decode_records( raw_response, _records )
                       for _rt, _records in zip( _record_types, response["list_records_binary"] ) ]
-            if get_ordered_dicts:
+            if force_primitive_return_types:
                 records = [ _Util.convert_cext_records_to_ordered_dicts( _records ) for _records in records]
             response["records"] = records
+        else:
+            response["records"] = [ [ json.loads(_record, object_pairs_hook = collections.OrderedDict) for _record in _records ]
+                        for _records in response["list_records_json"] ]
         # end if
 
         del response["list_records_binary"]
@@ -11532,7 +11993,8 @@ class GPUdb(object):
     def get_records_from_collection_and_decode( self, table_name = None, offset = 0,
                                                 limit = 10000, encoding =
                                                 'binary', options = {},
-                                                get_ordered_dicts = True ):
+                                                force_primitive_return_types =
+                                                True ):
         """Retrieves records from a collection. The operation can optionally
         return the record IDs which can be used in certain queries such as
         :meth:`.delete_records`.
@@ -11584,13 +12046,20 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-            get_ordered_dicts (bool)
-                Indicates if the decoded records will be returned as is, or
-                converted to OrderedDicts.  If Records are returned, then some
-                columns, e.g. those with the property 'datetime' will be
-                relevant python structures. If converted to OrderedDicts, they
-                will be converted to the avro primitive type, in the case of
-                'datetime', it would be string.  Default value is True.
+            force_primitive_return_types (bool)
+                If `True`, then `OrderedDict` objects will be returned, where
+                string sub-type columns will have their values converted back
+                to strings; for example, the Python `datetime` structs, used
+                for datetime type columns would have their values returned as
+                strings. If `False`, then :class:`Record` objects will be
+                returned, which for string sub-types, will return native or
+                custom structs; no conversion to string takes place. String
+                conversions, when returning `OrderedDicts`, incur a speed
+                penalty, and it is strongly recommended to use the
+                :class:`Record` object option instead. If `True`, but none of
+                the returned columns require a conversion, then the original
+                :class:`Record` objects will be returned. Default value is
+                True.
 
         Returns:
             A dict with the following entries--
@@ -11618,12 +12087,14 @@ class GPUdb(object):
         assert isinstance( limit, (int, long, float)), "get_records_from_collection_and_decode(): Argument 'limit' must be (one) of type(s) '(int, long, float)'; given %s" % type( limit ).__name__
         assert isinstance( encoding, (basestring)), "get_records_from_collection_and_decode(): Argument 'encoding' must be (one) of type(s) '(basestring)'; given %s" % type( encoding ).__name__
         assert isinstance( options, (dict)), "get_records_from_collection_and_decode(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-        assert isinstance(get_ordered_dicts, bool), "get_records_from_collection_and_decode: Argument 'get_ordered_dicts' must be bool; given %s" % type( get_ordered_dicts ).__name__
+        assert isinstance(force_primitive_return_types, bool), "get_records_from_collection_and_decode: Argument 'force_primitive_return_types' must be bool; given %s" % type( force_primitive_return_types ).__name__
 
         (REQ_SCHEMA, RSP_SCHEMA_CEXT) = self.__get_schemas( "/get/records/fromcollection", get_rsp_cext = True )
 
-        # Force JSON encoding if client encoding is json
-        if (self.encoding == "JSON"):
+        # Force JSON encoding if client encoding is json and method encoding
+        # is binary (checking for binary so that we do not accidentally override
+        # the GeoJSON encoding)
+        if ( (self.encoding == "JSON") and (encoding == "binary") ):
             encoding = "json"
 
         obj = {}
@@ -11638,15 +12109,15 @@ class GPUdb(object):
             return AttrDict( response )
 
         # Decode the data
-        if encoding == "json":
-            response["records"] = [ json.loads(record, object_pairs_hook = collections.OrderedDict) for record in response["records_json"] ]
-        else:
+        if (encoding == 'binary'):
             record_types = [ self.get_known_type( type_id ) for type_id in response["type_names"] ]
             records = [ rt.decode_records( raw_response, records )[ 0 ]
                      for rt, records in zip( record_types, response["records_binary"] ) ]
-            if get_ordered_dicts:
+            if force_primitive_return_types:
                 records = _Util.convert_cext_records_to_ordered_dicts( records )
             response["records"] = records
+        else:
+            response["records"] = [ json.loads(record, object_pairs_hook = collections.OrderedDict) for record in response["records_json"] ]
         # end if
 
         del response["records_binary"]
@@ -12067,11 +12538,7 @@ class GPUdb(object):
         obj['list_encoding'] = list_encoding
         obj['options'] = self.__sanitize_dicts( options )
         
-        if (list_encoding == 'json'):
-            obj['list_str'] = data
-            obj['list'] = () # needs a tuple for the c-extension
-            use_object_array = True
-        else:
+        if (list_encoding == 'binary'):
             # Convert the objects to proper Records
             use_object_array, data = _Util.convert_binary_data_to_cext_records( self, table_name, data, record_type )
 
@@ -12082,6 +12549,10 @@ class GPUdb(object):
                 obj['list'] = data
 
             obj['list_str'] = []
+        else:
+            obj['list_str'] = data
+            obj['list'] = () # needs a tuple for the c-extension
+            use_object_array = True
         # end if
 
 
@@ -12156,8 +12627,8 @@ class GPUdb(object):
                   * **min** --
                     For numerical columns, the minimum of the generated values
                     is set to this value.  Default is -99999.  For point,
-                    shape, and track semantic types, min for numeric 'x' and
-                    'y' columns needs to be within [-180, 180] and [-90, 90],
+                    shape, and track columns, min for numeric 'x' and 'y'
+                    columns needs to be within [-180, 180] and [-90, 90],
                     respectively. The default minimum possible values for these
                     columns in such cases are -180.0 and -90.0. For the
                     'TIMESTAMP' column, the default minimum corresponds to Jan
@@ -12167,30 +12638,28 @@ class GPUdb(object):
                     both minimum and maximum are provided, minimum must be less
                     than or equal to max. Value needs to be within [0, 200].
                     If the min is outside the accepted ranges for strings
-                    columns and 'x' and 'y' columns for point/shape/track
-                    types, then those parameters will not be set; however, an
-                    error will not be thrown in such a case. It is the
-                    responsibility of the user to use the *all* parameter
-                    judiciously.
+                    columns and 'x' and 'y' columns for point/shape/track, then
+                    those parameters will not be set; however, an error will
+                    not be thrown in such a case. It is the responsibility of
+                    the user to use the *all* parameter judiciously.
 
                   * **max** --
                     For numerical columns, the maximum of the generated values
                     is set to this value. Default is 99999. For point, shape,
-                    and track semantic types, max for numeric 'x' and 'y'
-                    columns needs to be within [-180, 180] and [-90, 90],
-                    respectively. The default minimum possible values for these
-                    columns in such cases are 180.0 and 90.0.
+                    and track columns, max for numeric 'x' and 'y' columns
+                    needs to be within [-180, 180] and [-90, 90], respectively.
+                    The default minimum possible values for these columns in
+                    such cases are 180.0 and 90.0.
                     For string columns, the maximum length of the randomly
                     generated strings is set to this value (default is 200). If
                     both minimum and maximum are provided, *max* must be
                     greater than or equal to *min*. Value needs to be within
                     [0, 200].
                     If the *max* is outside the accepted ranges for strings
-                    columns and 'x' and 'y' columns for point/shape/track
-                    types, then those parameters will not be set; however, an
-                    error will not be thrown in such a case. It is the
-                    responsibility of the user to use the *all* parameter
-                    judiciously.
+                    columns and 'x' and 'y' columns for point/shape/track, then
+                    those parameters will not be set; however, an error will
+                    not be thrown in such a case. It is the responsibility of
+                    the user to use the *all* parameter judiciously.
 
                   * **interval** --
                     If specified, generate values for all columns evenly spaced
@@ -12229,8 +12698,8 @@ class GPUdb(object):
                   * **min** --
                     For numerical columns, the minimum of the generated values
                     is set to this value.  Default is -99999.  For point,
-                    shape, and track semantic types, min for numeric 'x' and
-                    'y' columns needs to be within [-180, 180] and [-90, 90],
+                    shape, and track columns, min for numeric 'x' and 'y'
+                    columns needs to be within [-180, 180] and [-90, 90],
                     respectively. The default minimum possible values for these
                     columns in such cases are -180.0 and -90.0. For the
                     'TIMESTAMP' column, the default minimum corresponds to Jan
@@ -12240,30 +12709,28 @@ class GPUdb(object):
                     both minimum and maximum are provided, minimum must be less
                     than or equal to max. Value needs to be within [0, 200].
                     If the min is outside the accepted ranges for strings
-                    columns and 'x' and 'y' columns for point/shape/track
-                    types, then those parameters will not be set; however, an
-                    error will not be thrown in such a case. It is the
-                    responsibility of the user to use the *all* parameter
-                    judiciously.
+                    columns and 'x' and 'y' columns for point/shape/track, then
+                    those parameters will not be set; however, an error will
+                    not be thrown in such a case. It is the responsibility of
+                    the user to use the *all* parameter judiciously.
 
                   * **max** --
                     For numerical columns, the maximum of the generated values
                     is set to this value. Default is 99999. For point, shape,
-                    and track semantic types, max for numeric 'x' and 'y'
-                    columns needs to be within [-180, 180] and [-90, 90],
-                    respectively. The default minimum possible values for these
-                    columns in such cases are 180.0 and 90.0.
+                    and track columns, max for numeric 'x' and 'y' columns
+                    needs to be within [-180, 180] and [-90, 90], respectively.
+                    The default minimum possible values for these columns in
+                    such cases are 180.0 and 90.0.
                     For string columns, the maximum length of the randomly
                     generated strings is set to this value (default is 200). If
                     both minimum and maximum are provided, *max* must be
                     greater than or equal to *min*. Value needs to be within
                     [0, 200].
                     If the *max* is outside the accepted ranges for strings
-                    columns and 'x' and 'y' columns for point/shape/track
-                    types, then those parameters will not be set; however, an
-                    error will not be thrown in such a case. It is the
-                    responsibility of the user to use the *all* parameter
-                    judiciously.
+                    columns and 'x' and 'y' columns for point/shape/track, then
+                    those parameters will not be set; however, an error will
+                    not be thrown in such a case. It is the responsibility of
+                    the user to use the *all* parameter judiciously.
 
                   * **interval** --
                     If specified, generate values for all columns evenly spaced
@@ -12295,8 +12762,8 @@ class GPUdb(object):
                     default.
 
                 * **track_length** --
-                  This key-map pair is only valid for track type data sets (an
-                  error is thrown otherwise).  No nulls would be generated for
+                  This key-map pair is only valid for track data sets (an error
+                  is thrown otherwise).  No nulls would be generated for
                   nullable columns.
                   Allowed keys are:
 
@@ -12954,6 +13421,19 @@ class GPUdb(object):
                 segments for the same run ID; see output parameter *statuses*
                 and output parameter *messages* for statuses from individual
                 data segments.
+                Allowed values are:
+
+                * **running** --
+                  The proc instance is currently running.
+
+                * **complete** --
+                  The proc instance completed with no errors.
+
+                * **killed** --
+                  The proc instance was killed before completion.
+
+                * **error** --
+                  The proc instance failed with an error.
 
             statuses (dict of str to dicts of str to str)
                 Statuses for the returned run IDs, grouped by data segment ID.
@@ -13012,6 +13492,16 @@ class GPUdb(object):
 
             types (dict of str to str)
                 Map of user/role name to the type of that user/role.
+                Allowed values are:
+
+                * **internal_user** --
+                  A user whose credentials are managed by the database system.
+
+                * **external_user** --
+                  A user whose credentials are managed by an external LDAP.
+
+                * **role** --
+                  A role.
 
             roles (dict of str to lists of str)
                 Map of user/role name to a list of names of roles of which that
@@ -13403,8 +13893,8 @@ class GPUdb(object):
     # begin show_tables_by_type
     def show_tables_by_type( self, type_id = None, label = None, options = {} ):
         """Gets names of the tables whose type matches the given criteria. Each
-        table has a particular type. This type is made out of the type label,
-        schema of the table, and the semantic type of the table. This function
+        table has a particular type. This type comprises the schema and
+        properties of the table and sometimes a type label. This function
         allows a look up of the existing tables based on full or partial type
         information. The operation is synchronous.
 
@@ -13493,11 +13983,10 @@ class GPUdb(object):
 
     # begin show_types
     def show_types( self, type_id = None, label = None, options = {} ):
-        """Retrieves information for the specified data type. Given a type ID, the
-        database returns the data type schema, the label, and the semantic type
-        along with the type ID. If the user provides any combination of label
-        and semantic type, then the database returns the pertinent information
-        for all data types that match the input criteria.
+        """Retrieves information for the specified data type ID or type label. For
+        all data types that match the input criteria, the database returns the
+        type ID, the type schema, the label (if available), and the type's
+        column properties.
 
         Parameters:
 
@@ -14142,6 +14631,51 @@ class GPUdb(object):
     # end visualize_image_classbreak
 
 
+    # begin visualize_image_contour
+    def visualize_image_contour( self, table_names = None, x_column_name = None,
+                                 y_column_name = None, value_column_name = None,
+                                 min_x = None, max_x = None, min_y = None, max_y
+                                 = None, width = None, height = None, projection
+                                 = 'PLATE_CARREE', style_options = None, options
+                                 = None ):
+
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        assert isinstance( x_column_name, (basestring)), "visualize_image_contour(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
+        assert isinstance( y_column_name, (basestring)), "visualize_image_contour(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
+        assert isinstance( value_column_name, (basestring)), "visualize_image_contour(): Argument 'value_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( value_column_name ).__name__
+        assert isinstance( min_x, (int, long, float)), "visualize_image_contour(): Argument 'min_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_x ).__name__
+        assert isinstance( max_x, (int, long, float)), "visualize_image_contour(): Argument 'max_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_x ).__name__
+        assert isinstance( min_y, (int, long, float)), "visualize_image_contour(): Argument 'min_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_y ).__name__
+        assert isinstance( max_y, (int, long, float)), "visualize_image_contour(): Argument 'max_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_y ).__name__
+        assert isinstance( width, (int, long, float)), "visualize_image_contour(): Argument 'width' must be (one) of type(s) '(int, long, float)'; given %s" % type( width ).__name__
+        assert isinstance( height, (int, long, float)), "visualize_image_contour(): Argument 'height' must be (one) of type(s) '(int, long, float)'; given %s" % type( height ).__name__
+        assert isinstance( projection, (basestring)), "visualize_image_contour(): Argument 'projection' must be (one) of type(s) '(basestring)'; given %s" % type( projection ).__name__
+        assert isinstance( style_options, (dict)), "visualize_image_contour(): Argument 'style_options' must be (one) of type(s) '(dict)'; given %s" % type( style_options ).__name__
+        assert isinstance( options, (dict)), "visualize_image_contour(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/visualize/image/contour" )
+
+        obj = {}
+        obj['table_names'] = table_names
+        obj['x_column_name'] = x_column_name
+        obj['y_column_name'] = y_column_name
+        obj['value_column_name'] = value_column_name
+        obj['min_x'] = min_x
+        obj['max_x'] = max_x
+        obj['min_y'] = min_y
+        obj['max_y'] = max_y
+        obj['width'] = width
+        obj['height'] = height
+        obj['projection'] = projection
+        obj['style_options'] = self.__sanitize_dicts( style_options )
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/visualize/image/contour' )
+
+        return AttrDict( response )
+    # end visualize_image_contour
+
+
     # begin visualize_image_heatmap
     def visualize_image_heatmap( self, table_names = None, x_column_name = None,
                                  y_column_name = None, value_column_name = None,
@@ -14388,7 +14922,7 @@ class GPUdb(object):
 
 # ---------------------------------------------------------------------------
 # Import GPUdbIngestor; try from an installed package first, if not, try local
-if sys.version_info[0] >= 3: # checking the major component
+if sys.version_info.major >= 3: # checking the major component
     try:
         from gpudb.gpudb import GPUdbIngestor, RecordRetriever
     except:
@@ -14497,6 +15031,10 @@ class GPUdbTable( object ):
                 Note that multi-head ingestion is more computation intensive
                 for sharded tables, and it it probably advisable only if there
                 is a heavy ingestion load.  Choose carefully.  
+
+                Please see documentation of parameters *multihead_ingest_batch_size*
+                and *flush_multi_head_ingest_per_insertion* for controlling
+                the multi-head ingestion related behavior.
 
             use_multihead_ingest (bool)
                 Indicates whether or not to use multi-head ingestion, if
@@ -14608,63 +15146,70 @@ class GPUdbTable( object ):
         # Create a random table name if none is given
         self.name = name if name else GPUdbTable.random_name()
 
-        # Do different things based on whether the table already exists
-        if self.db.has_table( self.name )["table_exists"]:
-            # Check that the given type agrees with the existing table's type, if any given
-            show_table_rsp = self.db.show_table( self.name,
-                                                 options = {"get_sizes": "true",
-                                                            "show_children": "false"} )
-            if not _Util.is_ok( show_table_rsp ): # problem creating the table
-                raise GPUdbException( "Problem creating the table: " + _Util.get_error_msg( show_table_rsp ) )
+        try:
+            # Do different things based on whether the table already exists
+            if self.db.has_table( self.name )["table_exists"]:
+                # Check that the given type agrees with the existing table's type, if any given
+                show_table_rsp = self.db.show_table( self.name,
+                                                     options = {"get_sizes": "true",
+                                                                "show_children": "false"} )
+                if not _Util.is_ok( show_table_rsp ): # problem creating the table
+                    raise GPUdbException( "Problem creating the table: " + _Util.get_error_msg( show_table_rsp ) )
 
-            # Check if the table is a collection
-            if ( (show_table_rsp[ C._table_descriptions ] == C._collection)
-                 or (C._collection in show_table_rsp[ C._table_descriptions ][0]) ):
-                self._is_collection = True
-            else: # need to save the type ID for regular tables
-                self._type_id = show_table_rsp["type_ids"][0]
+                # Check if the table is a collection
+                if ( (show_table_rsp[ C._table_descriptions ] == C._collection)
+                     or (C._collection in show_table_rsp[ C._table_descriptions ][0]) ):
+                    self._is_collection = True
+                else: # need to save the type ID for regular tables
+                    self._type_id = show_table_rsp["type_ids"][0]
 
-            if not self._is_collection: # not a collection
-                gtable_type = GPUdbRecordType( None, "", show_table_rsp["type_schemas"][0],
-                                              show_table_rsp["properties"][0] )
-                table_type = RecordType.from_type_schema( "", show_table_rsp["type_schemas"][0],
-                                                          show_table_rsp["properties"][0] )
-            else:
-                gtable_type = None
-                table_type  = None
-            if ( self.record_type and not table_type ):
-                # TODO: Decide if we should have this check or silently ignore the given type
-                raise GPUdbException( "Table '%s' is an existing collection; so cannot be of the "
-                                      "given type." % self.name )
-            if ( self.gpudbrecord_type and (self.gpudbrecord_type != gtable_type) ):
-                raise GPUdbException( "Table '%s' exists; existing table's type does "
-                                      "not match the given type." % self.name )
+                if not self._is_collection: # not a collection
+                    gtable_type = GPUdbRecordType( None, "", show_table_rsp["type_schemas"][0],
+                                                  show_table_rsp["properties"][0] )
+                    table_type = RecordType.from_type_schema( "", show_table_rsp["type_schemas"][0],
+                                                              show_table_rsp["properties"][0] )
+                else:
+                    gtable_type = None
+                    table_type  = None
+                if ( self.record_type and not table_type ):
+                    # TODO: Decide if we should have this check or silently ignore the given type
+                    raise GPUdbException( "Table '%s' is an existing collection; so cannot be of the "
+                                          "given type." % self.name )
+                if ( self.gpudbrecord_type and (self.gpudbrecord_type != gtable_type) ):
+                    raise GPUdbException( "Table '%s' exists; existing table's type does "
+                                          "not match the given type." % self.name )
 
-            # Save the types
-            self.record_type      = table_type
-            self.gpudbrecord_type = gtable_type
+                # Save the types
+                self.record_type      = table_type
+                self.gpudbrecord_type = gtable_type
 
-            # Check if the table is read-only or not
-            if show_table_rsp[ C._table_descriptions ] in [ C._view, C._join, C._result_table ]:
-                self._is_read_only = True
-                self._count = show_table_rsp[ C._total_full_size ]
-        else: # table does not already exist in GPUdb
-            # Create the table (and the type)
-            if self.options._is_collection: # Create a collection
-                rsp_obj = self.db.create_table( self.name, "",
-                                                self.options.as_dict() )
-                self._is_collection = True
-            elif self.record_type: # create a regular table
-                type_id = self.gpudbrecord_type.create_type( self.db )
-                rsp_obj = self.db.create_table( self.name, type_id,
-                                                self.options.as_dict() )
-                self._type_id = type_id
-            else: # Need to create a table-hence the type-but none given
-                raise GPUdbException( "Must provide a type to create a new table; none given." )
+                # Check if the table is read-only or not
+                if show_table_rsp[ C._table_descriptions ] in [ C._view, C._join, C._result_table ]:
+                    self._is_read_only = True
+                    self._count = show_table_rsp[ C._total_full_size ]
+            else: # table does not already exist in GPUdb
+                # Create the table (and the type)
+                if self.options._is_collection: # Create a collection
+                    rsp_obj = self.db.create_table( self.name, "",
+                                                    self.options.as_dict() )
+                    self._is_collection = True
+                elif self.record_type: # create a regular table
+                    type_id = self.gpudbrecord_type.create_type( self.db )
+                    rsp_obj = self.db.create_table( self.name, type_id,
+                                                    self.options.as_dict() )
+                    self._type_id = type_id
+                else: # Need to create a table-hence the type-but none given
+                    raise GPUdbException( "Must provide a type to create a new table; none given." )
 
-            if not _Util.is_ok( rsp_obj ): # problem creating the table
-                raise GPUdbException( _Util.get_error_msg( rsp_obj ) )
-        # end if-else
+                if not _Util.is_ok( rsp_obj ): # problem creating the table
+                    raise GPUdbException( _Util.get_error_msg( rsp_obj ) )
+            # end if-else
+        except GPUdbException as e:
+            raise GPUdbException( "Error creating GPUdbTable: '{}'"
+                                  "".format( e.message ) )
+        except Exception as e: # all other exceptions
+            raise GPUdbException( "Error creating GPUdbTable; {}: '{}'"
+                                  "".format( e.__doc__, e.message ) )
 
 
         # Set up multi-head ingestion, if needed
@@ -15464,7 +16009,7 @@ class GPUdbTable( object ):
     
     def get_records( self, offset = 0, limit = 10000,
                      encoding = 'binary', options = {},
-                     get_ordered_dicts = True ):
+                     force_primitive_return_types = True ):
         """Retrieves records from a given table, optionally filtered by an
         expression and/or sorted by a column. This operation can be performed
         on tables, views, or on homogeneous collections (collections containing
@@ -15533,13 +16078,20 @@ class GPUdbTable( object ):
 
                   The default value is 'ascending'.
 
-            get_ordered_dicts (bool)
-                Indicates if the decoded records will be returned as is, or
-                converted to OrderedDicts.  If Records are returned, then some
-                columns, e.g. those with the property 'datetime' will be
-                relevant python structures. If converted to OrderedDicts, they
-                will be converted to the avro primitive type, in the case of
-                'datetime', it would be string.  Default value is True.
+            force_primitive_return_types (bool)
+                If `True`, then `OrderedDict` objects will be returned, where
+                string sub-type columns will have their values converted back
+                to strings; for example, the Python `datetime` structs, used
+                for datetime type columns would have their values returned as
+                strings. If `False`, then :class:`Record` objects will be
+                returned, which for string sub-types, will return native or
+                custom structs; no conversion to string takes place. String
+                conversions, when returning `OrderedDicts`, incur a speed
+                penalty, and it is strongly recommended to use the
+                :class:`Record` object option instead. If `True`, but none of
+                the returned columns require a conversion, then the original
+                :class:`Record` objects will be returned. Default value is
+                True.
 
 
         Returns:
@@ -15547,8 +16099,8 @@ class GPUdbTable( object ):
         """
         response = self.db.get_records_and_decode( self.name, offset, limit, encoding, options,
                                                    record_type = self.record_type,
-                                                   get_ordered_dicts =
-                                                   get_ordered_dicts )
+                                                   force_primitive_return_types =
+                                                   force_primitive_return_types )
         if not _Util.is_ok( response ):
             raise GPUdbException( _Util.get_error_msg( response ) )
 
@@ -15560,8 +16112,8 @@ class GPUdbTable( object ):
             # And re-submit the /get/records call
             response = self.db.get_records_and_decode( self.name, offset, limit, encoding, options,
                                                        record_type = self.record_type,
-                                                       get_ordered_dicts =
-                                                       get_ordered_dicts )
+                                                       force_primitive_return_types =
+                                                       force_primitive_return_types )
         # end if
 
         # Return just the records; disregard the extra info within the response
@@ -15573,7 +16125,7 @@ class GPUdbTable( object ):
     def get_records_by_column( self, column_names, offset = 0, limit = 10000,
                                encoding = 'binary', options = {},
                                print_data = False,
-                               get_ordered_dicts = True, get_column_major = True ):
+                               force_primitive_return_types = True, get_column_major = True ):
         """For a given table, retrieves the values of the given columns within a
         given range. It returns maps of column name to the vector of values for
         each supported data type (double, float, long, int and string). This
@@ -15652,13 +16204,20 @@ class GPUdbTable( object ):
                 format if the data is being returned in the column-major format.
                 Default is False.
 
-            get_ordered_dicts (bool)
-                Indicates if the decoded records will be returned as is, or
-                converted to OrderedDicts.  If Records are returned, then some
-                columns, e.g. those with the property 'datetime' will be
-                relevant python structures. If converted to OrderedDicts, they
-                will be converted to the avro primitive type, in the case of
-                'datetime', it would be string.  Default value is True.
+            force_primitive_return_types (bool)
+                If `True`, then `OrderedDict` objects will be returned, where
+                string sub-type columns will have their values converted back
+                to strings; for example, the Python `datetime` structs, used
+                for datetime type columns would have their values returned as
+                strings. If `False`, then :class:`Record` objects will be
+                returned, which for string sub-types, will return native or
+                custom structs; no conversion to string takes place. String
+                conversions, when returning `OrderedDicts`, incur a speed
+                penalty, and it is strongly recommended to use the
+                :class:`Record` object option instead. If `True`, but none of
+                the returned columns require a conversion, then the original
+                :class:`Record` objects will be returned. Default value is
+                True.
 
             get_column_major (bool)
                 Indicates if the decoded records will be transposed to be
@@ -15675,8 +16234,8 @@ class GPUdbTable( object ):
         # Issue the /get/records/bycolumn query
         response = self.db.get_records_by_column_and_decode( self.name, column_names,
                                                              offset, limit, encoding, options,
-                                                             get_ordered_dicts =
-                                                             get_ordered_dicts,
+                                                             force_primitive_return_types =
+                                                             force_primitive_return_types,
                                                              get_column_major =
                                                              get_column_major )
         if not _Util.is_ok( response ):
@@ -15698,7 +16257,7 @@ class GPUdbTable( object ):
     def get_records_by_series( self, world_table_name = None,
                                offset = 0, limit = 250, encoding = 'binary',
                                options = {},
-                               get_ordered_dicts = True ):
+                               force_primitive_return_types = True ):
         """Retrieves the complete series/track records from the given input
         parameter *world_table_name* based on the partial track information
         contained in the input parameter *table_name*.
@@ -15747,13 +16306,20 @@ class GPUdbTable( object ):
             options (dict of str)
                 Optional parameters.  Default value is an empty dict ( {} ).
 
-            get_ordered_dicts (bool)
-                Indicates if the decoded records will be returned as is, or
-                converted to OrderedDicts.  If Records are returned, then some
-                columns, e.g. those with the property 'datetime' will be
-                relevant python structures. If converted to OrderedDicts, they
-                will be converted to the avro primitive type, in the case of
-                'datetime', it would be string.  Default value is True.
+            force_primitive_return_types (bool)
+                If `True`, then `OrderedDict` objects will be returned, where
+                string sub-type columns will have their values converted back
+                to strings; for example, the Python `datetime` structs, used
+                for datetime type columns would have their values returned as
+                strings. If `False`, then :class:`Record` objects will be
+                returned, which for string sub-types, will return native or
+                custom structs; no conversion to string takes place. String
+                conversions, when returning `OrderedDicts`, incur a speed
+                penalty, and it is strongly recommended to use the
+                :class:`Record` object option instead. If `True`, but none of
+                the returned columns require a conversion, then the original
+                :class:`Record` objects will be returned. Default value is
+                True.
 
         Returns:
             A list of list of :class:`Record` objects containing the record values.
@@ -15765,8 +16331,8 @@ class GPUdbTable( object ):
                                                              offset = offset, limit = limit,
                                                              encoding = encoding,
                                                              options = options,
-                                                             get_ordered_dicts =
-                                                             get_ordered_dicts )
+                                                             force_primitive_return_types =
+                                                             force_primitive_return_types )
         if not _Util.is_ok( response ):
             raise GPUdbException( _Util.get_error_msg( response ) )
 
@@ -15778,7 +16344,7 @@ class GPUdbTable( object ):
 
     def get_records_from_collection( self, offset = 0, limit = 10000,
                                      encoding = 'binary', options = {},
-                                     get_ordered_dicts = True ):
+                                     force_primitive_return_types = True ):
         """Retrieves records from a collection. The operation can optionally
         return the record IDs which can be used in certain queries such as
         :meth:`.delete_records`.
@@ -15826,13 +16392,20 @@ class GPUdbTable( object ):
 
                   The default value is 'false'.
 
-            get_ordered_dicts (bool)
-                Indicates if the decoded records will be returned as is, or
-                converted to OrderedDicts.  If Records are returned, then some
-                columns, e.g. those with the property 'datetime' will be
-                relevant python structures. If converted to OrderedDicts, they
-                will be converted to the avro primitive type, in the case of
-                'datetime', it would be string.  Default value is True.
+            force_primitive_return_types (bool)
+                If `True`, then `OrderedDict` objects will be returned, where
+                string sub-type columns will have their values converted back
+                to strings; for example, the Python `datetime` structs, used
+                for datetime type columns would have their values returned as
+                strings. If `False`, then :class:`Record` objects will be
+                returned, which for string sub-types, will return native or
+                custom structs; no conversion to string takes place. String
+                conversions, when returning `OrderedDicts`, incur a speed
+                penalty, and it is strongly recommended to use the
+                :class:`Record` object option instead. If `True`, but none of
+                the returned columns require a conversion, then the original
+                :class:`Record` objects will be returned. Default value is
+                True.
 
         Returns:
             A list of :class:`Record` objects containing the record values.
@@ -15841,8 +16414,8 @@ class GPUdbTable( object ):
         response = self.db.get_records_from_collection_and_decode( self.name,
                                                                    offset, limit,
                                                                    encoding, options,
-                                                                   get_ordered_dicts =
-                                                                   get_ordered_dicts )
+                                                                   force_primitive_return_types =
+                                                                   force_primitive_return_types )
         if not _Util.is_ok( response ):
             raise GPUdbException( _Util.get_error_msg( response ) )
 
@@ -15850,6 +16423,107 @@ class GPUdbTable( object ):
         return response.records
     # end get_records_from_collection
 
+
+    def get_geo_json( self, offset = 0, limit = 10000,
+                     options = {}, force_primitive_return_types = True ):
+        """Retrieves records as a GeoJSON from a given table, optionally filtered by an
+        expression and/or sorted by a column. This operation can be performed
+        on tables, views, or on homogeneous collections (collections containing
+        tables of all the same type). Records can be returned encoded as binary
+        or json.
+
+        This operation supports paging through the data via the input parameter
+        *offset* and input parameter *limit* parameters. Note that when paging
+        through a table, if the table (or the underlying table in case of a
+        view) is updated (records are inserted, deleted or modified) the
+        records retrieved may differ between calls based on the updates
+        applied.
+
+        Decodes and returns the fetched records.
+
+        Parameters:
+
+            offset (long)
+                A positive integer indicating the number of initial results to
+                skip (this can be useful for paging through the results).
+                Default value is 0. The minimum allowed value is 0. The maximum
+                allowed value is MAX_INT.
+
+            limit (long)
+                A positive integer indicating the maximum number of results to
+                be returned. Or END_OF_SET (-9999) to indicate that the max
+                number of results should be returned.  Default value is 10000.
+
+            encoding (str)
+                Specifies the encoding for returned records.  Default value is
+                'binary'.
+                Allowed values are:
+
+                * binary
+                * json
+
+                The default value is 'binary'.
+
+            options (dict of str)
+                Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **expression** --
+                  Optional filter expression to apply to the table.
+
+                * **fast_index_lookup** --
+                  Indicates if indexes should be used to perform the lookup for
+                  a given expression if possible. Only applicable if there is
+                  no sorting, the expression contains only equivalence
+                  comparisons based on existing tables indexes and the range of
+                  requested values is from [0 to END_OF_SET]. The default value
+                  is true.
+
+                * **sort_by** --
+                  Optional column that the data should be sorted by. Empty by
+                  default (i.e. no sorting is applied).
+
+                * **sort_order** --
+                  String indicating how the returned values should be sorted -
+                  ascending or descending. If sort_order is provided, sort_by
+                  has to be provided.
+                  Allowed values are:
+
+                  * ascending
+                  * descending
+
+                  The default value is 'ascending'.
+
+            force_primitive_return_types (bool)
+                If `True`, then `OrderedDict` objects will be returned, where
+                string sub-type columns will have their values converted back
+                to strings; for example, the Python `datetime` structs, used
+                for datetime type columns would have their values returned as
+                strings. If `False`, then :class:`Record` objects will be
+                returned, which for string sub-types, will return native or
+                custom structs; no conversion to string takes place. String
+                conversions, when returning `OrderedDicts`, incur a speed
+                penalty, and it is strongly recommended to use the
+                :class:`Record` object option instead. If `True`, but none of
+                the returned columns require a conversion, then the original
+                :class:`Record` objects will be returned. Default value is
+                True.
+
+
+        Returns:
+            A GeoJSON object (a dict) containg the record values.
+        """
+        response = self.db.get_records_and_decode( self.name, offset, limit, "geojson", options,
+                                                   record_type = self.record_type,
+                                                   force_primitive_return_types =
+                                                   force_primitive_return_types )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        # Return just the records; disregard the extra info within the response
+        return response.records[0]
+    # end get_geo_json
+    
 
 
 
@@ -15882,7 +16556,7 @@ class GPUdbTable( object ):
                 alias.  Columns can be aliased via the syntax 'column_name as
                 alias'. Wild cards '*' can be used to include all columns
                 across member tables or 'table_id.*' for all of a single
-                table's columns.  Columns and column expressions comprising the
+                table's columns.  Columns and column expressions composing the
                 join must be uniquely named or aliased--therefore, the '*' wild
                 card cannot be used if column names aren't unique across all
                 tables.  Default value is an empty list ( [] ).   The user can
@@ -15937,14 +16611,18 @@ class GPUdbTable( object ):
                     whenever a new query is issued and new data is inserted
                     into the base table.  A full refresh of all the records
                     occurs when a new query is issued and there have been
-                    inserts to any non-base-tables since the last query
+                    inserts to any non-base-tables since the last query.  `TTL
+                    <../../../concepts/ttl.html>`_ will be set to not expire;
+                    any *ttl* specified will be ignored.
 
                   * **on_insert** --
                     incrementally refresh (refresh just those records added)
                     whenever new data is inserted into a base table.  A full
                     refresh of all the records occurs when a new query is
                     issued and there have been inserts to any non-base-tables
-                    since the last query
+                    since the last query.  `TTL <../../../concepts/ttl.html>`_
+                    will be set to not expire; any *ttl* specified will be
+                    ignored.
 
                   The default value is 'manual'.
 
@@ -15973,6 +16651,8 @@ class GPUdbTable( object ):
                 * **ttl** --
                   Sets the `TTL <../../../concepts/ttl.html>`_ of the join
                   table specified in input parameter *join_table_name*.
+                  Ignored if *refresh_method* is either *on_insert* or
+                  *on_query*.
 
                 * **view_id** --
                   view this projection is part of
@@ -16124,6 +16804,11 @@ class GPUdbTable( object ):
 
                 * **chunk_size** --
                   Indicates the chunk size to be used for this table.
+
+                * **create_indexes** --
+                  Comma-separated list of columns on which to create indexes on
+                  the output table.  The columns specified must be present in
+                  input parameter *output_column_names*.
 
                 * **ttl** --
                   Sets the `TTL <../../../concepts/ttl.html>`_ of the table
@@ -16351,7 +17036,8 @@ class GPUdbTable( object ):
 
     def aggregate_group_by( self, column_names = None, offset = None, limit =
                             1000, encoding = 'binary', options = {},
-                            get_ordered_dicts = True, get_column_major = True ):
+                            force_primitive_return_types = True,
+                            get_column_major = True ):
         """Calculates unique combinations (groups) of values for the given columns
         in a given table/view/collection and computes aggregates on each unique
         combination. This is somewhat analogous to an SQL-style SELECT...GROUP
@@ -16551,6 +17237,11 @@ class GPUdbTable( object ):
                   Indicates the chunk size to be used for the result table.
                   Must be used in combination with the *result_table* option.
 
+                * **create_indexes** --
+                  Comma-separated list of columns on which to create indexes on
+                  the result table. Must be used in combination with the
+                  *result_table* option.
+
                 * **view_id** --
                   view this result table is part of
 
@@ -16586,13 +17277,20 @@ class GPUdbTable( object ):
                   This option is used to specify the multidimensional
                   aggregates.
 
-            get_ordered_dicts (bool)
-                Indicates if the decoded records will be returned as is, or
-                converted to OrderedDicts.  If Records are returned, then some
-                columns, e.g. those with the property 'datetime' will be
-                relevant python structures. If converted to OrderedDicts, they
-                will be converted to the avro primitive type, in the case of
-                'datetime', it would be string.  Default value is True.
+            force_primitive_return_types (bool)
+                If `True`, then `OrderedDict` objects will be returned, where
+                string sub-type columns will have their values converted back
+                to strings; for example, the Python `datetime` structs, used
+                for datetime type columns would have their values returned as
+                strings. If `False`, then :class:`Record` objects will be
+                returned, which for string sub-types, will return native or
+                custom structs; no conversion to string takes place. String
+                conversions, when returning `OrderedDicts`, incur a speed
+                penalty, and it is strongly recommended to use the
+                :class:`Record` object option instead. If `True`, but none of
+                the returned columns require a conversion, then the original
+                :class:`Record` objects will be returned. Default value is
+                True.
 
             get_column_major (bool)
                 Indicates if the decoded records will be transposed to be
@@ -16636,8 +17334,8 @@ class GPUdbTable( object ):
                                                           column_names, offset,
                                                           limit, encoding,
                                                           options,
-                                                          get_ordered_dicts =
-                                                          get_ordered_dicts,
+                                                          force_primitive_return_types=
+                                                          force_primitive_return_types,
                                                           get_column_major =
                                                           get_column_major )
         if not _Util.is_ok( response ):
@@ -16911,10 +17609,9 @@ class GPUdbTable( object ):
         value must be specified separately (i.e.
         'percentile(75.0),percentile(99.0),percentile_rank(1234.56),percentile_rank(-5)').
 
-        A second, comma-separated value can be added to the
-        {percentile}@{choise of input stats} statistic to calculate percentile
-        resolution, e.g., a 50th percentile with 200 resolution would be
-        'percentile(50,200)'.
+        A second, comma-separated value can be added to the *percentile*
+        statistic to calculate percentile resolution, e.g., a 50th percentile
+        with 200 resolution would be 'percentile(50,200)'.
 
         The weighted average statistic requires a *weight_column_name* to be
         specified in input parameter *options*. The weighted average is then
@@ -17143,7 +17840,8 @@ class GPUdbTable( object ):
 
     def aggregate_unique( self, column_name = None, offset = None, limit =
                           10000, encoding = 'binary', options = {},
-                          get_ordered_dicts = True, get_column_major = True ):
+                          force_primitive_return_types = True, get_column_major
+                          = True ):
         """Returns all the unique values from a particular column (specified by
         input parameter *column_name*) of a particular table or collection
         (specified by input parameter *table_name*). If input parameter
@@ -17286,13 +17984,20 @@ class GPUdbTable( object ):
                 * **view_id** --
                   view this result table is part of
 
-            get_ordered_dicts (bool)
-                Indicates if the decoded records will be returned as is, or
-                converted to OrderedDicts.  If Records are returned, then some
-                columns, e.g. those with the property 'datetime' will be
-                relevant python structures. If converted to OrderedDicts, they
-                will be converted to the avro primitive type, in the case of
-                'datetime', it would be string.  Default value is True.
+            force_primitive_return_types (bool)
+                If `True`, then `OrderedDict` objects will be returned, where
+                string sub-type columns will have their values converted back
+                to strings; for example, the Python `datetime` structs, used
+                for datetime type columns would have their values returned as
+                strings. If `False`, then :class:`Record` objects will be
+                returned, which for string sub-types, will return native or
+                custom structs; no conversion to string takes place. String
+                conversions, when returning `OrderedDicts`, incur a speed
+                penalty, and it is strongly recommended to use the
+                :class:`Record` object option instead. If `True`, but none of
+                the returned columns require a conversion, then the original
+                :class:`Record` objects will be returned. Default value is
+                True.
 
             get_column_major (bool)
                 Indicates if the decoded records will be transposed to be
@@ -17335,8 +18040,8 @@ class GPUdbTable( object ):
         response = self.db.aggregate_unique_and_decode( self.name, column_name,
                                                         offset, limit, encoding,
                                                         options,
-                                                        get_ordered_dicts =
-                                                        get_ordered_dicts,
+                                                        force_primitive_return_types=
+                                                        force_primitive_return_types,
                                                         get_column_major =
                                                         get_column_major )
         if not _Util.is_ok( response ):
@@ -17355,8 +18060,9 @@ class GPUdbTable( object ):
 
     def aggregate_unpivot( self, column_names = None, variable_column_name = '',
                            value_column_name = '', pivoted_columns = None,
-                           encoding = 'binary', options = {}, get_ordered_dicts
-                           = True, get_column_major = True ):
+                           encoding = 'binary', options = {},
+                           force_primitive_return_types = True, get_column_major
+                           = True ):
         """Rotate the column values into rows values.
 
         For unpivot details and examples, see `Unpivot
@@ -17467,13 +18173,20 @@ class GPUdbTable( object ):
 
                   The default value is 'false'.
 
-            get_ordered_dicts (bool)
-                Indicates if the decoded records will be returned as is, or
-                converted to OrderedDicts.  If Records are returned, then some
-                columns, e.g. those with the property 'datetime' will be
-                relevant python structures. If converted to OrderedDicts, they
-                will be converted to the avro primitive type, in the case of
-                'datetime', it would be string.  Default value is True.
+            force_primitive_return_types (bool)
+                If `True`, then `OrderedDict` objects will be returned, where
+                string sub-type columns will have their values converted back
+                to strings; for example, the Python `datetime` structs, used
+                for datetime type columns would have their values returned as
+                strings. If `False`, then :class:`Record` objects will be
+                returned, which for string sub-types, will return native or
+                custom structs; no conversion to string takes place. String
+                conversions, when returning `OrderedDicts`, incur a speed
+                penalty, and it is strongly recommended to use the
+                :class:`Record` object option instead. If `True`, but none of
+                the returned columns require a conversion, then the original
+                :class:`Record` objects will be returned. Default value is
+                True.
 
             get_column_major (bool)
                 Indicates if the decoded records will be transposed to be
@@ -17523,8 +18236,8 @@ class GPUdbTable( object ):
                                                          value_column_name,
                                                          pivoted_columns,
                                                          encoding, options,
-                                                         get_ordered_dicts =
-                                                         get_ordered_dicts,
+                                                         force_primitive_return_types=
+                                                         force_primitive_return_types,
                                                          get_column_major =
                                                          get_column_major )
         if not _Util.is_ok( response ):
@@ -17561,9 +18274,13 @@ class GPUdbTable( object ):
         table & view that is not protected will have its TTL set to the given
         value.
 
-        Set the global access mode (i.e. locking) for a table. The mode can be
-        set to
-        'no_access', 'read_only', 'write_only' or 'read_write'.
+        Set the global access mode (i.e. locking) for a table. This setting
+        trumps any
+        role-based access controls that may be in place; e.g., a user with
+        write access
+        to a table marked read-only will not be able to insert records into it.
+        The mode
+        can be set to read-only, write-only, read/write, and no access.
 
         Change the `protection <../../../concepts/protection.html>`_ mode to
         prevent or
@@ -17616,9 +18333,17 @@ class GPUdbTable( object ):
                   <../../../concepts/tables.html>`_.
 
                 * **ttl** --
-                  Sets the `TTL <../../../concepts/ttl.html>`_ of the table,
-                  view, or collection specified in input parameter
-                  *table_name*.
+                  Sets the `time-to-live <../../../concepts/ttl.html>`_ in
+                  minutes of the table, view, or collection specified in input
+                  parameter *table_name*.
+
+                * **memory_ttl** --
+                  Sets the time-to-live in minutes for the individual chunks of
+                  the columns of the table, view, or collection specified in
+                  input parameter *table_name* to free their memory if unused
+                  longer than the given time. Specify an empty string to
+                  restore the global memory_ttl setting and a value of '-1' for
+                  an infinite timeout.
 
                 * **add_column** --
                   Adds the column specified in input parameter *value* to the
@@ -17631,7 +18356,12 @@ class GPUdbTable( object ):
                   Changes type and properties of the column specified in input
                   parameter *value*.  Use *column_type* and *column_properties*
                   in input parameter *options* to set the column's type and
-                  properties, respectively.
+                  properties, respectively. Note that primary key and/or shard
+                  key columns cannot be changed. All unchanging column
+                  properties must be listed for the change to take place, e.g.,
+                  to add dictionary encoding to an existing 'char4' column,
+                  both 'char4' and 'dict' must be specified in the input
+                  parameter *options* map.
 
                 * **set_column_compression** --
                   Modifies the `compression
@@ -17663,25 +18393,28 @@ class GPUdbTable( object ):
                   'read_only', 'write_only' and 'read_write'.
 
                 * **refresh** --
-                  Replay all the table creation commands required to create
-                  this view. Endpoints supported are :meth:`.filter`,
-                  :meth:`.create_join_table`, :meth:`.create_projection`,
-                  :meth:`.create_union`, :meth:`.aggregate_group_by`, and
-                  :meth:`.aggregate_unique`.
+                  Replays all the table creation commands required to create
+                  this `materialized view
+                  <../../../concepts/materialized_views.html>`_.
 
                 * **set_refresh_method** --
-                  Set the method by which this view is refreshed - one of
-                  'manual', 'periodic', 'on_change', 'on_query'.
+                  Sets the method by which this `materialized view
+                  <../../../concepts/materialized_views.html>`_ is refreshed -
+                  one of 'manual', 'periodic', 'on_change'.
 
                 * **set_refresh_start_time** --
-                  Set the time to start periodic refreshes to datetime string
-                  with format YYYY-MM-DD HH:MM:SS at which refresh is to be
-                  done.  Next refresh occurs at refresh_start_time +
-                  N*refresh_period
+                  Sets the time to start periodic refreshes of this
+                  `materialized view
+                  <../../../concepts/materialized_views.html>`_ to datetime
+                  string with format 'YYYY-MM-DD HH:MM:SS'.  Subsequent
+                  refreshes occur at the specified time + N * the refresh
+                  period.
 
                 * **set_refresh_period** --
-                  Set the time interval in seconds at which to refresh this
-                  view - sets the refresh method to periodic if not alreay set.
+                  Sets the time interval in seconds at which to refresh this
+                  `materialized view
+                  <../../../concepts/materialized_views.html>`_.  Also, sets
+                  the refresh method to periodic if not alreay set.
 
             value (str)
                 The value of the modification. May be a column name, 'true' or
@@ -17999,6 +18732,16 @@ class GPUdbTable( object ):
                   <../../../concepts/expressions.html>`_ to be applied to the
                   source table prior to the projection.
 
+                * **is_replicated** --
+                  If *true* then the projection will be replicated even if the
+                  source table is not.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **limit** --
                   The number of records to keep.
 
@@ -18021,6 +18764,13 @@ class GPUdbTable( object ):
 
                 * **chunk_size** --
                   Indicates the chunk size to be used for this table.
+
+                * **create_indexes** --
+                  Comma-separated list of columns on which to create indexes on
+                  the output table.  The columns specified must be present in
+                  input parameter *column_names*.  If any alias is given for
+                  any column name, the alias must be used, rather than the
+                  original column name.
 
                 * **ttl** --
                   Sets the `TTL <../../../concepts/ttl.html>`_ of the
@@ -18129,12 +18879,13 @@ class GPUdbTable( object ):
     def delete_records( self, expressions = None, options = {} ):
         """Deletes record(s) matching the provided criteria from the given table.
         The record selection criteria can either be one or more  input
-        parameter *expressions* (matching multiple records) or a single record
-        identified by *record_id* options.  Note that the two selection
-        criteria are mutually exclusive.  This operation cannot be run on a
-        collection or a view.  The operation is synchronous meaning that a
-        response will not be available until the request is completely
-        processed and all the matching records are deleted.
+        parameter *expressions* (matching multiple records), a single record
+        identified by *record_id* options, or all records when using
+        *delete_all_records*.  Note that the three selection criteria are
+        mutually exclusive.  This operation cannot be run on a collection or a
+        view.  The operation is synchronous meaning that a response will not be
+        available until the request is completely processed and all the
+        matching records are deleted.
 
         Parameters:
 
@@ -18160,6 +18911,16 @@ class GPUdbTable( object ):
                   of :meth:`insertion of the record <.insert_records>` or by
                   calling :meth:`.get_records_from_collection` with the
                   *return_record_ids* option.
+
+                * **delete_all_records** --
+                  If set to *true*, all records in the table will be deleted.
+                  If set to *false*, then the option is effectively ignored.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
         Returns:
             The response from the server which is a dict containing the

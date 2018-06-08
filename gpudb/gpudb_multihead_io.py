@@ -53,9 +53,12 @@ except:
 # Python version dependent imports
 if sys.version_info >= (2, 7):
     import collections
-    from urllib.parse import urlparse
 else:
     import ordereddict as collections # a separate package
+
+if sys.version_info.major >= 3:
+    from urllib.parse import urlparse
+else:
     from urlparse import urlparse
 
 
@@ -168,14 +171,14 @@ class GPUdbWorkerList:
         # Get system properties
         system_prop_rsp = gpudb.show_system_properties()
         if system_prop_rsp[ C._info ][ C._status ] == C._error:
-            raise ValueError( "Unable to retrieve system properties; error:"
-                              " %s" % system_prop_rsp[ C._info ][ C._msg ] )
+            raise GPUdbException( "Unable to retrieve system properties; error:"
+                                  " %s" % system_prop_rsp[ C._info ][ C._msg ] )
 
         system_properties = system_prop_rsp[ C._sys_properties ]
 
         # Is multi-head ingest enabled on the server?
         if C._multihead_enabled not in system_properties:
-            raise ValueError( "Missing value for %s" % C._multihead_enabled)
+            raise GPUdbException( "Missing value for %s" % C._multihead_enabled)
 
         self.multihead_enabled = (system_properties[ C._multihead_enabled ] == C._TRUE)
         if not self.multihead_enabled:
@@ -219,26 +222,26 @@ class GPUdbWorkerList:
 
                 # if no worker found for this rank, throw exception
                 if not found:
-                    raise ValueError("No matching URL found for worker"
+                    raise GPUdbException("No matching URL found for worker"
                                      "%d." % i)
             # end inner loop
         else: # Need to process the separately given IP addresses and ports
 
             # Get the worker IP addresses (per rank)
             if C._worker_IPs not in system_properties:
-                raise ValueError( "Missing value for %s" % C._worker_IPs)
+                raise GPUdbException( "Missing value for %s" % C._worker_IPs)
 
             self.worker_IPs_per_rank = system_properties[ C._worker_IPs ].split( ";" )
 
             # Get the worker ports
             if C._worker_ports not in system_properties:
-                raise ValueError( "Missing value for %s" % C._worker_ports)
+                raise GPUdbException( "Missing value for %s" % C._worker_ports)
 
             self.worker_ports = system_properties[ C._worker_ports ].split( ";" )
 
             # Check that the IP and port list lengths match
             if (len(self.worker_IPs_per_rank) != len(self.worker_ports)):
-                raise ValueError("Inconsistent number of values for %s and %s."
+                raise GPUdbException("Inconsistent number of values for %s and %s."
                                  % (C._worker_IPs_per_rank, C._worker_ports) )
 
             # Get the protocol used for the client (HTTP or HTTPS?)
@@ -254,7 +257,7 @@ class GPUdbWorkerList:
                 for ip_address in ip_addresses_for_this_rank:
                     # Validate the IP address's syntax
                     if not self.validate_ip_address( ip_address ):
-                        raise ValueError( "Malformed IP address: %s" % ip_address )
+                        raise GPUdbException( "Malformed IP address: %s" % ip_address )
 
                     # Generate the URL using the IP address and the port
                     url = (protocol + ip_address + ":" + self.worker_ports[i])
@@ -278,14 +281,14 @@ class GPUdbWorkerList:
 
                 # if no worker found for this rank, throw exception
                 if not found:
-                    raise ValueError("No matching IP address found for worker"
-                                     "%d." % i)
+                    raise GPUdbException("No matching IP address found for worker"
+                                         "%d." % i)
             # end inner loop
         # end if-else
 
         # if no worker found, throw error
         if not self.worker_urls:
-            raise ValueError( "No worker HTTP servers found." )
+            raise GPUdbException( "No worker HTTP servers found." )
     # end GPUdbWorkerList __init__
 
 
@@ -312,7 +315,7 @@ class GPUdbWorkerList:
         """Return a list of the URLs for the GPUdb workers."""
         return self.worker_urls
     # end get_worker_urls
-
+    
 # end class GPUdbWorkerList
 
 
@@ -386,8 +389,8 @@ class _RecordKey:
         """Initialize the RecordKey.
         """
         if (buffer_size < 1):
-            raise ValueError( "Buffer size must be greater than "
-                              "or equal to 1; given %d" % buffer_size )
+            raise GPUdbException( "Buffer size must be greater than "
+                                  "or equal to 1; given %d" % buffer_size )
 
         # self.record_key = {}
         self._current_size = 0
@@ -441,10 +444,10 @@ class _RecordKey:
         if we attempt to add n more bytes.
         """
         if not isinstance(n, int):
-            raise TypeError( "Argument 'n' must be an integer, given %s"
+            raise GPUdbException( "Argument 'n' must be an integer, given %s"
                              % str( type( n ) ) )
         if (n < 0):
-            raise ValueError( "Argument 'n' must be greater than or equal"
+            raise GPUdbException( "Argument 'n' must be greater than or equal"
                               " to zero; given %d" % n )
         if ( (len( self._buffer_value ) + n) > self._buffer_size ):
         # if ( (self._current_size + n) > self._buffer_size ):
@@ -1472,13 +1475,13 @@ class _RecordKeyBuilder:
         """
         # Check the input parameter type 'record_type'
         if not isinstance(record_type, GPUdbRecordType):
-            raise TypeError("Parameter 'record_type' must be of type "
-                            "GPUdbRecordType; given %s" % str( type( record_type ) ) )
+            raise GPUdbException("Parameter 'record_type' must be of type "
+                                 "GPUdbRecordType; given %s" % str( type( record_type ) ) )
 
         # Validate the boolean parameters
         if is_primary_key not in [True, False]:
-            raise ValueError( "Constructor parameter 'is_primary_key' must be a "
-                              "boolean value; given: %s" % is_primary_key )
+            raise GPUdbException( "Constructor parameter 'is_primary_key' must be a "
+                                  "boolean value; given: %s" % is_primary_key )
 
         # Save the record schema related information
         self._record_type         = record_type
@@ -1538,8 +1541,8 @@ class _RecordKeyBuilder:
                 self.key_schema_fields.append( key )
             elif ( (len( self.routing_key_indices ) != 1)
                    or (self.routing_key_indices[0] != track_id_index ) ):
-                raise ValueError( "Cannot have a shard key other than "
-                                  "'TRACKID' for track-type tables." )
+                raise GPUdbException( "Cannot have a shard key other than "
+                                      "'TRACKID' for track-type tables." )
         # end checking track-type tables
 
 
@@ -1627,7 +1630,7 @@ class _RecordKeyBuilder:
         # Check that the given record is an OrderedDict of the given table
         # type
         if not isinstance( record, collections.OrderedDict ):
-            raise ValueError( "Given record must be a GPUdbRecord object or"
+            raise GPUdbException( "Given record must be a GPUdbRecord object or"
                               " an OrderedDict; given %s"
                               % str( type( record ) ) )
 
@@ -2105,7 +2108,7 @@ class GPUdbIngestor:
             self.num_ranks = len( workers.get_worker_urls() )
 
         self.routing_table = None
-        if ( (self.num_ranks > 1)
+        if ( workers
              and (self.primary_key_builder or self.shard_key_builder) ):
             # Get the sharding assignment ranks
             shard_info = self.gpudb.admin_show_shards()
@@ -2388,12 +2391,15 @@ class RecordRetriever:
         self.record_type = record_type
 
         # Create the shard key builder
-        self.shard_key_builder   = _RecordKeyBuilder( self.record_type )
+        self.shard_key_builder = _RecordKeyBuilder( self.record_type )
 
+        # If no shard columns, then check if there are primary keys
+        if not self.shard_key_builder.has_key():
+            self.shard_key_builder = _RecordKeyBuilder( self.record_type,
+                                                        is_primary_key = True )
         if not self.shard_key_builder.has_key():
             self.shard_key_builder = None
-        # end saving the key builders
-
+        
 
         # Set up the worker queues
         # ------------------------
@@ -2422,7 +2428,7 @@ class RecordRetriever:
             self.num_ranks = len( workers.get_worker_urls() )
 
         self.routing_table = None
-        if ( (self.num_ranks > 1)
+        if ( workers
              and self.shard_key_builder ):
             # Get the sharding assignment ranks
             shard_info = self.gpudb.admin_show_shards()

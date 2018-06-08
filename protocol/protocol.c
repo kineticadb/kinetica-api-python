@@ -63,6 +63,8 @@
         Py_VISIT(state->schema_data_type_names);
         return 0;
     }
+#else
+    ProtocolState Protocol_state;
 #endif
 
 /* -- Protocol Module Initialization ---------------------------------------- */

@@ -3661,7 +3661,7 @@ static AvroErrorCode read_date_column(uint8_t** pos, uint8_t* max, ColumnValue* 
         return ERR_OVERFLOW;
     }
 
-    if (!encode_date(year, month, day, &date))
+    if (!encode_date((int)year, (int)month, (int)day, &date))
     {
         return ERR_OVERFLOW;
     }
@@ -3702,7 +3702,7 @@ static AvroErrorCode read_datetime_column(uint8_t** pos, uint8_t* max, ColumnVal
 
     if (*pos == max)
     {
-        if (!encode_datetime(year, month, day, 0, 0, 0, 0, &datetime))
+        if (!encode_datetime((int)year, (int)month, (int)day, 0, 0, 0, 0, &datetime))
         {
             return ERR_OVERFLOW;
         }
@@ -3762,7 +3762,7 @@ static AvroErrorCode read_datetime_column(uint8_t** pos, uint8_t* max, ColumnVal
         return ERR_OVERFLOW;
     }
 
-    if (!encode_datetime(year, month, day, hour, minute, second, millisecond, &datetime))
+    if (!encode_datetime((int)year, (int)month, (int)day, (int)hour, (int)minute, (int)second, (int)millisecond, &datetime))
     {
         return ERR_OVERFLOW;
     }
@@ -3883,7 +3883,7 @@ static AvroErrorCode read_time_column(uint8_t** pos, uint8_t* max, ColumnValue* 
         return ERR_OVERFLOW;
     }
 
-    encode_time(hour, minute, second, millisecond, &time);
+    encode_time((int)hour, (int)minute, (int)second, (int)millisecond, &time);
     column_value->value.i = time;
     column_value->len = 0;
     return ERR_NONE;

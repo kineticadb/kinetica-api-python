@@ -74,15 +74,15 @@ PY_LONG_LONG epoch_ms_to_datetime(const PY_LONG_LONG epoch_ms)
     /* 0 = March 1, 0000 */
     base_ms = epoch_ms - BASE_EPOCH_MS;
 
-    days = base_ms / MSEC_PER_DAY;
+    days = (long)(base_ms / MSEC_PER_DAY);
     milliseconds = base_ms % MSEC_PER_DAY;
 
     /* March 1, 0000 = Wednesday (3) */
     day_of_week = (days + 3) % DAYS_PER_WEEK;
 
-    cycles_since_base = days / DAYS_PER_CYCLE;
+    cycles_since_base = (int)(days / DAYS_PER_CYCLE);
     days %= DAYS_PER_CYCLE;
-    centuries_since_cycle = days / DAYS_PER_CENTURY;
+    centuries_since_cycle = (int)(days / DAYS_PER_CENTURY);
 
     if (centuries_since_cycle == CENTURIES_PER_CYCLE)
     {
@@ -91,9 +91,9 @@ PY_LONG_LONG epoch_ms_to_datetime(const PY_LONG_LONG epoch_ms)
     }
 
     days -= centuries_since_cycle * DAYS_PER_CENTURY;
-    leaps_since_century = days / DAYS_PER_LEAP;
+    leaps_since_century = (int)(days / DAYS_PER_LEAP);
     days -= leaps_since_century * DAYS_PER_LEAP;
-    years_since_leap = days / DAYS_PER_YEAR;
+    years_since_leap = (int)(days / DAYS_PER_YEAR);
 
     if (years_since_leap == YEARS_PER_LEAP)
     {
@@ -103,7 +103,7 @@ PY_LONG_LONG epoch_ms_to_datetime(const PY_LONG_LONG epoch_ms)
 
     days -= years_since_leap * DAYS_PER_YEAR;
     is_leap_year = years_since_leap == 0 && (leaps_since_century != 0 || centuries_since_cycle == 0);
-    day_of_year = days + 59 + is_leap_year;
+    day_of_year = (int)(days + 59 + is_leap_year);
 
     if (day_of_year >= DAYS_PER_YEAR + is_leap_year)
     {
