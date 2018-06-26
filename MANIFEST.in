@@ -3,6 +3,7 @@ include protocol/avro.h
 include protocol/bufferrange.h
 include protocol/common.h
 include protocol/dt.h
+include protocol/platform.h
 include protocol/protocol.h
 include protocol/record.h
 include protocol/schema.h
