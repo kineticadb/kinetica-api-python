@@ -1017,7 +1017,7 @@ class GPUdbRecordColumn(object):
 
         # Sort and stringify the column properties so that the order for a given set of
         # properties is always the same--handy for equivalency checks
-        self._column_properties = sorted( column_properties )
+        self._column_properties = sorted( column_properties, key = lambda x : str(x[0]) )
 
         # Check for nullability
         self._is_nullable = False # default value
@@ -1034,7 +1034,7 @@ class GPUdbRecordColumn(object):
             if (GPUdbColumnProperty.NULLABLE not in self._column_properties):
                 self._column_properties.append( GPUdbColumnProperty.NULLABLE )
                 # Re-sort for equivalency tests down the road
-                self._column_properties = sorted( self._column_properties )
+                self._column_properties = sorted( self._column_properties, key = lambda x : str(x[0]) )
             # end inner if
         # end if
     # end __init__
@@ -1210,7 +1210,7 @@ class GPUdbRecordType(object):
 
             # Extract the column's properties, if any
             if col.column_properties:
-                self._column_properties[ col.name ] = sorted( col.column_properties )
+                self._column_properties[ col.name ] = sorted( col.column_properties, key = lambda x : str(x[0]) )
             # done handling column props
 
             # Create the field for the schema string
@@ -2423,7 +2423,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "6.2.0.5"
+    api_version   = "6.2.0.6"
 
     # constants
     END_OF_SET = -9999
@@ -6739,6 +6739,24 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **create_indexes** --
+                  Comma-separated list of columns on which to create indexes on
+                  the table specified in *result_table*. The columns specified
+                  must be present in output column names.  If any alias is
+                  given for any column name, the alias must be used, rather
+                  than the original column name.
+
+                * **result_table_force_replicated** --
+                  Force the result table to be replicated (ignores any
+                  sharding). Must be used in combination with the
+                  *result_table* option.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
         Returns:
             A dict with the following entries--
 
@@ -6919,6 +6937,24 @@ class GPUdb(object):
 
                 * **materialize_on_gpu** --
                   If *true* then the output columns will be cached on the GPU.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **create_indexes** --
+                  Comma-separated list of columns on which to create indexes on
+                  the table specified in *result_table*. The columns specified
+                  must be present in output column names.  If any alias is
+                  given for any column name, the alias must be used, rather
+                  than the original column name.
+
+                * **result_table_force_replicated** --
+                  Force the result table to be replicated (ignores any
+                  sharding). Must be used in combination with the
+                  *result_table* option.
                   Allowed values are:
 
                   * true
@@ -9152,9 +9188,18 @@ class GPUdb(object):
                     Retains all unique rows from the first table that do not
                     appear in the second table (only works on 2 tables).
 
+                  * **except_all** --
+                    Retains all rows(including duplicates) from the first table
+                    that do not appear in the second table (only works on 2
+                    tables).
+
                   * **intersect** --
                     Retains all unique rows that appear in both of the
                     specified tables (only works on 2 tables).
+
+                  * **intersect_all** --
+                    Retains all rows(including duplicates) that appear in both
+                    of the specified tables (only works on 2 tables).
 
                   * **merge_views** --
                     Merge two or more views (or views of views) of the same
@@ -9196,6 +9241,17 @@ class GPUdb(object):
 
                 * **view_id** --
                   view the output table will be a part of
+
+                * **force_replicated** --
+                  If *true*, then the table specified in input parameter
+                  *table_name* will be replicated even if the source tables are
+                  not.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -16785,9 +16841,18 @@ class GPUdbTable( object ):
                     Retains all unique rows from the first table that do not
                     appear in the second table (only works on 2 tables).
 
+                  * **except_all** --
+                    Retains all rows(including duplicates) from the first table
+                    that do not appear in the second table (only works on 2
+                    tables).
+
                   * **intersect** --
                     Retains all unique rows that appear in both of the
                     specified tables (only works on 2 tables).
+
+                  * **intersect_all** --
+                    Retains all rows(including duplicates) that appear in both
+                    of the specified tables (only works on 2 tables).
 
                   * **merge_views** --
                     Merge two or more views (or views of views) of the same
@@ -16829,6 +16894,17 @@ class GPUdbTable( object ):
 
                 * **view_id** --
                   view the output table will be a part of
+
+                * **force_replicated** --
+                  If *true*, then the table specified in input parameter
+                  *table_name* will be replicated even if the source tables are
+                  not.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
         Returns:
             A read-only GPUdbTable object.
@@ -18166,6 +18242,24 @@ class GPUdbTable( object ):
 
                 * **materialize_on_gpu** --
                   If *true* then the output columns will be cached on the GPU.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **create_indexes** --
+                  Comma-separated list of columns on which to create indexes on
+                  the table specified in *result_table*. The columns specified
+                  must be present in output column names.  If any alias is
+                  given for any column name, the alias must be used, rather
+                  than the original column name.
+
+                * **result_table_force_replicated** --
+                  Force the result table to be replicated (ignores any
+                  sharding). Must be used in combination with the
+                  *result_table* option.
                   Allowed values are:
 
                   * true
