@@ -2423,7 +2423,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "6.2.0.6"
+    api_version   = "6.2.0.7"
 
     # constants
     END_OF_SET = -9999
@@ -4386,9 +4386,9 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/visualize/image/classbreak"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"cb_column_name","type":"string"},{"name":"cb_vals","type":{"type":"array","items":"string"}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"cb_attr","type":"string"},{"name":"cb_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointcolor_attr","type":"string"},{"name":"cb_pointcolor_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointsize_attr","type":"string"},{"name":"cb_pointsize_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointshape_attr","type":"string"},{"name":"cb_pointshape_vals","type":{"type":"array","items":"string"}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"}]}"""
-        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("world_table_names", "array", [("string")]), ("x_column_name", "string"), ("y_column_name", "string"), ("geometry_column_name", "string"), ("track_ids", "array", [("array", [("string")])]), ("cb_column_name", "string"), ("cb_vals", "array", [("string")]), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("projection", "string"), ("bg_color", "long"), ("style_options", "map", [("array", [("string")])]), ("options", "map", [("string")])] )
+        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("world_table_names", "array", [("string")]), ("x_column_name", "string"), ("y_column_name", "string"), ("geometry_column_name", "string"), ("track_ids", "array", [("array", [("string")])]), ("cb_attr", "string"), ("cb_vals", "array", [("string")]), ("cb_pointcolor_attr", "string"), ("cb_pointcolor_vals", "array", [("string")]), ("cb_pointsize_attr", "string"), ("cb_pointsize_vals", "array", [("string")]), ("cb_pointshape_attr", "string"), ("cb_pointshape_vals", "array", [("string")]), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("projection", "string"), ("bg_color", "long"), ("style_options", "map", [("array", [("string")])]), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("width", "double"), ("height", "double"), ("bg_color", "long"), ("image_data", "bytes")] )
         ENDPOINT = "/visualize/image/classbreak"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -14633,12 +14633,16 @@ class GPUdb(object):
     def visualize_image_classbreak( self, table_names = None, world_table_names =
                                     None, x_column_name = None, y_column_name =
                                     None, geometry_column_name = None, track_ids
-                                    = None, cb_column_name = None, cb_vals =
-                                    None, min_x = None, max_x = None, min_y =
-                                    None, max_y = None, width = None, height =
-                                    None, projection = 'PLATE_CARREE', bg_color
-                                    = None, style_options = None, options = {}
-                                    ):
+                                    = None, cb_attr = None, cb_vals = None,
+                                    cb_pointcolor_attr = None,
+                                    cb_pointcolor_vals = None, cb_pointsize_attr
+                                    = None, cb_pointsize_vals = None,
+                                    cb_pointshape_attr = None,
+                                    cb_pointshape_vals = None, min_x = None,
+                                    max_x = None, min_y = None, max_y = None,
+                                    width = None, height = None, projection =
+                                    'PLATE_CARREE', bg_color = None,
+                                    style_options = None, options = {} ):
 
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
         world_table_names = world_table_names if isinstance( world_table_names, list ) else ( [] if (world_table_names is None) else [ world_table_names ] )
@@ -14646,8 +14650,14 @@ class GPUdb(object):
         assert isinstance( y_column_name, (basestring)), "visualize_image_classbreak(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
         assert isinstance( geometry_column_name, (basestring)), "visualize_image_classbreak(): Argument 'geometry_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( geometry_column_name ).__name__
         track_ids = track_ids if isinstance( track_ids, list ) else ( [] if (track_ids is None) else [ track_ids ] )
-        assert isinstance( cb_column_name, (basestring)), "visualize_image_classbreak(): Argument 'cb_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( cb_column_name ).__name__
+        assert isinstance( cb_attr, (basestring)), "visualize_image_classbreak(): Argument 'cb_attr' must be (one) of type(s) '(basestring)'; given %s" % type( cb_attr ).__name__
         cb_vals = cb_vals if isinstance( cb_vals, list ) else ( [] if (cb_vals is None) else [ cb_vals ] )
+        assert isinstance( cb_pointcolor_attr, (basestring)), "visualize_image_classbreak(): Argument 'cb_pointcolor_attr' must be (one) of type(s) '(basestring)'; given %s" % type( cb_pointcolor_attr ).__name__
+        cb_pointcolor_vals = cb_pointcolor_vals if isinstance( cb_pointcolor_vals, list ) else ( [] if (cb_pointcolor_vals is None) else [ cb_pointcolor_vals ] )
+        assert isinstance( cb_pointsize_attr, (basestring)), "visualize_image_classbreak(): Argument 'cb_pointsize_attr' must be (one) of type(s) '(basestring)'; given %s" % type( cb_pointsize_attr ).__name__
+        cb_pointsize_vals = cb_pointsize_vals if isinstance( cb_pointsize_vals, list ) else ( [] if (cb_pointsize_vals is None) else [ cb_pointsize_vals ] )
+        assert isinstance( cb_pointshape_attr, (basestring)), "visualize_image_classbreak(): Argument 'cb_pointshape_attr' must be (one) of type(s) '(basestring)'; given %s" % type( cb_pointshape_attr ).__name__
+        cb_pointshape_vals = cb_pointshape_vals if isinstance( cb_pointshape_vals, list ) else ( [] if (cb_pointshape_vals is None) else [ cb_pointshape_vals ] )
         assert isinstance( min_x, (int, long, float)), "visualize_image_classbreak(): Argument 'min_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_x ).__name__
         assert isinstance( max_x, (int, long, float)), "visualize_image_classbreak(): Argument 'max_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_x ).__name__
         assert isinstance( min_y, (int, long, float)), "visualize_image_classbreak(): Argument 'min_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_y ).__name__
@@ -14668,8 +14678,14 @@ class GPUdb(object):
         obj['y_column_name'] = y_column_name
         obj['geometry_column_name'] = geometry_column_name
         obj['track_ids'] = track_ids
-        obj['cb_column_name'] = cb_column_name
+        obj['cb_attr'] = cb_attr
         obj['cb_vals'] = cb_vals
+        obj['cb_pointcolor_attr'] = cb_pointcolor_attr
+        obj['cb_pointcolor_vals'] = cb_pointcolor_vals
+        obj['cb_pointsize_attr'] = cb_pointsize_attr
+        obj['cb_pointsize_vals'] = cb_pointsize_vals
+        obj['cb_pointshape_attr'] = cb_pointshape_attr
+        obj['cb_pointshape_vals'] = cb_pointshape_vals
         obj['min_x'] = min_x
         obj['max_x'] = max_x
         obj['min_y'] = min_y
