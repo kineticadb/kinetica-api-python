@@ -7,3 +7,9 @@ include protocol/platform.h
 include protocol/protocol.h
 include protocol/record.h
 include protocol/schema.h
+prune build
+prune _build
+prune docs
+prune templates
+prune test
+exclude *.sh
