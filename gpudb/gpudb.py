@@ -177,10 +177,10 @@ class _ConnectionToken(object):
         assert (len(host) > 0), "Expected a valid host address, got an empty string."
         assert (connection in ["HTTP", "HTTPS"]), "Expected connection to be 'HTTP' or 'HTTPS', got: '"+str(connection)+"'"
 
-        self._host       = host
-        self._port       = int(port)
-        self._connection = connection
-        self._gpudb_url_path = url_path
+        self._host           = str( host )
+        self._port           = int(port)
+        self._connection     = str( connection )
+        self._gpudb_url_path = str( url_path )
     # end __init__
 # end class _ConnectionToken
 
@@ -265,6 +265,10 @@ class _Util(object):
     @staticmethod
     def ensure_str(value):
         if isinstance(value, basestring):
+            if ( ( not isinstance(value, unicode) )
+                 and (sys.version_info.major == 2) ): # Python 2
+                return unicode( value, 'utf-8' )
+            # Python 3
             return value
         elif isinstance(value, bytes):
             return _Util.bytes_to_str(value)
@@ -402,7 +406,7 @@ class _Util(object):
                     continue # skip to the next object
                 elif isinstance( obj, GPUdbRecord ):
                     # A GPUdbRecord ; get the (column name, column value) pairs
-                    obj = obj.data()
+                    obj = obj.data
                 elif isinstance( obj, list ):
                     # A list is given; create (col name, col value) pairs; using the dict constructor
                     # to support python 2.6)
@@ -429,8 +433,12 @@ class _Util(object):
                     # Get column data type
                     col_data_type = column.data_type
 
+                    # Handle unicode
+                    if (col_data_type == "string"):
+                        if (sys.version_info.major == 2): # checking the major component
+                            col_value = _Util.ensure_str( col_value )
                     # Handle datetime
-                    if (col_data_type == "datetime"):
+                    elif (col_data_type == "datetime"):
                         # Conversion needed if it is NOT already a datetime struct
                         if not isinstance( col_value, datetime.datetime ):
                             # Better be a string if not a datetime object
@@ -1226,15 +1234,13 @@ class GPUdbRecordType(object):
         fields = ", ".join( fields )
 
         # Generate the avro schema string
-        schema_string = """
-        {{
-            "type" : "record",
-            "name" : "{_label}",
-            "fields" : [ {_fields} ]
-        }}
-        """.format( _label  = self.name,
+        schema_string = """{{
+	"type" : "record",
+	"name" : "{_label}",
+	"fields" : [ {_fields} ]}}
+	""".format( _label  = self.name,
                     _fields = fields )
-        schema_string = schema_string.replace( " ", "" ).replace( "\n", "" )
+        schema_string = schema_string.replace( "\t", "" ).replace( "\n", "" )
 
         # Generate the avro schema and save it
         self._record_schema = schema.parse( schema_string )
@@ -2325,7 +2331,7 @@ class GPUdb(object):
 
     @host.setter
     def host(self, value):
-        self._get_current_conn_token()._host = value
+        self._get_current_conn_token()._host = str( value )
 
     @property
     def port(self):
@@ -2341,7 +2347,7 @@ class GPUdb(object):
 
     @gpudb_url_path.setter
     def gpudb_url_path(self, value):
-        self._get_current_conn_token()._gpudb_url_path = value
+        self._get_current_conn_token()._gpudb_url_path = str( value )
 
     @property
     def connection(self):
@@ -2423,7 +2429,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "6.2.0.7"
+    api_version   = "6.2.0.9"
 
     # constants
     END_OF_SET = -9999
@@ -2526,13 +2532,16 @@ class GPUdb(object):
                     loop_error = ( "Error posting to '{}:{}{}' due to: {}"
                                    "".format(conn_token._host, conn_token._port, url_path, str(e)) )
 
-                try:
-                    resp = conn.getresponse()
-                    resp_data = resp.read()
-                    resp_time = resp.getheader('x-request-time-secs',None)
-                except: # some error occurred; return a message
-                    loop_error = GPUdbException( "Timeout Error: No response received from %s:%s" % (conn_token._host, conn_token._port) )
-                # end except
+                if not loop_error:
+                    try:
+                        resp = conn.getresponse()
+                        resp_data = resp.read()
+                        resp_time = resp.getheader('x-request-time-secs',None)
+                    except: # some error occurred; return a message
+                        loop_error = GPUdbException( "Timeout Error: No response received from %s:%s" % (conn_token._host, conn_token._port) )
+                    # end except
+                # end inner if
+            # end outer if
 
             if loop_error:
                 self._current_conn_token_index = \
@@ -4375,9 +4384,9 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/visualize/image/chart"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_chart_request","fields":[{"name":"table_name","type":"string"},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"string"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_chart_request","fields":[{"name":"table_name","type":"string"},{"name":"x_column_names","type":{"type":"array","items":"string"}},{"name":"y_column_names","type":{"type":"array","items":"string"}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"string"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_chart_response","fields":[{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"string"},{"name":"image_data","type":"bytes"},{"name":"axes_info","type":{"type":"map","values":{"type":"array","items":"string"}}}]}"""
-        REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("x_column_name", "string"), ("y_column_name", "string"), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("bg_color", "string"), ("style_options", "map", [("array", [("string")])]), ("options", "map", [("string")])] )
+        REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("x_column_names", "array", [("string")]), ("y_column_names", "array", [("string")]), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("bg_color", "string"), ("style_options", "map", [("array", [("string")])]), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("bg_color", "string"), ("image_data", "bytes"), ("axes_info", "map", [("array", [("string")])])] )
         ENDPOINT = "/visualize/image/chart"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -4398,9 +4407,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/visualize/image/contour"
         REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_contour_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"value_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"style_options","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_contour_response","fields":[{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"},{"name":"grid_data","type":"bytes"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_contour_response","fields":[{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"},{"name":"grid_data","type":"bytes"},{"name":"fill_n0","type":"double"},{"name":"fill_nn","type":"double"},{"name":"min_level","type":"double"},{"name":"max_level","type":"double"},{"name":"samples_used","type":"long"}]}"""
         REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("x_column_name", "string"), ("y_column_name", "string"), ("value_column_name", "string"), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("projection", "string"), ("style_options", "map", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("width", "int"), ("height", "int"), ("bg_color", "long"), ("image_data", "bytes"), ("grid_data", "bytes")] )
+        RSP_SCHEMA = Schema( "record", [("width", "int"), ("height", "int"), ("bg_color", "long"), ("image_data", "bytes"), ("grid_data", "bytes"), ("fill_n0", "double"), ("fill_nn", "double"), ("min_level", "double"), ("max_level", "double"), ("samples_used", "long")] )
         ENDPOINT = "/visualize/image/contour"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4671,7 +4680,7 @@ class GPUdb(object):
 
 
     # begin admin_show_alerts
-    def admin_show_alerts( self, num_alerts = None, options = None ):
+    def admin_show_alerts( self, num_alerts = None, options = {} ):
         """Retrieves a list of the most recent alerts generated.  The number of
         alerts to retrieve is specified in this request.
 
@@ -4693,7 +4702,7 @@ class GPUdb(object):
                 are less in the system. A value of 0 returns all stored alerts.
 
             options (dict of str to str)
-                Optional parameters.
+                Optional parameters.  Default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -7388,6 +7397,9 @@ class GPUdb(object):
                   <../../../concepts/materialized_views.html>`_.  Also, sets
                   the refresh method to periodic if not alreay set.
 
+                * **remove_text_search_attributes** --
+                  remove text_search attribute from all columns, if exists.
+
             value (str)
                 The value of the modification. May be a column name, 'true' or
                 'false', a TTL, or the global access mode depending on input
@@ -7444,6 +7456,15 @@ class GPUdb(object):
 
                   * **false** --
                     false
+
+                  The default value is 'true'.
+
+                * **update_last_access_time** --
+                  Indicates whether need to update the last_access_time.
+                  Allowed values are:
+
+                  * true
+                  * false
 
                   The default value is 'true'.
 
@@ -7651,12 +7672,11 @@ class GPUdb(object):
                   default.
 
                 * **order_by** --
-                  Comma-separated list of the columns to be sorted from source
-                  table (specified by input parameter *source_table_name*) by;
-                  e.g. 'timestamp asc, x desc'.  The columns specified must be
-                  present in input parameter *field_map*.  If any alias is
-                  given for any column name, the alias must be used, rather
-                  than the original column name.
+                  Comma-separated list of the columns and expressions to be
+                  sorted by from the source table (specified by input parameter
+                  *source_table_name*); e.g. 'timestamp asc, x desc'.  The
+                  *order_by* columns do not have to be present in input
+                  parameter *field_map*.
 
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting the
@@ -8443,7 +8463,7 @@ class GPUdb(object):
 
 
     # begin create_role
-    def create_role( self, name = None, options = None ):
+    def create_role( self, name = None, options = {} ):
         """Creates a new role.
 
         Parameters:
@@ -8454,7 +8474,7 @@ class GPUdb(object):
                 digit. Must not be the same name as an existing user or role.
 
             options (dict of str to str)
-                Optional parameters.
+                Optional parameters.  Default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -9108,13 +9128,13 @@ class GPUdb(object):
         Limitations and Cautions
         <../../../concepts/unions.html#limitations-and-cautions>`_.
 
-        INTERSECT (DISTINCT) - For data set intersection details and examples,
-        see `Intersect <../../../concepts/intersect.html>`_.  For limitations,
-        see `Intersect Limitations
+        INTERSECT (DISTINCT/ALL) - For data set intersection details and
+        examples, see `Intersect <../../../concepts/intersect.html>`_.  For
+        limitations, see `Intersect Limitations
         <../../../concepts/intersect.html#limitations>`_.
 
-        EXCEPT (DISTINCT) - For data set subtraction details and examples, see
-        `Except <../../../concepts/except.html>`_.  For limitations, see
+        EXCEPT (DISTINCT/ALL) - For data set subtraction details and examples,
+        see `Except <../../../concepts/except.html>`_.  For limitations, see
         `Except Limitations <../../../concepts/except.html#limitations>`_.
 
         MERGE VIEWS - For a given set of `filtered views
@@ -9672,9 +9692,11 @@ class GPUdb(object):
 
             table_name (str)
                 Name of the table to filter.  This may be the ID of a
-                collection, table or a result set (for chaining queries).
-                Collections may be filtered only if all tables within the
-                collection have the same type ID.
+                collection, table or a result set (for chaining queries). If
+                filtering a collection, all child tables where the filter
+                expression is valid will be filtered; the filtered result
+                tables will then be placed in a collection specified by input
+                parameter *view_name*.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -9744,9 +9766,11 @@ class GPUdb(object):
 
             table_name (str)
                 Name of the table to filter.  This may be the name of a
-                collection, a table or a view (when chaining queries).
-                Collections may be filtered only if all tables within the
-                collection have the same type ID.
+                collection, a table or a view (when chaining queries). If
+                filtering a collection, all child tables where the filter
+                expression is valid will be filtered; the filtered result
+                tables will then be placed in a collection specified by input
+                parameter *view_name*.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -9828,9 +9852,11 @@ class GPUdb(object):
 
             table_name (str)
                 Name of the table to filter.  This may be the name of a
-                collection, a table or a view (when chaining queries).
-                Collections may be filtered only if all tables within the
-                collection have the same type ID.
+                collection, a table or a view (when chaining queries).  If
+                filtering a collection, all child tables where the filter
+                expression is valid will be filtered; the filtered result
+                tables will then be placed in a collection specified by input
+                parameter *view_name*.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -10190,9 +10216,11 @@ class GPUdb(object):
 
             table_name (str)
                 Name of the table to filter.  This may be the ID of a
-                collection, table or a result set (for chaining queries).
-                Collections may be filtered only if all tables within the
-                collection have the same type ID.
+                collection, table or a result set (for chaining queries). If
+                filtering a collection, all child tables where the filter
+                expression is valid will be filtered; the filtered result
+                tables will then be placed in a collection specified by input
+                parameter *view_name*.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -11400,8 +11428,8 @@ class GPUdb(object):
                   Optional filter expression to apply to the table.
 
                 * **sort_by** --
-                  Optional column that the data should be sorted by. Empty by
-                  default (i.e. no sorting is applied).
+                  Optional column(s) that the data should be sorted by. Empty
+                  by default (i.e. no sorting is applied).
 
                 * **sort_order** --
                   String indicating how the returned values should be sorted -
@@ -11416,10 +11444,17 @@ class GPUdb(object):
 
                 * **order_by** --
                   Comma-separated list of the columns to be sorted by; e.g.
-                  'timestamp asc, x desc'.  The columns specified must be
-                  present in input parameter *column_names*.  If any alias is
-                  given for any column name, the alias must be used, rather
-                  than the original column name.
+                  'timestamp asc, x desc'.
+
+                * **convert_wkts_to_wkbs** --
+                  If true, then WKT string columns will be returned as WKB
+                  bytes.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -11545,8 +11580,8 @@ class GPUdb(object):
                   Optional filter expression to apply to the table.
 
                 * **sort_by** --
-                  Optional column that the data should be sorted by. Empty by
-                  default (i.e. no sorting is applied).
+                  Optional column(s) that the data should be sorted by. Empty
+                  by default (i.e. no sorting is applied).
 
                 * **sort_order** --
                   String indicating how the returned values should be sorted -
@@ -11561,10 +11596,17 @@ class GPUdb(object):
 
                 * **order_by** --
                   Comma-separated list of the columns to be sorted by; e.g.
-                  'timestamp asc, x desc'.  The columns specified must be
-                  present in input parameter *column_names*.  If any alias is
-                  given for any column name, the alias must be used, rather
-                  than the original column name.
+                  'timestamp asc, x desc'.
+
+                * **convert_wkts_to_wkbs** --
+                  If true, then WKT string columns will be returned as WKB
+                  bytes.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
             record_type (:class:`RecordType` or None)
                 The record type expected in the results, or None to
@@ -12497,9 +12539,6 @@ class GPUdb(object):
         The *return_record_ids* option indicates that the database should
         return the unique identifiers of inserted records.
 
-        The *route_to_address* option directs that inserted records should be
-        targeted for a particular database node.
-
         Parameters:
 
             table_name (str)
@@ -12555,10 +12594,6 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
-
-                * **route_to_address** --
-                  Route to a specific rank/tom. Option not suitable for tables
-                  using primary/shard keys
 
             record_type (RecordType)
                 A :class:`RecordType` object using which the the binary data
@@ -14055,6 +14090,16 @@ class GPUdb(object):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **no_join_types** --
+                  When set to 'true', no join types will be included.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -14207,6 +14252,17 @@ class GPUdb(object):
                   Can be used to customize behavior when the updated primary
                   key value already exists as described in
                   :meth:`.insert_records`.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **use_expressions_in_new_values_maps** --
+                  When set to 'true', all new_values in new_values_maps are
+                  considered as expression values. When set to 'false', all
+                  new_values in new_values_maps are considered as constants.
                   Allowed values are:
 
                   * true
@@ -14400,11 +14456,11 @@ class GPUdb(object):
 
 
     # begin visualize_image_chart
-    def visualize_image_chart( self, table_name = None, x_column_name = None,
-                               y_column_name = None, min_x = None, max_x = None,
-                               min_y = None, max_y = None, width = None, height
-                               = None, bg_color = None, style_options = None,
-                               options = {} ):
+    def visualize_image_chart( self, table_name = None, x_column_names = None,
+                               y_column_names = None, min_x = None, max_x =
+                               None, min_y = None, max_y = None, width = None,
+                               height = None, bg_color = None, style_options =
+                               None, options = {} ):
         """Scatter plot is the only plot type currently supported. A non-numeric
         column can be specified as x or y column and jitters can be added to
         them to avoid excessive overlapping. All color values must be in the
@@ -14416,13 +14472,15 @@ class GPUdb(object):
             table_name (str)
                 Name of the table containing the data to be drawn as a chart.
 
-            x_column_name (str)
-                Name of the column containing the data mapped to the x axis of
-                a chart.
+            x_column_names (list of str)
+                Names of the columns containing the data mapped to the x axis
+                of a chart.    The user can provide a single element (which
+                will be automatically promoted to a list internally) or a list.
 
-            y_column_name (str)
-                Name of the column containing the data mapped to the y axis of
-                a chart.
+            y_column_names (list of str)
+                Names of the columns containing the data mapped to the y axis
+                of a chart.    The user can provide a single element (which
+                will be automatically promoted to a list internally) or a list.
 
             min_x (float)
                 Lower bound for the x column values. For non-numeric x column,
@@ -14521,6 +14579,30 @@ class GPUdb(object):
                   column values are sorted, e.g. "avg(price)", which defaults
                   to "avg(price) ascending".
 
+                * **scale_type_x** --
+                  Type of x axis scale.
+                  Allowed values are:
+
+                  * **none** --
+                    No scale is applied to the x axis.
+
+                  * **log** --
+                    A base-10 log scale is applied to the x axis.
+
+                  The default value is 'none'.
+
+                * **scale_type_y** --
+                  Type of y axis scale.
+                  Allowed values are:
+
+                  * **none** --
+                    No scale is applied to the y axis.
+
+                  * **log** --
+                    A base-10 log scale is applied to the y axis.
+
+                  The default value is 'none'.
+
                 * **jitter_x** --
                   Amplitude of horizontal jitter applied to non-numaric x
                   column values.
@@ -14595,8 +14677,8 @@ class GPUdb(object):
                   coordinates.
         """
         assert isinstance( table_name, (basestring)), "visualize_image_chart(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
-        assert isinstance( x_column_name, (basestring)), "visualize_image_chart(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
-        assert isinstance( y_column_name, (basestring)), "visualize_image_chart(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
+        x_column_names = x_column_names if isinstance( x_column_names, list ) else ( [] if (x_column_names is None) else [ x_column_names ] )
+        y_column_names = y_column_names if isinstance( y_column_names, list ) else ( [] if (y_column_names is None) else [ y_column_names ] )
         assert isinstance( min_x, (int, long, float)), "visualize_image_chart(): Argument 'min_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_x ).__name__
         assert isinstance( max_x, (int, long, float)), "visualize_image_chart(): Argument 'max_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_x ).__name__
         assert isinstance( min_y, (int, long, float)), "visualize_image_chart(): Argument 'min_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_y ).__name__
@@ -14611,8 +14693,8 @@ class GPUdb(object):
 
         obj = {}
         obj['table_name'] = table_name
-        obj['x_column_name'] = x_column_name
-        obj['y_column_name'] = y_column_name
+        obj['x_column_names'] = x_column_names
+        obj['y_column_names'] = y_column_names
         obj['min_x'] = min_x
         obj['max_x'] = max_x
         obj['min_y'] = min_y
@@ -14709,7 +14791,7 @@ class GPUdb(object):
                                  min_x = None, max_x = None, min_y = None, max_y
                                  = None, width = None, height = None, projection
                                  = 'PLATE_CARREE', style_options = None, options
-                                 = None ):
+                                 = {} ):
 
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
         assert isinstance( x_column_name, (basestring)), "visualize_image_contour(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
@@ -15665,8 +15747,11 @@ class GPUdbTable( object ):
             encoded_data.append( encoded_record )
         elif not any( _Util.is_list_or_dict( i ) for i in args):
             # Column values not within a single list/dict: so it is a single record
-            encoded_record = self._record_encoding_function( list(args) )
-            encoded_data.append( encoded_record )
+            if (isinstance( args[0], GPUdbRecord) or isinstance( args[0], Record) ):
+                encoded_data.append( args[0] )
+            else:
+                encoded_record = self._record_encoding_function( list(args) )
+                encoded_data.append( encoded_record )
         elif not all( _Util.is_list_or_dict( i ) for i in args):
             # Some values are lists or dicts, but not all--this is an error case
             raise GPUdbException( "Arguments must be either contain no list, or contain only "
@@ -16777,13 +16862,13 @@ class GPUdbTable( object ):
         Limitations and Cautions
         <../../../concepts/unions.html#limitations-and-cautions>`_.
 
-        INTERSECT (DISTINCT) - For data set intersection details and examples,
-        see `Intersect <../../../concepts/intersect.html>`_.  For limitations,
-        see `Intersect Limitations
+        INTERSECT (DISTINCT/ALL) - For data set intersection details and
+        examples, see `Intersect <../../../concepts/intersect.html>`_.  For
+        limitations, see `Intersect Limitations
         <../../../concepts/intersect.html#limitations>`_.
 
-        EXCEPT (DISTINCT) - For data set subtraction details and examples, see
-        `Except <../../../concepts/except.html>`_.  For limitations, see
+        EXCEPT (DISTINCT/ALL) - For data set subtraction details and examples,
+        see `Except <../../../concepts/except.html>`_.  For limitations, see
         `Except Limitations <../../../concepts/except.html#limitations>`_.
 
         MERGE VIEWS - For a given set of `filtered views
@@ -18526,6 +18611,9 @@ class GPUdbTable( object ):
                   <../../../concepts/materialized_views.html>`_.  Also, sets
                   the refresh method to periodic if not alreay set.
 
+                * **remove_text_search_attributes** --
+                  remove text_search attribute from all columns, if exists.
+
             value (str)
                 The value of the modification. May be a column name, 'true' or
                 'false', a TTL, or the global access mode depending on input
@@ -18582,6 +18670,15 @@ class GPUdbTable( object ):
 
                   * **false** --
                     false
+
+                  The default value is 'true'.
+
+                * **update_last_access_time** --
+                  Indicates whether need to update the last_access_time.
+                  Allowed values are:
+
+                  * true
+                  * false
 
                   The default value is 'true'.
 
@@ -18682,12 +18779,11 @@ class GPUdbTable( object ):
                   default.
 
                 * **order_by** --
-                  Comma-separated list of the columns to be sorted from source
-                  table (specified by input parameter *source_table_name*) by;
-                  e.g. 'timestamp asc, x desc'.  The columns specified must be
-                  present in input parameter *field_map*.  If any alias is
-                  given for any column name, the alias must be used, rather
-                  than the original column name.
+                  Comma-separated list of the columns and expressions to be
+                  sorted by from the source table (specified by input parameter
+                  *source_table_name*); e.g. 'timestamp asc, x desc'.  The
+                  *order_by* columns do not have to be present in input
+                  parameter *field_map*.
 
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting the
@@ -20478,6 +20574,17 @@ class GPUdbTable( object ):
                   Can be used to customize behavior when the updated primary
                   key value already exists as described in
                   :meth:`.insert_records`.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **use_expressions_in_new_values_maps** --
+                  When set to 'true', all new_values in new_values_maps are
+                  considered as expression values. When set to 'false', all
+                  new_values in new_values_maps are considered as constants.
                   Allowed values are:
 
                   * true
