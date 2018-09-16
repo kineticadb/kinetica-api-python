@@ -146,27 +146,40 @@ class InsertionException(Exception):
 class GPUdbWorkerList:
     """A list of worker URLs to use for multi-head ingest."""
 
-    def __init__( self, gpudb, ip_regex = "" ):
+    def __init__( self, gpudb, ip_regex = "",
+                  use_head_node_only = False ):
         """Automatically populates the GPUdbWorkerList object with the worker
         URLs for the GPUdb server to support multi-head ingest. (If the
         specified GPUdb instance has multi-head ingest disabled, the worker
-        list will be empty and multi-head ingest will not be used.) Note
-        that in some cases, workers may be configured to use more than one
+        list will have the head node URL only and multi-head ingest will
+        not be used.)
+
+        Note that in some cases, workers may be configured to use more than one
         IP address, not all of which may be accessible to the client; this
         constructor uses the first IP returned by the server for each
         worker.
 
-        @param gpudb  The GPUdb client handle from which to obtain the
-                      worker URLs.
-        @param ip_regex  Optional IP regular expression to match for the
-                         worker URLs.
+        Parameters:
+        gpudb (GPUdb)
+            The GPUdb client handle from which to obtain the worker URLs.
+        ip_regex (str)
+            Optional IP regular expression to match for the worker URLs.
+        use_head_node_only (bool)
+            Optional boolean flag indicating that only head node should be
+            used (for whatever reason), instead of the workers utilizing the
+            multi-head feature.
         """
-        # Check the input parameter type
+        # Validate the input parameter 'gpudb'
         assert isinstance(gpudb, GPUdb), ("Parameter 'gpudb' must be of "
                                           "type GPUdb; given %s"
                                           % type(gpudb) )
+        # Validate the input parameter 'use_head_node_only'
+        assert isinstance(use_head_node_only, bool), \
+            ("Parameter 'use_head_node_only' must be a boolean value;  given "
+             "%s" % str( type( use_head_node_only ) ) )
         
         self.worker_urls = []
+        self.use_head_node_only = use_head_node_only
 
         # Get system properties
         system_prop_rsp = gpudb.show_system_properties()
@@ -180,9 +193,14 @@ class GPUdbWorkerList:
         if C._multihead_enabled not in system_properties:
             raise GPUdbException( "Missing value for %s" % C._multihead_enabled)
 
-        self.multihead_enabled = (system_properties[ C._multihead_enabled ] == C._TRUE)
-        if not self.multihead_enabled:
+        self._is_multihead_enabled = (system_properties[ C._multihead_enabled ] == C._TRUE)
+        if not self._is_multihead_enabled:
             # Multihead ingest is not enabled.  Just return the main/only ingestor
+            self.worker_urls.append( gpudb.get_url() )
+            return # nothing to do
+
+        # Head node-only usage is requested; so just return the head node
+        if self.use_head_node_only:
             self.worker_urls.append( gpudb.get_url() )
             return # nothing to do
 
@@ -312,10 +330,16 @@ class GPUdbWorkerList:
 
 
     def get_worker_urls( self ):
-        """Return a list of the URLs for the GPUdb workers."""
+        """Returns a list of the URLs for the GPUdb workers."""
         return self.worker_urls
     # end get_worker_urls
-    
+
+
+    def is_multihead_enabled( self ):
+        """Returns whether multi-head I/O is enabled at the server."""
+        return self._is_multihead_enabled
+    # end is_multihead_enabled
+
 # end class GPUdbWorkerList
 
 
@@ -1986,7 +2010,8 @@ class GPUdbIngestor:
                   record_type,
                   batch_size,
                   options = None,
-                  workers = None ):
+                  workers = None,
+                  is_table_replicated = False ):
         """Initializes the GPUdbIngestor instance.
 
         Parameters:
@@ -2010,6 +2035,11 @@ class GPUdbIngestor:
                 parameter.
             workers (GPUdbWorkerList)
                 Optional parameter.  A list of GPUdb worker rank addresses.
+            is_table_replicated (bool)
+                Optional boolean flag indicating whether the table is replicated; if
+                True, then multi-head ingestion will not be used (but the head node
+                would be used for ingestion instead).  This is due to GPUdb not
+                supporting multi-head ingestion on replicated tables.
         """
 
         # Validate input parameter 'gpudb'
@@ -2041,13 +2071,20 @@ class GPUdbIngestor:
             raise GPUdbException( "Parameter 'workers' must be of type "
                                   "GPUdbWorkerList; given %s"
                                   % str( type( workers ) ) )
+        # Validate input parameter 'is_table_replicated'
+        if not isinstance( is_table_replicated, bool ):
+            raise GPUdbException( "Parameter 'is_table_replicated' must be of type "
+                                  "a boolean value; given %s"
+                                  % str( type( is_table_replicated ) ) )
 
         # Save the parameter values
-        self.gpudb       = gpudb
-        self.table_name  = table_name
-        self.record_type = record_type
-        self.batch_size  = batch_size
-        self.options     = options
+        self.gpudb               = gpudb
+        self.table_name          = table_name
+        self.record_type         = record_type
+        self.batch_size          = batch_size
+        self.options             = options
+        self.is_table_replicated = is_table_replicated
+        print ("self.is_table_replicated:", self.is_table_replicated) # debug~~~~~
 
         self.count_inserted = 0
         self.count_updated  = 0
@@ -2056,6 +2093,9 @@ class GPUdbIngestor:
         self.shard_key_builder   = _RecordKeyBuilder( self.record_type )
         self.primary_key_builder = _RecordKeyBuilder( self.record_type,
                                                  is_primary_key = True )
+
+        # Is the table replicated
+
 
         # Save the appropriate key builders
         if self.primary_key_builder.has_key():
@@ -2086,7 +2126,9 @@ class GPUdbIngestor:
 
         # If no worker URLs are provided, get them from the server
         if not workers:
-            workers = GPUdbWorkerList( self.gpudb )
+            # If the table is replicated, then we use only the head node
+            workers = GPUdbWorkerList( self.gpudb,
+                                       use_head_node_only = self.is_table_replicated )
 
         # Create worker queues per worker URL
         for worker in workers.get_worker_urls():
@@ -2107,9 +2149,17 @@ class GPUdbIngestor:
         else:
             self.num_ranks = len( workers.get_worker_urls() )
 
+        # Very important to know if multi-head IO is actually enabled
+        # at the server
+        self.is_multihead_enabled = workers.is_multihead_enabled()
+            
+        # Set the routing table, iff multi-head I/O is turned on
+        # AND the table is not replicated
         self.routing_table = None
-        if ( workers
+        if ( self.is_multihead_enabled
+             and (not self.is_table_replicated)
              and (self.primary_key_builder or self.shard_key_builder) ):
+            print ("Setting the routing table, ", self.is_table_replicated) # debug~~~~~~
             # Get the sharding assignment ranks
             shard_info = self.gpudb.admin_show_shards()
             # Subtract 1 from each value of the routing_table
@@ -2121,6 +2171,7 @@ class GPUdbIngestor:
                 if (routing_table_entry > self.num_ranks):
                     raise GPUdbException( "Not enough worker URLs specified." )
         # end if
+
     # end GPUdbIngestor __init__
 
 
@@ -2190,7 +2241,7 @@ class GPUdbIngestor:
             raise GPUdbException( "Input parameter 'record' must be a GPUdbRecord or an "
                                   "OrderedDict; given %s" % str(type(record)) )
 
-        if record_encoding not in ("json", "binary"):
+        if record_encoding.lower() not in ("json", "binary"):
             raise GPUdbException( "Input parameter 'record_encoding' must be "
                                   "one of ['json', 'binary']; given '%s'" % record_encoding )
 
@@ -2427,8 +2478,12 @@ class RecordRetriever:
         else:
             self.num_ranks = len( workers.get_worker_urls() )
 
+        # Very important to know if multi-head IO is actually enabled
+        # at the server
+        self.is_multihead_enabled = workers.is_multihead_enabled()
+
         self.routing_table = None
-        if ( workers
+        if ( self.is_multihead_enabled
              and self.shard_key_builder ):
             # Get the sharding assignment ranks
             shard_info = self.gpudb.admin_show_shards()
@@ -2488,8 +2543,6 @@ class RecordRetriever:
         shard_key = self.shard_key_builder.build_key_with_shard_values_only( key_values )
 
         # Get the appropriate worker
-        if not self.routing_table: # TODO: potentially change behavior
-            raise GPUdbException( "No routing table found; please check that multi-head retrieval is set up." )
         worker_index = shard_key.route( self.routing_table )
         worker_queue = self.worker_queues[ worker_index ]
 
@@ -2513,7 +2566,7 @@ class RecordRetriever:
         # TODO: Potential desired behavior
         # 1. return only the decoded records
         return gr_rsp
-        # end get_records_by_key
+    # end get_records_by_key
     
 # end class RecordRetriever
 

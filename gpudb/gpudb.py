@@ -8,7 +8,7 @@
 # ---------------------------------------------------------------------------
 # gpudb.py - The Python API to interact with a GPUdb server.
 #
-# Copyright (c) 2014 GIS Federal
+# Copyright (c) 2018 Kinetica DB Inc.
 # ---------------------------------------------------------------------------
 
 from __future__ import print_function
@@ -119,12 +119,47 @@ class C:
 
 
 # ---------------------------------------------------------------------------
+# GPUdbException - Exception for Generic GPUdb Issues
+# ---------------------------------------------------------------------------
+class GPUdbException( Exception ):
+
+    def __init__( self, value ):
+        self.value = value
+        self.message = value
+    # end __init__
+
+    def __str__( self ):
+        return repr( self.value )
+    # end __str__
+    
+# end class GPUdbException
+
+
+# ---------------------------------------------------------------------------
+# GPUdbConnectionException - Exception for HTTP Issues
+# ---------------------------------------------------------------------------
+class GPUdbConnectionException( GPUdbException ):
+
+    def __init__( self, value ):
+        self.value = value
+        self.message = value
+    # end __init__
+
+    def __str__( self ):
+        return repr( self.value )
+    # end __str__
+    
+# end class GPUdbConnectionException
+
+
+# ---------------------------------------------------------------------------
 # _ConnectionToken - Private wrapper class to manage connection logic
 # ---------------------------------------------------------------------------
 class _ConnectionToken(object):
     """Internal wrapper class to handle multiple server logic."""
-    def __init__(self, host, port, connection):
-        assert (isinstance(host, (basestring, unicode))), "Expected a string host address, got: '"+str(host)+"'"
+    def __init__(self, host, port, host_manager_port, connection):
+        if not isinstance(host, (basestring, unicode)):
+            raise GPUdbException( "Expected a string host address, got: '"+str(host)+"'" )
 
         # host may take the form of :
         #  - "https://user:password@domain.com:port/path/"
@@ -167,20 +202,34 @@ class _ConnectionToken(object):
             elif connection == 'HTTPS' :
                 port = 443
 
-        # Validate port
+        # Validate the head node port
         try :
-            port = int(port)
+            port = int( port )
         except :
-            assert False, "Expected a numeric port, got: '" + str(port) + "'"
+            raise GPUdbException( "Expected a numeric port, got: '" + str(port) + "'" )
+        # Validate the host manager port
+        try :
+            host_manager_port = int( host_manager_port )
+        except :
+            raise GPUdbException( "Expected a numeric host manager port, got: '" + str(host_manager_port) + "'" )
 
-        assert (port > 0) and (port < 65536), "Expected a valid port (1-65535), got: '"+str(port)+"'"
-        assert (len(host) > 0), "Expected a valid host address, got an empty string."
-        assert (connection in ["HTTP", "HTTPS"]), "Expected connection to be 'HTTP' or 'HTTPS', got: '"+str(connection)+"'"
+        # Port values must be within (0, 65536)
+        if ( (port <= 0) or (port >= 65536) ):
+            raise GPUdbException( "Expected a valid port (1-65535), got: '"+str(port)+"'" )
+        if ( (host_manager_port <= 0) or (host_manager_port >= 65536) ):
+            raise GPUdbException( "Expected a valid host manager port (1-65535), got: '"+str(host_manager_port)+"'" )
+        # Must have at least one host
+        if not (len(host) > 0):
+            raise GPUdbException( "Expected a valid host address, got an empty string." )
+        # Valid protocols: http and https
+        if connection not in ["HTTP", "HTTPS"]:
+            raise GPUdbException( "Expected connection to be 'HTTP' or 'HTTPS', got: '"+str(connection)+"'" )
 
-        self._host           = str( host )
-        self._port           = int(port)
-        self._connection     = str( connection )
-        self._gpudb_url_path = str( url_path )
+        self._host              = str( host )
+        self._port              = int(port)
+        self._host_manager_port = int(host_manager_port)
+        self._connection        = str( connection )
+        self._gpudb_url_path    = str( url_path )
     # end __init__
 # end class _ConnectionToken
 
@@ -708,24 +757,31 @@ class AttrDict(dict):
     def __init__(self, *args, **kwargs):
         super(AttrDict, self).__init__(*args, **kwargs)
         self.__dict__ = self
-# end class AttrDict
+    # end init
+
+    def is_ok( self ):
+        """Returns True if the response object's status is OK."""
+        try:
+            return (self.__dict__['status_info']['status'] == 'OK')
+        except KeyError as ex:
+            raise GPUdbException( "Unknown wrapped object; could not find "
+                                  " the following key: {}".format( str(ex) ) )
+    # end is_ok
 
 
-# ---------------------------------------------------------------------------
-# GPUdbException - Exception for GPUdb Issues
-# ---------------------------------------------------------------------------
-class GPUdbException( Exception ):
+    def get_error_msg( self ):
+        """Returns the error message for the query, if any.  None otherwise."""
+        try:
+            if (self.__dict__['status_info']['status'] != 'ERROR'):
+                return None
+            return self.__dict__['status_info']['message']
+        except KeyError as ex:
+            raise GPUdbException( "Unknown wrapped object; could not find "
+                                  " the following key: {}".format( str(ex) ) )
+    # end get_error_msg
 
-    def __init__( self, value ):
-        self.value = value
-        self.message = value
-    # end __init__
-
-    def __str__( self ):
-        return repr( self.value )
-    # end __str__
     
-# end class GPUdbException
+# end class AttrDict
 
 
 # ---------------------------------------------------------------------------
@@ -2025,11 +2081,12 @@ class GPUdbRecord( object ):
 
 class GPUdb(object):
 
-    def __init__(self, host = "127.0.0.1", port = "9191",
-                       encoding = "BINARY", connection = 'HTTP',
-                       username = "", password = "", timeout = None,
-                       no_init_db_contact = False,
-                       **kwargs ):
+    def __init__( self, host = "127.0.0.1", port = "9191",
+                  host_manager_port = "9300",
+                  encoding = "BINARY", connection = 'HTTP',
+                  username = "", password = "", timeout = None,
+                  no_init_db_contact = False,
+                  **kwargs ):
         """
         Construct a new GPUdb client instance.
 
@@ -2048,6 +2105,11 @@ class GPUdb(object):
                 can be omitted entirely if the host already contains the port.
                 If the *host* does include a port, then this argument will be
                 ignored.
+            host_manager_port (str)
+                The port of the host manager for the GPUdb server at the given
+                IP address. May be provided as a list in conjunction with host;
+                but if using the same port for all hosts, then a single port
+                value is OK.
 
             encoding (str)
                 Type of Avro encoding to use, "BINARY", "JSON" or "SNAPPY".
@@ -2074,6 +2136,7 @@ class GPUdb(object):
         """
         # Call the internal function to initialize the object
         self.__construct( host = host, port = port,
+                          host_manager_port = host_manager_port,
                           encoding = encoding, connection = connection,
                           username = username, password = password,
                           timeout = timeout,
@@ -2082,7 +2145,8 @@ class GPUdb(object):
     # end __init__
 
 
-    def __construct(self, host = "127.0.0.1", port = "9191",
+    def __construct( self, host = "127.0.0.1", port = "9191",
+                     host_manager_port = "9300",
                        encoding = "BINARY", connection = 'HTTP',
                        username = "", password = "", timeout = None,
                        no_init_db_contact = False,
@@ -2105,6 +2169,11 @@ class GPUdb(object):
                 can be omitted entirely if the host already contains the port.
                 If the *host* does include a port, then this argument will be
                 ignored.
+            host_manager_port (str)
+                The port of the host manager for the GPUdb server at the given
+                IP address. May be provided as a list in conjunction with host;
+                but if using the same port for all hosts, then a single port
+                value is OK.
 
             encoding (str)
                 Type of Avro encoding to use, "BINARY", "JSON" or "SNAPPY".
@@ -2132,17 +2201,22 @@ class GPUdb(object):
         if type(host) is list:
             if not type(port) is list:
                 port = [port]*len(host)
+            if not type(host_manager_port) is list:
+                host_manager_port = [host_manager_port]*len(host)
             if not type(connection) is list:
                 connection = [connection]*len(host)
 
-            assert len(host) == len(port) == len(connection), \
-                "Host, port and connection list must have the same number of items"
+            assert len(host) == len(port) == len(host_manager_port) == len(connection), \
+                "Host, port, host_manager_port  and connection list must have the same number of items"
         else:
-            assert not (type(port) is list) and not (type(connection) is list), \
+            assert (not (type(port) is list)
+                    and not (type(host_manager_port) is list)
+                    and not (type(connection) is list)), \
                 "Host is not a list, port and connection must not be either"
 
             host = [host]
             port = [port]
+            host_manager_port = [host_manager_port]
             connection = [connection]
 
         assert (encoding in ["BINARY", "JSON", "SNAPPY"]), "Expected encoding to be either 'BINARY', 'JSON' or 'SNAPPY' got: '"+str(encoding)+"'"
@@ -2150,8 +2224,8 @@ class GPUdb(object):
             print('SNAPPY encoding specified but python-snappy is not installed; reverting to BINARY')
             encoding = 'BINARY'
 
-        self._conn_tokens = tuple(_ConnectionToken(h, p, c) \
-                               for h, p, c in zip(host, port, connection))
+        self._conn_tokens = tuple(_ConnectionToken(h, p, hmp, c) \
+                                  for h, p, hmp, c in zip(host, port, host_manager_port, connection))
         self.current_host_index = random.randint(0, len(self._conn_tokens))
 
         self.encoding   = encoding
@@ -2316,7 +2390,13 @@ class GPUdb(object):
     def get_port( self ):
         """Return the port the host is listening to."""
         return self._get_current_conn_token()._port
-    # end get_host
+    # end get_port
+
+
+    def get_host_manager_port( self ):
+        """Return the port the host manager is listening to."""
+        return self._get_current_conn_token()._host_manager_port
+    # end get_host_manager_port
 
 
     def get_url( self ):
@@ -2340,6 +2420,13 @@ class GPUdb(object):
     @port.setter
     def port(self, value):
         self._get_current_conn_token()._port = value
+    @property
+    def host_manager_port(self):
+        return self.get_host_manager_port()
+
+    @host_manager_port.setter
+    def host_manager_port(self, value):
+        self._get_current_conn_token()._host_manager_port = value
 
     @property
     def gpudb_url_path(self):
@@ -2429,7 +2516,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "6.2.0.9"
+    api_version   = "6.2.0.10"
 
     # constants
     END_OF_SET = -9999
@@ -2475,13 +2562,16 @@ class GPUdb(object):
     # Helper functions
     # -----------------------------------------------------------------------
 
-    def __post_to_gpudb_read(self, body_data, endpoint):
-        """
-        Create a HTTP connection and POST then get GET, returning the server response.
+    def __create_header_and_process_body_data( self, body_data ):
+        """Create an HTTP or HTTPS header, and compress the body data
+        if needed.
 
         Parameters:
-            body_data : Data to POST to GPUdb server.
-            endpoint  : Server path to POST to, e.g. "/add".
+            body_data : The body of the data, already avro or json encoded
+
+        Returns:
+            A tuple where the first element is the header and the second
+        element is the body data (either unprocessed or processed).
         """
 
         if self.encoding == 'BINARY':
@@ -2499,6 +2589,89 @@ class GPUdb(object):
         if self.auth:
             headers["Authorization"] = self.auth
 
+        return (headers, body_data)
+    # end __create_header
+   
+ 
+    def __post_and_get( self,
+                        host, port, url_path, connection_type,
+                        headers, body_data, endpoint ):
+        """
+        Create a HTTP connection and POST then get GET, returning the server response.
+
+        Parameters:
+            host (str)
+                The host to send the request to
+            port (str)
+                The port to send the request to
+            url_path (str)
+                The URL for the request (exclusive of the endpoint)
+            connection_type (str)
+                'HTTP' or 'HTTPS'
+            headers (dict)
+                The headers to use for the HTTP or HTTPS connection
+            body_data (bytes)
+                Data to POST to GPUdb server.
+            endpoint (str)
+                Server path to POST to, e.g. "/add".
+        """
+        # NOTE: Creating a new httplib.HTTPConnection is suprisingly just as
+        #       fast as reusing a persistent one and has the advantage of
+        #       fully retrying from scratch if the connection fails.
+
+        # Get the full URL path for the request
+        url_path = (url_path + endpoint)
+
+        # Try to establish a connection
+        try:
+            if (connection_type == 'HTTP'):
+                conn = httplib.HTTPConnection( host = host,
+                                               port = port,
+                                               timeout = self.timeout)
+            elif (connection_type == 'HTTPS'):
+                conn = httplib.HTTPSConnection( host = host,
+                                                port = port,
+                                                timeout = self.timeout)
+        except Exception as e:
+            raise GPUdbConnectionException("Error connecting to '{}' on port {} due to: {}"
+                                           "".format(host, port, str(e)) )
+
+        # Try to post the message
+        try:
+            conn.request("POST", url_path, body_data, headers)
+        except Exception as e:
+            raise GPUdbConnectionException( "Error posting to '{}:{}{}' due to: {}"
+                                            "".format(host, port, url_path, str(e)) )
+
+        # Get the response
+        try:
+            resp = conn.getresponse()
+        except: # some error occurred; return a message
+            raise GPUdbConnectionException( "Timeout Error: No response received from %s:%s"
+                                            "" % (host, port) )
+
+        # Read the response
+        try:
+            resp_data = resp.read()
+            resp_time = resp.getheader('x-request-time-secs',None)
+            return  resp_data, resp_time
+        except: # some error occurred; return a message
+            raise GPUdbException( "Error reading response from {}:{} for {}"
+                                  "".format( host, port, endpoint ) )
+    # end __post_and_get
+
+
+    def __post_to_gpudb_read(self, body_data, endpoint):
+        """
+        Create a HTTP connection and POST then get GET, returning the server response.
+
+        Parameters:
+            body_data : Data to POST to GPUdb server.
+            endpoint  : Server path to POST to, e.g. "/add".
+        """
+        # Get the header and process the body data
+        ( headers, body_data ) = self.__create_header_and_process_body_data( body_data )
+
         # NOTE: Creating a new httplib.HTTPConnection is suprisingly just as
         #       fast as reusing a persistent one and has the advantage of
         #       fully retrying from scratch if the connection fails.
@@ -2510,45 +2683,25 @@ class GPUdb(object):
         while cond:
             loop_error = None
             conn_token = self._get_current_conn_token()
-            url_path = (conn_token._gpudb_url_path + endpoint)
 
+            # Try to post and get the message using the current connection
+            # token's information
             try:
-                if (conn_token._connection == 'HTTP'):
-                    conn = httplib.HTTPConnection(host=conn_token._host,
-                                                  port=conn_token._port,
-                                                  timeout=self.timeout)
-                elif (conn_token._connection == 'HTTPS'):
-                    conn = httplib.HTTPSConnection(host=conn_token._host,
-                                                   port=conn_token._port,
-                                                   timeout=self.timeout)
-            except Exception as e:
-                loop_error = ("Error connecting to '{}' on port {} due to: {}"
-                              "".format(conn_token._host, conn_token._port, str(e)) )
-
-            if not loop_error:
-                try:
-                    conn.request("POST", url_path, body_data, headers)
-                except Exception as e:
-                    loop_error = ( "Error posting to '{}:{}{}' due to: {}"
-                                   "".format(conn_token._host, conn_token._port, url_path, str(e)) )
-
-                if not loop_error:
-                    try:
-                        resp = conn.getresponse()
-                        resp_data = resp.read()
-                        resp_time = resp.getheader('x-request-time-secs',None)
-                    except: # some error occurred; return a message
-                        loop_error = GPUdbException( "Timeout Error: No response received from %s:%s" % (conn_token._host, conn_token._port) )
-                    # end except
-                # end inner if
-            # end outer if
-
-            if loop_error:
+                ( resp_data,
+                  resp_time ) = self.__post_and_get( conn_token._host, conn_token._port,
+                                                     conn_token._gpudb_url_path,
+                                                     conn_token._connection,
+                                                     headers,
+                                                     body_data,
+                                                     endpoint )
+            except (GPUdbException, GPUdbConnectionException) as ex:
+                loop_error = ex
                 self._current_conn_token_index = \
                     (self._current_conn_token_index+1) % len(self._conn_tokens)
             error = loop_error
 
             cond = error and (self._current_conn_token_index != initial_index)
+        # end while loop
 
         if error:
             if isinstance( error, (basestring, unicode)):
@@ -2562,12 +2715,105 @@ class GPUdb(object):
     # end __post_to_gpudb_read
 
 
+    def __post_to_hm_read(self, body_data, endpoint):
+        """
+        Create a HTTP connection and POST to the host manager, then get GET
+        returning the server response.
+
+        Parameters:
+            body_data : Data to POST to GPUdb server.
+            endpoint  : Server path to POST to, e.g. "/add".
+        """
+
+        # Get the header and process the body data
+        ( headers, body_data ) = self.__create_header_and_process_body_data( body_data )
+
+        # NOTE: Creating a new httplib.HTTPConnection is suprisingly just as
+        #       fast as reusing a persistent one and has the advantage of
+        #       fully retrying from scratch if the connection fails.
+
+        initial_index = self._current_conn_token_index
+        cond = True
+        error = None
+
+        while cond:
+            loop_error = None
+            conn_token = self._get_current_conn_token()
+
+            try:
+                ( resp_data,
+                  resp_time ) = self.__post_and_get( conn_token._host,
+                                                     conn_token._host_manager_port,
+                                                     conn_token._gpudb_url_path,
+                                                     conn_token._connection,
+                                                     headers,
+                                                     body_data,
+                                                     endpoint )
+            except (GPUdbException, GPUdbConnectionException) as ex:
+                loop_error = ex
+                self._current_conn_token_index = \
+                    (self._current_conn_token_index+1) % len(self._conn_tokens)
+            error = loop_error
+
+            cond = error and (self._current_conn_token_index != initial_index)
+        # end while loop
+
+        # Last ditch effort: if error due to wrong port, inquire the head node
+        # what the port is and use that if different
+        if error:
+            if isinstance( error, GPUdbConnectionException ):
+                # Get the host manager port from the head node
+                try:
+                    sys_properties = self.show_system_properties().property_map
+                except (GPUdbException, GPUdbConnectionException) as ex:
+                    raise GPUdbException( ex.message )
+
+                if "conf.hm_http_port" not in sys_properties:
+                    raise GPUdbException( 'Error: "conf.hm_http_port" not found '
+                                          'system properties!' )
+                try :
+                    hm_port = int( sys_properties[ "conf.hm_http_port" ] )
+                except:
+                    raise GPUdbException ( "Expected a numeric port, got: '{}'"
+                                           "".format( str(sys_properties[ "conf.hm_http_port" ]) ) )
+
+                # Check if this host manager port works
+                try:
+                    conn_token = self._get_current_conn_token()
+                    ( resp_data,
+                      resp_time ) = self.__post_and_get( conn_token._host,
+                                                         hm_port,
+                                                         conn_token._gpudb_url_path,
+                                                         conn_token._connection,
+                                                         headers,
+                                                         body_data,
+                                                         endpoint )
+                    # Upon success, update the connection token's host manager port
+                    conn_token._host_manager_port = hm_port
+                    # Reset the error
+                except (GPUdbException, GPUdbConnectionException) as ex:
+                    raise
+            else:
+                if isinstance( error, (basestring, unicode)):
+                    raise GPUdbException( error )
+                elif isinstance( error, GPUdbException ):
+                    raise error
+                else:
+                    raise GPUdbException( error )
+            # end inner if
+        # end if error
+
+        return  resp_data, resp_time
+    # end __post_to_hm_read
+
+
     def __client_to_object_encoding( self ):
         """Returns object encoding for queries based on the GPUdb client's
         encoding.
         """
         return self.client_to_object_encoding_map[ self.encoding ]
     # end client_to_object_encoding
+
 
     def __read_orig_datum(self, SCHEMA, encoded_datum, encoding=None):
         """
@@ -2776,6 +3022,25 @@ class GPUdb(object):
 
         return self.__read_datum_cext(REP_SCHEMA, response, None, response_time)
     # end __post_then_get_cext
+    def __post_to_hm_then_get_cext(self, REQ_SCHEMA, REP_SCHEMA, datum, endpoint):
+        """
+        Encode the datum dict using the REQ_SCHEMA, POST to the host manager and
+        decode the reply using the REP_SCHEMA.
+
+        Parameters:
+            REQ_SCHEMA : The parsed schema from avro.schema.parse() of the request.
+            REP_SCHEMA : The parsed schema from avro.schema.parse() of the reply.
+            datum      : Request dict matching the REQ_SCHEMA.
+            endpoint   : Server path to POST to, e.g. "/add".
+
+        Returns:
+            The decoded response.
+        """
+        encoded_datum = self.encode_datum_cext(REQ_SCHEMA, datum)
+        response, response_time  = self.__post_to_hm_read(encoded_datum, endpoint)
+
+        return self.__read_datum_cext(REP_SCHEMA, response, None, response_time)
+    # end __post_to_hm_then_get_cext
 
 
     def __post_then_get_cext_raw(self, REQ_SCHEMA, REP_SCHEMA, datum, endpoint):
@@ -4686,8 +4951,8 @@ class GPUdb(object):
 
         Important: This endpoint is accessed via the host manager port rather
         than the primary database port; the default ports for host manager and
-        the primary database can be found `here
-        <../../../install/index.html#default-ports>`_.  If you are invoking
+        the primary database can be found under `Default Ports
+        <../../../install/package.html#default-ports>`_.  If you are invoking
         this endpoint via a GPUdb API object, you must instantiate that object
         using the host manager port instead of the database port. The same IP
         address is used for both ports.
@@ -4734,7 +4999,7 @@ class GPUdb(object):
         obj['num_alerts'] = num_alerts
         obj['options'] = self.__sanitize_dicts( options )
 
-        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/admin/show/alerts' )
+        response = self.__post_to_hm_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/admin/show/alerts' )
 
         return AttrDict( response )
     # end admin_show_alerts
@@ -13661,6 +13926,9 @@ class GPUdb(object):
                 * **conf.worker_http_server_ports** --
                   Semicolon (';') separated string of the port numbers of all
                   the ingestion-enabled worker ranks of the system.
+
+                * **conf.hm_http_port** --
+                  The host manager port number (an integer value).
         """
         assert isinstance( options, (dict)), "show_system_properties(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -15272,6 +15540,7 @@ class GPUdbTable( object ):
         self._is_read_only  = False
         self._is_collection = False
         self._type_id       = None
+        self._is_replicated = self.options._is_replicated
 
         # The table is known to be read only
         if read_only_table_count is not None: # Integer value 0 accepted
@@ -15341,6 +15610,10 @@ class GPUdbTable( object ):
                 if show_table_rsp[ C._table_descriptions ] in [ C._view, C._join, C._result_table ]:
                     self._is_read_only = True
                     self._count = show_table_rsp[ C._total_full_size ]
+                # Check if the table is replicated
+                if ( (show_table_rsp[ C._table_descriptions ] == C._replicated)
+                     or (C._replicated in show_table_rsp[ C._table_descriptions ][0]) ):
+                    self._is_replicated = True
             else: # table does not already exist in GPUdb
                 # Create the table (and the type)
                 if self.options._is_collection: # Create a collection
@@ -15388,7 +15661,8 @@ class GPUdbTable( object ):
 
             self._multihead_ingestor = GPUdbIngestor( self.db, self.name,
                                                       self.gpudbrecord_type,
-                                                      multihead_ingest_batch_size )
+                                                      multihead_ingest_batch_size,
+                                                      is_table_replicated = self._is_replicated )
 
             # Save the per-insertion-call flushing setting
             self._flush_multi_head_ingest_per_insertion = flush_multi_head_ingest_per_insertion
@@ -15600,6 +15874,10 @@ class GPUdbTable( object ):
         """
         return self.__len__()
     # end count
+    def is_replicated( self ):
+        """Returns True if the table is replicated."""
+        return self._is_replicated
+    # end is_replicated
 
 
     def get_table_type( self ):
