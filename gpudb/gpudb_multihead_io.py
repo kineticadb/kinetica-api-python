@@ -16,7 +16,7 @@ import sys
 if sys.version_info.major >= 3:
     from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, GPUdbException
 else:
-    from gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, GPUdbException
+    from gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, GPUdbException, GPUdbConnectionException
 
 from avro import schema, datafile, io
 import datetime
@@ -24,6 +24,9 @@ import json
 import random
 import re
 import struct
+import time
+
+from protocol import Record
 
 
 try:
@@ -82,18 +85,24 @@ class C:
     _is_nullable = "is_nullable"
 
     # gpudb response status related dict keys
-    _info   = "status_info"
-    _msg    = "message"
-    _status = "status"
-    _error  = "ERROR"
-    _ok     = "OK"
+    _status_info = "status_info"
+    _msg         = "message"
+    _status      = "status"
+    _error       = "ERROR"
+    _ok          = "OK"
 
     # GPUdb /admin/show/shards response dict keys
     _shard_ranks = "rank"
+    _shard_version = "version"
 
-    # GPUdb /insert/records response dict keys
+    # GPUdb /insert/records response constants
     _count_inserted = "count_inserted"
     _count_updated  = "count_updated"
+
+    # GPUdb /insert/records and /get/records response common constants
+    _info           = "info"
+    _data_rerouted  = "data_rerouted"
+    _true           = "true"
 
     # GPUdb /show/table response dict keys
     _table_names = "table_names"
@@ -146,7 +155,7 @@ class InsertionException(Exception):
 class GPUdbWorkerList:
     """A list of worker URLs to use for multi-head ingest."""
 
-    def __init__( self, gpudb, ip_regex = "",
+    def __init__( self, gpudb, ip_regex = None,
                   use_head_node_only = False ):
         """Automatically populates the GPUdbWorkerList object with the worker
         URLs for the GPUdb server to support multi-head ingest. (If the
@@ -177,15 +186,16 @@ class GPUdbWorkerList:
         assert isinstance(use_head_node_only, bool), \
             ("Parameter 'use_head_node_only' must be a boolean value;  given "
              "%s" % str( type( use_head_node_only ) ) )
-        
+
         self.worker_urls = []
         self.use_head_node_only = use_head_node_only
+        self._ip_regex = ip_regex
 
         # Get system properties
         system_prop_rsp = gpudb.show_system_properties()
-        if system_prop_rsp[ C._info ][ C._status ] == C._error:
+        if system_prop_rsp[ C._status_info ][ C._status ] == C._error:
             raise GPUdbException( "Unable to retrieve system properties; error:"
-                                  " %s" % system_prop_rsp[ C._info ][ C._msg ] )
+                                  " %s" % system_prop_rsp[ C._status_info ][ C._msg ] )
 
         system_properties = system_prop_rsp[ C._sys_properties ]
 
@@ -211,6 +221,13 @@ class GPUdbWorkerList:
             # Process the URLs per worker rank (ignoring rank-0)
             for i in range(1, len(self.worker_URLs_per_rank)):
                 urls_per_rank = self.worker_URLs_per_rank[ i ]
+
+                # Check if this rank has been removed
+                if not urls_per_rank:
+                    # We need an empty slot to indicate removed ranks
+                    self.worker_urls.append( None )
+                    continue
+                
                 url_addresses_for_this_rank = urls_per_rank.split( "," )
                 found = False
 
@@ -219,9 +236,9 @@ class GPUdbWorkerList:
                     # Parse the URL
                     url = urlparse( url_str )
                     if ((not url.scheme) or (not url.hostname) or (not url.port)):
-                        raise GPUdbException("Malformed URL: {}".format( url_str ) )
+                        raise GPUdbException("Malformed URL: '{}'".format( url_str ) )
 
-                    if (ip_regex == ""): # no regex given
+                    if not ip_regex: # no regex given
                         # so, include all IP addresses
                         self.worker_urls.append( url_str )
                         found = True
@@ -268,6 +285,13 @@ class GPUdbWorkerList:
             # Process the IP addresses per worker rank (ignoring rank-0)
             for i in range(1, len(self.worker_IPs_per_rank)):
                 ips_per_rank = self.worker_IPs_per_rank[ i ]
+
+                # Check if this rank has been removed
+                if not ips_per_rank:
+                    # We need an empty slot to indicate removed ranks
+                    self.worker_urls.append( None )
+                    continue
+
                 ip_addresses_for_this_rank = ips_per_rank.split( "," )
                 found = False
 
@@ -340,6 +364,11 @@ class GPUdbWorkerList:
         return self._is_multihead_enabled
     # end is_multihead_enabled
 
+
+    def get_ip_regex( self ):
+        """Returns the IP regex, if any, used to create the worker list."""
+        return self._ip_regex
+    # end get_ip_regex
 # end class GPUdbWorkerList
 
 
@@ -2084,7 +2113,7 @@ class GPUdbIngestor:
         self.batch_size          = batch_size
         self.options             = options
         self.is_table_replicated = is_table_replicated
-        print ("self.is_table_replicated:", self.is_table_replicated) # debug~~~~~
+        self.worker_list         = workers
 
         self.count_inserted = 0
         self.count_updated  = 0
@@ -2111,69 +2140,159 @@ class GPUdbIngestor:
                 self.shard_key_builder = None
         # end saving the key builders
 
-        has_primary_key = (self.primary_key_builder is not None)
+        self.has_primary_key = (self.primary_key_builder is not None)
 
         # Set up the worker queues
         # ------------------------
         # Boolean flag for primary key related info
-        update_on_existing_pk = False
+        self.update_on_existing_pk = False
         if ( self.options
              and ("update_on_existing_pk" in self.options) ):
-            update_on_existing_pk = (self.options[ "update_on_existing_pk" ] == "true")
+            self.update_on_existing_pk = (self.options[ "update_on_existing_pk" ] == "true")
         # end if
 
         self.worker_queues = []
 
         # If no worker URLs are provided, get them from the server
-        if not workers:
+        if not self.worker_list:
             # If the table is replicated, then we use only the head node
-            workers = GPUdbWorkerList( self.gpudb,
-                                       use_head_node_only = self.is_table_replicated )
+            self.worker_list = GPUdbWorkerList( self.gpudb,
+                                                use_head_node_only = self.is_table_replicated )
 
         # Create worker queues per worker URL
-        for worker in workers.get_worker_urls():
+        for worker in self.worker_list.get_worker_urls():
+            # Handle removed ranks
+            if not worker:
+                self.worker_queues.append( None )
+                continue
+                
             try:
-                worker_url = worker
-                wq = _WorkerQueue( worker_url, self.gpudb,
+                wq = _WorkerQueue( worker, self.gpudb,
                                    self.batch_size,
-                                   has_primary_key = has_primary_key,
-                                   update_on_existing_pk = update_on_existing_pk )
+                                   has_primary_key = self.has_primary_key,
+                                   update_on_existing_pk = self.update_on_existing_pk )
                 self.worker_queues.append( wq )
             except Exception as e:
-                raise
+                raise GPUdbException( str(e) )
         # end loop over workers
 
         # Get the number of workers
-        if not workers:
+        if not self.worker_list:
             self.num_ranks = 1
         else:
-            self.num_ranks = len( workers.get_worker_urls() )
+            self.num_ranks = len( self.worker_list.get_worker_urls() )
 
         # Very important to know if multi-head IO is actually enabled
         # at the server
-        self.is_multihead_enabled = workers.is_multihead_enabled()
+        self.is_multihead_enabled = self.worker_list.is_multihead_enabled()
             
         # Set the routing table, iff multi-head I/O is turned on
         # AND the table is not replicated
         self.routing_table = None
+        self._shard_version = None
+        self._shard_update_time = None
         if ( self.is_multihead_enabled
              and (not self.is_table_replicated)
              and (self.primary_key_builder or self.shard_key_builder) ):
-            print ("Setting the routing table, ", self.is_table_replicated) # debug~~~~~~
-            # Get the sharding assignment ranks
-            shard_info = self.gpudb.admin_show_shards()
-            # Subtract 1 from each value of the routing_table
-            # (because the 1st worker rank is the 0th element in the worker list)
-            self.routing_table = [(rank-1) for rank in shard_info[ C._shard_ranks ] ]
 
-            # Check that enough worker URLs are specified
-            for routing_table_entry in self.routing_table:
-                if (routing_table_entry > self.num_ranks):
-                    raise GPUdbException( "Not enough worker URLs specified." )
+            # Since it's the first time, there's no need to "REconstruct"
+            # the queues
+            self.__update_shard_mapping( reconstruct_worker_queues = False )
         # end if
 
     # end GPUdbIngestor __init__
 
+
+    def __update_shard_mapping( self, reconstruct_worker_queues = True ):
+        """Update the shard mapping for the ingestor.
+
+        Parameters:
+            reconstruct_worker_queues (bool)
+                When True, the worker queues will be re-constructed based on
+                the new cluster configuration.  The records that are already in
+                the existing queues will be re-processed to be saved in the
+                new queues.
+
+        Returns:
+            A boolean flag indicating if the shard mapping was updated.
+        """
+        # Get the sharding assignment ranks
+        shard_info = self.gpudb.admin_show_shards()
+
+        # Get the shard version
+        new_shard_version = shard_info[ C._shard_version ]
+
+        # No-op if the shard version hasn't changed (and it's not the first time)
+        if self._shard_version and (self._shard_version == new_shard_version):
+            return False # Did not do anything
+
+        # Save the new shard version and also when we're updating the mapping
+        self._shard_version = new_shard_version
+        self._shard_update_time = time.time()
+        
+        # Subtract 1 from each value of the routing_table
+        # (because the 1st worker rank is the 0th element in the worker list)
+        self.routing_table = [(rank-1) for rank in shard_info[ C._shard_ranks ] ]
+
+        # The worker queues need to be re-constructed when asked for
+        # iff multi-head i/o is enabled and the table is not replicated
+        if ( reconstruct_worker_queues
+             and self.is_multihead_enabled
+             and (not self.is_table_replicated) ):
+            self.__reconstruct_worker_queues_and_requeue_records()
+
+        return True # the shard mapping was updated indeed
+    # end __update_shard_mapping
+
+
+    def __reconstruct_worker_queues_and_requeue_records( self ):
+        """Based on a freshly fetched worker list, re-constructs the
+        worker queues and re-queues already queued records.
+        """
+        # Re-construct the existing worker queues and re-shard the currently
+        # queued records
+        new_worker_queues = []
+
+        # Get the latest worker list (use whatever IP regex was used initially)
+        new_worker_list = GPUdbWorkerList( self.gpudb, self.worker_list.get_ip_regex() )
+        if (new_worker_list == self.worker_list):
+            return # nothing to do since the worker list did not change
+
+        # Update the worker list
+        self.worker_list = new_worker_list
+        new_workers      = self.worker_list.get_worker_urls()
+
+        # Create worker queues per worker URL
+        for worker in new_workers:
+            # Handle removed ranks
+            if not worker:
+                new_worker_queues.append( None )
+                continue
+                
+            try: # adding a queue for a currently active rank
+                wq = _WorkerQueue( worker, self.gpudb,
+                                   self.batch_size,
+                                   has_primary_key = self.has_primary_key,
+                                   update_on_existing_pk = self.update_on_existing_pk )
+                new_worker_queues.append( wq )
+            except Exception as e:
+                raise GPUdbException( str(e) )
+        # end loop over workers
+
+        # Get the number of workers
+        self.num_ranks = len( new_workers )
+
+        # Save the new queue for future use
+        old_worker_queues  = self.worker_queues
+        self.worker_queues = new_worker_queues
+        
+        # Re-queue any existing queued records
+        for old_queue in old_worker_queues:
+            if old_queue:
+                self.insert_records( old_queue.flush() )
+        # end loop
+    # end __reconstruct_worker_queues_and_requeue_records
+    
 
     def get_gpudb( self ):
         """Return the instance of GPUdb client used by this ingestor."""
@@ -2211,6 +2330,41 @@ class GPUdbIngestor:
     # end get_count_updated
 
 
+    def __encode_data_for_insertion( self, records, record_encoding = "binary" ):
+        """Encode the given records for insertion.
+
+        Parameters:
+            records (list)
+                A list of un-encoded records.
+
+            record_encoding (str)
+                The encoding to use for the insertion.  Allowed values are:
+
+                * 'binary'
+                * 'json'
+
+                The default values is 'binary'.
+
+        Returns:
+            A list of encoded records.
+        """
+        # Encode the object into binary if not already encoded
+        if record_encoding == "binary":
+            if isinstance( records[0], GPUdbRecord ):
+                encoded_records = [ record.binary_data for record in records ]
+            else:
+                encoded_records = [ GPUdbRecord( self.record_type, record ).binary_data for record in records ]
+        else:
+            if isinstance( record, GPUdbRecord ):
+                encoded_records = [ record.column_values for record in records ]
+            else:
+                encoded_records = records
+        # end if-else
+
+        return encoded_records
+    # end __encode_data_for_insertion
+
+    
     def insert_record( self, record, record_encoding = "binary" ):
         """Queues a record for insertion into GPUdb. If the queue reaches the
         {@link #get_batch_size batch size}, all records in the queue will be
@@ -2271,21 +2425,8 @@ class GPUdbIngestor:
         # Get the worker
         worker_queue = self.worker_queues[ worker_index ]
 
-        # Encode the object into binary if not already encoded
-        if record_encoding == "binary":
-            if isinstance( record, GPUdbRecord ):
-                encoded_record = record.binary_data
-            else:
-                encoded_record = GPUdbRecord( self.record_type, record ).binary_data
-        else:
-            if isinstance( record, GPUdbRecord ):
-                encoded_record = record.column_values
-            else:
-                encoded_record = record
-        # end if-else
-
         # Insert the record for the worker queue
-        queue = worker_queue.insert( encoded_record, primary_key )
+        queue = worker_queue.insert( record, primary_key )
 
         # Flush, if necessary (when the worker queue returns a non-empty queue)
         if queue:
@@ -2337,7 +2478,7 @@ class GPUdbIngestor:
 
 
 
-    def flush( self ):
+    def flush( self, forced_flush = True ):
         """Ensures that any queued records are inserted into GPUdb. If an error
         occurs while inserting the records from any queue, the records will no
         longer be in that queue nor in GPUdb; catch {@link InsertException} to
@@ -2345,36 +2486,109 @@ class GPUdbIngestor:
         to retry). Other queues may also still contain unflushed records if
         this occurs.
 
+        Parameters:
+            forced_flush (bool)
+                Boolean flag indicating whether a user invoked this method or
+                an internal method called it.
+
         @throws InsertException if an error occurs while inserting records.
         """
         for worker in self.worker_queues:
+            if not worker:
+                continue # skipping empty workers
+            
             queue = worker.flush()
             # Actually insert the records
-            self.__flush( queue, worker.get_gpudb() )
+            self.__flush( queue, worker.get_gpudb(), forced_flush = forced_flush )
     # end flush
 
 
 
-    def __flush( self, queue, worker_gpudb ):
+    def __flush( self, queue, worker_gpudb,
+                 forced_flush = False,
+                 record_encoding = "binary" ):
         """Internal method to flush--actually insert--the records to GPUdb.
 
-        @param queue  List of records to insert
-        @param url  The URL to which to send the records.
+        Parameters:
+            queue (list)
+                List of records to insert
+
+            worker_gpudb (:class:`GPUdb`)
+                The URL to which to send the records.
+
+            forced_flush (bool)
+                If True, then somebody intends to forcefully flush the given
+                records.  Default value is False.
+
+            record_encoding (str)
+                The encoding to use for the insertion.  Allowed values are:
+
+                * 'binary'
+                * 'json'
+
+                The default values is 'binary'.
+
         """
         if not queue:
             return # nothing to do
 
-        try:
-            # Insert the records
-            insert_rsp = worker_gpudb.insert_records( table_name = self.table_name,
-                                                      data = queue,
-                                                      options = self.options )
-            if (insert_rsp['status_info']['status'] != "OK"):
-                raise InsertionException( insert_rsp['status_info']['message'], queue )
+        if record_encoding.lower() not in ("json", "binary"):
+            raise GPUdbException( "Input parameter 'record_encoding' must be "
+                                  "one of ['json', 'binary']; given '%s'" % record_encoding )
 
-            # Update the insert and update counts
-            self.count_inserted += insert_rsp[ C._count_inserted ]
-            self.count_updated  += insert_rsp[ C._count_updated  ]
+        try:
+            # We may need the timestamp later
+            insertion_attempt_timestamp = time.time()
+
+            # Encode the data
+            encoded_data = self.__encode_data_for_insertion( queue,
+                                                             record_encoding = record_encoding )
+            
+            # Insert the records
+            insertion_succeeded = False
+            try:
+                insert_rsp = worker_gpudb.insert_records( table_name = self.table_name,
+                                                          data = encoded_data,
+                                                          options = self.options )
+                insertion_succeeded = insert_rsp.is_ok()
+                error_msg           = insert_rsp.get_error_msg()
+            except GPUdbConnectionException as ex:
+                insertion_succeeded = False
+                error_msg = str( ex )
+
+            if not insertion_succeeded:
+                # Insertion failed, but maybe due to shard mapping changes (due to
+                # cluster reconfiguration)? Check if the mapping needs to be updated
+                # or has been updated by another thread already after the
+                # insertion was attemtped
+                if (self.__update_shard_mapping()
+                    or (insertion_attempt_timestamp < self._shard_update_time) ):
+
+                    # We need to try inserting the records again since no worker
+                    # queue has these records any more (but the records may
+                    # go to a worker queue different from the one they came from)
+                    self.insert_records( queue )
+
+                    # If the user intends a forceful flush, then make sure that the
+                    # records get flushed
+                    if forced_flush:
+                        # This invocation of flush is internal
+                        self.flush( forced_flush = False )
+                else: # it's a genuine error (nothing to do with cluster re-configuration)
+                    raise InsertionException( error_msg, queue )
+            else: # insertion succeeded
+                # Update the insert and update counts
+                self.count_inserted += insert_rsp[ C._count_inserted ]
+                self.count_updated  += insert_rsp[ C._count_updated  ]
+
+                # Check if shard re-balancing is under way at the server; if so,
+                # we need to update the shard mapping
+                if ( (C._data_rerouted in insert_rsp.info)
+                     and (insert_rsp.info[ C._data_rerouted ] ==  C._true) ) :
+
+                    self.__update_shard_mapping()
+                # end inner if
+            # end if
         except InsertionException as e:
             raise InsertionException( str(e), queue )
     # end __flush
@@ -2440,6 +2654,7 @@ class RecordRetriever:
         self.gpudb       = gpudb
         self.table_name  = table_name
         self.record_type = record_type
+        self.worker_list = workers
 
         # Create the shard key builder
         self.shard_key_builder = _RecordKeyBuilder( self.record_type )
@@ -2456,48 +2671,128 @@ class RecordRetriever:
         # ------------------------
 
         # If no worker URLs are provided, get them from the server
-        if not workers:
-            workers = GPUdbWorkerList( self.gpudb )
+        if not self.worker_list:
+            self.worker_list = GPUdbWorkerList( self.gpudb )
 
         # Create worker queues per worker URL
         self.worker_queues = []
-        for worker in workers.get_worker_urls():
+        for worker in self.worker_list.get_worker_urls():
+            # Handle removed ranks
+            if not worker:
+                self.worker_queues.append( None )
+                continue
+                
             try:
-                worker_url = worker
-                wq = _WorkerQueue( worker_url, self.gpudb,
-                                   # self.batch_size,
-                                   1 ) # using one for now..........
+                wq = _WorkerQueue( worker, self.gpudb,
+                                   capacity = 1 ) # using one for now..........
                 self.worker_queues.append( wq )
             except Exception as e:
-                raise
+                raise GPUdbException( str(e) )
         # end loop over workers
 
         # Get the number of workers
-        if not workers:
+        if not self.worker_list:
             self.num_ranks = 1
         else:
-            self.num_ranks = len( workers.get_worker_urls() )
+            self.num_ranks = len( self.worker_list.get_worker_urls() )
 
         # Very important to know if multi-head IO is actually enabled
         # at the server
-        self.is_multihead_enabled = workers.is_multihead_enabled()
+        self.is_multihead_enabled = self.worker_list.is_multihead_enabled()
 
         self.routing_table = None
+        self._shard_version = None
+        self._shard_update_time = None
         if ( self.is_multihead_enabled
              and self.shard_key_builder ):
-            # Get the sharding assignment ranks
-            shard_info = self.gpudb.admin_show_shards()
-            # Subtract 1 from each value of the routing_table
-            # (because the 1st worker rank is the 0th element in the worker list)
-            self.routing_table = [(rank-1) for rank in shard_info[ C._shard_ranks ] ]
 
-            # Check that enough worker URLs are specified
-            for routing_table_entry in self.routing_table:
-                if (routing_table_entry > self.num_ranks):
-                    raise GPUdbException( "Not enough worker URLs specified." )
+            # Since it's the first time, there's no need to "REconstruct"
+            # the queues
+            self.__update_shard_mapping( reconstruct_worker_queues = False )
         # end if
     # end RecordRetriever __init__
 
+
+    def __update_shard_mapping( self, reconstruct_worker_queues = True ):
+        """Update the shard mapping for the ingestor.
+
+        Parameters:
+            reconstruct_worker_queues (bool)
+                When True, the worker queues will be re-constructed based on
+                the new cluster configuration.  The records that are already in
+                the existing queues will be re-processed to be saved in the
+                new queues.
+
+        Returns:
+            A boolean flag indicating if the shard mapping was updated.
+        """
+        # Get the sharding assignment ranks
+        shard_info = self.gpudb.admin_show_shards()
+
+        # Get the shard version
+        new_shard_version = shard_info[ C._shard_version ]
+
+        # No-op if the shard version hasn't changed (and it's not the first time)
+        if self._shard_version and (self._shard_version == new_shard_version):
+            return False # Did not do anything
+
+        # Save the new shard version and also when we're updating the mapping
+        self._shard_version = new_shard_version
+        self._shard_update_time = time.time()
+        
+        # Subtract 1 from each value of the routing_table
+        # (because the 1st worker rank is the 0th element in the worker list)
+        self.routing_table = [(rank-1) for rank in shard_info[ C._shard_ranks ] ]
+
+        # The worker queues need to be re-constructed when asked for
+        # iff multi-head i/o is enabled and the table is not replicated
+        if ( reconstruct_worker_queues
+             and self.is_multihead_enabled ):
+            self.__reconstruct_worker_queues()
+
+        return True # the shard mapping was updated indeed
+    # end __update_shard_mapping
+
+
+    def __reconstruct_worker_queues( self ):
+        """Based on a freshly fetched worker list, re-constructs the
+        worker queues.
+        """
+        # Re-construct the existing worker queues and re-shard the currently
+        # queued records
+        new_worker_queues = []
+
+        # Get the latest worker list (use whatever IP regex was used initially)
+        new_worker_list = GPUdbWorkerList( self.gpudb, self.worker_list.get_ip_regex() )
+        if (new_worker_list == self.worker_list):
+            return # nothing to do since the worker list did not change
+
+        # Update the worker list
+        self.worker_list = GPUdbWorkerList( self.gpudb, new_worker_list.get_ip_regex() )
+        new_workers      = self.worker_list.get_worker_urls()
+
+        # Create worker queues per worker URL
+        for worker in new_workers:
+            # Handle removed ranks
+            if not worker:
+                new_worker_queues.append( None )
+                continue
+                
+            try: # adding a queue for a currently active rank
+                wq = _WorkerQueue( worker, self.gpudb,
+                                   capacity = 1 ) # using one for now..........
+                new_worker_queues.append( wq )
+            except Exception as e:
+                raise GPUdbException( str(e) )
+        # end loop over workers
+
+        # Get the number of workers
+        self.num_ranks = len( new_workers )
+
+        # Save the new queue for future use
+        self.worker_queues = new_worker_queues
+    # end __reconstruct_worker_queues
+    
 
 
     def get_records_by_key( self, key_values, expression = "" ):
@@ -2539,6 +2834,9 @@ class RecordRetriever:
         options["expression"] = expression
         options["fast_index_lookup"] = "true"
 
+        # We may need the timestamp later
+        retrieval_attempt_timestamp = time.time()
+
         # Build the shard key
         shard_key = self.shard_key_builder.build_key_with_shard_values_only( key_values )
 
@@ -2547,14 +2845,37 @@ class RecordRetriever:
         worker_queue = self.worker_queues[ worker_index ]
 
         # Fetch the record(s) that map to this shard key
-        gr_rsp = worker_queue.get_gpudb().get_records( self.table_name,
-                                                       limit = self.gpudb.END_OF_SET,
-                                                       options = options,
-                                                       get_record_type = False )
+        retrieval_succeeded = False
+        try:
+            gr_rsp = worker_queue.get_gpudb().get_records( self.table_name,
+                                                           limit = self.gpudb.END_OF_SET,
+                                                           options = options,
+                                                           get_record_type = False )
+            retrieval_succeeded = gr_rsp.is_ok()
+            error_msg           = gr_rsp.get_error_msg()
+        except GPUdbConnectionException as ex:
+            error_msg = str( ex )
 
-        if not (gr_rsp['status_info']['status'] == 'OK'):
-            raise GPUdbException( gr_rsp['status_info']['message'] )
+        if not retrieval_succeeded:
+            # Retrieval failed, but maybe due to shard mapping changes (due to
+            # cluster reconfiguration)? Check if the mapping needs to be updated
+            # or has been updated by another thread already after the
+            # retrieval was attemtped
+            if (self.__update_shard_mapping()
+                or (retrieval_attempt_timestamp < self._shard_update_time) ):
 
+                # Re-try the retrieval
+                gr_rsp = self.get_records_by_key( key_values, expression )
+                return gr_rsp
+            else: # any other reason is a genuine error
+                raise GPUdbException( error_msg )
+            # end inner if
+        elif ( (C._data_rerouted in gr_rsp.info)
+             and (gr_rsp.info[ C._data_rerouted ] ==  C._true) ) :
+            # Shard re-balancing is under way at the server; so,
+            # we need to update the shard mapping
+            self.__update_shard_mapping()
+        # end if
         
         # Decode the records
         records = GPUdbRecord.decode_binary_data( gr_rsp["type_schema"],

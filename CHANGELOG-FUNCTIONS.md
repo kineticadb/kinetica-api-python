@@ -1,6 +1,22 @@
 GPUdb Schemas Changelog
 =======================
 
+Version 7.0.0 - 2018-06-28
+--------------------------
+
+-   Added an output parameter named 'info' (a string-to-string map) to the
+    responses of all the endpoints.  This map will contain additional information
+    that may vary from endpoint to endpoint
+-   New endpoints for resource management
+    - /create/resourcegroup
+    - /show/resourcegroups
+    - /alter/resourcegroup
+    - /delete/resourcegroup
+    - /alter/tier
+-   Updated /create/user/internal request/response to handle resource group names
+-   Updated /show/security response to include resource group names
+
+
 Version 6.2.0 - 2018-02-11
 --------------------------
 
@@ -9,7 +25,7 @@ Version 6.2.0 - 2018-02-11
     - /get/job
 -   New  /create/materializedview endpoint
 -   /create/proc has new option 'max_concurrency_per_node'
--   /
+
 
 Version 6.1.0 - 2018-01-08
 --------------------------
@@ -27,7 +43,7 @@ Version 6.1.0 - 2018-01-08
     -   /filter/byradius/geometry
 -   /filter/bygeometry now supports column names other than "WKT"
 
-	
+
 Version 6.0.0 - 2017-01-24
 --------------------------
 

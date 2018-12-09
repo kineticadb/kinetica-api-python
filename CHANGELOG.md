@@ -1,5 +1,10 @@
 # GPUdb Python API Changelog
 
+## Version 7.0.0 - TBD
+
+### Version 7.0.0.0 - TBD
+-   Added support for cluster reconfiguration to the multi-head I/O operations
+
 
 ## Version 6.2.0 - 2018-05-09
 

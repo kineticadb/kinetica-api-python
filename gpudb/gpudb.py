@@ -565,7 +565,7 @@ class _Util(object):
         except GPUdbException as e:
             raise
         except KeyError as e:
-            raise GPUdbException( "Missing column value for '{}'".format( e.message ) )
+            raise GPUdbException( "Missing column value for '{}'".format( str(e) ) )
         except:
             raise GPUdbException( str( sys.exc_info()[1] ) )
 
@@ -987,10 +987,11 @@ class GPUdbColumnProperty(object):
 
 
     DICT = "dict"
-    """str: This property indicates that this column should be dictionary encoded.
-    It can only be used in conjunction with string columns marked with a charN
-    property. This property is appropriate for columns where the cardinality
-    (the number of unique values) is expected to be low, and can save a large
+    """str: This property indicates that this column should be `dictionary encoded
+    <../../../concepts/dictionary_encoding.html>`_. It can only be used in
+    conjunction with restricted string (charN), int, or long columns.
+    Dictionary encoding is best for columns where the cardinality (the number
+    of unique values) is expected to be low. This property can save a large
     amount of memory.
     """
 
@@ -1843,6 +1844,8 @@ class GPUdbRecord( object ):
             raise GPUdbException( "'record_type' must be a GPUdbRecordType; given " + str(type( record_type )) )
         self._record_type = record_type
 
+        if isinstance( column_values, GPUdbRecord ):
+            return column_values
 
         # Validate the column values
         if not _Util.is_list_or_dict( column_values ):
@@ -2516,7 +2519,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "6.2.0.10"
+    api_version   = "7.0.0.0"
 
     # constants
     END_OF_SET = -9999
@@ -2532,7 +2535,8 @@ class GPUdb(object):
                 "name" : "logger_request",
                 "fields" : [
                     {"name" : "ranks", "type" : {"type" : "array", "items" : "int"}},
-                    {"name" : "log_levels", "type" : {"type" : "map", "values" : "string"}}
+                    {"name" : "log_levels", "type" : {"type" : "map", "values" : "string"}},
+                    {"name" : "options", "type" : {"type" : "map", "values" : "string"}}
                 ]
             }
         """.replace("\n", "").replace(" ", "")
@@ -2549,7 +2553,8 @@ class GPUdb(object):
         self.logger_request_schema = Schema( "record",
                                              [
                                                  ("ranks", "array", [("int")]),
-                                                 ("log_levels", "map", [("string")] )
+                                                 ("log_levels", "map", [("string")] ),
+                                                 ("options", "map", [("string")])
                                              ] )
         self.logger_response_schema = Schema( "record",
                                               [
@@ -3348,9 +3353,27 @@ class GPUdb(object):
         return self.__read_orig_datum_cext(RSP_SCHEMA, encoded_datum, 'BINARY')
 
 
-    def logger(self, ranks, log_levels):
+    def logger(self, ranks, log_levels, options = {}):
         """Convenience function to change log levels of some
         or all GPUdb ranks.
+        Parameters:
+            ranks (list of ints)
+                A list containing the ranks to which to apply the new log levels.
+
+            log_levels (dict of str to str)
+                A map where the keys dictacte which log's levels to change, and the
+                values dictate what the new log levels will be.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            status (str)
+                The status of the endpoint ('OK' or 'ERROR').
+
+            log_levels (map of str to str)
         """
         REQ_SCHEMA = self.logger_request_schema
         RSP_SCHEMA = self.logger_response_schema
@@ -3358,9 +3381,16 @@ class GPUdb(object):
         datum = {}
         datum["ranks"]      = ranks
         datum["log_levels"] = log_levels
+        datum["options"]    = options
 
         print('Using host: %s\n' % (self.host))
-        return self.__post_then_get_cext(REQ_SCHEMA, RSP_SCHEMA, datum, "/logger")
+        response = self.__post_then_get_cext(REQ_SCHEMA, RSP_SCHEMA, datum, "/logger")
+
+        if not _Util.is_ok( response ): # problem setting the log levels
+            raise GPUdbException( "Problem setting the log levels: "
+                                  + _Util.get_error_msg( response ) )
+
+        return AttrDict( response )
     # end logger
 
 
@@ -3499,9 +3529,9 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA }
         name = "/admin/add/ranks"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_add_ranks_request","fields":[{"name":"hosts","type":{"type":"array","items":"string"}},{"name":"config_params","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_add_ranks_response","fields":[{"name":"added_ranks","type":{"type":"array","items":"int"}},{"name":"results","type":{"type":"array","items":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_add_ranks_response","fields":[{"name":"added_ranks","type":{"type":"array","items":"int"}},{"name":"results","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("hosts", "array", [("string")]), ("config_params", "array", [("map", [("string")])]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("added_ranks", "array", [("int")]), ("results", "array", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("added_ranks", "array", [("int")]), ("results", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/add/ranks"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3510,9 +3540,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/admin/alter/configuration"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_alter_configuration_request","fields":[{"name":"config_string","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_alter_configuration_response","fields":[{"name":"status","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_alter_configuration_response","fields":[{"name":"status","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("config_string", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("status", "string")] )
+        RSP_SCHEMA = Schema( "record", [("status", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/alter/configuration"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3520,10 +3550,10 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/admin/alter/jobs"
-        REQ_SCHEMA_STR = """{"type":"record","name":"admin_alter_jobs_request","fields":[{"name":"job_ids","type":{"type":"array","items":"int"}},{"name":"action","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_alter_jobs_response","fields":[{"name":"job_ids","type":{"type":"array","items":"int"}},{"name":"action","type":"string"},{"name":"status","type":{"type":"array","items":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("job_ids", "array", [("int")]), ("action", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("job_ids", "array", [("int")]), ("action", "string"), ("status", "array", [("string")])] )
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_alter_jobs_request","fields":[{"name":"job_ids","type":{"type":"array","items":"long"}},{"name":"action","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_alter_jobs_response","fields":[{"name":"job_ids","type":{"type":"array","items":"long"}},{"name":"action","type":"string"},{"name":"status","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("job_ids", "array", [("long")]), ("action", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("job_ids", "array", [("long")]), ("action", "string"), ("status", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/alter/jobs"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3532,9 +3562,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/admin/alter/shards"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_alter_shards_request","fields":[{"name":"version","type":"long"},{"name":"use_index","type":"boolean"},{"name":"rank","type":{"type":"array","items":"int"}},{"name":"tom","type":{"type":"array","items":"int"}},{"name":"index","type":{"type":"array","items":"int"}},{"name":"backup_map_list","type":{"type":"array","items":"int"}},{"name":"backup_map_values","type":{"type":"array","items":{"type":"array","items":"int"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_alter_shards_response","fields":[{"name":"version","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_alter_shards_response","fields":[{"name":"version","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("version", "long"), ("use_index", "boolean"), ("rank", "array", [("int")]), ("tom", "array", [("int")]), ("index", "array", [("int")]), ("backup_map_list", "array", [("int")]), ("backup_map_values", "array", [("array", [("int")])]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("version", "long")] )
+        RSP_SCHEMA = Schema( "record", [("version", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/alter/shards"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3543,9 +3573,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/admin/offline"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_offline_request","fields":[{"name":"offline","type":"boolean"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_offline_response","fields":[{"name":"is_offline","type":"boolean"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_offline_response","fields":[{"name":"is_offline","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("offline", "boolean"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("is_offline", "boolean")] )
+        RSP_SCHEMA = Schema( "record", [("is_offline", "boolean"), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/offline"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3553,10 +3583,10 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/admin/rebalance"
-        REQ_SCHEMA_STR = """{"type":"record","name":"admin_rebalance_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"action","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_rebalance_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"message","type":{"type":"array","items":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("action", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("message", "array", [("string")])] )
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_rebalance_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_rebalance_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"message","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("message", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/rebalance"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3565,9 +3595,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/admin/remove/ranks"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_remove_ranks_request","fields":[{"name":"ranks","type":{"type":"array","items":"int"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_remove_ranks_response","fields":[{"name":"removed_ranks","type":{"type":"array","items":"int"}},{"name":"results","type":{"type":"array","items":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_remove_ranks_response","fields":[{"name":"removed_ranks","type":{"type":"array","items":"int"}},{"name":"results","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("ranks", "array", [("int")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("removed_ranks", "array", [("int")]), ("results", "array", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("removed_ranks", "array", [("int")]), ("results", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/remove/ranks"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3576,10 +3606,21 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/admin/show/alerts"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_show_alerts_request","fields":[{"name":"num_alerts","type":"int"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_show_alerts_response","fields":[{"name":"timestamps","type":{"type":"array","items":"string"}},{"name":"types","type":{"type":"array","items":"string"}},{"name":"params","type":{"type":"array","items":{"type":"map","values":"string"}}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_show_alerts_response","fields":[{"name":"timestamps","type":{"type":"array","items":"string"}},{"name":"types","type":{"type":"array","items":"string"}},{"name":"params","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("num_alerts", "int"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("timestamps", "array", [("string")]), ("types", "array", [("string")]), ("params", "array", [("map", [("string")])])] )
+        RSP_SCHEMA = Schema( "record", [("timestamps", "array", [("string")]), ("types", "array", [("string")]), ("params", "array", [("map", [("string")])]), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/show/alerts"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/admin/show/cluster/operations"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_show_cluster_operations_request","fields":[{"name":"history_index","type":"int"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_show_cluster_operations_response","fields":[{"name":"history_index","type":"int"},{"name":"history_size","type":"int"},{"name":"in_progress","type":"boolean"},{"name":"start_time","type":"string"},{"name":"end_time","type":"string"},{"name":"endpoint","type":"string"},{"name":"endpoint_schema","type":"string"},{"name":"overall_status","type":"string"},{"name":"user_stopped","type":"boolean"},{"name":"percent_complete","type":"int"},{"name":"dry_run","type":"boolean"},{"name":"messages","type":{"type":"array","items":"string"}},{"name":"add_ranks","type":"boolean"},{"name":"add_ranks_status","type":"string"},{"name":"ranks_being_added","type":{"type":"array","items":"int"}},{"name":"rank_hosts","type":{"type":"array","items":"string"}},{"name":"add_ranks_percent_complete","type":"int"},{"name":"remove_ranks","type":"boolean"},{"name":"remove_ranks_status","type":"string"},{"name":"ranks_being_removed","type":{"type":"array","items":"int"}},{"name":"remove_ranks_percent_complete","type":"int"},{"name":"rebalance","type":"boolean"},{"name":"rebalance_unsharded_data","type":"boolean"},{"name":"rebalance_unsharded_data_status","type":"string"},{"name":"unsharded_rebalance_percent_complete","type":"int"},{"name":"rebalance_sharded_data","type":"boolean"},{"name":"shard_array_version","type":"long"},{"name":"rebalance_sharded_data_status","type":"string"},{"name":"num_shards_changing","type":"int"},{"name":"sharded_rebalance_percent_complete","type":"int"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("history_index", "int"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("history_index", "int"), ("history_size", "int"), ("in_progress", "boolean"), ("start_time", "string"), ("end_time", "string"), ("endpoint", "string"), ("endpoint_schema", "string"), ("overall_status", "string"), ("user_stopped", "boolean"), ("percent_complete", "int"), ("dry_run", "boolean"), ("messages", "array", [("string")]), ("add_ranks", "boolean"), ("add_ranks_status", "string"), ("ranks_being_added", "array", [("int")]), ("rank_hosts", "array", [("string")]), ("add_ranks_percent_complete", "int"), ("remove_ranks", "boolean"), ("remove_ranks_status", "string"), ("ranks_being_removed", "array", [("int")]), ("remove_ranks_percent_complete", "int"), ("rebalance", "boolean"), ("rebalance_unsharded_data", "boolean"), ("rebalance_unsharded_data_status", "string"), ("unsharded_rebalance_percent_complete", "int"), ("rebalance_sharded_data", "boolean"), ("shard_array_version", "long"), ("rebalance_sharded_data_status", "string"), ("num_shards_changing", "int"), ("sharded_rebalance_percent_complete", "int"), ("info", "map", [("string")])] )
+        ENDPOINT = "/admin/show/cluster/operations"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -3587,9 +3628,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/admin/show/configuration"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_show_configuration_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_show_configuration_response","fields":[{"name":"config_string","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_show_configuration_response","fields":[{"name":"config_string","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("config_string", "string")] )
+        RSP_SCHEMA = Schema( "record", [("config_string", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/show/configuration"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3598,9 +3639,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/admin/show/jobs"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_show_jobs_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_show_jobs_response","fields":[{"name":"job_id","type":{"type":"array","items":"int"}},{"name":"status","type":{"type":"array","items":"string"}},{"name":"endpoint_name","type":{"type":"array","items":"string"}},{"name":"time_received","type":{"type":"array","items":"long"}},{"name":"auth_id","type":{"type":"array","items":"string"}},{"name":"user_data","type":{"type":"array","items":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_show_jobs_response","fields":[{"name":"job_id","type":{"type":"array","items":"long"}},{"name":"status","type":{"type":"array","items":"string"}},{"name":"endpoint_name","type":{"type":"array","items":"string"}},{"name":"time_received","type":{"type":"array","items":"long"}},{"name":"auth_id","type":{"type":"array","items":"string"}},{"name":"user_data","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("job_id", "array", [("int")]), ("status", "array", [("string")]), ("endpoint_name", "array", [("string")]), ("time_received", "array", [("long")]), ("auth_id", "array", [("string")]), ("user_data", "array", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("job_id", "array", [("long")]), ("status", "array", [("string")]), ("endpoint_name", "array", [("string")]), ("time_received", "array", [("long")]), ("auth_id", "array", [("string")]), ("user_data", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/show/jobs"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3609,9 +3650,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/admin/show/shards"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_show_shards_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_show_shards_response","fields":[{"name":"version","type":"long"},{"name":"rank","type":{"type":"array","items":"int"}},{"name":"tom","type":{"type":"array","items":"int"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_show_shards_response","fields":[{"name":"version","type":"long"},{"name":"rank","type":{"type":"array","items":"int"}},{"name":"tom","type":{"type":"array","items":"int"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("version", "long"), ("rank", "array", [("int")]), ("tom", "array", [("int")])] )
+        RSP_SCHEMA = Schema( "record", [("version", "long"), ("rank", "array", [("int")]), ("tom", "array", [("int")]), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/show/shards"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3620,9 +3661,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/admin/shutdown"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_shutdown_request","fields":[{"name":"exit_type","type":"string"},{"name":"authorization","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_shutdown_response","fields":[{"name":"exit_status","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_shutdown_response","fields":[{"name":"exit_status","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("exit_type", "string"), ("authorization", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("exit_status", "string")] )
+        RSP_SCHEMA = Schema( "record", [("exit_status", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/shutdown"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3631,9 +3672,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/admin/verifydb"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_verify_db_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_verify_db_response","fields":[{"name":"verified_ok","type":"boolean"},{"name":"error_list","type":{"type":"array","items":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_verify_db_response","fields":[{"name":"verified_ok","type":"boolean"},{"name":"error_list","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("verified_ok", "boolean"), ("error_list", "array", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("verified_ok", "boolean"), ("error_list", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/verifydb"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3642,9 +3683,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/aggregate/convexhull"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_convex_hull_request","fields":[{"name":"table_name","type":"string"},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_convex_hull_response","fields":[{"name":"x_vector","type":{"type":"array","items":"double"}},{"name":"y_vector","type":{"type":"array","items":"double"}},{"name":"count","type":"int"},{"name":"is_valid","type":"boolean"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_convex_hull_response","fields":[{"name":"x_vector","type":{"type":"array","items":"double"}},{"name":"y_vector","type":{"type":"array","items":"double"}},{"name":"count","type":"int"},{"name":"is_valid","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("x_column_name", "string"), ("y_column_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("x_vector", "array", [("double")]), ("y_vector", "array", [("double")]), ("count", "int"), ("is_valid", "boolean")] )
+        RSP_SCHEMA = Schema( "record", [("x_vector", "array", [("double")]), ("y_vector", "array", [("double")]), ("count", "int"), ("is_valid", "boolean"), ("info", "map", [("string")])] )
         ENDPOINT = "/aggregate/convexhull"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3653,10 +3694,10 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/aggregate/groupby"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_group_by_request","fields":[{"name":"table_name","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"offset","type":"long"},{"name":"limit","type":"long"},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_group_by_response","fields":[{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"},{"name":"total_number_of_records","type":"long"},{"name":"has_more_records","type":"boolean"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_group_by_response","fields":[{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"},{"name":"total_number_of_records","type":"long"},{"name":"has_more_records","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("column_names", "array", [("string")]), ("offset", "long"), ("limit", "long"), ("encoding", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("response_schema_str", "string"), ("binary_encoded_response", "bytes"), ("json_encoded_response", "string"), ("total_number_of_records", "long"), ("has_more_records", "boolean")] )
-        RSP_SCHEMA_CEXT = Schema( "record", [("response_schema_str", "string"), ("binary_encoded_response", "object"), ("json_encoded_response", "string"), ("total_number_of_records", "long"), ("has_more_records", "boolean")] )
+        RSP_SCHEMA = Schema( "record", [("response_schema_str", "string"), ("binary_encoded_response", "bytes"), ("json_encoded_response", "string"), ("total_number_of_records", "long"), ("has_more_records", "boolean"), ("info", "map", [("string")])] )
+        RSP_SCHEMA_CEXT = Schema( "record", [("response_schema_str", "string"), ("binary_encoded_response", "object"), ("json_encoded_response", "string"), ("total_number_of_records", "long"), ("has_more_records", "boolean"), ("info", "map", [("string")])] )
         ENDPOINT = "/aggregate/groupby"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3666,9 +3707,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/aggregate/histogram"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_histogram_request","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"},{"name":"start","type":"double"},{"name":"end","type":"double"},{"name":"interval","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_histogram_response","fields":[{"name":"counts","type":{"type":"array","items":"double"}},{"name":"start","type":"double"},{"name":"end","type":"double"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_histogram_response","fields":[{"name":"counts","type":{"type":"array","items":"double"}},{"name":"start","type":"double"},{"name":"end","type":"double"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("column_name", "string"), ("start", "double"), ("end", "double"), ("interval", "double"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("counts", "array", [("double")]), ("start", "double"), ("end", "double")] )
+        RSP_SCHEMA = Schema( "record", [("counts", "array", [("double")]), ("start", "double"), ("end", "double"), ("info", "map", [("string")])] )
         ENDPOINT = "/aggregate/histogram"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3677,9 +3718,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/aggregate/kmeans"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_k_means_request","fields":[{"name":"table_name","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"k","type":"int"},{"name":"tolerance","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_k_means_response","fields":[{"name":"means","type":{"type":"array","items":{"type":"array","items":"double"}}},{"name":"counts","type":{"type":"array","items":"long"}},{"name":"rms_dists","type":{"type":"array","items":"double"}},{"name":"count","type":"long"},{"name":"rms_dist","type":"double"},{"name":"tolerance","type":"double"},{"name":"num_iters","type":"int"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_k_means_response","fields":[{"name":"means","type":{"type":"array","items":{"type":"array","items":"double"}}},{"name":"counts","type":{"type":"array","items":"long"}},{"name":"rms_dists","type":{"type":"array","items":"double"}},{"name":"count","type":"long"},{"name":"rms_dist","type":"double"},{"name":"tolerance","type":"double"},{"name":"num_iters","type":"int"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("column_names", "array", [("string")]), ("k", "int"), ("tolerance", "double"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("means", "array", [("array", [("double")])]), ("counts", "array", [("long")]), ("rms_dists", "array", [("double")]), ("count", "long"), ("rms_dist", "double"), ("tolerance", "double"), ("num_iters", "int")] )
+        RSP_SCHEMA = Schema( "record", [("means", "array", [("array", [("double")])]), ("counts", "array", [("long")]), ("rms_dists", "array", [("double")]), ("count", "long"), ("rms_dist", "double"), ("tolerance", "double"), ("num_iters", "int"), ("info", "map", [("string")])] )
         ENDPOINT = "/aggregate/kmeans"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3688,9 +3729,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/aggregate/minmax"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_min_max_request","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_min_max_response","fields":[{"name":"min","type":"double"},{"name":"max","type":"double"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_min_max_response","fields":[{"name":"min","type":"double"},{"name":"max","type":"double"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("column_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("min", "double"), ("max", "double")] )
+        RSP_SCHEMA = Schema( "record", [("min", "double"), ("max", "double"), ("info", "map", [("string")])] )
         ENDPOINT = "/aggregate/minmax"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3699,9 +3740,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/aggregate/minmax/geometry"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_min_max_geometry_request","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_min_max_geometry_response","fields":[{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_min_max_geometry_response","fields":[{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("column_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double")] )
+        RSP_SCHEMA = Schema( "record", [("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("info", "map", [("string")])] )
         ENDPOINT = "/aggregate/minmax/geometry"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3710,9 +3751,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/aggregate/statistics"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_statistics_request","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"},{"name":"stats","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_statistics_response","fields":[{"name":"stats","type":{"type":"map","values":"double"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_statistics_response","fields":[{"name":"stats","type":{"type":"map","values":"double"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("column_name", "string"), ("stats", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("stats", "map", [("double")])] )
+        RSP_SCHEMA = Schema( "record", [("stats", "map", [("double")]), ("info", "map", [("string")])] )
         ENDPOINT = "/aggregate/statistics"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3721,9 +3762,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/aggregate/statistics/byrange"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_statistics_by_range_request","fields":[{"name":"table_name","type":"string"},{"name":"select_expression","type":"string"},{"name":"column_name","type":"string"},{"name":"value_column_name","type":"string"},{"name":"stats","type":"string"},{"name":"start","type":"double"},{"name":"end","type":"double"},{"name":"interval","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_statistics_by_range_response","fields":[{"name":"stats","type":{"type":"map","values":{"type":"array","items":"double"}}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_statistics_by_range_response","fields":[{"name":"stats","type":{"type":"map","values":{"type":"array","items":"double"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("select_expression", "string"), ("column_name", "string"), ("value_column_name", "string"), ("stats", "string"), ("start", "double"), ("end", "double"), ("interval", "double"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("stats", "map", [("array", [("double")])])] )
+        RSP_SCHEMA = Schema( "record", [("stats", "map", [("array", [("double")])]), ("info", "map", [("string")])] )
         ENDPOINT = "/aggregate/statistics/byrange"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3732,10 +3773,10 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/aggregate/unique"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_unique_request","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"},{"name":"offset","type":"long"},{"name":"limit","type":"long"},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_unique_response","fields":[{"name":"table_name","type":"string"},{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"},{"name":"has_more_records","type":"boolean"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_unique_response","fields":[{"name":"table_name","type":"string"},{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"},{"name":"has_more_records","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("column_name", "string"), ("offset", "long"), ("limit", "long"), ("encoding", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("response_schema_str", "string"), ("binary_encoded_response", "bytes"), ("json_encoded_response", "string"), ("has_more_records", "boolean")] )
-        RSP_SCHEMA_CEXT = Schema( "record", [("table_name", "string"), ("response_schema_str", "string"), ("binary_encoded_response", "object"), ("json_encoded_response", "string"), ("has_more_records", "boolean")] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("response_schema_str", "string"), ("binary_encoded_response", "bytes"), ("json_encoded_response", "string"), ("has_more_records", "boolean"), ("info", "map", [("string")])] )
+        RSP_SCHEMA_CEXT = Schema( "record", [("table_name", "string"), ("response_schema_str", "string"), ("binary_encoded_response", "object"), ("json_encoded_response", "string"), ("has_more_records", "boolean"), ("info", "map", [("string")])] )
         ENDPOINT = "/aggregate/unique"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3745,10 +3786,10 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/aggregate/unpivot"
         REQ_SCHEMA_STR = """{"type":"record","name":"aggregate_unpivot_request","fields":[{"name":"table_name","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"variable_column_name","type":"string"},{"name":"value_column_name","type":"string"},{"name":"pivoted_columns","type":{"type":"array","items":"string"}},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_unpivot_response","fields":[{"name":"table_name","type":"string"},{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"},{"name":"total_number_of_records","type":"long"},{"name":"has_more_records","type":"boolean"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"aggregate_unpivot_response","fields":[{"name":"table_name","type":"string"},{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"},{"name":"total_number_of_records","type":"long"},{"name":"has_more_records","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("column_names", "array", [("string")]), ("variable_column_name", "string"), ("value_column_name", "string"), ("pivoted_columns", "array", [("string")]), ("encoding", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("response_schema_str", "string"), ("binary_encoded_response", "bytes"), ("json_encoded_response", "string"), ("total_number_of_records", "long"), ("has_more_records", "boolean")] )
-        RSP_SCHEMA_CEXT = Schema( "record", [("table_name", "string"), ("response_schema_str", "string"), ("binary_encoded_response", "object"), ("json_encoded_response", "string"), ("total_number_of_records", "long"), ("has_more_records", "boolean")] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("response_schema_str", "string"), ("binary_encoded_response", "bytes"), ("json_encoded_response", "string"), ("total_number_of_records", "long"), ("has_more_records", "boolean"), ("info", "map", [("string")])] )
+        RSP_SCHEMA_CEXT = Schema( "record", [("table_name", "string"), ("response_schema_str", "string"), ("binary_encoded_response", "object"), ("json_encoded_response", "string"), ("total_number_of_records", "long"), ("has_more_records", "boolean"), ("info", "map", [("string")])] )
         ENDPOINT = "/aggregate/unpivot"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3756,11 +3797,22 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "RSP_SCHEMA_CEXT" : RSP_SCHEMA_CEXT,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/alter/resourcegroup"
+        REQ_SCHEMA_STR = """{"type":"record","name":"alter_resource_group_request","fields":[{"name":"name","type":"string"},{"name":"tier_attributes","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"tier_strategy","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_resource_group_response","fields":[{"name":"name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("name", "string"), ("tier_attributes", "map", [("map", [("string")])]), ("tier_strategy", "array", [("string")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/alter/resourcegroup"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/alter/system/properties"
         REQ_SCHEMA_STR = """{"type":"record","name":"alter_system_properties_request","fields":[{"name":"property_updates_map","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"alter_system_properties_response","fields":[{"name":"updated_properties_map","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_system_properties_response","fields":[{"name":"updated_properties_map","type":{"type":"map","values":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("property_updates_map", "map", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("updated_properties_map", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("updated_properties_map", "map", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/alter/system/properties"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3769,10 +3821,21 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/alter/table"
         REQ_SCHEMA_STR = """{"type":"record","name":"alter_table_request","fields":[{"name":"table_name","type":"string"},{"name":"action","type":"string"},{"name":"value","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"alter_table_response","fields":[{"name":"table_name","type":"string"},{"name":"action","type":"string"},{"name":"value","type":"string"},{"name":"type_id","type":"string"},{"name":"type_definition","type":"string"},{"name":"properties","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"label","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_table_response","fields":[{"name":"table_name","type":"string"},{"name":"action","type":"string"},{"name":"value","type":"string"},{"name":"type_id","type":"string"},{"name":"type_definition","type":"string"},{"name":"properties","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"label","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("action", "string"), ("value", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("action", "string"), ("value", "string"), ("type_id", "string"), ("type_definition", "string"), ("properties", "map", [("array", [("string")])]), ("label", "string")] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("action", "string"), ("value", "string"), ("type_id", "string"), ("type_definition", "string"), ("properties", "map", [("array", [("string")])]), ("label", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/alter/table"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/alter/table/columns"
+        REQ_SCHEMA_STR = """{"type":"record","name":"alter_table_columns_request","fields":[{"name":"table_name","type":"string"},{"name":"column_alterations","type":{"type":"array","items":{"type":"map","values":"string"},"default":{}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_table_columns_response","fields":[{"name":"table_name","type":"string"},{"name":"type_id","type":"string"},{"name":"type_definition","type":"string"},{"name":"properties","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"label","type":"string"},{"name":"column_alterations","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("column_alterations", "array", [("map", [("string")])]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("type_id", "string"), ("type_definition", "string"), ("properties", "map", [("array", [("string")])]), ("label", "string"), ("column_alterations", "array", [("map", [("string")])]), ("info", "map", [("string")])] )
+        ENDPOINT = "/alter/table/columns"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -3780,10 +3843,21 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/alter/table/metadata"
         REQ_SCHEMA_STR = """{"type":"record","name":"alter_table_metadata_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"metadata_map","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"alter_table_metadata_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"metadata_map","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_table_metadata_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"metadata_map","type":{"type":"map","values":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("metadata_map", "map", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("metadata_map", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("metadata_map", "map", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/alter/table/metadata"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/alter/tier"
+        REQ_SCHEMA_STR = """{"type":"record","name":"alter_tier_request","fields":[{"name":"name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_tier_response","fields":[{"name":"name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/alter/tier"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -3791,9 +3865,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/alter/user"
         REQ_SCHEMA_STR = """{"type":"record","name":"alter_user_request","fields":[{"name":"name","type":"string"},{"name":"action","type":"string"},{"name":"value","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"alter_user_response","fields":[{"name":"name","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_user_response","fields":[{"name":"name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("name", "string"), ("action", "string"), ("value", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("name", "string")] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/alter/user"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3802,9 +3876,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/append/records"
         REQ_SCHEMA_STR = """{"type":"record","name":"append_records_request","fields":[{"name":"table_name","type":"string"},{"name":"source_table_name","type":"string"},{"name":"field_map","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"append_records_response","fields":[{"name":"table_name","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"append_records_response","fields":[{"name":"table_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("source_table_name", "string"), ("field_map", "map", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string")] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/append/records"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3813,9 +3887,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/clear/statistics"
         REQ_SCHEMA_STR = """{"type":"record","name":"clear_statistics_request","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"clear_statistics_response","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"clear_statistics_response","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("column_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("column_name", "string")] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("column_name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/clear/statistics"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3824,9 +3898,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/clear/table"
         REQ_SCHEMA_STR = """{"type":"record","name":"clear_table_request","fields":[{"name":"table_name","type":"string"},{"name":"authorization","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"clear_table_response","fields":[{"name":"table_name","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"clear_table_response","fields":[{"name":"table_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("authorization", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string")] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/clear/table"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3835,9 +3909,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/clear/tablemonitor"
         REQ_SCHEMA_STR = """{"type":"record","name":"clear_table_monitor_request","fields":[{"name":"topic_id","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"clear_table_monitor_response","fields":[{"name":"topic_id","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"clear_table_monitor_response","fields":[{"name":"topic_id","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("topic_id", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("topic_id", "string")] )
+        RSP_SCHEMA = Schema( "record", [("topic_id", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/clear/tablemonitor"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3846,9 +3920,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/clear/trigger"
         REQ_SCHEMA_STR = """{"type":"record","name":"clear_trigger_request","fields":[{"name":"trigger_id","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"clear_trigger_response","fields":[{"name":"trigger_id","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"clear_trigger_response","fields":[{"name":"trigger_id","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("trigger_id", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("trigger_id", "string")] )
+        RSP_SCHEMA = Schema( "record", [("trigger_id", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/clear/trigger"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3857,10 +3931,21 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/collect/statistics"
         REQ_SCHEMA_STR = """{"type":"record","name":"collect_statistics_request","fields":[{"name":"table_name","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"collect_statistics_response","fields":[{"name":"table_name","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"collect_statistics_response","fields":[{"name":"table_name","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("column_names", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("column_names", "array", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("column_names", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/collect/statistics"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/create/graph"
+        REQ_SCHEMA_STR = """{"name":"create_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"directed_graph","type":"boolean"},{"name":"nodes","type":{"type":"array","items":"string"}},{"name":"edges","type":{"type":"array","items":"string"}},{"name":"weights","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"name":"create_graph_response","type":"record","fields":[{"name":"num_nodes","type":"long"},{"name":"num_edges","type":"long"},{"name":"edges_ids","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("directed_graph", "boolean"), ("nodes", "array", [("string")]), ("edges", "array", [("string")]), ("weights", "array", [("string")]), ("restrictions", "array", [("string")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("num_nodes", "long"), ("num_edges", "long"), ("edges_ids", "array", [("long")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/create/graph"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -3868,9 +3953,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/create/job"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_job_request","fields":[{"name":"endpoint","type":"string"},{"name":"request_encoding","type":"string"},{"name":"data","type":"bytes"},{"name":"data_str","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"create_job_response","fields":[{"name":"job_id","type":"int"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_job_response","fields":[{"name":"job_id","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("endpoint", "string"), ("request_encoding", "string"), ("data", "bytes"), ("data_str", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("job_id", "int")] )
+        RSP_SCHEMA = Schema( "record", [("job_id", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/job"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3879,9 +3964,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/create/jointable"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_join_table_request","fields":[{"name":"join_table_name","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"expressions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"create_join_table_response","fields":[{"name":"join_table_name","type":"string"},{"name":"count","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_join_table_response","fields":[{"name":"join_table_name","type":"string"},{"name":"count","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("join_table_name", "string"), ("table_names", "array", [("string")]), ("column_names", "array", [("string")]), ("expressions", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("join_table_name", "string"), ("count", "long")] )
+        RSP_SCHEMA = Schema( "record", [("join_table_name", "string"), ("count", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/jointable"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3890,9 +3975,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/create/materializedview"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_materialized_view_request","fields":[{"name":"table_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"create_materialized_view_response","fields":[{"name":"table_name","type":"string"},{"name":"view_id","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_materialized_view_response","fields":[{"name":"table_name","type":"string"},{"name":"view_id","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("view_id", "string")] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("view_id", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/materializedview"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3901,9 +3986,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/create/proc"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_proc_request","fields":[{"name":"proc_name","type":"string"},{"name":"execution_mode","type":"string"},{"name":"files","type":{"type":"map","values":"bytes"}},{"name":"command","type":"string"},{"name":"args","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"create_proc_response","fields":[{"name":"proc_name","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_proc_response","fields":[{"name":"proc_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("proc_name", "string"), ("execution_mode", "string"), ("files", "map", [("bytes")]), ("command", "string"), ("args", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("proc_name", "string")] )
+        RSP_SCHEMA = Schema( "record", [("proc_name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/proc"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3912,10 +3997,21 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/create/projection"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_projection_request","fields":[{"name":"table_name","type":"string"},{"name":"projection_name","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"create_projection_response","fields":[{"name":"projection_name","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_projection_response","fields":[{"name":"projection_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("projection_name", "string"), ("column_names", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("projection_name", "string")] )
+        RSP_SCHEMA = Schema( "record", [("projection_name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/projection"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/create/resourcegroup"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_resource_group_request","fields":[{"name":"name","type":"string"},{"name":"tier_attributes","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"tier_strategy","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_resource_group_response","fields":[{"name":"name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("name", "string"), ("tier_attributes", "map", [("map", [("string")])]), ("tier_strategy", "array", [("string")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/create/resourcegroup"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -3923,9 +4019,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/create/role"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_role_request","fields":[{"name":"name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"create_role_response","fields":[{"name":"name","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_role_response","fields":[{"name":"name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("name", "string")] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/role"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3934,9 +4030,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/create/table"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_table_request","fields":[{"name":"table_name","type":"string"},{"name":"type_id","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"create_table_response","fields":[{"name":"table_name","type":"string"},{"name":"type_id","type":"string"},{"name":"is_collection","type":"boolean"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_table_response","fields":[{"name":"table_name","type":"string"},{"name":"type_id","type":"string"},{"name":"is_collection","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("type_id", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("type_id", "string"), ("is_collection", "boolean")] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("type_id", "string"), ("is_collection", "boolean"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/table"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3945,9 +4041,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/create/tablemonitor"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_table_monitor_request","fields":[{"name":"table_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"create_table_monitor_response","fields":[{"name":"topic_id","type":"string"},{"name":"table_name","type":"string"},{"name":"type_schema","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_table_monitor_response","fields":[{"name":"topic_id","type":"string"},{"name":"table_name","type":"string"},{"name":"type_schema","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("topic_id", "string"), ("table_name", "string"), ("type_schema", "string")] )
+        RSP_SCHEMA = Schema( "record", [("topic_id", "string"), ("table_name", "string"), ("type_schema", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/tablemonitor"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3956,9 +4052,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/create/trigger/byarea"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_trigger_by_area_request","fields":[{"name":"request_id","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"x_vector","type":{"type":"array","items":"double"}},{"name":"y_column_name","type":"string"},{"name":"y_vector","type":{"type":"array","items":"double"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"create_trigger_by_area_response","fields":[{"name":"trigger_id","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_trigger_by_area_response","fields":[{"name":"trigger_id","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("request_id", "string"), ("table_names", "array", [("string")]), ("x_column_name", "string"), ("x_vector", "array", [("double")]), ("y_column_name", "string"), ("y_vector", "array", [("double")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("trigger_id", "string")] )
+        RSP_SCHEMA = Schema( "record", [("trigger_id", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/trigger/byarea"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3967,9 +4063,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/create/trigger/byrange"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_trigger_by_range_request","fields":[{"name":"request_id","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"column_name","type":"string"},{"name":"min","type":"double"},{"name":"max","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"create_trigger_by_range_response","fields":[{"name":"trigger_id","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_trigger_by_range_response","fields":[{"name":"trigger_id","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("request_id", "string"), ("table_names", "array", [("string")]), ("column_name", "string"), ("min", "double"), ("max", "double"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("trigger_id", "string")] )
+        RSP_SCHEMA = Schema( "record", [("trigger_id", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/trigger/byrange"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3978,9 +4074,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/create/type"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_type_request","fields":[{"name":"type_definition","type":"string"},{"name":"label","type":"string"},{"name":"properties","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"create_type_response","fields":[{"name":"type_id","type":"string"},{"name":"type_definition","type":"string"},{"name":"label","type":"string"},{"name":"properties","type":{"type":"map","values":{"type":"array","items":"string"}}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_type_response","fields":[{"name":"type_id","type":"string"},{"name":"type_definition","type":"string"},{"name":"label","type":"string"},{"name":"properties","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("type_definition", "string"), ("label", "string"), ("properties", "map", [("array", [("string")])]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("type_id", "string"), ("type_definition", "string"), ("label", "string"), ("properties", "map", [("array", [("string")])])] )
+        RSP_SCHEMA = Schema( "record", [("type_id", "string"), ("type_definition", "string"), ("label", "string"), ("properties", "map", [("array", [("string")])]), ("info", "map", [("string")])] )
         ENDPOINT = "/create/type"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -3989,9 +4085,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/create/union"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_union_request","fields":[{"name":"table_name","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"input_column_names","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"output_column_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"create_union_response","fields":[{"name":"table_name","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_union_response","fields":[{"name":"table_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("table_names", "array", [("string")]), ("input_column_names", "array", [("array", [("string")])]), ("output_column_names", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string")] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/union"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4000,9 +4096,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/create/user/external"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_user_external_request","fields":[{"name":"name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"create_user_external_response","fields":[{"name":"name","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_user_external_response","fields":[{"name":"name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("name", "string")] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/user/external"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4011,10 +4107,21 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/create/user/internal"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_user_internal_request","fields":[{"name":"name","type":"string"},{"name":"password","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"create_user_internal_response","fields":[{"name":"name","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_user_internal_response","fields":[{"name":"name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("name", "string"), ("password", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("name", "string")] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/user/internal"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/delete/graph"
+        REQ_SCHEMA_STR = """{"name":"delete_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"name":"delete_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("info", "map", [("string")])] )
+        ENDPOINT = "/delete/graph"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -4022,9 +4129,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/delete/proc"
         REQ_SCHEMA_STR = """{"type":"record","name":"delete_proc_request","fields":[{"name":"proc_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"delete_proc_response","fields":[{"name":"proc_name","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"delete_proc_response","fields":[{"name":"proc_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("proc_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("proc_name", "string")] )
+        RSP_SCHEMA = Schema( "record", [("proc_name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/delete/proc"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4033,10 +4140,21 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/delete/records"
         REQ_SCHEMA_STR = """{"type":"record","name":"delete_records_request","fields":[{"name":"table_name","type":"string"},{"name":"expressions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"delete_records_response","fields":[{"name":"count_deleted","type":"long"},{"name":"counts_deleted","type":{"type":"array","items":"long"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"delete_records_response","fields":[{"name":"count_deleted","type":"long"},{"name":"counts_deleted","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("expressions", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("count_deleted", "long"), ("counts_deleted", "array", [("long")])] )
+        RSP_SCHEMA = Schema( "record", [("count_deleted", "long"), ("counts_deleted", "array", [("long")]), ("info", "map", [("string")])] )
         ENDPOINT = "/delete/records"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/delete/resourcegroup"
+        REQ_SCHEMA_STR = """{"type":"record","name":"delete_resource_group_request","fields":[{"name":"name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"delete_resource_group_response","fields":[{"name":"name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/delete/resourcegroup"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -4044,9 +4162,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/delete/role"
         REQ_SCHEMA_STR = """{"type":"record","name":"delete_role_request","fields":[{"name":"name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"delete_role_response","fields":[{"name":"name","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"delete_role_response","fields":[{"name":"name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("name", "string")] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/delete/role"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4055,9 +4173,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/delete/user"
         REQ_SCHEMA_STR = """{"type":"record","name":"delete_user_request","fields":[{"name":"name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"delete_user_response","fields":[{"name":"name","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"delete_user_response","fields":[{"name":"name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("name", "string")] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/delete/user"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4066,9 +4184,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/execute/proc"
         REQ_SCHEMA_STR = """{"type":"record","name":"execute_proc_request","fields":[{"name":"proc_name","type":"string"},{"name":"params","type":{"type":"map","values":"string"}},{"name":"bin_params","type":{"type":"map","values":"bytes"}},{"name":"input_table_names","type":{"type":"array","items":"string"}},{"name":"input_column_names","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"output_table_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"execute_proc_response","fields":[{"name":"run_id","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"execute_proc_response","fields":[{"name":"run_id","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("proc_name", "string"), ("params", "map", [("string")]), ("bin_params", "map", [("bytes")]), ("input_table_names", "array", [("string")]), ("input_column_names", "map", [("array", [("string")])]), ("output_table_names", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("run_id", "string")] )
+        RSP_SCHEMA = Schema( "record", [("run_id", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/execute/proc"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4076,21 +4194,23 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/execute/sql"
-        REQ_SCHEMA_STR = """{"type":"record","name":"execute_sql_request","fields":[{"name":"Query","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"execute_sql_response","fields":[{"name":"query_execution_plan","type":"string"}]}"""
-        REQ_SCHEMA = Schema( "record", [("Query", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("query_execution_plan", "string")] )
+        REQ_SCHEMA_STR = """{"type":"record","name":"execute_sql_request","fields":[{"name":"statement","type":"string"},{"name":"offset","type":"long"},{"name":"limit","type":"long"},{"name":"encoding","type":"string"},{"name":"request_schema_str","type":"string"},{"name":"data","type":{"type":"array","items":"bytes"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"execute_sql_response","fields":[{"name":"count_affected","type":"long"},{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"},{"name":"total_number_of_records","type":"long"},{"name":"has_more_records","type":"boolean"},{"name":"paging_table","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("statement", "string"), ("offset", "long"), ("limit", "long"), ("encoding", "string"), ("request_schema_str", "string"), ("data", "array", [("bytes")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("count_affected", "long"), ("response_schema_str", "string"), ("binary_encoded_response", "bytes"), ("json_encoded_response", "string"), ("total_number_of_records", "long"), ("has_more_records", "boolean"), ("paging_table", "string"), ("info", "map", [("string")])] )
+        RSP_SCHEMA_CEXT = Schema( "record", [("count_affected", "long"), ("response_schema_str", "string"), ("binary_encoded_response", "object"), ("json_encoded_response", "string"), ("total_number_of_records", "long"), ("has_more_records", "boolean"), ("paging_table", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/execute/sql"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "RSP_SCHEMA_CEXT" : RSP_SCHEMA_CEXT,
                                        "ENDPOINT" : ENDPOINT }
         name = "/filter"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"expression","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"filter_response","fields":[{"name":"count","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"filter_response","fields":[{"name":"count","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("view_name", "string"), ("expression", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("count", "long")] )
+        RSP_SCHEMA = Schema( "record", [("count", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/filter"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4099,9 +4219,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/filter/byarea"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_area_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"x_column_name","type":"string"},{"name":"x_vector","type":{"type":"array","items":"double"}},{"name":"y_column_name","type":"string"},{"name":"y_vector","type":{"type":"array","items":"double"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_area_response","fields":[{"name":"count","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_area_response","fields":[{"name":"count","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("view_name", "string"), ("x_column_name", "string"), ("x_vector", "array", [("double")]), ("y_column_name", "string"), ("y_vector", "array", [("double")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("count", "long")] )
+        RSP_SCHEMA = Schema( "record", [("count", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/filter/byarea"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4110,9 +4230,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/filter/byarea/geometry"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_area_geometry_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"column_name","type":"string"},{"name":"x_vector","type":{"type":"array","items":"double"}},{"name":"y_vector","type":{"type":"array","items":"double"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_area_geometry_response","fields":[{"name":"count","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_area_geometry_response","fields":[{"name":"count","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("view_name", "string"), ("column_name", "string"), ("x_vector", "array", [("double")]), ("y_vector", "array", [("double")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("count", "long")] )
+        RSP_SCHEMA = Schema( "record", [("count", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/filter/byarea/geometry"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4121,9 +4241,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/filter/bybox"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_box_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"x_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"y_column_name","type":"string"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_box_response","fields":[{"name":"count","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_box_response","fields":[{"name":"count","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("view_name", "string"), ("x_column_name", "string"), ("min_x", "double"), ("max_x", "double"), ("y_column_name", "string"), ("min_y", "double"), ("max_y", "double"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("count", "long")] )
+        RSP_SCHEMA = Schema( "record", [("count", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/filter/bybox"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4132,9 +4252,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/filter/bybox/geometry"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_box_geometry_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_box_geometry_response","fields":[{"name":"count","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_box_geometry_response","fields":[{"name":"count","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("view_name", "string"), ("column_name", "string"), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("count", "long")] )
+        RSP_SCHEMA = Schema( "record", [("count", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/filter/bybox/geometry"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4143,9 +4263,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/filter/bygeometry"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_geometry_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"column_name","type":"string"},{"name":"input_wkt","type":"string"},{"name":"operation","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_geometry_response","fields":[{"name":"count","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_geometry_response","fields":[{"name":"count","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("view_name", "string"), ("column_name", "string"), ("input_wkt", "string"), ("operation", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("count", "long")] )
+        RSP_SCHEMA = Schema( "record", [("count", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/filter/bygeometry"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4154,9 +4274,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/filter/bylist"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_list_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"column_values_map","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_list_response","fields":[{"name":"count","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_list_response","fields":[{"name":"count","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("view_name", "string"), ("column_values_map", "map", [("array", [("string")])]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("count", "long")] )
+        RSP_SCHEMA = Schema( "record", [("count", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/filter/bylist"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4165,9 +4285,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/filter/byradius"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_radius_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"x_column_name","type":"string"},{"name":"x_center","type":"double"},{"name":"y_column_name","type":"string"},{"name":"y_center","type":"double"},{"name":"radius","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_radius_response","fields":[{"name":"count","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_radius_response","fields":[{"name":"count","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("view_name", "string"), ("x_column_name", "string"), ("x_center", "double"), ("y_column_name", "string"), ("y_center", "double"), ("radius", "double"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("count", "long")] )
+        RSP_SCHEMA = Schema( "record", [("count", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/filter/byradius"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4176,9 +4296,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/filter/byradius/geometry"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_radius_geometry_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"column_name","type":"string"},{"name":"x_center","type":"double"},{"name":"y_center","type":"double"},{"name":"radius","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_radius_geometry_response","fields":[{"name":"count","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_radius_geometry_response","fields":[{"name":"count","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("view_name", "string"), ("column_name", "string"), ("x_center", "double"), ("y_center", "double"), ("radius", "double"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("count", "long")] )
+        RSP_SCHEMA = Schema( "record", [("count", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/filter/byradius/geometry"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4187,9 +4307,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/filter/byrange"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_range_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"column_name","type":"string"},{"name":"lower_bound","type":"double"},{"name":"upper_bound","type":"double"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_range_response","fields":[{"name":"count","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_range_response","fields":[{"name":"count","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("view_name", "string"), ("column_name", "string"), ("lower_bound", "double"), ("upper_bound", "double"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("count", "long")] )
+        RSP_SCHEMA = Schema( "record", [("count", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/filter/byrange"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4198,9 +4318,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/filter/byseries"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_series_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"track_id","type":"string"},{"name":"target_track_ids","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_series_response","fields":[{"name":"count","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_series_response","fields":[{"name":"count","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("view_name", "string"), ("track_id", "string"), ("target_track_ids", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("count", "long")] )
+        RSP_SCHEMA = Schema( "record", [("count", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/filter/byseries"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4209,9 +4329,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/filter/bystring"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_string_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"expression","type":"string"},{"name":"mode","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_string_response","fields":[{"name":"count","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_string_response","fields":[{"name":"count","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("view_name", "string"), ("expression", "string"), ("mode", "string"), ("column_names", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("count", "long")] )
+        RSP_SCHEMA = Schema( "record", [("count", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/filter/bystring"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4220,9 +4340,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/filter/bytable"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_table_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"column_name","type":"string"},{"name":"source_table_name","type":"string"},{"name":"source_table_column_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_table_response","fields":[{"name":"count","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_table_response","fields":[{"name":"count","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("view_name", "string"), ("column_name", "string"), ("source_table_name", "string"), ("source_table_column_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("count", "long")] )
+        RSP_SCHEMA = Schema( "record", [("count", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/filter/bytable"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4231,9 +4351,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/filter/byvalue"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_value_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"is_string","type":"boolean"},{"name":"value","type":"double"},{"name":"value_str","type":"string"},{"name":"column_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_value_response","fields":[{"name":"count","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_value_response","fields":[{"name":"count","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("view_name", "string"), ("is_string", "boolean"), ("value", "double"), ("value_str", "string"), ("column_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("count", "long")] )
+        RSP_SCHEMA = Schema( "record", [("count", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/filter/byvalue"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4241,10 +4361,10 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/get/job"
-        REQ_SCHEMA_STR = """{"type":"record","name":"get_job_request","fields":[{"name":"job_id","type":"int"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"get_job_response","fields":[{"name":"endpoint","type":"string"},{"name":"job_status","type":"string"},{"name":"running","type":"boolean"},{"name":"progress","type":"int"},{"name":"successful","type":"boolean"},{"name":"response_encoding","type":"string"},{"name":"job_response","type":"bytes"},{"name":"job_response_str","type":"string"},{"name":"status_map","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("job_id", "int"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("endpoint", "string"), ("job_status", "string"), ("running", "boolean"), ("progress", "int"), ("successful", "boolean"), ("response_encoding", "string"), ("job_response", "bytes"), ("job_response_str", "string"), ("status_map", "map", [("string")])] )
+        REQ_SCHEMA_STR = """{"type":"record","name":"get_job_request","fields":[{"name":"job_id","type":"long"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"get_job_response","fields":[{"name":"endpoint","type":"string"},{"name":"job_status","type":"string"},{"name":"running","type":"boolean"},{"name":"progress","type":"int"},{"name":"successful","type":"boolean"},{"name":"response_encoding","type":"string"},{"name":"job_response","type":"bytes"},{"name":"job_response_str","type":"string"},{"name":"status_map","type":{"type":"map","values":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("job_id", "long"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("endpoint", "string"), ("job_status", "string"), ("running", "boolean"), ("progress", "int"), ("successful", "boolean"), ("response_encoding", "string"), ("job_response", "bytes"), ("job_response_str", "string"), ("status_map", "map", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/get/job"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4253,10 +4373,10 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/get/records"
         REQ_SCHEMA_STR = """{"type":"record","name":"get_records_request","fields":[{"name":"table_name","type":"string"},{"name":"offset","type":"long"},{"name":"limit","type":"long"},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"get_records_response","fields":[{"name":"table_name","type":"string"},{"name":"type_name","type":"string"},{"name":"type_schema","type":"string"},{"name":"records_binary","type":{"type":"array","items":"bytes"}},{"name":"records_json","type":{"type":"array","items":"string"}},{"name":"total_number_of_records","type":"long"},{"name":"has_more_records","type":"boolean"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"get_records_response","fields":[{"name":"table_name","type":"string"},{"name":"type_name","type":"string"},{"name":"type_schema","type":"string"},{"name":"records_binary","type":{"type":"array","items":"bytes"}},{"name":"records_json","type":{"type":"array","items":"string"}},{"name":"total_number_of_records","type":"long"},{"name":"has_more_records","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("offset", "long"), ("limit", "long"), ("encoding", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("type_name", "string"), ("type_schema", "string"), ("records_binary", "array", [("bytes")]), ("records_json", "array", [("string")]), ("total_number_of_records", "long"), ("has_more_records", "boolean")] )
-        RSP_SCHEMA_CEXT = Schema( "record", [("table_name", "string"), ("type_name", "string"), ("type_schema", "string"), ("records_binary", "object_array"), ("records_json", "array", [("string")]), ("total_number_of_records", "long"), ("has_more_records", "boolean")] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("type_name", "string"), ("type_schema", "string"), ("records_binary", "array", [("bytes")]), ("records_json", "array", [("string")]), ("total_number_of_records", "long"), ("has_more_records", "boolean"), ("info", "map", [("string")])] )
+        RSP_SCHEMA_CEXT = Schema( "record", [("table_name", "string"), ("type_name", "string"), ("type_schema", "string"), ("records_binary", "object_array"), ("records_json", "array", [("string")]), ("total_number_of_records", "long"), ("has_more_records", "boolean"), ("info", "map", [("string")])] )
         ENDPOINT = "/get/records"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4266,10 +4386,10 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/get/records/bycolumn"
         REQ_SCHEMA_STR = """{"type":"record","name":"get_records_by_column_request","fields":[{"name":"table_name","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"offset","type":"long"},{"name":"limit","type":"long"},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"get_records_by_column_response","fields":[{"name":"table_name","type":"string"},{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"},{"name":"total_number_of_records","type":"long"},{"name":"has_more_records","type":"boolean"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"get_records_by_column_response","fields":[{"name":"table_name","type":"string"},{"name":"response_schema_str","type":"string"},{"name":"binary_encoded_response","type":"bytes"},{"name":"json_encoded_response","type":"string"},{"name":"total_number_of_records","type":"long"},{"name":"has_more_records","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("column_names", "array", [("string")]), ("offset", "long"), ("limit", "long"), ("encoding", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("response_schema_str", "string"), ("binary_encoded_response", "bytes"), ("json_encoded_response", "string"), ("total_number_of_records", "long"), ("has_more_records", "boolean")] )
-        RSP_SCHEMA_CEXT = Schema( "record", [("table_name", "string"), ("response_schema_str", "string"), ("binary_encoded_response", "object"), ("json_encoded_response", "string"), ("total_number_of_records", "long"), ("has_more_records", "boolean")] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("response_schema_str", "string"), ("binary_encoded_response", "bytes"), ("json_encoded_response", "string"), ("total_number_of_records", "long"), ("has_more_records", "boolean"), ("info", "map", [("string")])] )
+        RSP_SCHEMA_CEXT = Schema( "record", [("table_name", "string"), ("response_schema_str", "string"), ("binary_encoded_response", "object"), ("json_encoded_response", "string"), ("total_number_of_records", "long"), ("has_more_records", "boolean"), ("info", "map", [("string")])] )
         ENDPOINT = "/get/records/bycolumn"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4279,10 +4399,10 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/get/records/byseries"
         REQ_SCHEMA_STR = """{"type":"record","name":"get_records_by_series_request","fields":[{"name":"table_name","type":"string"},{"name":"world_table_name","type":"string"},{"name":"offset","type":"int"},{"name":"limit","type":"int"},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"get_records_by_series_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"type_names","type":{"type":"array","items":"string"}},{"name":"type_schemas","type":{"type":"array","items":"string"}},{"name":"list_records_binary","type":{"type":"array","items":{"type":"array","items":"bytes"}}},{"name":"list_records_json","type":{"type":"array","items":{"type":"array","items":"string"}}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"get_records_by_series_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"type_names","type":{"type":"array","items":"string"}},{"name":"type_schemas","type":{"type":"array","items":"string"}},{"name":"list_records_binary","type":{"type":"array","items":{"type":"array","items":"bytes"}}},{"name":"list_records_json","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("world_table_name", "string"), ("offset", "int"), ("limit", "int"), ("encoding", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("type_names", "array", [("string")]), ("type_schemas", "array", [("string")]), ("list_records_binary", "array", [("array", [("bytes")])]), ("list_records_json", "array", [("array", [("string")])])] )
-        RSP_SCHEMA_CEXT = Schema( "record", [("table_names", "array", [("string")]), ("type_names", "array", [("string")]), ("type_schemas", "array", [("string")]), ("list_records_binary", "array", [("object_array")]), ("list_records_json", "array", [("array", [("string")])])] )
+        RSP_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("type_names", "array", [("string")]), ("type_schemas", "array", [("string")]), ("list_records_binary", "array", [("array", [("bytes")])]), ("list_records_json", "array", [("array", [("string")])]), ("info", "map", [("string")])] )
+        RSP_SCHEMA_CEXT = Schema( "record", [("table_names", "array", [("string")]), ("type_names", "array", [("string")]), ("type_schemas", "array", [("string")]), ("list_records_binary", "array", [("object_array")]), ("list_records_json", "array", [("array", [("string")])]), ("info", "map", [("string")])] )
         ENDPOINT = "/get/records/byseries"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4292,10 +4412,10 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/get/records/fromcollection"
         REQ_SCHEMA_STR = """{"type":"record","name":"get_records_from_collection_request","fields":[{"name":"table_name","type":"string"},{"name":"offset","type":"long"},{"name":"limit","type":"long"},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"get_records_from_collection_response","fields":[{"name":"table_name","type":"string"},{"name":"type_names","type":{"type":"array","items":"string"}},{"name":"records_binary","type":{"type":"array","items":"bytes"}},{"name":"records_json","type":{"type":"array","items":"string"}},{"name":"record_ids","type":{"type":"array","items":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"get_records_from_collection_response","fields":[{"name":"table_name","type":"string"},{"name":"type_names","type":{"type":"array","items":"string"}},{"name":"records_binary","type":{"type":"array","items":"bytes"}},{"name":"records_json","type":{"type":"array","items":"string"}},{"name":"record_ids","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("offset", "long"), ("limit", "long"), ("encoding", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("type_names", "array", [("string")]), ("records_binary", "array", [("bytes")]), ("records_json", "array", [("string")]), ("record_ids", "array", [("string")])] )
-        RSP_SCHEMA_CEXT = Schema( "record", [("table_name", "string"), ("type_names", "array", [("string")]), ("records_binary", "object_array"), ("records_json", "array", [("string")]), ("record_ids", "array", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("type_names", "array", [("string")]), ("records_binary", "array", [("bytes")]), ("records_json", "array", [("string")]), ("record_ids", "array", [("string")]), ("info", "map", [("string")])] )
+        RSP_SCHEMA_CEXT = Schema( "record", [("table_name", "string"), ("type_names", "array", [("string")]), ("records_binary", "object_array"), ("records_json", "array", [("string")]), ("record_ids", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/get/records/fromcollection"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4303,11 +4423,22 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "RSP_SCHEMA_CEXT" : RSP_SCHEMA_CEXT,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/get/vectortile"
+        REQ_SCHEMA_STR = """{"type":"record","name":"get_vectortile_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"layers","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"tile_x","type":"int"},{"name":"tile_y","type":"int"},{"name":"zoom","type":"int"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"get_vectortile_response","fields":[{"name":"encoded_data","type":"bytes"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("column_names", "array", [("string")]), ("layers", "map", [("array", [("string")])]), ("tile_x", "int"), ("tile_y", "int"), ("zoom", "int"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("encoded_data", "bytes"), ("info", "map", [("string")])] )
+        ENDPOINT = "/get/vectortile"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/grant/permission/system"
         REQ_SCHEMA_STR = """{"type":"record","name":"grant_permission_system_request","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"grant_permission_system_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"grant_permission_system_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string")] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/grant/permission/system"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4316,9 +4447,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/grant/permission/table"
         REQ_SCHEMA_STR = """{"type":"record","name":"grant_permission_table_request","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"table_name","type":"string"},{"name":"filter_expression","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"grant_permission_table_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"table_name","type":"string"},{"name":"filter_expression","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"grant_permission_table_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"table_name","type":"string"},{"name":"filter_expression","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("table_name", "string"), ("filter_expression", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("table_name", "string"), ("filter_expression", "string")] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("table_name", "string"), ("filter_expression", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/grant/permission/table"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4327,9 +4458,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/grant/role"
         REQ_SCHEMA_STR = """{"type":"record","name":"grant_role_request","fields":[{"name":"role","type":"string"},{"name":"member","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"grant_role_response","fields":[{"name":"role","type":"string"},{"name":"member","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"grant_role_response","fields":[{"name":"role","type":"string"},{"name":"member","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("role", "string"), ("member", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("role", "string"), ("member", "string")] )
+        RSP_SCHEMA = Schema( "record", [("role", "string"), ("member", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/grant/role"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4338,9 +4469,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/has/proc"
         REQ_SCHEMA_STR = """{"type":"record","name":"has_proc_request","fields":[{"name":"proc_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"has_proc_response","fields":[{"name":"proc_name","type":"string"},{"name":"proc_exists","type":"boolean"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"has_proc_response","fields":[{"name":"proc_name","type":"string"},{"name":"proc_exists","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("proc_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("proc_name", "string"), ("proc_exists", "boolean")] )
+        RSP_SCHEMA = Schema( "record", [("proc_name", "string"), ("proc_exists", "boolean"), ("info", "map", [("string")])] )
         ENDPOINT = "/has/proc"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4349,9 +4480,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/has/table"
         REQ_SCHEMA_STR = """{"type":"record","name":"has_table_request","fields":[{"name":"table_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"has_table_response","fields":[{"name":"table_name","type":"string"},{"name":"table_exists","type":"boolean"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"has_table_response","fields":[{"name":"table_name","type":"string"},{"name":"table_exists","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("table_exists", "boolean")] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("table_exists", "boolean"), ("info", "map", [("string")])] )
         ENDPOINT = "/has/table"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4360,9 +4491,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/has/type"
         REQ_SCHEMA_STR = """{"type":"record","name":"has_type_request","fields":[{"name":"type_id","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"has_type_response","fields":[{"name":"type_id","type":"string"},{"name":"type_exists","type":"boolean"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"has_type_response","fields":[{"name":"type_id","type":"string"},{"name":"type_exists","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("type_id", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("type_id", "string"), ("type_exists", "boolean")] )
+        RSP_SCHEMA = Schema( "record", [("type_id", "string"), ("type_exists", "boolean"), ("info", "map", [("string")])] )
         ENDPOINT = "/has/type"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4371,9 +4502,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/insert/records"
         REQ_SCHEMA_STR = """{"type":"record","name":"insert_records_request","fields":[{"name":"table_name","type":"string"},{"name":"list","type":{"type":"array","items":"bytes"}},{"name":"list_str","type":{"type":"array","items":"string"}},{"name":"list_encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"insert_records_response","fields":[{"name":"record_ids","type":{"type":"array","items":"string"}},{"name":"count_inserted","type":"int"},{"name":"count_updated","type":"int"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"insert_records_response","fields":[{"name":"record_ids","type":{"type":"array","items":"string"}},{"name":"count_inserted","type":"int"},{"name":"count_updated","type":"int"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("list", "array", [("bytes")]), ("list_str", "array", [("string")]), ("list_encoding", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("record_ids", "array", [("string")]), ("count_inserted", "int"), ("count_updated", "int")] )
+        RSP_SCHEMA = Schema( "record", [("record_ids", "array", [("string")]), ("count_inserted", "int"), ("count_updated", "int"), ("info", "map", [("string")])] )
         REQ_SCHEMA_CEXT = Schema( "record", [("table_name", "string"), ("list", "object_array"), ("list_str", "array", [("string")]), ("list_encoding", "string"), ("options", "map", [("string")])] )
         ENDPOINT = "/insert/records"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -4384,9 +4515,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/insert/records/random"
         REQ_SCHEMA_STR = """{"type":"record","name":"insert_records_random_request","fields":[{"name":"table_name","type":"string"},{"name":"count","type":"long"},{"name":"options","type":{"type":"map","values":{"type":"map","values":"double"}}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"insert_records_random_response","fields":[{"name":"table_name","type":"string"},{"name":"count","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"insert_records_random_response","fields":[{"name":"table_name","type":"string"},{"name":"count","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("count", "long"), ("options", "map", [("map", [("double")])])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("count", "long")] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("count", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/insert/records/random"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4395,9 +4526,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/insert/symbol"
         REQ_SCHEMA_STR = """{"type":"record","name":"insert_symbol_request","fields":[{"name":"symbol_id","type":"string"},{"name":"symbol_format","type":"string"},{"name":"symbol_data","type":"bytes"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"insert_symbol_response","fields":[{"name":"symbol_id","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"insert_symbol_response","fields":[{"name":"symbol_id","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("symbol_id", "string"), ("symbol_format", "string"), ("symbol_data", "bytes"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("symbol_id", "string")] )
+        RSP_SCHEMA = Schema( "record", [("symbol_id", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/insert/symbol"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4406,10 +4537,21 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/kill/proc"
         REQ_SCHEMA_STR = """{"type":"record","name":"kill_proc_request","fields":[{"name":"run_id","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"kill_proc_response","fields":[{"name":"run_ids","type":{"type":"array","items":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"kill_proc_response","fields":[{"name":"run_ids","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("run_id", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("run_ids", "array", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("run_ids", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/kill/proc"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/list/graph"
+        REQ_SCHEMA_STR = """{"name":"list_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"name":"list_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"graph_names","type":{"type":"array","items":"string"}},{"name":"num_nodes","type":{"type":"array","items":"long"}},{"name":"num_edges","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("graph_names", "array", [("string")]), ("num_nodes", "array", [("long")]), ("num_edges", "array", [("long")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/list/graph"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -4417,9 +4559,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/lock/table"
         REQ_SCHEMA_STR = """{"type":"record","name":"lock_table_request","fields":[{"name":"table_name","type":"string"},{"name":"lock_type","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"lock_table_response","fields":[{"name":"lock_type","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"lock_table_response","fields":[{"name":"lock_type","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("lock_type", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("lock_type", "string")] )
+        RSP_SCHEMA = Schema( "record", [("lock_type", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/lock/table"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4428,20 +4570,31 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/merge/records"
         REQ_SCHEMA_STR = """{"type":"record","name":"merge_records_request","fields":[{"name":"table_name","type":"string"},{"name":"source_table_names","type":{"type":"array","items":"string"}},{"name":"field_maps","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"merge_records_response","fields":[{"name":"table_name","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"merge_records_response","fields":[{"name":"table_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("source_table_names", "array", [("string")]), ("field_maps", "array", [("map", [("string")])]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string")] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/merge/records"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/query/graph"
+        REQ_SCHEMA_STR = """{"name":"query_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"edge_to_node","type":"boolean"},{"name":"edge_or_node_int_ids","type":{"type":"array","items":"long"}},{"name":"edge_or_node_string_ids","type":{"type":"array","items":"string"}},{"name":"edge_or_node_wkt_ids","type":{"type":"array","items":"string"}},{"name":"adjacency_table","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"name":"query_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"adjacency_list_int_array","type":{"type":"array","items":"long"}},{"name":"adjacency_list_string_array","type":{"type":"array","items":"string"}},{"name":"adjacency_list_wkt_array","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("edge_to_node", "boolean"), ("edge_or_node_int_ids", "array", [("long")]), ("edge_or_node_string_ids", "array", [("string")]), ("edge_or_node_wkt_ids", "array", [("string")]), ("adjacency_table", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("adjacency_list_int_array", "array", [("long")]), ("adjacency_list_string_array", "array", [("string")]), ("adjacency_list_wkt_array", "array", [("string")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/query/graph"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/replace/tom"
-        REQ_SCHEMA_STR = """{"type":"record","name":"admin_replace_tom_request","fields":[{"name":"old_rank_tom","type":"long"},{"name":"new_rank_tom","type":"long"}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_replace_tom_response","fields":[{"name":"old_rank_tom","type":"long"},{"name":"new_rank_tom","type":"long"}]}"""
-        REQ_SCHEMA = Schema( "record", [("old_rank_tom", "long"), ("new_rank_tom", "long")] )
-        RSP_SCHEMA = Schema( "record", [("old_rank_tom", "long"), ("new_rank_tom", "long")] )
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_replace_tom_request","fields":[{"name":"old_rank_tom","type":"long"},{"name":"new_rank_tom","type":"long"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_replace_tom_response","fields":[{"name":"old_rank_tom","type":"long"},{"name":"new_rank_tom","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("old_rank_tom", "long"), ("new_rank_tom", "long"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("old_rank_tom", "long"), ("new_rank_tom", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/replace/tom"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4450,9 +4603,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/revoke/permission/system"
         REQ_SCHEMA_STR = """{"type":"record","name":"revoke_permission_system_request","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"revoke_permission_system_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"revoke_permission_system_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string")] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/revoke/permission/system"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4461,9 +4614,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/revoke/permission/table"
         REQ_SCHEMA_STR = """{"type":"record","name":"revoke_permission_table_request","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"table_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"revoke_permission_table_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"table_name","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"revoke_permission_table_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"table_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("table_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("table_name", "string")] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("table_name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/revoke/permission/table"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4472,9 +4625,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/revoke/role"
         REQ_SCHEMA_STR = """{"type":"record","name":"revoke_role_request","fields":[{"name":"role","type":"string"},{"name":"member","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"revoke_role_response","fields":[{"name":"role","type":"string"},{"name":"member","type":"string"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"revoke_role_response","fields":[{"name":"role","type":"string"},{"name":"member","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("role", "string"), ("member", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("role", "string"), ("member", "string")] )
+        RSP_SCHEMA = Schema( "record", [("role", "string"), ("member", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/revoke/role"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4483,9 +4636,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/proc"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_proc_request","fields":[{"name":"proc_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_proc_response","fields":[{"name":"proc_names","type":{"type":"array","items":"string"}},{"name":"execution_modes","type":{"type":"array","items":"string"}},{"name":"files","type":{"type":"array","items":{"type":"map","values":"bytes"}}},{"name":"commands","type":{"type":"array","items":"string"}},{"name":"args","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"array","items":{"type":"map","values":"string"}}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_proc_response","fields":[{"name":"proc_names","type":{"type":"array","items":"string"}},{"name":"execution_modes","type":{"type":"array","items":"string"}},{"name":"files","type":{"type":"array","items":{"type":"map","values":"bytes"}}},{"name":"commands","type":{"type":"array","items":"string"}},{"name":"args","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("proc_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("proc_names", "array", [("string")]), ("execution_modes", "array", [("string")]), ("files", "array", [("map", [("bytes")])]), ("commands", "array", [("string")]), ("args", "array", [("array", [("string")])]), ("options", "array", [("map", [("string")])])] )
+        RSP_SCHEMA = Schema( "record", [("proc_names", "array", [("string")]), ("execution_modes", "array", [("string")]), ("files", "array", [("map", [("bytes")])]), ("commands", "array", [("string")]), ("args", "array", [("array", [("string")])]), ("options", "array", [("map", [("string")])]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/proc"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4494,10 +4647,32 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/proc/status"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_proc_status_request","fields":[{"name":"run_id","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_proc_status_response","fields":[{"name":"proc_names","type":{"type":"map","values":"string"}},{"name":"params","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"bin_params","type":{"type":"map","values":{"type":"map","values":"bytes"}}},{"name":"input_table_names","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"input_column_names","type":{"type":"map","values":{"type":"map","values":{"type":"array","items":"string"}}}},{"name":"output_table_names","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"overall_statuses","type":{"type":"map","values":"string"}},{"name":"statuses","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"messages","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"results","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":"string"}}}},{"name":"bin_results","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":"bytes"}}}},{"name":"timings","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":"long"}}}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_proc_status_response","fields":[{"name":"proc_names","type":{"type":"map","values":"string"}},{"name":"params","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"bin_params","type":{"type":"map","values":{"type":"map","values":"bytes"}}},{"name":"input_table_names","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"input_column_names","type":{"type":"map","values":{"type":"map","values":{"type":"array","items":"string"}}}},{"name":"output_table_names","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"overall_statuses","type":{"type":"map","values":"string"}},{"name":"statuses","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"messages","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"results","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":"string"}}}},{"name":"bin_results","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":"bytes"}}}},{"name":"timings","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":"long"}}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("run_id", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("proc_names", "map", [("string")]), ("params", "map", [("map", [("string")])]), ("bin_params", "map", [("map", [("bytes")])]), ("input_table_names", "map", [("array", [("string")])]), ("input_column_names", "map", [("map", [("array", [("string")])])]), ("output_table_names", "map", [("array", [("string")])]), ("options", "map", [("map", [("string")])]), ("overall_statuses", "map", [("string")]), ("statuses", "map", [("map", [("string")])]), ("messages", "map", [("map", [("string")])]), ("results", "map", [("map", [("map", [("string")])])]), ("bin_results", "map", [("map", [("map", [("bytes")])])]), ("timings", "map", [("map", [("map", [("long")])])])] )
+        RSP_SCHEMA = Schema( "record", [("proc_names", "map", [("string")]), ("params", "map", [("map", [("string")])]), ("bin_params", "map", [("map", [("bytes")])]), ("input_table_names", "map", [("array", [("string")])]), ("input_column_names", "map", [("map", [("array", [("string")])])]), ("output_table_names", "map", [("array", [("string")])]), ("options", "map", [("map", [("string")])]), ("overall_statuses", "map", [("string")]), ("statuses", "map", [("map", [("string")])]), ("messages", "map", [("map", [("string")])]), ("results", "map", [("map", [("map", [("string")])])]), ("bin_results", "map", [("map", [("map", [("bytes")])])]), ("timings", "map", [("map", [("map", [("long")])])]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/proc/status"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/show/resource/statistics"
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_resource_statistics_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_resource_statistics_response","fields":[{"name":"statistics_map","type":{"type":"map","values":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("statistics_map", "map", [("string")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/show/resource/statistics"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/show/resourcegroups"
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_resource_groups_request","fields":[{"name":"names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_resource_groups_response","fields":[{"name":"groups","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("names", "array", [("string")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("groups", "map", [("map", [("string")])]), ("info", "map", [("string")])] )
+        ENDPOINT = "/show/resourcegroups"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -4505,9 +4680,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/security"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_security_request","fields":[{"name":"names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_security_response","fields":[{"name":"types","type":{"type":"map","values":"string"}},{"name":"roles","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"permissions","type":{"type":"map","values":{"type":"array","items":{"type":"map","values":"string"}}}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_security_response","fields":[{"name":"types","type":{"type":"map","values":"string"}},{"name":"roles","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"permissions","type":{"type":"map","values":{"type":"array","items":{"type":"map","values":"string"}}}},{"name":"resource_groups","type":{"type":"map","values":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("names", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("types", "map", [("string")]), ("roles", "map", [("array", [("string")])]), ("permissions", "map", [("array", [("map", [("string")])])])] )
+        RSP_SCHEMA = Schema( "record", [("types", "map", [("string")]), ("roles", "map", [("array", [("string")])]), ("permissions", "map", [("array", [("map", [("string")])])]), ("resource_groups", "map", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/security"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4516,9 +4691,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/statistics"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_statistics_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_statistics_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"stastistics_map","type":{"type":"array","items":{"type":"array","items":{"type":"map","values":"string"}}}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_statistics_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"stastistics_map","type":{"type":"array","items":{"type":"array","items":{"type":"map","values":"string"}}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("stastistics_map", "array", [("array", [("map", [("string")])])])] )
+        RSP_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("stastistics_map", "array", [("array", [("map", [("string")])])]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/statistics"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4527,9 +4702,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/system/properties"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_system_properties_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_system_properties_response","fields":[{"name":"property_map","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_system_properties_response","fields":[{"name":"property_map","type":{"type":"map","values":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("property_map", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("property_map", "map", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/system/properties"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4538,9 +4713,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/system/status"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_system_status_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_system_status_response","fields":[{"name":"status_map","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_system_status_response","fields":[{"name":"status_map","type":{"type":"map","values":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("status_map", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("status_map", "map", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/system/status"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4549,9 +4724,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/system/timing"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_system_timing_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_system_timing_response","fields":[{"name":"endpoints","type":{"type":"array","items":"string"}},{"name":"time_in_ms","type":{"type":"array","items":"float"}},{"name":"jobIds","type":{"type":"array","items":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_system_timing_response","fields":[{"name":"endpoints","type":{"type":"array","items":"string"}},{"name":"time_in_ms","type":{"type":"array","items":"float"}},{"name":"jobIds","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("endpoints", "array", [("string")]), ("time_in_ms", "array", [("float")]), ("jobIds", "array", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("endpoints", "array", [("string")]), ("time_in_ms", "array", [("float")]), ("jobIds", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/system/timing"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4560,9 +4735,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/table"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_table_request","fields":[{"name":"table_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_table_response","fields":[{"name":"table_name","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"table_descriptions","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"type_ids","type":{"type":"array","items":"string"}},{"name":"type_schemas","type":{"type":"array","items":"string"}},{"name":"type_labels","type":{"type":"array","items":"string"}},{"name":"properties","type":{"type":"array","items":{"type":"map","values":{"type":"array","items":"string"}}}},{"name":"additional_info","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"sizes","type":{"type":"array","items":"long"}},{"name":"full_sizes","type":{"type":"array","items":"long"}},{"name":"join_sizes","type":{"type":"array","items":"double"}},{"name":"total_size","type":"long"},{"name":"total_full_size","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_table_response","fields":[{"name":"table_name","type":"string"},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"table_descriptions","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"type_ids","type":{"type":"array","items":"string"}},{"name":"type_schemas","type":{"type":"array","items":"string"}},{"name":"type_labels","type":{"type":"array","items":"string"}},{"name":"properties","type":{"type":"array","items":{"type":"map","values":{"type":"array","items":"string"}}}},{"name":"additional_info","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"sizes","type":{"type":"array","items":"long"}},{"name":"full_sizes","type":{"type":"array","items":"long"}},{"name":"join_sizes","type":{"type":"array","items":"double"}},{"name":"total_size","type":"long"},{"name":"total_full_size","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("table_names", "array", [("string")]), ("table_descriptions", "array", [("array", [("string")])]), ("type_ids", "array", [("string")]), ("type_schemas", "array", [("string")]), ("type_labels", "array", [("string")]), ("properties", "array", [("map", [("array", [("string")])])]), ("additional_info", "array", [("map", [("string")])]), ("sizes", "array", [("long")]), ("full_sizes", "array", [("long")]), ("join_sizes", "array", [("double")]), ("total_size", "long"), ("total_full_size", "long")] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("table_names", "array", [("string")]), ("table_descriptions", "array", [("array", [("string")])]), ("type_ids", "array", [("string")]), ("type_schemas", "array", [("string")]), ("type_labels", "array", [("string")]), ("properties", "array", [("map", [("array", [("string")])])]), ("additional_info", "array", [("map", [("string")])]), ("sizes", "array", [("long")]), ("full_sizes", "array", [("long")]), ("join_sizes", "array", [("double")]), ("total_size", "long"), ("total_full_size", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/show/table"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4571,9 +4746,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/table/metadata"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_table_metadata_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_table_metadata_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"metadata_maps","type":{"type":"array","items":{"type":"map","values":"string"}}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_table_metadata_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"metadata_maps","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("metadata_maps", "array", [("map", [("string")])])] )
+        RSP_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("metadata_maps", "array", [("map", [("string")])]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/table/metadata"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4582,9 +4757,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/tables/bytype"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_tables_by_type_request","fields":[{"name":"type_id","type":"string"},{"name":"label","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_tables_by_type_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_tables_by_type_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("type_id", "string"), ("label", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_names", "array", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/tables/bytype"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4593,9 +4768,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/triggers"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_triggers_request","fields":[{"name":"trigger_ids","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_triggers_response","fields":[{"name":"trigger_map","type":{"type":"map","values":{"type":"map","values":"string"}}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_triggers_response","fields":[{"name":"trigger_map","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("trigger_ids", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("trigger_map", "map", [("map", [("string")])])] )
+        RSP_SCHEMA = Schema( "record", [("trigger_map", "map", [("map", [("string")])]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/triggers"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4604,10 +4779,21 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/types"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_types_request","fields":[{"name":"type_id","type":"string"},{"name":"label","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_types_response","fields":[{"name":"type_ids","type":{"type":"array","items":"string"}},{"name":"type_schemas","type":{"type":"array","items":"string"}},{"name":"labels","type":{"type":"array","items":"string"}},{"name":"properties","type":{"type":"array","items":{"type":"map","values":{"type":"array","items":"string"}}}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_types_response","fields":[{"name":"type_ids","type":{"type":"array","items":"string"}},{"name":"type_schemas","type":{"type":"array","items":"string"}},{"name":"labels","type":{"type":"array","items":"string"}},{"name":"properties","type":{"type":"array","items":{"type":"map","values":{"type":"array","items":"string"}}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("type_id", "string"), ("label", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("type_ids", "array", [("string")]), ("type_schemas", "array", [("string")]), ("labels", "array", [("string")]), ("properties", "array", [("map", [("array", [("string")])])])] )
+        RSP_SCHEMA = Schema( "record", [("type_ids", "array", [("string")]), ("type_schemas", "array", [("string")]), ("labels", "array", [("string")]), ("properties", "array", [("map", [("array", [("string")])])]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/types"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/solve/graph"
+        REQ_SCHEMA_STR = """{"name":"solve_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"weights_on_edges","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"solver_type","type":"string"},{"name":"source_node_id","type":"long"},{"name":"destination_node_ids","type":{"type":"array","items":"long"}},{"name":"node_type","type":"string"},{"name":"source_node","type":"string"},{"name":"destination_nodes","type":{"type":"array","items":"string"}},{"name":"solution_table","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"name":"solve_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"result_per_destination_node","type":{"type":"array","items":"float"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("weights_on_edges", "array", [("string")]), ("restrictions", "array", [("string")]), ("solver_type", "string"), ("source_node_id", "long"), ("destination_node_ids", "array", [("long")]), ("node_type", "string"), ("source_node", "string"), ("destination_nodes", "array", [("string")]), ("solution_table", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("result_per_destination_node", "array", [("float")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/solve/graph"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -4615,9 +4801,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/update/records"
         REQ_SCHEMA_STR = """{"type":"record","name":"update_records_request","fields":[{"name":"table_name","type":"string"},{"name":"expressions","type":{"type":"array","items":"string"}},{"name":"new_values_maps","type":{"type":"array","items":{"type":"map","values":["string","null"]}}},{"name":"records_to_insert","type":{"type":"array","items":"bytes"}},{"name":"records_to_insert_str","type":{"type":"array","items":"string"}},{"name":"record_encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"update_records_response","fields":[{"name":"count_updated","type":"long"},{"name":"counts_updated","type":{"type":"array","items":"long"}},{"name":"count_inserted","type":"long"},{"name":"counts_inserted","type":{"type":"array","items":"long"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"update_records_response","fields":[{"name":"count_updated","type":"long"},{"name":"counts_updated","type":{"type":"array","items":"long"}},{"name":"count_inserted","type":"long"},{"name":"counts_inserted","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("expressions", "array", [("string")]), ("new_values_maps", "array", [("map", [("nullable", [("string")])])]), ("records_to_insert", "array", [("bytes")]), ("records_to_insert_str", "array", [("string")]), ("record_encoding", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("count_updated", "long"), ("counts_updated", "array", [("long")]), ("count_inserted", "long"), ("counts_inserted", "array", [("long")])] )
+        RSP_SCHEMA = Schema( "record", [("count_updated", "long"), ("counts_updated", "array", [("long")]), ("count_inserted", "long"), ("counts_inserted", "array", [("long")]), ("info", "map", [("string")])] )
         REQ_SCHEMA_CEXT = Schema( "record", [("table_name", "string"), ("expressions", "array", [("string")]), ("new_values_maps", "array", [("map", [("nullable", [("string")])])]), ("records_to_insert", "object_array"), ("records_to_insert_str", "array", [("string")]), ("record_encoding", "string"), ("options", "map", [("string")])] )
         ENDPOINT = "/update/records"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -4628,9 +4814,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/update/records/byseries"
         REQ_SCHEMA_STR = """{"type":"record","name":"update_records_by_series_request","fields":[{"name":"table_name","type":"string"},{"name":"world_table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"reserved","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"update_records_by_series_response","fields":[{"name":"count","type":"int"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"update_records_by_series_response","fields":[{"name":"count","type":"int"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("world_table_name", "string"), ("view_name", "string"), ("reserved", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("count", "int")] )
+        RSP_SCHEMA = Schema( "record", [("count", "int"), ("info", "map", [("string")])] )
         ENDPOINT = "/update/records/byseries"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4638,10 +4824,10 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/visualize/image"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"}]}"""
-        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("world_table_names", "array", [("string")]), ("x_column_name", "string"), ("y_column_name", "string"), ("geometry_column_name", "string"), ("track_ids", "array", [("array", [("string")])]), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("projection", "string"), ("bg_color", "long"), ("style_options", "map", [("array", [("string")])]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("width", "double"), ("height", "double"), ("bg_color", "long"), ("image_data", "bytes")] )
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"symbol_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("world_table_names", "array", [("string")]), ("x_column_name", "string"), ("y_column_name", "string"), ("symbol_column_name", "string"), ("geometry_column_name", "string"), ("track_ids", "array", [("array", [("string")])]), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("projection", "string"), ("bg_color", "long"), ("style_options", "map", [("array", [("string")])]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("width", "double"), ("height", "double"), ("bg_color", "long"), ("image_data", "bytes"), ("info", "map", [("string")])] )
         ENDPOINT = "/visualize/image"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4650,9 +4836,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/visualize/image/chart"
         REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_chart_request","fields":[{"name":"table_name","type":"string"},{"name":"x_column_names","type":{"type":"array","items":"string"}},{"name":"y_column_names","type":{"type":"array","items":"string"}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"string"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_chart_response","fields":[{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"string"},{"name":"image_data","type":"bytes"},{"name":"axes_info","type":{"type":"map","values":{"type":"array","items":"string"}}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_chart_response","fields":[{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"string"},{"name":"image_data","type":"bytes"},{"name":"axes_info","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("x_column_names", "array", [("string")]), ("y_column_names", "array", [("string")]), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("bg_color", "string"), ("style_options", "map", [("array", [("string")])]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("bg_color", "string"), ("image_data", "bytes"), ("axes_info", "map", [("array", [("string")])])] )
+        RSP_SCHEMA = Schema( "record", [("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("bg_color", "string"), ("image_data", "bytes"), ("axes_info", "map", [("array", [("string")])]), ("info", "map", [("string")])] )
         ENDPOINT = "/visualize/image/chart"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4661,9 +4847,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/visualize/image/classbreak"
         REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"cb_attr","type":"string"},{"name":"cb_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointcolor_attr","type":"string"},{"name":"cb_pointcolor_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointsize_attr","type":"string"},{"name":"cb_pointsize_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointshape_attr","type":"string"},{"name":"cb_pointshape_vals","type":{"type":"array","items":"string"}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("world_table_names", "array", [("string")]), ("x_column_name", "string"), ("y_column_name", "string"), ("geometry_column_name", "string"), ("track_ids", "array", [("array", [("string")])]), ("cb_attr", "string"), ("cb_vals", "array", [("string")]), ("cb_pointcolor_attr", "string"), ("cb_pointcolor_vals", "array", [("string")]), ("cb_pointsize_attr", "string"), ("cb_pointsize_vals", "array", [("string")]), ("cb_pointshape_attr", "string"), ("cb_pointshape_vals", "array", [("string")]), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("projection", "string"), ("bg_color", "long"), ("style_options", "map", [("array", [("string")])]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("width", "double"), ("height", "double"), ("bg_color", "long"), ("image_data", "bytes")] )
+        RSP_SCHEMA = Schema( "record", [("width", "double"), ("height", "double"), ("bg_color", "long"), ("image_data", "bytes"), ("info", "map", [("string")])] )
         ENDPOINT = "/visualize/image/classbreak"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4672,9 +4858,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/visualize/image/contour"
         REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_contour_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"value_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"style_options","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_contour_response","fields":[{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"},{"name":"grid_data","type":"bytes"},{"name":"fill_n0","type":"double"},{"name":"fill_nn","type":"double"},{"name":"min_level","type":"double"},{"name":"max_level","type":"double"},{"name":"samples_used","type":"long"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_contour_response","fields":[{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"},{"name":"grid_data","type":"bytes"},{"name":"fill_n0","type":"double"},{"name":"fill_nn","type":"double"},{"name":"min_level","type":"double"},{"name":"max_level","type":"double"},{"name":"samples_used","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("x_column_name", "string"), ("y_column_name", "string"), ("value_column_name", "string"), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("projection", "string"), ("style_options", "map", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("width", "int"), ("height", "int"), ("bg_color", "long"), ("image_data", "bytes"), ("grid_data", "bytes"), ("fill_n0", "double"), ("fill_nn", "double"), ("min_level", "double"), ("max_level", "double"), ("samples_used", "long")] )
+        RSP_SCHEMA = Schema( "record", [("width", "int"), ("height", "int"), ("bg_color", "long"), ("image_data", "bytes"), ("grid_data", "bytes"), ("fill_n0", "double"), ("fill_nn", "double"), ("min_level", "double"), ("max_level", "double"), ("samples_used", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/visualize/image/contour"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4683,9 +4869,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/visualize/image/heatmap"
         REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_heatmap_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"value_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"style_options","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_heatmap_response","fields":[{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_heatmap_response","fields":[{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("x_column_name", "string"), ("y_column_name", "string"), ("value_column_name", "string"), ("geometry_column_name", "string"), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("projection", "string"), ("style_options", "map", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("width", "int"), ("height", "int"), ("bg_color", "long"), ("image_data", "bytes")] )
+        RSP_SCHEMA = Schema( "record", [("width", "int"), ("height", "int"), ("bg_color", "long"), ("image_data", "bytes"), ("info", "map", [("string")])] )
         ENDPOINT = "/visualize/image/heatmap"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4694,9 +4880,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/visualize/image/labels"
         REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_labels_request","fields":[{"name":"table_name","type":"string"},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"x_offset","type":"string"},{"name":"y_offset","type":"string"},{"name":"text_string","type":"string"},{"name":"font","type":"string"},{"name":"text_color","type":"string"},{"name":"text_angle","type":"string"},{"name":"text_scale","type":"string"},{"name":"draw_box","type":"string"},{"name":"draw_leader","type":"string"},{"name":"line_width","type":"string"},{"name":"line_color","type":"string"},{"name":"fill_color","type":"string"},{"name":"leader_x_column_name","type":"string"},{"name":"leader_y_column_name","type":"string"},{"name":"filter","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_labels_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_labels_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("x_column_name", "string"), ("y_column_name", "string"), ("x_offset", "string"), ("y_offset", "string"), ("text_string", "string"), ("font", "string"), ("text_color", "string"), ("text_angle", "string"), ("text_scale", "string"), ("draw_box", "string"), ("draw_leader", "string"), ("line_width", "string"), ("line_color", "string"), ("fill_color", "string"), ("leader_x_column_name", "string"), ("leader_y_column_name", "string"), ("filter", "string"), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("projection", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("width", "double"), ("height", "double"), ("bg_color", "long"), ("image_data", "bytes")] )
+        RSP_SCHEMA = Schema( "record", [("width", "double"), ("height", "double"), ("bg_color", "long"), ("image_data", "bytes"), ("info", "map", [("string")])] )
         ENDPOINT = "/visualize/image/labels"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4705,9 +4891,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/visualize/video"
         REQ_SCHEMA_STR = """{"type":"record","name":"visualize_video_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"time_intervals","type":{"type":"array","items":{"type":"array","items":"double"}}},{"name":"video_style","type":"string"},{"name":"session_key","type":"string"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_video_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"num_frames","type":"int"},{"name":"session_key","type":"string"},{"name":"data","type":{"type":"array","items":"bytes"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_video_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"num_frames","type":"int"},{"name":"session_key","type":"string"},{"name":"data","type":{"type":"array","items":"bytes"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("world_table_names", "array", [("string")]), ("track_ids", "array", [("array", [("string")])]), ("x_column_name", "string"), ("y_column_name", "string"), ("geometry_column_name", "string"), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("projection", "string"), ("bg_color", "long"), ("time_intervals", "array", [("array", [("double")])]), ("video_style", "string"), ("session_key", "string"), ("style_options", "map", [("array", [("string")])]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("width", "double"), ("height", "double"), ("bg_color", "long"), ("num_frames", "int"), ("session_key", "string"), ("data", "array", [("bytes")])] )
+        RSP_SCHEMA = Schema( "record", [("width", "double"), ("height", "double"), ("bg_color", "long"), ("num_frames", "int"), ("session_key", "string"), ("data", "array", [("bytes")]), ("info", "map", [("string")])] )
         ENDPOINT = "/visualize/video"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4716,9 +4902,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/visualize/video/heatmap"
         REQ_SCHEMA_STR = """{"type":"record","name":"visualize_video_heatmap_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"time_intervals","type":{"type":"array","items":{"type":"array","items":"double"}}},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"video_style","type":"string"},{"name":"session_key","type":"string"},{"name":"style_options","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_video_heatmap_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"num_frames","type":"int"},{"name":"session_key","type":"string"},{"name":"data","type":{"type":"array","items":"bytes"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_video_heatmap_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"num_frames","type":"int"},{"name":"session_key","type":"string"},{"name":"data","type":{"type":"array","items":"bytes"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("x_column_name", "string"), ("y_column_name", "string"), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("time_intervals", "array", [("array", [("double")])]), ("width", "int"), ("height", "int"), ("projection", "string"), ("video_style", "string"), ("session_key", "string"), ("style_options", "map", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("width", "double"), ("height", "double"), ("bg_color", "long"), ("num_frames", "int"), ("session_key", "string"), ("data", "array", [("bytes")])] )
+        RSP_SCHEMA = Schema( "record", [("width", "double"), ("height", "double"), ("bg_color", "long"), ("num_frames", "int"), ("session_key", "string"), ("data", "array", [("bytes")]), ("info", "map", [("string")])] )
         ENDPOINT = "/visualize/video/heatmap"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -4740,6 +4926,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["admin_rebalance"] = "/admin/rebalance"
         self.gpudb_func_to_endpoint_map["admin_remove_ranks"] = "/admin/remove/ranks"
         self.gpudb_func_to_endpoint_map["admin_show_alerts"] = "/admin/show/alerts"
+        self.gpudb_func_to_endpoint_map["admin_show_cluster_operations"] = "/admin/show/cluster/operations"
         self.gpudb_func_to_endpoint_map["admin_show_configuration"] = "/admin/show/configuration"
         self.gpudb_func_to_endpoint_map["admin_show_jobs"] = "/admin/show/jobs"
         self.gpudb_func_to_endpoint_map["admin_show_shards"] = "/admin/show/shards"
@@ -4755,9 +4942,12 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["aggregate_statistics_by_range"] = "/aggregate/statistics/byrange"
         self.gpudb_func_to_endpoint_map["aggregate_unique"] = "/aggregate/unique"
         self.gpudb_func_to_endpoint_map["aggregate_unpivot"] = "/aggregate/unpivot"
+        self.gpudb_func_to_endpoint_map["alter_resource_group"] = "/alter/resourcegroup"
         self.gpudb_func_to_endpoint_map["alter_system_properties"] = "/alter/system/properties"
         self.gpudb_func_to_endpoint_map["alter_table"] = "/alter/table"
+        self.gpudb_func_to_endpoint_map["alter_table_columns"] = "/alter/table/columns"
         self.gpudb_func_to_endpoint_map["alter_table_metadata"] = "/alter/table/metadata"
+        self.gpudb_func_to_endpoint_map["alter_tier"] = "/alter/tier"
         self.gpudb_func_to_endpoint_map["alter_user"] = "/alter/user"
         self.gpudb_func_to_endpoint_map["append_records"] = "/append/records"
         self.gpudb_func_to_endpoint_map["clear_statistics"] = "/clear/statistics"
@@ -4765,11 +4955,13 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["clear_table_monitor"] = "/clear/tablemonitor"
         self.gpudb_func_to_endpoint_map["clear_trigger"] = "/clear/trigger"
         self.gpudb_func_to_endpoint_map["collect_statistics"] = "/collect/statistics"
+        self.gpudb_func_to_endpoint_map["create_graph"] = "/create/graph"
         self.gpudb_func_to_endpoint_map["create_job"] = "/create/job"
         self.gpudb_func_to_endpoint_map["create_join_table"] = "/create/jointable"
         self.gpudb_func_to_endpoint_map["create_materialized_view"] = "/create/materializedview"
         self.gpudb_func_to_endpoint_map["create_proc"] = "/create/proc"
         self.gpudb_func_to_endpoint_map["create_projection"] = "/create/projection"
+        self.gpudb_func_to_endpoint_map["create_resource_group"] = "/create/resourcegroup"
         self.gpudb_func_to_endpoint_map["create_role"] = "/create/role"
         self.gpudb_func_to_endpoint_map["create_table"] = "/create/table"
         self.gpudb_func_to_endpoint_map["create_table_monitor"] = "/create/tablemonitor"
@@ -4779,8 +4971,10 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["create_union"] = "/create/union"
         self.gpudb_func_to_endpoint_map["create_user_external"] = "/create/user/external"
         self.gpudb_func_to_endpoint_map["create_user_internal"] = "/create/user/internal"
+        self.gpudb_func_to_endpoint_map["delete_graph"] = "/delete/graph"
         self.gpudb_func_to_endpoint_map["delete_proc"] = "/delete/proc"
         self.gpudb_func_to_endpoint_map["delete_records"] = "/delete/records"
+        self.gpudb_func_to_endpoint_map["delete_resource_group"] = "/delete/resourcegroup"
         self.gpudb_func_to_endpoint_map["delete_role"] = "/delete/role"
         self.gpudb_func_to_endpoint_map["delete_user"] = "/delete/user"
         self.gpudb_func_to_endpoint_map["execute_proc"] = "/execute/proc"
@@ -4804,6 +4998,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["get_records_by_column"] = "/get/records/bycolumn"
         self.gpudb_func_to_endpoint_map["get_records_by_series"] = "/get/records/byseries"
         self.gpudb_func_to_endpoint_map["get_records_from_collection"] = "/get/records/fromcollection"
+        self.gpudb_func_to_endpoint_map["get_vectortile"] = "/get/vectortile"
         self.gpudb_func_to_endpoint_map["grant_permission_system"] = "/grant/permission/system"
         self.gpudb_func_to_endpoint_map["grant_permission_table"] = "/grant/permission/table"
         self.gpudb_func_to_endpoint_map["grant_role"] = "/grant/role"
@@ -4814,14 +5009,18 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["insert_records_random"] = "/insert/records/random"
         self.gpudb_func_to_endpoint_map["insert_symbol"] = "/insert/symbol"
         self.gpudb_func_to_endpoint_map["kill_proc"] = "/kill/proc"
+        self.gpudb_func_to_endpoint_map["list_graph"] = "/list/graph"
         self.gpudb_func_to_endpoint_map["lock_table"] = "/lock/table"
         self.gpudb_func_to_endpoint_map["merge_records"] = "/merge/records"
+        self.gpudb_func_to_endpoint_map["query_graph"] = "/query/graph"
         self.gpudb_func_to_endpoint_map["admin_replace_tom"] = "/replace/tom"
         self.gpudb_func_to_endpoint_map["revoke_permission_system"] = "/revoke/permission/system"
         self.gpudb_func_to_endpoint_map["revoke_permission_table"] = "/revoke/permission/table"
         self.gpudb_func_to_endpoint_map["revoke_role"] = "/revoke/role"
         self.gpudb_func_to_endpoint_map["show_proc"] = "/show/proc"
         self.gpudb_func_to_endpoint_map["show_proc_status"] = "/show/proc/status"
+        self.gpudb_func_to_endpoint_map["show_resource_statistics"] = "/show/resource/statistics"
+        self.gpudb_func_to_endpoint_map["show_resource_groups"] = "/show/resourcegroups"
         self.gpudb_func_to_endpoint_map["show_security"] = "/show/security"
         self.gpudb_func_to_endpoint_map["show_statistics"] = "/show/statistics"
         self.gpudb_func_to_endpoint_map["show_system_properties"] = "/show/system/properties"
@@ -4832,6 +5031,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["show_tables_by_type"] = "/show/tables/bytype"
         self.gpudb_func_to_endpoint_map["show_triggers"] = "/show/triggers"
         self.gpudb_func_to_endpoint_map["show_types"] = "/show/types"
+        self.gpudb_func_to_endpoint_map["solve_graph"] = "/solve/graph"
         self.gpudb_func_to_endpoint_map["update_records"] = "/update/records"
         self.gpudb_func_to_endpoint_map["update_records_by_series"] = "/update/records/byseries"
         self.gpudb_func_to_endpoint_map["visualize_image"] = "/visualize/image"
@@ -4844,6 +5044,98 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["visualize_video_heatmap"] = "/visualize/video/heatmap"
     # end load_gpudb_func_to_endpoint_map
 
+    # begin admin_add_ranks
+    def admin_add_ranks( self, hosts = None, config_params = None, options = {} ):
+        """Add one or more new ranks to the Kinetica cluster. The new ranks will
+        not contain any data initially, other than replicated tables, and not
+        be assigned any shards. To rebalance data across the cluster, which
+        includes shifting some shard key assignments to newly added ranks, see
+        :meth:`.admin_rebalance`.
+
+        For example, if attempting to add three new ranks (two ranks on host
+        172.123.45.67 and one rank on host 172.123.45.68) to a Kinetica cluster
+        with additional configuration parameters:
+
+        * input parameter *hosts* would be an array including 172.123.45.67 in
+        the first two indices (signifying two ranks being added to host
+        172.123.45.67) and 172.123.45.68 in the last index (signifying one rank
+        being added to host 172.123.45.67)
+
+        * input parameter *config_params* would be an array of maps, with each
+        map corresponding to the ranks being added in input parameter *hosts*.
+        The key of each map would be the configuration parameter name and the
+        value would be the parameter's value, e.g. 'rank.gpu':'1'
+
+        Parameters:
+
+            hosts (list of str)
+                The IP address of each rank being added to the cluster. Insert
+                one entry per rank, even if they are on the same host. The
+                order of the hosts in the array only matters as it relates to
+                the input parameter *config_params*.    The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            config_params (list of dicts of str to str)
+                Configuration parameters to apply to the new ranks, e.g., which
+                GPU to use. Configuration parameters that start with 'rankN.',
+                where N is the rank number, should omit the N, as the new rank
+                number(s) are not allocated until the ranks are created. Each
+                entry in this array corresponds to the entry at the same array
+                index in the input parameter *hosts*. This array must either be
+                completely empty or have the same number of elements as the
+                hosts array.  An empty array will result in the new ranks being
+                set only with default parameters.    The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **dry_run** --
+                  If *true*, only validation checks will be performed. No ranks
+                  are added.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            added_ranks (list of ints)
+                The number assigned to each newly added rank, in the same order
+                as the ranks in the input parameter *hosts*. Will be empty if
+                the operation fails.
+
+            results (list of str)
+                Text description of the result of each rank being added.
+                Indicates the reason for any errors that occur. Entries are in
+                the same order as the input parameter *hosts*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        hosts = hosts if isinstance( hosts, list ) else ( [] if (hosts is None) else [ hosts ] )
+        config_params = config_params if isinstance( config_params, list ) else ( [] if (config_params is None) else [ config_params ] )
+        assert isinstance( options, (dict)), "admin_add_ranks(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/admin/add/ranks" )
+
+        obj = {}
+        obj['hosts'] = hosts
+        obj['config_params'] = config_params
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/admin/add/ranks' )
+
+        return AttrDict( response )
+    # end admin_add_ranks
+
+
     # begin admin_alter_jobs
     def admin_alter_jobs( self, job_ids = None, action = None, options = {} ):
         """Perform the requested action on a list of one or more job(s). Based on
@@ -4855,7 +5147,7 @@ class GPUdb(object):
 
         Parameters:
 
-            job_ids (list of ints)
+            job_ids (list of longs)
                 Jobs to be modified.    The user can provide a single element
                 (which will be automatically promoted to a list internally) or
                 a list.
@@ -4872,7 +5164,7 @@ class GPUdb(object):
         Returns:
             A dict with the following entries--
 
-            job_ids (list of ints)
+            job_ids (list of longs)
                 Jobs on which the action was performed.
 
             action (str)
@@ -4880,6 +5172,9 @@ class GPUdb(object):
 
             status (list of str)
                 Status of the requested action for each job.
+
+            info (dict of str to str)
+                Additional information.
         """
         job_ids = job_ids if isinstance( job_ids, list ) else ( [] if (job_ids is None) else [ job_ids ] )
         assert isinstance( action, (basestring)), "admin_alter_jobs(): Argument 'action' must be (one) of type(s) '(basestring)'; given %s" % type( action ).__name__
@@ -4896,6 +5191,38 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end admin_alter_jobs
+
+
+    # begin admin_alter_shards
+    def admin_alter_shards( self, version = None, use_index = None, rank = None, tom
+                            = None, index = None, backup_map_list = None,
+                            backup_map_values = None, options = {} ):
+
+        assert isinstance( version, (int, long, float)), "admin_alter_shards(): Argument 'version' must be (one) of type(s) '(int, long, float)'; given %s" % type( version ).__name__
+        assert isinstance( use_index, (bool)), "admin_alter_shards(): Argument 'use_index' must be (one) of type(s) '(bool)'; given %s" % type( use_index ).__name__
+        rank = rank if isinstance( rank, list ) else ( [] if (rank is None) else [ rank ] )
+        tom = tom if isinstance( tom, list ) else ( [] if (tom is None) else [ tom ] )
+        index = index if isinstance( index, list ) else ( [] if (index is None) else [ index ] )
+        backup_map_list = backup_map_list if isinstance( backup_map_list, list ) else ( [] if (backup_map_list is None) else [ backup_map_list ] )
+        backup_map_values = backup_map_values if isinstance( backup_map_values, list ) else ( [] if (backup_map_values is None) else [ backup_map_values ] )
+        assert isinstance( options, (dict)), "admin_alter_shards(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/admin/alter/shards" )
+
+        obj = {}
+        obj['version'] = version
+        obj['use_index'] = use_index
+        obj['rank'] = rank
+        obj['tom'] = tom
+        obj['index'] = index
+        obj['backup_map_list'] = backup_map_list
+        obj['backup_map_values'] = backup_map_values
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/admin/alter/shards' )
+
+        return AttrDict( response )
+    # end admin_alter_shards
 
 
     # begin admin_offline
@@ -4928,6 +5255,9 @@ class GPUdb(object):
 
             is_offline (bool)
                 Returns true if the system is offline, or false otherwise.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( offline, (bool)), "admin_offline(): Argument 'offline' must be (one) of type(s) '(bool)'; given %s" % type( offline ).__name__
         assert isinstance( options, (dict)), "admin_offline(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -4944,27 +5274,167 @@ class GPUdb(object):
     # end admin_offline
 
 
+    # begin admin_rebalance
+    def admin_rebalance( self, options = {} ):
+        """Rebalance the cluster so that all the nodes contain approximately an
+        equal number of records.  The rebalance will also cause the shards to
+        be equally distributed (as much as possible) across all the ranks.
+
+        Parameters:
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **rebalance_sharded_data** --
+                  If *true*, sharded data will be rebalanced approximately
+                  equally across the cluster. Note that for big clusters, this
+                  data transfer could be time consuming and result in delayed
+                  query responses.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **rebalance_unsharded_data** --
+                  If *true*, unsharded data (data without primary keys and
+                  without shard keys) will be rebalanced approximately equally
+                  across the cluster. Note that for big clusters, this data
+                  transfer could be time consuming and result in delayed query
+                  responses.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **table_whitelist** --
+                  Comma-separated list of unsharded table names to rebalance.
+                  Not applicable to sharded tables because they are always
+                  balanced in accordance with their primary key or shard key.
+                  Cannot be used simultaneously with *table_blacklist*.
+
+                * **table_blacklist** --
+                  Comma-separated list of unsharded table names to not
+                  rebalance. Not applicable to sharded tables because they are
+                  always balanced in accordance with their primary key or shard
+                  key. Cannot be used simultaneously with *table_whitelist*.
+
+        Returns:
+            A dict with the following entries--
+
+            table_names (list of str)
+                Names of the rebalanced tables.
+
+            message (list of str)
+                Error Messages from rebalancing the tables.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( options, (dict)), "admin_rebalance(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/admin/rebalance" )
+
+        obj = {}
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/admin/rebalance' )
+
+        return AttrDict( response )
+    # end admin_rebalance
+
+
+    # begin admin_remove_ranks
+    def admin_remove_ranks( self, ranks = None, options = {} ):
+        """Remove one or more ranks from the cluster.  Note that this operation
+        could take a long time to complete for big clusters. All data in the
+        ranks to be removed is rebalanced to other ranks before the node is
+        removed unless the *rebalance_sharded_data* or
+        *rebalance_unsharded_data* parameters are set to *false* in the input
+        parameter *options*.
+
+        Parameters:
+
+            ranks (list of ints)
+                Rank numbers of the ranks to be removed from the cluster.
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **rebalance_sharded_data** --
+                  When *true*, data with primary keys or shard keys will be
+                  rebalanced to other ranks prior to rank removal. Note that
+                  for big clusters, this data transfer could be time consuming
+                  and result in delayed query responses.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **rebalance_unsharded_data** --
+                  When *true*, unsharded data (data without primary keys and
+                  without shard keys) will be rebalanced to other ranks prior
+                  to rank removal. Note that for big clusters, this data
+                  transfer could be time consuming and result in delayed query
+                  responses.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+        Returns:
+            A dict with the following entries--
+
+            removed_ranks (list of ints)
+                Ranks that were removed from the cluster.  May be empty in the
+                case of failures.
+
+            results (list of str)
+                Text description of the result of each rank being removed.
+                Indicates the reason for any errors that occur. Entries are in
+                the same order as the input parameter *ranks*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        ranks = ranks if isinstance( ranks, list ) else ( [] if (ranks is None) else [ ranks ] )
+        assert isinstance( options, (dict)), "admin_remove_ranks(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/admin/remove/ranks" )
+
+        obj = {}
+        obj['ranks'] = ranks
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/admin/remove/ranks' )
+
+        return AttrDict( response )
+    # end admin_remove_ranks
+
+
     # begin admin_show_alerts
     def admin_show_alerts( self, num_alerts = None, options = {} ):
-        """Retrieves a list of the most recent alerts generated.  The number of
-        alerts to retrieve is specified in this request.
-
-        Important: This endpoint is accessed via the host manager port rather
-        than the primary database port; the default ports for host manager and
-        the primary database can be found under `Default Ports
-        <../../../install/package.html#default-ports>`_.  If you are invoking
-        this endpoint via a GPUdb API object, you must instantiate that object
-        using the host manager port instead of the database port. The same IP
-        address is used for both ports.
-
-        Returns lists of alert data, earliest to latest
+        """Requests a list of the most recent alerts.
+        Returns lists of alert data, including timestamp and type.
 
         Parameters:
 
             num_alerts (int)
                 Number of most recent alerts to request. The response will
-                return input parameter *num_alerts* alerts, or less if there
-                are less in the system. A value of 0 returns all stored alerts.
+                include up to input parameter *num_alerts* depending on how
+                many alerts there are in the system. A value of 0 returns all
+                stored alerts.
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
@@ -4973,22 +5443,24 @@ class GPUdb(object):
             A dict with the following entries--
 
             timestamps (list of str)
-                System alert timestamps.  The array is sorted from earliest to
-                latest.  Each array entry corresponds with the entries at the
-                same index in output parameter *types* and output parameter
-                *params*.
-
-            types (list of str)
-                System alert types.  The array is sorted from earliest to
-                latest. Each array entry corresponds with the entries at the
-                same index in output parameter *timestamps* and output
+                Timestamp for when the alert occurred, sorted from most recent
+                to least recent. Each array entry corresponds with the entries
+                at the same index in output parameter *types* and output
                 parameter *params*.
 
+            types (list of str)
+                Type of system alert, sorted from most recent to least recent.
+                Each array entry corresponds with the entries at the same index
+                in output parameter *timestamps* and output parameter *params*.
+
             params (list of dicts of str to str)
-                Parameters for each alert.  The array is sorted from earliest
-                to latest. Each array entry corresponds with the entries at the
+                Parameters for each alert, sorted from most recent to least
+                recent. Each array entry corresponds with the entries at the
                 same index in output parameter *timestamps* and output
                 parameter *types*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( num_alerts, (int, long, float)), "admin_show_alerts(): Argument 'num_alerts' must be (one) of type(s) '(int, long, float)'; given %s" % type( num_alerts ).__name__
         assert isinstance( options, (dict)), "admin_show_alerts(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -5003,6 +5475,156 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end admin_show_alerts
+
+
+    # begin admin_show_cluster_operations
+    def admin_show_cluster_operations( self, history_index = 0, options = {} ):
+        """Shows detailed status of current or prior cluster operations.
+
+        By default will retrieve the current or most resent cluster operation.
+        The @{history_index} is used to specify which cluster operation to
+        retrieve. A value of zero will return the most recent, one will return
+        the second most recent, etc.  The response will also indicate how many
+        cluster operations are stored in the history.
+
+        Parameters:
+
+            history_index (int)
+                Indicates which cluster operation to retrieve.  Zero is most
+                recent.  Default value is 0.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            history_index (int)
+                Indicates how recent the cluster operation is, relative to all
+                prior cluster operations.  Zero is most recent, one is second
+                most recent, etc.
+
+            history_size (int)
+                Number of cluster operations executed to date
+
+            in_progress (bool)
+                Whether this cluster operation is currently in progress or not
+
+            start_time (str)
+                The start time of the cluster operation
+
+            end_time (str)
+                The end time of the cluster operation, if completed
+
+            endpoint (str)
+                The endpoint that initiated the cluster operation.
+
+            endpoint_schema (str)
+                The schema for the original request
+
+            overall_status (str)
+                OK or ERROR.  If the operation is still in progress, OK means
+                it has been successful so far.
+
+            user_stopped (bool)
+                Indicates if a user stopped this operation at any point while
+                in progress.
+
+            percent_complete (int)
+                Percent complete of this entire operation.
+
+            dry_run (bool)
+                Indicates if this operation was a dry run.
+
+            messages (list of str)
+                Updates, and error messages if any.
+
+            add_ranks (bool)
+                Indicates that adding ranks is being performed or was performed
+                as part of this operation.
+
+            add_ranks_status (str)
+                Will be one of NOT_STARTED, IN PROGRESS, INTERRUPTED,
+                COMPLETED_OK, or ERROR
+
+            ranks_being_added (list of ints)
+                The rank numbers of the ranks currently being added, or the
+                rank numbers that were added if the operation is complete.
+
+            rank_hosts (list of str)
+                The host IP addresses of the ranks being added, in the same
+                order as the output parameter *ranks_being_added* list.
+
+            add_ranks_percent_complete (int)
+                Current percent complete of the add ranks operation
+
+            remove_ranks (bool)
+                Indicates that removing ranks is being performed or was
+                performed as part of this operation.
+
+            remove_ranks_status (str)
+                Will be one of NOT_STARTED, IN PROGRESS, INTERRUPTED,
+                COMPLETED_OK, or ERROR
+
+            ranks_being_removed (list of ints)
+                The ranks being removed, or that have been removed if the
+                operation is completed.
+
+            remove_ranks_percent_complete (int)
+                Current percent complete of the remove ranks operation
+
+            rebalance (bool)
+                Indicates whether data and/or shard rebalancing is part of this
+                operation
+
+            rebalance_unsharded_data (bool)
+                Indicates that a rebalance operation included rebalancing of
+                unsharded data.
+
+            rebalance_unsharded_data_status (str)
+                Will be one of NOT_STARTED, IN PROGRESS, INTERRUPTED,
+                COMPLETED_OK, or ERROR
+
+            unsharded_rebalance_percent_complete (int)
+                Percentage of unsharded tables that completed rebalancing, out
+                of all unsharded tables to rebalance
+
+            rebalance_sharded_data (bool)
+                Indicates that a rebalance operation included rebalancing of
+                sharded data.
+
+            shard_array_version (long)
+                shard array version that was/is being rebalanced to. Each
+                change to the shard array results in the version number
+                incrementing
+
+            rebalance_sharded_data_status (str)
+                Will be one of NOT_STARTED, IN PROGRESS, INTERRUPTED,
+                COMPLETED_OK, or ERROR
+
+            num_shards_changing (int)
+                Number of shards that will change as part of rebalance
+
+            sharded_rebalance_percent_complete (int)
+                Percentage of shard keys, and their associated data if
+                applicable, that have completed rebalancing.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( history_index, (int, long, float)), "admin_show_cluster_operations(): Argument 'history_index' must be (one) of type(s) '(int, long, float)'; given %s" % type( history_index ).__name__
+        assert isinstance( options, (dict)), "admin_show_cluster_operations(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/admin/show/cluster/operations" )
+
+        obj = {}
+        obj['history_index'] = history_index
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/admin/show/cluster/operations' )
+
+        return AttrDict( response )
+    # end admin_show_cluster_operations
 
 
     # begin admin_show_jobs
@@ -5020,7 +5642,7 @@ class GPUdb(object):
         Returns:
             A dict with the following entries--
 
-            job_id (list of ints)
+            job_id (list of longs)
 
 
             status (list of str)
@@ -5037,6 +5659,9 @@ class GPUdb(object):
 
             user_data (list of str)
 
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( options, (dict)), "admin_show_jobs(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -5073,6 +5698,9 @@ class GPUdb(object):
 
             tom (list of ints)
                 Array of toms to which the corresponding shard belongs.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( options, (dict)), "admin_show_shards(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -5108,6 +5736,9 @@ class GPUdb(object):
 
             exit_status (str)
                 'OK' upon (right before) successful exit.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( exit_type, (basestring)), "admin_shutdown(): Argument 'exit_type' must be (one) of type(s) '(basestring)'; given %s" % type( exit_type ).__name__
         assert isinstance( authorization, (basestring)), "admin_shutdown(): Argument 'authorization' must be (one) of type(s) '(basestring)'; given %s" % type( authorization ).__name__
@@ -5146,11 +5777,14 @@ class GPUdb(object):
 
             verified_ok (bool)
                 True if no errors were found, false otherwise.  Default value
-                is 'false'.
+                is False.
 
             error_list (list of str)
                 List of errors found while validating the database internal
                 state.  Default value is an empty list ( [] ).
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( options, (dict)), "admin_verify_db(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -5202,6 +5836,9 @@ class GPUdb(object):
 
             is_valid (bool)
 
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "aggregate_convex_hull(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( x_column_name, (basestring)), "aggregate_convex_hull(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
@@ -5488,6 +6125,9 @@ class GPUdb(object):
 
             has_more_records (bool)
                 Too many records. Returned a partial set.
+
+            info (dict of str to str)
+                Additional information.
 
             record_type (:class:`RecordType` or None)
                 A :class:`RecordType` object using which the user can decode
@@ -5815,6 +6455,9 @@ class GPUdb(object):
             has_more_records (bool)
                 Too many records. Returned a partial set.
 
+            info (dict of str to str)
+                Additional information.
+
             records (list of :class:`Record`)
                 A list of :class:`Record` objects which contain the decoded
                 records.
@@ -5934,6 +6577,9 @@ class GPUdb(object):
 
             end (float)
                 Value of input parameter *end*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "aggregate_histogram(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( column_name, (basestring)), "aggregate_histogram(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
@@ -6036,6 +6682,9 @@ class GPUdb(object):
 
             num_iters (int)
                 The number of iterations the algorithm executed before it quit.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "aggregate_k_means(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         column_names = column_names if isinstance( column_names, list ) else ( [] if (column_names is None) else [ column_names ] )
@@ -6085,6 +6734,9 @@ class GPUdb(object):
 
             max (float)
                 Maximum value of the input parameter *column_name*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "aggregate_min_max(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( column_name, (basestring)), "aggregate_min_max(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
@@ -6140,6 +6792,9 @@ class GPUdb(object):
             max_y (float)
                 Maximum y-coordinate value of the input parameter
                 *column_name*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "aggregate_min_max_geometry(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( column_name, (basestring)), "aggregate_min_max_geometry(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
@@ -6288,6 +6943,9 @@ class GPUdb(object):
             stats (dict of str to floats)
                 (statistic name, double value) pairs of the requested
                 statistics, including the total count by default.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "aggregate_statistics(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( column_name, (basestring)), "aggregate_statistics(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
@@ -6400,6 +7058,9 @@ class GPUdb(object):
                 parameter having a value that is a vector of the corresponding
                 value-column bin statistics. In a addition the key count has a
                 value that is a histogram of the binning-column.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "aggregate_statistics_by_range(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( select_expression, (basestring)), "aggregate_statistics_by_range(): Argument 'select_expression' must be (one) of type(s) '(basestring)'; given %s" % type( select_expression ).__name__
@@ -6598,6 +7259,9 @@ class GPUdb(object):
 
             has_more_records (bool)
                 Too many records. Returned a partial set.
+
+            info (dict of str to str)
+                Additional information.
 
             record_type (:class:`RecordType` or None)
                 A :class:`RecordType` object using which the user can decode
@@ -6827,6 +7491,9 @@ class GPUdb(object):
             has_more_records (bool)
                 Too many records. Returned a partial set.
 
+            info (dict of str to str)
+                Additional information.
+
             records (list of :class:`Record`)
                 A list of :class:`Record` objects which contain the decoded
                 records.
@@ -7054,6 +7721,9 @@ class GPUdb(object):
             has_more_records (bool)
                 Too many records. Returned a partial set.
 
+            info (dict of str to str)
+                Additional information.
+
             record_type (:class:`RecordType` or None)
                 A :class:`RecordType` object using which the user can decode
                 the binarydata by using :meth:`GPUdbRecord.decode_binary_data`.
@@ -7279,6 +7949,9 @@ class GPUdb(object):
             has_more_records (bool)
                 Too many records. Returned a partial set.
 
+            info (dict of str to str)
+                Additional information.
+
             records (list of :class:`Record`)
                 A list of :class:`Record` objects which contain the decoded
                 records.
@@ -7343,6 +8016,88 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end aggregate_unpivot_and_decode
+
+
+    # begin alter_resource_group
+    def alter_resource_group( self, name = None, tier_attributes = {}, tier_strategy
+                              = None, options = {} ):
+        """Alters properties of exisiting resource group to facilitate resource
+        management.
+
+        Parameters:
+
+            name (str)
+                Name of the group to be altered. Must match existing resource
+                group name.
+
+            tier_attributes (dict of str to dicts of str to str)
+                Optional map containing group limits for tier-specific
+                attributes such as memory.  Default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **max_memory** --
+                  Maximum amount of memory usable in the given tier at one time
+                  for this group.
+
+            tier_strategy (list of str)
+                Optional array that defines the default tiering strategy for
+                this group. Each element pair defines an existing tier and its
+                preferred priority. e.g. ['RAM 50',VRAM 30']    The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **max_cpu_concurrency** --
+                  Maximum number of simultaneous threads that will be used to
+                  execute a request for this group.
+
+                * **max_scheduling_priority** --
+                  Maximum priority of a scheduled task for this group.
+
+                * **max_tier_priority** --
+                  Maximum priority of a tiered object for this group.
+
+                * **is_default_group** --
+                  If true this request applies to the global default resource
+                  group. It is an error for this field to be true when the
+                  input parameter *name* field is also populated.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( name, (basestring)), "alter_resource_group(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( tier_attributes, (dict)), "alter_resource_group(): Argument 'tier_attributes' must be (one) of type(s) '(dict)'; given %s" % type( tier_attributes ).__name__
+        tier_strategy = tier_strategy if isinstance( tier_strategy, list ) else ( [] if (tier_strategy is None) else [ tier_strategy ] )
+        assert isinstance( options, (dict)), "alter_resource_group(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/alter/resourcegroup" )
+
+        obj = {}
+        obj['name'] = name
+        obj['tier_attributes'] = self.__sanitize_dicts( tier_attributes )
+        obj['tier_strategy'] = tier_strategy
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/alter/resourcegroup' )
+
+        return AttrDict( response )
+    # end alter_resource_group
 
 
     # begin alter_system_properties
@@ -7478,6 +8233,9 @@ class GPUdb(object):
             updated_properties_map (dict of str to str)
                 map of values updated, For speed tests a map of values measured
                 to the measurement
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( property_updates_map, (dict)), "alter_system_properties(): Argument 'property_updates_map' must be (one) of type(s) '(dict)'; given %s" % type( property_updates_map ).__name__
         assert isinstance( options, (dict)), "alter_system_properties(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -7498,8 +8256,7 @@ class GPUdb(object):
     def alter_table( self, table_name = None, action = None, value = None, options =
                      {} ):
         """Apply various modifications to a table, view, or collection.  The
-        available
-        modifications include the following:
+        available modifications include the following:
 
         Create or delete an `index
         <../../../concepts/indexes.html#column-index>`_ on a
@@ -7529,6 +8286,10 @@ class GPUdb(object):
         allow automatic expiration. This can be applied to tables, views, and
         collections.
 
+        Manage a `range-partitioned
+        <../../../concepts/tables.html#partitioning>`_
+        table's partitions.
+
         Allow homogeneous tables within a collection.
 
         Manage a table's columns--a column can be added, removed, or have its
@@ -7548,10 +8309,7 @@ class GPUdb(object):
                 Allowed values are:
 
                 * **allow_homogeneous_tables** --
-                  Sets whether homogeneous tables are allowed in the given
-                  collection. This action is only valid if input parameter
-                  *table_name* is a collection. The input parameter *value*
-                  must be either 'true' or 'false'.
+                  No longer supported; action will be ignored.
 
                 * **create_index** --
                   Creates an `index
@@ -7631,6 +8389,21 @@ class GPUdb(object):
                   parameter *value* should be the foreign_key_name specified
                   when creating the key or the complete string used to define
                   it.
+
+                * **add_partition** --
+                  Partition definition to add (for range-partitioned tables
+                  only).  See `range partitioning example
+                  <../../../concepts/tables.html#partitioning-by-range-example>`_
+                  for example format.
+
+                * **remove_partition** --
+                  Name of partition to remove (for range-partitioned tables
+                  only).  All data in partition will be moved to the default
+                  partition
+
+                * **delete_partition** --
+                  Name of partition to delete (for range-partitioned tables
+                  only).  All data in the partition will be deleted.
 
                 * **set_global_access_mode** --
                   Sets the global access mode (i.e. locking) for the table
@@ -7765,6 +8538,9 @@ class GPUdb(object):
             label (str)
                 return the type label  (when changing a table, a new type may
                 be created)
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "alter_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( action, (basestring)), "alter_table(): Argument 'action' must be (one) of type(s) '(basestring)'; given %s" % type( action ).__name__
@@ -7783,6 +8559,107 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end alter_table
+
+
+    # begin alter_table_columns
+    def alter_table_columns( self, table_name = None, column_alterations = None,
+                             options = None ):
+        """Apply various modifications to columns in a table, view.  The available
+        modifications include the following:
+
+        Create or delete an `index
+        <../../../concepts/indexes.html#column-index>`_ on a
+        particular column. This can speed up certain operations when using
+        expressions
+        containing equality or relational operators on indexed columns. This
+        only
+        applies to tables.
+
+        Manage a table's columns--a column can be added, removed, or have its
+        `type and properties <../../../concepts/types.html>`_ modified.
+
+        Set or unset `compression <../../../concepts/compression.html>`_ for a
+        column.
+
+        Parameters:
+
+            table_name (str)
+                Table on which the operation will be performed. Must be an
+                existing table or view.
+
+            column_alterations (list of dicts of str to str)
+                list of alter table add/delete/change column requests - all for
+                the same table.
+                                each request is a map that includes
+                'column_name', 'action' and the options specific for the
+                action,
+                                note that the same options as in alter table
+                requests but in the same map as the column name and the action.
+                For example:
+                [{'column_name':'col_1','action':'change_column','rename_column':'col_2'},
+                                {'column_name':'col_1','action':'add_column',
+                'type':'int','default_value':'1'}
+                                ]     The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
+
+            options (dict of str to str)
+                Optional parameters.
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                Table on which the operation was performed.
+
+            type_id (str)
+                return the type_id (when changing a table, a new type may be
+                created)
+
+            type_definition (str)
+                return the type_definition  (when changing a table, a new type
+                may be created)
+
+            properties (dict of str to lists of str)
+                return the type properties  (when changing a table, a new type
+                may be created)
+
+            label (str)
+                return the type label  (when changing a table, a new type may
+                be created)
+
+            column_alterations (list of dicts of str to str)
+                list of alter table add/delete/change column requests - all for
+                the same table.
+                                each request is a map that includes
+                'column_name', 'action' and the options specific for the
+                action,
+                                note that the same options as in alter table
+                requests but in the same map as the column name and the action.
+                For example:
+                [{'column_name':'col_1','action':'change_column','rename_column':'col_2'},
+                                {'column_name':'col_1','action':'add_column',
+                'type':'int','default_value':'1'}
+                                ]
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( table_name, (basestring)), "alter_table_columns(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        column_alterations = column_alterations if isinstance( column_alterations, list ) else ( [] if (column_alterations is None) else [ column_alterations ] )
+        assert isinstance( options, (dict)), "alter_table_columns(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/alter/table/columns" )
+
+        obj = {}
+        obj['table_name'] = table_name
+        obj['column_alterations'] = column_alterations
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/alter/table/columns' )
+
+        return AttrDict( response )
+    # end alter_table_columns
 
 
     # begin alter_table_metadata
@@ -7819,6 +8696,9 @@ class GPUdb(object):
 
             metadata_map (dict of str to str)
                 Value of input parameter *metadata_map*.
+
+            info (dict of str to str)
+                Additional information.
         """
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
         assert isinstance( metadata_map, (dict)), "alter_table_metadata(): Argument 'metadata_map' must be (one) of type(s) '(dict)'; given %s" % type( metadata_map ).__name__
@@ -7835,6 +8715,54 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end alter_table_metadata
+
+
+    # begin alter_tier
+    def alter_tier( self, name = None, options = {} ):
+        """Alters properties of exisiting tier to facilitate resource management.
+
+        Parameters:
+
+            name (str)
+                Name of the tier to be altered. Must match tier group name.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **capacity** --
+                  Maximum size in bytes this tier may hold at once.
+
+                * **high_watermark** --
+                  Triggers asynchronous eviction once a tiers resource usage
+                  exceeds this percentage down to the low watermark.
+
+                * **low_watermark** --
+                  Percentage resource usage to evict down to once the high
+                  watermark has been hit.
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( name, (basestring)), "alter_tier(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( options, (dict)), "alter_tier(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/alter/tier" )
+
+        obj = {}
+        obj['name'] = name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/alter/tier' )
+
+        return AttrDict( response )
+    # end alter_tier
 
 
     # begin alter_user
@@ -7854,6 +8782,11 @@ class GPUdb(object):
                   Sets the password of the user. The user must be an internal
                   user.
 
+                * **set_resource_group** --
+                  Sets the resource group for an internal user. The resource
+                  group must exist, otherwise, an empty string assigns the user
+                  to the default resource group.
+
             value (str)
                 The value of the modification, depending on input parameter
                 *action*.
@@ -7866,6 +8799,9 @@ class GPUdb(object):
 
             name (str)
                 Value of input parameter *name*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( name, (basestring)), "alter_user(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
         assert isinstance( action, (basestring)), "alter_user(): Argument 'action' must be (one) of type(s) '(basestring)'; given %s" % type( action ).__name__
@@ -7921,25 +8857,24 @@ class GPUdb(object):
 
                 * **offset** --
                   A positive integer indicating the number of initial results
-                  to skip from source table (specified by input parameter
-                  *source_table_name*). Default is 0. The minimum allowed value
-                  is 0. The maximum allowed value is MAX_INT.
+                  to skip from input parameter *source_table_name*. Default is
+                  0. The minimum allowed value is 0. The maximum allowed value
+                  is MAX_INT.
 
                 * **limit** --
                   A positive integer indicating the maximum number of results
-                  to be returned from source table (specified by input
-                  parameter *source_table_name*). Or END_OF_SET (-9999) to
-                  indicate that the max number of results should be returned.
+                  to be returned from input parameter *source_table_name*. Or
+                  END_OF_SET (-9999) to indicate that the max number of results
+                  should be returned.
 
                 * **expression** --
-                  Optional filter expression to apply to the source table
-                  (specified by input parameter *source_table_name*). Empty by
-                  default.
+                  Optional filter expression to apply to the input parameter
+                  *source_table_name*.
 
                 * **order_by** --
-                  Comma-separated list of the columns and expressions to be
-                  sorted by from the source table (specified by input parameter
-                  *source_table_name*); e.g. 'timestamp asc, x desc'.  The
+                  Comma-separated list of the columns to be sorted by from
+                  source table (specified by input parameter
+                  *source_table_name*), e.g., 'timestamp asc, x desc'. The
                   *order_by* columns do not have to be present in input
                   parameter *field_map*.
 
@@ -7969,6 +8904,9 @@ class GPUdb(object):
 
             table_name (str)
 
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "append_records(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( source_table_name, (basestring)), "append_records(): Argument 'source_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( source_table_name ).__name__
@@ -7987,6 +8925,26 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end append_records
+
+
+    # begin clear_statistics
+    def clear_statistics( self, table_name = '', column_name = '', options = {} ):
+
+        assert isinstance( table_name, (basestring)), "clear_statistics(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( column_name, (basestring)), "clear_statistics(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
+        assert isinstance( options, (dict)), "clear_statistics(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/clear/statistics" )
+
+        obj = {}
+        obj['table_name'] = table_name
+        obj['column_name'] = column_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/clear/statistics' )
+
+        return AttrDict( response )
+    # end clear_statistics
 
 
     # begin clear_table
@@ -8030,6 +8988,9 @@ class GPUdb(object):
             table_name (str)
                 Value of input parameter *table_name* for a given table, or
                 'ALL CLEARED' in case of clearing all tables.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "clear_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( authorization, (basestring)), "clear_table(): Argument 'authorization' must be (one) of type(s) '(basestring)'; given %s" % type( authorization ).__name__
@@ -8066,6 +9027,9 @@ class GPUdb(object):
 
             topic_id (str)
                 Value of input parameter *topic_id*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( topic_id, (basestring)), "clear_table_monitor(): Argument 'topic_id' must be (one) of type(s) '(basestring)'; given %s" % type( topic_id ).__name__
         assert isinstance( options, (dict)), "clear_table_monitor(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -8101,6 +9065,9 @@ class GPUdb(object):
 
             trigger_id (str)
                 Value of input parameter *trigger_id*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( trigger_id, (basestring)), "clear_trigger(): Argument 'trigger_id' must be (one) of type(s) '(basestring)'; given %s" % type( trigger_id ).__name__
         assert isinstance( options, (dict)), "clear_trigger(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -8115,6 +9082,240 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end clear_trigger
+
+
+    # begin collect_statistics
+    def collect_statistics( self, table_name = None, column_names = None, options =
+                            {} ):
+
+        assert isinstance( table_name, (basestring)), "collect_statistics(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        column_names = column_names if isinstance( column_names, list ) else ( [] if (column_names is None) else [ column_names ] )
+        assert isinstance( options, (dict)), "collect_statistics(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/collect/statistics" )
+
+        obj = {}
+        obj['table_name'] = table_name
+        obj['column_names'] = column_names
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/collect/statistics' )
+
+        return AttrDict( response )
+    # end collect_statistics
+
+
+    # begin create_graph
+    def create_graph( self, graph_name = None, directed_graph = True, nodes = None,
+                      edges = None, weights = None, restrictions = None, options
+                      = {} ):
+        """Creates a new graph network using given nodes, edges, weights, and
+        restrictions. See `Network Graph Solvers
+        <../../../graph_solver/network_graph_solver.html>`_ for more
+        information.
+
+        Parameters:
+
+            graph_name (str)
+                Name of the graph resource to generate.
+
+            directed_graph (bool)
+                If set to *true*, the graph will be directed (0 to 1, 1 to 2,
+                etc.). If set to *false*, the graph will not be directed.
+                Default value is True.
+                Allowed values are:
+
+                * true
+                * false
+
+                The default value is 'true'.
+
+            nodes (list of str)
+                Nodes represent fundamental topological units of a graph. Nodes
+                must be specified using `identifiers
+                <../../../graph_solver/network_graph_solver.html#identifiers>`_;
+                identifiers are grouped as `combinations
+                <../../../graph_solver/network_graph_solver.html#id-combos>`_.
+                Example format: 'table.column AS NODE_ID'    The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
+
+            edges (list of str)
+                Edges represent the required fundamental topological unit of a
+                graph that typically connect nodes. Edges must be specified
+                using `identifiers
+                <../../../graph_solver/network_graph_solver.html#identifiers>`_;
+                identifiers are grouped as `combinations
+                <../../../graph_solver/network_graph_solver.html#id-combos>`_.
+                Example format: 'table.column AS EDGE_WKTLINE'    The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
+
+            weights (list of str)
+                Weights represent a method of informing the graph solver of the
+                cost of including a given edge in a solution. Weights must be
+                specified using `identifiers
+                <../../../graph_solver/network_graph_solver.html#identifiers>`_;
+                identifiers are grouped as `combinations
+                <../../../graph_solver/network_graph_solver.html#id-combos>`_.
+                Example format: 'table.column AS WEIGHTS_EDGE_ID'    The user
+                can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
+
+            restrictions (list of str)
+                Restrictions represent a method of informing the graph solver
+                which edges and/or nodes should be ignored for the solution.
+                Restrictions must be specified using `identifiers
+                <../../../graph_solver/network_graph_solver.html#identifiers>`_;
+                identifiers are grouped as `combinations
+                <../../../graph_solver/network_graph_solver.html#id-combos>`_.
+                Example format: 'table.column AS RESTRICTIONS_EDGE_ID'    The
+                user can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **restriction_threshold_value** --
+                  Value-based restriction comparison. Any node or edge with a
+                  RESTRICTIONS_VALUECOMPARED value greater than the
+                  *restriction_threshold_value* will not be included in the
+                  graph.
+
+                * **merge_tolerance** --
+                  If node geospatial positions are input (e.g., WKTPOINT, X,
+                  Y), determines the minimum separation allowed between unique
+                  nodes. If nodes are within the tolerance of each other, they
+                  will be merged as a single node.
+
+                * **min_x** --
+                  Minimum x (longitude) value for spatial graph associations.
+
+                * **max_x** --
+                  Maximum x (longitude) value for spatial graph associations.
+
+                * **min_y** --
+                  Minimum y (latitude) value for spatial graph associations.
+
+                * **max_y** --
+                  Maximum y (latitude) value for spatial graph associations.
+
+                * **recreate** --
+                  If set to *true* and the graph (using input parameter
+                  *graph_name*) already exists, the graph is deleted and
+                  recreated.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **export_create_results** --
+                  If set to *true*, returns the graph topology in the response
+                  as arrays.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **enable_graph_draw** --
+                  If set to *true*, adds a 'EDGE_WKTLINE' column identifier to
+                  the specified *graph_table* so the graph can be viewed via
+                  WMS; for social and non-geospatial graphs, the 'EDGE_WKTLINE'
+                  column identifier will be populated with spatial coordinates
+                  derived from a flattening layout algorithm so the graph can
+                  still be viewed.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **save_persist** --
+                  If set to *true*, the graph will be saved in the persist
+                  directory (see the `config reference
+                  <../../../config/index.html>`_ for more information). If set
+                  to *false*, the graph will be removed when the graph server
+                  is shutdown.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **sync_db** --
+                  If set to *true*, the graph will be updated if its source
+                  table(s) is updated. If set to *false*, the graph will not be
+                  updated if the source table(s) is updated.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **add_table_monitor** --
+                  Adds a table monitor to every table used in the creation of
+                  the graph. For more details on table monitors, see
+                  :meth:`.create_table_monitor`.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **graph_table** --
+                  If the *graph_table* name is NOT left blank, the created
+                  graph is also created as a table with the given name and
+                  following identifier columns: 'EDGE_ID', 'EDGE_NODE1_ID',
+                  'EDGE_NODE2_ID'. If left blank, no table is created.
+
+        Returns:
+            A dict with the following entries--
+
+            num_nodes (long)
+                Total number of nodes created.
+
+            num_edges (long)
+                Total number of edges created.
+
+            edges_ids (list of longs)
+                Edges given as pairs of node indices. Only populated if
+                *export_create_results* is set to *true*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( graph_name, (basestring)), "create_graph(): Argument 'graph_name' must be (one) of type(s) '(basestring)'; given %s" % type( graph_name ).__name__
+        assert isinstance( directed_graph, (bool)), "create_graph(): Argument 'directed_graph' must be (one) of type(s) '(bool)'; given %s" % type( directed_graph ).__name__
+        nodes = nodes if isinstance( nodes, list ) else ( [] if (nodes is None) else [ nodes ] )
+        edges = edges if isinstance( edges, list ) else ( [] if (edges is None) else [ edges ] )
+        weights = weights if isinstance( weights, list ) else ( [] if (weights is None) else [ weights ] )
+        restrictions = restrictions if isinstance( restrictions, list ) else ( [] if (restrictions is None) else [ restrictions ] )
+        assert isinstance( options, (dict)), "create_graph(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/create/graph" )
+
+        obj = {}
+        obj['graph_name'] = graph_name
+        obj['directed_graph'] = directed_graph
+        obj['nodes'] = nodes
+        obj['edges'] = edges
+        obj['weights'] = weights
+        obj['restrictions'] = restrictions
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/create/graph' )
+
+        return AttrDict( response )
+    # end create_graph
 
 
     # begin create_job
@@ -8164,8 +9365,11 @@ class GPUdb(object):
         Returns:
             A dict with the following entries--
 
-            job_id (int)
+            job_id (long)
                 An identifier for the job created by this call.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( endpoint, (basestring)), "create_job(): Argument 'endpoint' must be (one) of type(s) '(basestring)'; given %s" % type( endpoint ).__name__
         assert isinstance( request_encoding, (basestring)), "create_job(): Argument 'request_encoding' must be (one) of type(s) '(basestring)'; given %s" % type( request_encoding ).__name__
@@ -8189,8 +9393,9 @@ class GPUdb(object):
 
 
     # begin create_join_table
-    def create_join_table( self, join_table_name = None, table_names = [],
-                           column_names = [], expressions = [], options = {} ):
+    def create_join_table( self, join_table_name = None, table_names = None,
+                           column_names = None, expressions = [], options = {}
+                           ):
         """Creates a table that is the result of a SQL JOIN.
 
         For join details and examples see: `Joins
@@ -8206,9 +9411,9 @@ class GPUdb(object):
 
             table_names (list of str)
                 The list of table names composing the join.  Corresponds to a
-                SQL statement FROM clause.  Default value is an empty list ( []
-                ).   The user can provide a single element (which will be
-                automatically promoted to a list internally) or a list.
+                SQL statement FROM clause.    The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
 
             column_names (list of str)
                 List of member table columns or column expressions to be
@@ -8220,9 +9425,8 @@ class GPUdb(object):
                 table's columns.  Columns and column expressions composing the
                 join must be uniquely named or aliased--therefore, the '*' wild
                 card cannot be used if column names aren't unique across all
-                tables.  Default value is an empty list ( [] ).   The user can
-                provide a single element (which will be automatically promoted
-                to a list internally) or a list.
+                tables.    The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
 
             expressions (list of str)
                 An optional list of expressions to combine and filter the
@@ -8332,6 +9536,9 @@ class GPUdb(object):
             count (long)
                 The number of records in the join table filtered by the given
                 select expression.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( join_table_name, (basestring)), "create_join_table(): Argument 'join_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( join_table_name ).__name__
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
@@ -8441,6 +9648,9 @@ class GPUdb(object):
 
             view_id (str)
                 Value of view_id.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "create_materialized_view(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( options, (dict)), "create_materialized_view(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -8530,6 +9740,9 @@ class GPUdb(object):
 
             proc_name (str)
                 Value of input parameter *proc_name*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( proc_name, (basestring)), "create_proc(): Argument 'proc_name' must be (one) of type(s) '(basestring)'; given %s" % type( proc_name ).__name__
         assert isinstance( execution_mode, (basestring)), "create_proc(): Argument 'execution_mode' must be (one) of type(s) '(basestring)'; given %s" % type( execution_mode ).__name__
@@ -8707,6 +9920,9 @@ class GPUdb(object):
 
             projection_name (str)
                 Value of input parameter *projection_name*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "create_projection(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( projection_name, (basestring)), "create_projection(): Argument 'projection_name' must be (one) of type(s) '(basestring)'; given %s" % type( projection_name ).__name__
@@ -8725,6 +9941,77 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end create_projection
+
+
+    # begin create_resource_group
+    def create_resource_group( self, name = None, tier_attributes = {},
+                               tier_strategy = None, options = {} ):
+        """Creates a new resource group to facilitate resource management.
+
+        Parameters:
+
+            name (str)
+                Name of the group to be created. Must contain only letters,
+                digits, and underscores, and cannot begin with a digit. Must
+                not match existing resource group name.
+
+            tier_attributes (dict of str to dicts of str to str)
+                Optional map containing group limits for tier-specific
+                attributes such as memory.  Default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **max_memory** --
+                  Maximum amount of memory usable in the given tier at one time
+                  for this group.
+
+            tier_strategy (list of str)
+                Optional array that defines the default tiering strategy for
+                this group. Each element pair defines an existing tier and its
+                preferred priority. e.g. ['RAM 50',VRAM 30']    The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **max_cpu_concurrency** --
+                  Maximum number of simultaneous threads that will be used to
+                  execute a request for this group.
+
+                * **max_scheduling_priority** --
+                  Maximum priority of a scheduled task for this group.
+
+                * **max_tier_priority** --
+                  Maximum priority of a tiered object for this group.
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( name, (basestring)), "create_resource_group(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( tier_attributes, (dict)), "create_resource_group(): Argument 'tier_attributes' must be (one) of type(s) '(dict)'; given %s" % type( tier_attributes ).__name__
+        tier_strategy = tier_strategy if isinstance( tier_strategy, list ) else ( [] if (tier_strategy is None) else [ tier_strategy ] )
+        assert isinstance( options, (dict)), "create_resource_group(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/create/resourcegroup" )
+
+        obj = {}
+        obj['name'] = name
+        obj['tier_attributes'] = self.__sanitize_dicts( tier_attributes )
+        obj['tier_strategy'] = tier_strategy
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/create/resourcegroup' )
+
+        return AttrDict( response )
+    # end create_resource_group
 
 
     # begin create_role
@@ -8746,6 +10033,9 @@ class GPUdb(object):
 
             name (str)
                 Value of input parameter *name*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( name, (basestring)), "create_role(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
         assert isinstance( options, (dict)), "create_role(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -8764,16 +10054,27 @@ class GPUdb(object):
 
     # begin create_table
     def create_table( self, table_name = None, type_id = None, options = {} ):
-        """Creates a new table or collection. If a new table is being created, the
-        type of the table is given by input parameter *type_id*, which must the
-        be the ID of a currently registered type (i.e. one created via
-        :meth:`.create_type`). The table will be created inside a collection if
-        the option *collection_name* is specified. If that collection does not
-        already exist, it will be created.
+        """Creates a new table or collection. If a new table is being created,
+        the type of the table is given by input parameter *type_id*, which must
+        the be the ID of
+        a currently registered type (i.e. one created via
+        :meth:`.create_type`). The
+        table will be created inside a collection if the option
+        *collection_name* is specified. If that collection does
+        not already exist, it will be created.
 
-        To create a new collection, specify the name of the collection in input
-        parameter *table_name* and set the *is_collection* option to *true*;
-        input parameter *type_id* will be ignored.
+        To create a new collection, specify the name of the collection in
+        input parameter *table_name* and set the *is_collection* option to
+        *true*; input parameter *type_id* will be
+        ignored.
+
+        A table may optionally be designated to use a
+        `replicated <../../../concepts/tables.html#replication>`_ distribution
+        scheme,
+        have `foreign keys <../../../concepts/tables.html#foreign-keys>`_ to
+        other
+        tables assigned, or be assigned a
+        `partitioning <../../../concepts/tables.html#partitioning>`_ scheme.
 
         Parameters:
 
@@ -8820,8 +10121,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **disallow_homogeneous_tables** --
-                  For a collection, indicates whether the collection prohibits
-                  containment of multiple tables of exactly the same data type.
+                  No longer supported; value will be ignored.
                   Allowed values are:
 
                   * true
@@ -8830,17 +10130,19 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **is_replicated** --
-                  For a table, indicates the `distribution scheme
+                  For a table, affects the `distribution scheme
                   <../../../concepts/tables.html#distribution>`_ for the
-                  table's data.  If true, the table will be `replicated
+                  table's data.  If true and the given type has no explicit
+                  `shard key <../../../concepts/tables.html#shard-key>`_
+                  defined, the table will be `replicated
                   <../../../concepts/tables.html#replication>`_.  If false, the
                   table will be `sharded
                   <../../../concepts/tables.html#sharding>`_ according to the
-                  `shard key <../../../concepts/tables.html#shard-keys>`_
-                  specified in the given input parameter *type_id*, or
-                  `randomly sharded
+                  shard key specified in the given input parameter *type_id*,
+                  or `randomly sharded
                   <../../../concepts/tables.html#random-sharding>`_, if no
-                  shard key is specified.
+                  shard key is specified.  Note that a type containing a shard
+                  key cannot be used to create a replicated table.
                   Allowed values are:
 
                   * true
@@ -8858,6 +10160,33 @@ class GPUdb(object):
                 * **foreign_shard_key** --
                   Foreign shard key of the format 'source_column references
                   shard_by_column from target_table(primary_key_column)'
+
+                * **partition_type** --
+                  `Partitioning <../../../concepts/tables.html#partitioning>`_
+                  scheme to use
+                  Allowed values are:
+
+                  * **RANGE** --
+                    Use `range partitioning
+                    <../../../concepts/tables.html#partitioning-by-range>`_
+
+                  * **INTERVAL** --
+                    Use `interval partitioning
+                    <../../../concepts/tables.html#partitioning-by-interval>`_
+
+                * **partition_keys** --
+                  Comma-separated list of partition keys, which are the columns
+                  or column expressions by which records will be assigned to
+                  partitions defined by *partition_definitions*
+
+                * **partition_definitions** --
+                  Comma-separated list of partition definitions, whose format
+                  depends on the choice of *partition_type*.  See `range
+                  partitioning example
+                  <../../../concepts/tables.html#partitioning-by-range-example>`_
+                  or `interval partitioning example
+                  <../../../concepts/tables.html#partitioning-by-interval-example>`_
+                  for example formats.
 
                 * **ttl** --
                   For a table, sets the `TTL <../../../concepts/ttl.html>`_ of
@@ -8889,6 +10218,9 @@ class GPUdb(object):
 
             is_collection (bool)
                 Indicates if the created entity is a collection.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "create_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( type_id, (basestring)), "create_table(): Argument 'type_id' must be (one) of type(s) '(basestring)'; given %s" % type( type_id ).__name__
@@ -8940,6 +10272,9 @@ class GPUdb(object):
             type_schema (str)
                 JSON Avro schema of the table, for use in decoding published
                 records.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "create_table_monitor(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( options, (dict)), "create_table_monitor(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -9016,6 +10351,9 @@ class GPUdb(object):
 
             trigger_id (str)
                 Value of input parameter *request_id*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( request_id, (basestring)), "create_trigger_by_area(): Argument 'request_id' must be (one) of type(s) '(basestring)'; given %s" % type( request_id ).__name__
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
@@ -9088,6 +10426,9 @@ class GPUdb(object):
 
             trigger_id (str)
                 Value of input parameter *request_id*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( request_id, (basestring)), "create_trigger_by_range(): Argument 'request_id' must be (one) of type(s) '(basestring)'; given %s" % type( request_id ).__name__
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
@@ -9327,12 +10668,14 @@ class GPUdb(object):
                   worry about the avro schema for the record.
 
                 * **dict** --
-                  This property indicates that this column should be dictionary
-                  encoded. It can only be used in conjunction with string
-                  columns marked with a charN property. This property is
-                  appropriate for columns where the cardinality (the number of
-                  unique values) is expected to be low, and can save a large
-                  amount of memory.
+                  This property indicates that this column should be
+                  `dictionary encoded
+                  <../../../concepts/dictionary_encoding.html>`_. It can only
+                  be used in conjunction with restricted string (charN), int,
+                  or long columns. Dictionary encoding is best for columns
+                  where the cardinality (the number of unique values) is
+                  expected to be low. This property can save a large amount of
+                  memory.
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
@@ -9353,6 +10696,9 @@ class GPUdb(object):
 
             properties (dict of str to lists of str)
                 Value of input parameter *properties*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( type_definition, (basestring)), "create_type(): Argument 'type_definition' must be (one) of type(s) '(basestring)'; given %s" % type( type_definition ).__name__
         assert isinstance( label, (basestring)), "create_type(): Argument 'label' must be (one) of type(s) '(basestring)'; given %s" % type( label ).__name__
@@ -9543,6 +10889,9 @@ class GPUdb(object):
 
             table_name (str)
                 Value of input parameter *table_name*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "create_union(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
@@ -9585,6 +10934,9 @@ class GPUdb(object):
 
             name (str)
                 Value of input parameter *name*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( name, (basestring)), "create_user_external(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
         assert isinstance( options, (dict)), "create_user_external(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -9619,12 +10971,20 @@ class GPUdb(object):
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **resource_group** --
+                  Name of an existing resource group to associate with this
+                  user
 
         Returns:
             A dict with the following entries--
 
             name (str)
                 Value of input parameter *name*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( name, (basestring)), "create_user_internal(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
         assert isinstance( password, (basestring)), "create_user_internal(): Argument 'password' must be (one) of type(s) '(basestring)'; given %s" % type( password ).__name__
@@ -9641,6 +11001,55 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end create_user_internal
+
+
+    # begin delete_graph
+    def delete_graph( self, graph_name = None, options = {} ):
+        """Deletes an existing graph from the graph server and/or persist.
+
+        Parameters:
+
+            graph_name (str)
+                Name of the graph to be deleted.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **delete_persist** --
+                  If set to *true*, the graph is removed from the server and
+                  persist. If set to *false*, the graph is removed from the
+                  server but is left in persist. The graph can be reloaded from
+                  persist if it is recreated with the same 'graph_name'.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+        Returns:
+            A dict with the following entries--
+
+            result (bool)
+                Indicates a successful deletion.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( graph_name, (basestring)), "delete_graph(): Argument 'graph_name' must be (one) of type(s) '(basestring)'; given %s" % type( graph_name ).__name__
+        assert isinstance( options, (dict)), "delete_graph(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/delete/graph" )
+
+        obj = {}
+        obj['graph_name'] = graph_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/delete/graph' )
+
+        return AttrDict( response )
+    # end delete_graph
 
 
     # begin delete_proc
@@ -9662,6 +11071,9 @@ class GPUdb(object):
 
             proc_name (str)
                 Value of input parameter *proc_name*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( proc_name, (basestring)), "delete_proc(): Argument 'proc_name' must be (one) of type(s) '(basestring)'; given %s" % type( proc_name ).__name__
         assert isinstance( options, (dict)), "delete_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -9737,6 +11149,9 @@ class GPUdb(object):
 
             counts_deleted (list of longs)
                 Total number of records deleted per expression.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "delete_records(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         expressions = expressions if isinstance( expressions, list ) else ( [] if (expressions is None) else [ expressions ] )
@@ -9753,6 +11168,42 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end delete_records
+
+
+    # begin delete_resource_group
+    def delete_resource_group( self, name = None, options = {} ):
+        """Deletes a resource group.
+
+        Parameters:
+
+            name (str)
+                Name of the group to be deleted.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( name, (basestring)), "delete_resource_group(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( options, (dict)), "delete_resource_group(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/delete/resourcegroup" )
+
+        obj = {}
+        obj['name'] = name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/delete/resourcegroup' )
+
+        return AttrDict( response )
+    # end delete_resource_group
 
 
     # begin delete_role
@@ -9772,6 +11223,9 @@ class GPUdb(object):
 
             name (str)
                 Value of input parameter *name*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( name, (basestring)), "delete_role(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
         assert isinstance( options, (dict)), "delete_role(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -9805,6 +11259,9 @@ class GPUdb(object):
 
             name (str)
                 Value of input parameter *name*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( name, (basestring)), "delete_user(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
         assert isinstance( options, (dict)), "delete_user(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -9914,6 +11371,9 @@ class GPUdb(object):
                 The run ID of the running proc instance. This may be passed to
                 :meth:`.show_proc_status` to obtain status information, or
                 :meth:`.kill_proc` to kill the proc instance.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( proc_name, (basestring)), "execute_proc(): Argument 'proc_name' must be (one) of type(s) '(basestring)'; given %s" % type( proc_name ).__name__
         assert isinstance( params, (dict)), "execute_proc(): Argument 'params' must be (one) of type(s) '(dict)'; given %s" % type( params ).__name__
@@ -9940,6 +11400,559 @@ class GPUdb(object):
     # end execute_proc
 
 
+    # begin execute_sql
+    def execute_sql( self, statement = None, offset = None, limit = None, encoding =
+                     'binary', request_schema_str = '', data = [], options = {}
+                     ):
+        """SQL Request
+
+        Parameters:
+
+            statement (str)
+                SQL statement (query, DML, or DDL) to be executed
+
+            offset (long)
+                A positive integer indicating the number of initial results to
+                skip (this can be useful for paging through the results).  The
+                minimum allowed value is 0. The maximum allowed value is
+                MAX_INT.
+
+            limit (long)
+                A positive integer indicating the maximum number of results to
+                be returned (if not provided the default is 10000), or
+                END_OF_SET (-9999) to indicate that the maximum number of
+                results allowed by the server should be returned.
+
+            encoding (str)
+                Specifies the encoding for returned records; either 'binary' or
+                'json'.  Default value is 'binary'.
+                Allowed values are:
+
+                * binary
+                * json
+
+                The default value is 'binary'.
+
+            request_schema_str (str)
+                Avro schema of input parameter *data*.  Default value is ''.
+
+            data (list of str)
+                An array of binary-encoded data for the records to be binded to
+                the SQL query.  Default value is an empty list ( [] ).   The
+                user can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **parallel_execution** --
+                  If *false*, disables the parallel step execution of the given
+                  query.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **cost_based_optimization** --
+                  If *false*, disables the cost-based optimization of the given
+                  query.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **plan_cache** --
+                  If *false*, disables plan caching for the given query.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **rule_based_optimization** --
+                  If *false*, disables rule-based rewrite optimizations for the
+                  given query
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **results_caching** --
+                  If *false*, disables caching of the results of the given
+                  query
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **paging_table** --
+                  When empty or the specified paging table not exists, the
+                  system will create a paging table and return when query
+                  output has more records than the user asked. If the paging
+                  table exists in the system, the records from the paging table
+                  are returned without evaluating the query.
+
+                * **paging_table_ttl** --
+                  Sets the `TTL <../../../concepts/ttl.html>`_ of the paging
+                  table.
+
+                * **distributed_joins** --
+                  If *false*, disables the use of distributed joins in
+                  servicing the given query.  Any query requiring a distributed
+                  join to succeed will fail, though hints can be used in the
+                  query to change the distribution of the source data to allow
+                  the query to succeed.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **ssq_optimization** --
+                  If *false*, scalar subqueries will be translated into joins
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **late_materialization** --
+                  If *true*, Joins/Filters results  will always be materialized
+                  ( saved to result tables format)
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **ttl** --
+                  Sets the `TTL <../../../concepts/ttl.html>`_ of the
+                  intermediate result tables used in query execution.
+
+                * **update_on_existing_pk** --
+                  Can be used to customize behavior when the updated primary
+                  key value already exists as described in
+                  :meth:`.insert_records`.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **preserve_dict_encoding** --
+                  If *true*, then columns that were dict encoded in the source
+                  table will be dict encoded in the projection table.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **validate_change_column** --
+                  When changing a column using alter table, validate the change
+                  before applying it. If *true*, then validate all values. A
+                  value too large (or too long) for the new type will prevent
+                  any change. If *false*, then when a value is too large or
+                  long, it will be truncated.
+                  Allowed values are:
+
+                  * **true** --
+                    true
+
+                  * **false** --
+                    false
+
+                  The default value is 'true'.
+
+        Returns:
+            A dict with the following entries--
+
+            count_affected (long)
+                The number of objects/records affected.
+
+            response_schema_str (str)
+                Avro schema of output parameter *binary_encoded_response* or
+                output parameter *json_encoded_response*.
+
+            binary_encoded_response (str)
+                Avro binary encoded response.
+
+            json_encoded_response (str)
+                Avro JSON encoded response.
+
+            total_number_of_records (long)
+                Total/Filtered number of records.
+
+            has_more_records (bool)
+                Too many records. Returned a partial set.
+                Allowed values are:
+
+                * true
+                * false
+
+            paging_table (str)
+                Name of the table that has the result records of the query.
+                Valid, when output parameter *has_more_records* is *true*
+                (Subject to config.paging_tables_enabled)
+
+            info (dict of str to str)
+                Additional information.
+
+            record_type (:class:`RecordType` or None)
+                A :class:`RecordType` object using which the user can decode
+                the binarydata by using :meth:`GPUdbRecord.decode_binary_data`.
+                If JSON encodingis used, then None.
+        """
+        assert isinstance( statement, (basestring)), "execute_sql(): Argument 'statement' must be (one) of type(s) '(basestring)'; given %s" % type( statement ).__name__
+        assert isinstance( offset, (int, long, float)), "execute_sql(): Argument 'offset' must be (one) of type(s) '(int, long, float)'; given %s" % type( offset ).__name__
+        assert isinstance( limit, (int, long, float)), "execute_sql(): Argument 'limit' must be (one) of type(s) '(int, long, float)'; given %s" % type( limit ).__name__
+        assert isinstance( encoding, (basestring)), "execute_sql(): Argument 'encoding' must be (one) of type(s) '(basestring)'; given %s" % type( encoding ).__name__
+        assert isinstance( request_schema_str, (basestring)), "execute_sql(): Argument 'request_schema_str' must be (one) of type(s) '(basestring)'; given %s" % type( request_schema_str ).__name__
+        data = data if isinstance( data, list ) else ( [] if (data is None) else [ data ] )
+        assert isinstance( options, (dict)), "execute_sql(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/execute/sql" )
+
+        obj = {}
+        obj['statement'] = statement
+        obj['offset'] = offset
+        obj['limit'] = limit
+        obj['encoding'] = encoding
+        obj['request_schema_str'] = request_schema_str
+        obj['data'] = data
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/execute/sql' )
+        if not _Util.is_ok( response ):
+            return AttrDict( response )
+
+        # Create the record type and save it in the response, if applicable
+        if encoding == "binary":
+            record_type = RecordType.from_dynamic_schema( response["response_schema_str"], response["binary_encoded_response"] )
+            response["record_type"] = record_type
+        else:
+            response["record_type"] = None
+
+        return AttrDict( response )
+    # end execute_sql
+
+
+    # begin execute_sql_and_decode
+    def execute_sql_and_decode( self, statement = None, offset = None, limit = None,
+                                encoding = 'binary', request_schema_str = '',
+                                data = [], options = {}, record_type = None,
+                                force_primitive_return_types = True,
+                                get_column_major = True ):
+        """SQL Request
+
+        Parameters:
+
+            statement (str)
+                SQL statement (query, DML, or DDL) to be executed
+
+            offset (long)
+                A positive integer indicating the number of initial results to
+                skip (this can be useful for paging through the results).  The
+                minimum allowed value is 0. The maximum allowed value is
+                MAX_INT.
+
+            limit (long)
+                A positive integer indicating the maximum number of results to
+                be returned (if not provided the default is 10000), or
+                END_OF_SET (-9999) to indicate that the maximum number of
+                results allowed by the server should be returned.
+
+            encoding (str)
+                Specifies the encoding for returned records; either 'binary' or
+                'json'.  Default value is 'binary'.
+                Allowed values are:
+
+                * binary
+                * json
+
+                The default value is 'binary'.
+
+            request_schema_str (str)
+                Avro schema of input parameter *data*.  Default value is ''.
+
+            data (list of str)
+                An array of binary-encoded data for the records to be binded to
+                the SQL query.  Default value is an empty list ( [] ).   The
+                user can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **parallel_execution** --
+                  If *false*, disables the parallel step execution of the given
+                  query.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **cost_based_optimization** --
+                  If *false*, disables the cost-based optimization of the given
+                  query.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **plan_cache** --
+                  If *false*, disables plan caching for the given query.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **rule_based_optimization** --
+                  If *false*, disables rule-based rewrite optimizations for the
+                  given query
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **results_caching** --
+                  If *false*, disables caching of the results of the given
+                  query
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **paging_table** --
+                  When empty or the specified paging table not exists, the
+                  system will create a paging table and return when query
+                  output has more records than the user asked. If the paging
+                  table exists in the system, the records from the paging table
+                  are returned without evaluating the query.
+
+                * **paging_table_ttl** --
+                  Sets the `TTL <../../../concepts/ttl.html>`_ of the paging
+                  table.
+
+                * **distributed_joins** --
+                  If *false*, disables the use of distributed joins in
+                  servicing the given query.  Any query requiring a distributed
+                  join to succeed will fail, though hints can be used in the
+                  query to change the distribution of the source data to allow
+                  the query to succeed.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **ssq_optimization** --
+                  If *false*, scalar subqueries will be translated into joins
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **late_materialization** --
+                  If *true*, Joins/Filters results  will always be materialized
+                  ( saved to result tables format)
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **ttl** --
+                  Sets the `TTL <../../../concepts/ttl.html>`_ of the
+                  intermediate result tables used in query execution.
+
+                * **update_on_existing_pk** --
+                  Can be used to customize behavior when the updated primary
+                  key value already exists as described in
+                  :meth:`.insert_records`.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **preserve_dict_encoding** --
+                  If *true*, then columns that were dict encoded in the source
+                  table will be dict encoded in the projection table.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **validate_change_column** --
+                  When changing a column using alter table, validate the change
+                  before applying it. If *true*, then validate all values. A
+                  value too large (or too long) for the new type will prevent
+                  any change. If *false*, then when a value is too large or
+                  long, it will be truncated.
+                  Allowed values are:
+
+                  * **true** --
+                    true
+
+                  * **false** --
+                    false
+
+                  The default value is 'true'.
+
+            record_type (:class:`RecordType` or None)
+                The record type expected in the results, or None to
+                determinethe appropriate type automatically. If known,
+                providing thismay improve performance in binary mode. Not used
+                in JSON mode.The default value is None.
+
+            force_primitive_return_types (bool)
+                If `True`, then `OrderedDict` objects will be returned, where
+                string sub-type columns will have their values converted back
+                to strings; for example, the Python `datetime` structs, used
+                for datetime type columns would have their values returned as
+                strings. If `False`, then :class:`Record` objects will be
+                returned, which for string sub-types, will return native or
+                custom structs; no conversion to string takes place. String
+                conversions, when returning `OrderedDicts`, incur a speed
+                penalty, and it is strongly recommended to use the
+                :class:`Record` object option instead. If `True`, but none of
+                the returned columns require a conversion, then the original
+                :class:`Record` objects will be returned. Default value is
+                True.
+
+            get_column_major (bool)
+                Indicates if the decoded records will be transposed to be
+                column-major or returned as is (row-major).  Default value is
+                True.
+
+        Returns:
+            A dict with the following entries--
+
+            count_affected (long)
+                The number of objects/records affected.
+
+            response_schema_str (str)
+                Avro schema of output parameter *binary_encoded_response* or
+                output parameter *json_encoded_response*.
+
+            total_number_of_records (long)
+                Total/Filtered number of records.
+
+            has_more_records (bool)
+                Too many records. Returned a partial set.
+                Allowed values are:
+
+                * true
+                * false
+
+            paging_table (str)
+                Name of the table that has the result records of the query.
+                Valid, when output parameter *has_more_records* is *true*
+                (Subject to config.paging_tables_enabled)
+
+            info (dict of str to str)
+                Additional information.
+
+            records (list of :class:`Record`)
+                A list of :class:`Record` objects which contain the decoded
+                records.
+        """
+        assert isinstance( statement, (basestring)), "execute_sql_and_decode(): Argument 'statement' must be (one) of type(s) '(basestring)'; given %s" % type( statement ).__name__
+        assert isinstance( offset, (int, long, float)), "execute_sql_and_decode(): Argument 'offset' must be (one) of type(s) '(int, long, float)'; given %s" % type( offset ).__name__
+        assert isinstance( limit, (int, long, float)), "execute_sql_and_decode(): Argument 'limit' must be (one) of type(s) '(int, long, float)'; given %s" % type( limit ).__name__
+        assert isinstance( encoding, (basestring)), "execute_sql_and_decode(): Argument 'encoding' must be (one) of type(s) '(basestring)'; given %s" % type( encoding ).__name__
+        assert isinstance( request_schema_str, (basestring)), "execute_sql_and_decode(): Argument 'request_schema_str' must be (one) of type(s) '(basestring)'; given %s" % type( request_schema_str ).__name__
+        data = data if isinstance( data, list ) else ( [] if (data is None) else [ data ] )
+        assert isinstance( options, (dict)), "execute_sql_and_decode(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+        assert ( (record_type == None) or isinstance(record_type, RecordType) ), "execute_sql_and_decode: Argument 'record_type' must be either RecordType or None; given %s" % type( record_type ).__name__
+        assert isinstance(force_primitive_return_types, bool), "execute_sql_and_decode: Argument 'force_primitive_return_types' must be bool; given %s" % type( force_primitive_return_types ).__name__
+        assert isinstance(get_column_major, bool), "execute_sql_and_decode: Argument 'get_column_major' must be bool; given %s" % type( get_column_major ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA_CEXT) = self.__get_schemas( "/execute/sql", get_rsp_cext = True )
+
+        # Force JSON encoding if client encoding is json and method encoding
+        # is binary (checking for binary so that we do not accidentally override
+        # the GeoJSON encoding)
+        if ( (self.encoding == "JSON") and (encoding == "binary") ):
+            encoding = "json"
+
+        obj = {}
+        obj['statement'] = statement
+        obj['offset'] = offset
+        obj['limit'] = limit
+        obj['encoding'] = encoding
+        obj['request_schema_str'] = request_schema_str
+        obj['data'] = data
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response, raw_response = self.__post_then_get_cext_raw( REQ_SCHEMA, RSP_SCHEMA_CEXT, obj, '/execute/sql' )
+        if not _Util.is_ok( response ):
+            return AttrDict( response )
+
+        # Decode the data
+        if (encoding == 'binary'):
+            record_type = record_type if record_type else RecordType.from_dynamic_schema( response["response_schema_str"], raw_response, response["binary_encoded_response"] )
+            records = record_type.decode_dynamic_records( raw_response, response["binary_encoded_response"] )
+            if force_primitive_return_types:
+                records = _Util.convert_cext_records_to_ordered_dicts( records )
+
+            # Transpose the data to column-major, if requested by the user
+            if get_column_major:
+                records = GPUdbRecord.transpose_data_to_col_major( records )
+
+            response["records"] = records
+        else:
+            records = json.loads( response["json_encoded_response"] )
+            if get_column_major:
+                # Get column-major data
+                records = GPUdbRecord.decode_dynamic_json_data_column_major( records, response["response_schema_str"] )
+            else:
+                # Get row-major data
+                records = GPUdbRecord.decode_dynamic_json_data_row_major( records, response["response_schema_str"] )
+            response["records"] = records
+        # end if
+
+        del response["binary_encoded_response"]
+        del response["json_encoded_response"]
+
+        return AttrDict( response )
+    # end execute_sql_and_decode
+
+
     # begin filter
     def filter( self, table_name = None, view_name = '', expression = None, options
                 = {} ):
@@ -9956,8 +11969,8 @@ class GPUdb(object):
         Parameters:
 
             table_name (str)
-                Name of the table to filter.  This may be the ID of a
-                collection, table or a result set (for chaining queries). If
+                Name of the table to filter.  This may be the name of a
+                collection, a table, or a view (when chaining queries).  If
                 filtering a collection, all child tables where the filter
                 expression is valid will be filtered; the filtered result
                 tables will then be placed in a collection specified by input
@@ -9995,6 +12008,9 @@ class GPUdb(object):
 
             count (long)
                 The number of records that matched the given select expression.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "filter(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -10031,7 +12047,7 @@ class GPUdb(object):
 
             table_name (str)
                 Name of the table to filter.  This may be the name of a
-                collection, a table or a view (when chaining queries). If
+                collection, a table, or a view (when chaining queries).  If
                 filtering a collection, all child tables where the filter
                 expression is valid will be filtered; the filtered result
                 tables will then be placed in a collection specified by input
@@ -10075,6 +12091,9 @@ class GPUdb(object):
 
             count (long)
                 The number of records passing the area filter.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "filter_by_area(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_area(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -10117,7 +12136,7 @@ class GPUdb(object):
 
             table_name (str)
                 Name of the table to filter.  This may be the name of a
-                collection, a table or a view (when chaining queries).  If
+                collection, a table, or a view (when chaining queries).  If
                 filtering a collection, all child tables where the filter
                 expression is valid will be filtered; the filtered result
                 tables will then be placed in a collection specified by input
@@ -10158,6 +12177,9 @@ class GPUdb(object):
 
             count (long)
                 The number of records passing the area filter.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "filter_by_area_geometry(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_area_geometry(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -10246,6 +12268,9 @@ class GPUdb(object):
 
             count (long)
                 The number of records passing the box filter.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "filter_by_box(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_box(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -10333,6 +12358,9 @@ class GPUdb(object):
 
             count (long)
                 The number of records passing the box filter.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "filter_by_box_geometry(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_box_geometry(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -10434,6 +12462,9 @@ class GPUdb(object):
 
             count (long)
                 The number of records passing the geometry filter.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "filter_by_geometry(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_geometry(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -10480,8 +12511,8 @@ class GPUdb(object):
         Parameters:
 
             table_name (str)
-                Name of the table to filter.  This may be the ID of a
-                collection, table or a result set (for chaining queries). If
+                Name of the table to filter.  This may be the name of a
+                collection, a table, or a view (when chaining queries).  If
                 filtering a collection, all child tables where the filter
                 expression is valid will be filtered; the filtered result
                 tables will then be placed in a collection specified by input
@@ -10525,6 +12556,9 @@ class GPUdb(object):
 
             count (long)
                 The number of records passing the list filter.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "filter_by_list(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_list(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -10611,6 +12645,9 @@ class GPUdb(object):
 
             count (long)
                 The number of records passing the radius filter.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "filter_by_radius(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_radius(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -10697,6 +12734,9 @@ class GPUdb(object):
 
             count (long)
                 The number of records passing the radius filter.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "filter_by_radius_geometry(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_radius_geometry(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -10775,6 +12815,9 @@ class GPUdb(object):
 
             count (long)
                 The number of records passing the range filter.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "filter_by_range(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_range(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -10877,6 +12920,9 @@ class GPUdb(object):
 
             count (long)
                 The number of records passing the series filter.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "filter_by_series(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_series(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -10981,6 +13027,9 @@ class GPUdb(object):
 
             count (long)
                 The number of records that passed the string filter.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "filter_by_string(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_string(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -11112,6 +13161,9 @@ class GPUdb(object):
                 input parameter *column_name* values matching input parameter
                 *source_table_column_name* values in input parameter
                 *source_table_name*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "filter_by_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_table(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -11189,6 +13241,9 @@ class GPUdb(object):
 
             count (long)
                 The number of records passing the value filter.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "filter_by_value(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_value(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -11220,7 +13275,7 @@ class GPUdb(object):
         """
         Parameters:
 
-            job_id (int)
+            job_id (long)
                 A unique identifier for the job whose status and result is to
                 be fetched.
 
@@ -11296,6 +13351,9 @@ class GPUdb(object):
                   Explains what error occurred while running the job
                   asynchronously.  This entry only exists when the job status
                   is *ERROR*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( job_id, (int, long, float)), "get_job(): Argument 'job_id' must be (one) of type(s) '(int, long, float)'; given %s" % type( job_id ).__name__
         assert isinstance( options, (dict)), "get_job(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -11425,6 +13483,9 @@ class GPUdb(object):
 
             has_more_records (bool)
                 Too many records. Returned a partial set.
+
+            info (dict of str to str)
+                Additional information.
 
             record_type (:class:`RecordType` or None)
                 A :class:`RecordType` object using which the user can decode
@@ -11581,6 +13642,9 @@ class GPUdb(object):
             has_more_records (bool)
                 Too many records. Returned a partial set.
 
+            info (dict of str to str)
+                Additional information.
+
             records (list of :class:`Record`)
                 A list of :class:`Record` objects which contain the decoded
                 records.
@@ -11693,13 +13757,14 @@ class GPUdb(object):
                   Optional filter expression to apply to the table.
 
                 * **sort_by** --
-                  Optional column(s) that the data should be sorted by. Empty
-                  by default (i.e. no sorting is applied).
+                  Optional column that the data should be sorted by. Used in
+                  conjunction with *sort_order*. The *order_by* option can be
+                  used in lieu of *sort_by* / *sort_order*.
 
                 * **sort_order** --
                   String indicating how the returned values should be sorted -
-                  ascending or descending. If sort_order is provided, sort_by
-                  has to be provided.
+                  *ascending* or *descending*. If *sort_order* is provided,
+                  *sort_by* has to be provided.
                   Allowed values are:
 
                   * ascending
@@ -11708,8 +13773,8 @@ class GPUdb(object):
                   The default value is 'ascending'.
 
                 * **order_by** --
-                  Comma-separated list of the columns to be sorted by; e.g.
-                  'timestamp asc, x desc'.
+                  Comma-separated list of the columns to be sorted by as well
+                  as the sort direction, e.g., 'timestamp asc, x desc'.
 
                 * **convert_wkts_to_wkbs** --
                   If true, then WKT string columns will be returned as WKB
@@ -11742,6 +13807,9 @@ class GPUdb(object):
 
             has_more_records (bool)
                 Too many records. Returned a partial set.
+
+            info (dict of str to str)
+                Additional information.
 
             record_type (:class:`RecordType` or None)
                 A :class:`RecordType` object using which the user can decode
@@ -11845,13 +13913,14 @@ class GPUdb(object):
                   Optional filter expression to apply to the table.
 
                 * **sort_by** --
-                  Optional column(s) that the data should be sorted by. Empty
-                  by default (i.e. no sorting is applied).
+                  Optional column that the data should be sorted by. Used in
+                  conjunction with *sort_order*. The *order_by* option can be
+                  used in lieu of *sort_by* / *sort_order*.
 
                 * **sort_order** --
                   String indicating how the returned values should be sorted -
-                  ascending or descending. If sort_order is provided, sort_by
-                  has to be provided.
+                  *ascending* or *descending*. If *sort_order* is provided,
+                  *sort_by* has to be provided.
                   Allowed values are:
 
                   * ascending
@@ -11860,8 +13929,8 @@ class GPUdb(object):
                   The default value is 'ascending'.
 
                 * **order_by** --
-                  Comma-separated list of the columns to be sorted by; e.g.
-                  'timestamp asc, x desc'.
+                  Comma-separated list of the columns to be sorted by as well
+                  as the sort direction, e.g., 'timestamp asc, x desc'.
 
                 * **convert_wkts_to_wkbs** --
                   If true, then WKT string columns will be returned as WKB
@@ -11914,6 +13983,9 @@ class GPUdb(object):
 
             has_more_records (bool)
                 Too many records. Returned a partial set.
+
+            info (dict of str to str)
+                Additional information.
 
             records (list of :class:`Record`)
                 A list of :class:`Record` objects which contain the decoded
@@ -12064,6 +14136,9 @@ class GPUdb(object):
                 (inner list) in each series/track (outer list). Otherwise,
                 empty list-of-lists.
 
+            info (dict of str to str)
+                Additional information.
+
             record_types (list of :class:`RecordType`)
                 A list of :class:`RecordType` objects using which the user can
                 decode the binarydata by using
@@ -12186,6 +14261,9 @@ class GPUdb(object):
             type_schemas (list of str)
                 The type schemas (one per series/track) of the returned
                 series/tracks.
+
+            info (dict of str to str)
+                Additional information.
 
             records (list of list of :class:`Record`)
                 A list of list of :class:`Record` objects which contain the
@@ -12320,6 +14398,9 @@ class GPUdb(object):
                 then this list contains the internal ID for each object.
                 Otherwise it will be empty.
 
+            info (dict of str to str)
+                Additional information.
+
             record_types (list of :class:`RecordType`)
                 A list of :class:`RecordType` objects using which the user can
                 decode the binarydata by using
@@ -12441,6 +14522,9 @@ class GPUdb(object):
                 then this list contains the internal ID for each object.
                 Otherwise it will be empty.
 
+            info (dict of str to str)
+                Additional information.
+
             records (list of :class:`Record`)
                 A list of :class:`Record` objects which contain the decoded
                 records.
@@ -12490,6 +14574,36 @@ class GPUdb(object):
     # end get_records_from_collection_and_decode
 
 
+    # begin get_vectortile
+    def get_vectortile( self, table_names = None, column_names = None, layers =
+                        None, tile_x = None, tile_y = None, zoom = None, options
+                        = {} ):
+
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        column_names = column_names if isinstance( column_names, list ) else ( [] if (column_names is None) else [ column_names ] )
+        assert isinstance( layers, (dict)), "get_vectortile(): Argument 'layers' must be (one) of type(s) '(dict)'; given %s" % type( layers ).__name__
+        assert isinstance( tile_x, (int, long, float)), "get_vectortile(): Argument 'tile_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( tile_x ).__name__
+        assert isinstance( tile_y, (int, long, float)), "get_vectortile(): Argument 'tile_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( tile_y ).__name__
+        assert isinstance( zoom, (int, long, float)), "get_vectortile(): Argument 'zoom' must be (one) of type(s) '(int, long, float)'; given %s" % type( zoom ).__name__
+        assert isinstance( options, (dict)), "get_vectortile(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/get/vectortile" )
+
+        obj = {}
+        obj['table_names'] = table_names
+        obj['column_names'] = column_names
+        obj['layers'] = self.__sanitize_dicts( layers )
+        obj['tile_x'] = tile_x
+        obj['tile_y'] = tile_y
+        obj['zoom'] = zoom
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/get/vectortile' )
+
+        return AttrDict( response )
+    # end get_vectortile
+
+
     # begin grant_permission_system
     def grant_permission_system( self, name = None, permission = None, options = {}
                                  ):
@@ -12525,6 +14639,9 @@ class GPUdb(object):
 
             permission (str)
                 Value of input parameter *permission*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( name, (basestring)), "grant_permission_system(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
         assert isinstance( permission, (basestring)), "grant_permission_system(): Argument 'permission' must be (one) of type(s) '(basestring)'; given %s" % type( permission ).__name__
@@ -12598,6 +14715,9 @@ class GPUdb(object):
 
             filter_expression (str)
                 Value of input parameter *filter_expression*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( name, (basestring)), "grant_permission_table(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
         assert isinstance( permission, (basestring)), "grant_permission_table(): Argument 'permission' must be (one) of type(s) '(basestring)'; given %s" % type( permission ).__name__
@@ -12645,6 +14765,9 @@ class GPUdb(object):
 
             member (str)
                 Value of input parameter *member*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( role, (basestring)), "grant_role(): Argument 'role' must be (one) of type(s) '(basestring)'; given %s" % type( role ).__name__
         assert isinstance( member, (basestring)), "grant_role(): Argument 'member' must be (one) of type(s) '(basestring)'; given %s" % type( member ).__name__
@@ -12687,6 +14810,9 @@ class GPUdb(object):
 
                 * true
                 * false
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( proc_name, (basestring)), "has_proc(): Argument 'proc_name' must be (one) of type(s) '(basestring)'; given %s" % type( proc_name ).__name__
         assert isinstance( options, (dict)), "has_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -12727,6 +14853,9 @@ class GPUdb(object):
 
                 * true
                 * false
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "has_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( options, (dict)), "has_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -12768,6 +14897,9 @@ class GPUdb(object):
 
                 * true
                 * false
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( type_id, (basestring)), "has_type(): Argument 'type_id' must be (one) of type(s) '(basestring)'; given %s" % type( type_id ).__name__
         assert isinstance( options, (dict)), "has_type(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -12878,6 +15010,9 @@ class GPUdb(object):
 
             count_updated (int)
                 The number of records updated.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "insert_records(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         data = data if isinstance( data, list ) else ( [] if (data is None) else [ data ] )
@@ -13143,6 +15278,9 @@ class GPUdb(object):
 
             count (long)
                 Number of records inserted.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "insert_records_random(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( count, (int, long, float)), "insert_records_random(): Argument 'count' must be (one) of type(s) '(int, long, float)'; given %s" % type( count ).__name__
@@ -13214,6 +15352,9 @@ class GPUdb(object):
 
             symbol_id (str)
                 Value of input parameter *symbol_id*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( symbol_id, (basestring)), "insert_symbol(): Argument 'symbol_id' must be (one) of type(s) '(basestring)'; given %s" % type( symbol_id ).__name__
         assert isinstance( symbol_format, (basestring)), "insert_symbol(): Argument 'symbol_format' must be (one) of type(s) '(basestring)'; given %s" % type( symbol_format ).__name__
@@ -13254,6 +15395,9 @@ class GPUdb(object):
 
             run_ids (list of str)
                 List of run IDs of proc instances that were killed.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( run_id, (basestring)), "kill_proc(): Argument 'run_id' must be (one) of type(s) '(basestring)'; given %s" % type( run_id ).__name__
         assert isinstance( options, (dict)), "kill_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -13268,6 +15412,53 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end kill_proc
+
+
+    # begin list_graph
+    def list_graph( self, graph_name = '', options = {} ):
+        """Lists basic information about one or all graphs that exist on the graph
+        server.
+
+        Parameters:
+
+            graph_name (str)
+                Name of the graph on which to retrieve information. If empty,
+                information about all graphs is returned.  Default value is ''.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            result (bool)
+                Indicates a successful listing.
+
+            graph_names (list of str)
+                Name(s) of the graph(s).
+
+            num_nodes (list of longs)
+                Total number of nodes in the graph.
+
+            num_edges (list of longs)
+                Total number of edges in the graph.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( graph_name, (basestring)), "list_graph(): Argument 'graph_name' must be (one) of type(s) '(basestring)'; given %s" % type( graph_name ).__name__
+        assert isinstance( options, (dict)), "list_graph(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/list/graph" )
+
+        obj = {}
+        obj['graph_name'] = graph_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/list/graph' )
+
+        return AttrDict( response )
+    # end list_graph
 
 
     # begin lock_table
@@ -13318,6 +15509,9 @@ class GPUdb(object):
 
             lock_type (str)
                 Returns the lock state of the table.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "lock_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( lock_type, (basestring)), "lock_table(): Argument 'lock_type' must be (one) of type(s) '(basestring)'; given %s" % type( lock_type ).__name__
@@ -13437,6 +15631,9 @@ class GPUdb(object):
 
             table_name (str)
 
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "merge_records(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         source_table_names = source_table_names if isinstance( source_table_names, list ) else ( [] if (source_table_names is None) else [ source_table_names ] )
@@ -13457,17 +15654,162 @@ class GPUdb(object):
     # end merge_records
 
 
+    # begin query_graph
+    def query_graph( self, graph_name = None, edge_to_node = True,
+                     edge_or_node_int_ids = None, edge_or_node_string_ids =
+                     None, edge_or_node_wkt_ids = None, adjacency_table = '',
+                     options = {} ):
+        """Employs a topological query on a network graph generated a-priori by
+        :meth:`.create_graph`. See `Network Graph Solvers
+        <../../../graph_solver/network_graph_solver.html>`_ for more
+        information.
+
+        Parameters:
+
+            graph_name (str)
+                Name of the graph resource to query.
+
+            edge_to_node (bool)
+                If set to *true*, the query gives the adjacency list from
+                edge(s) to node(s); otherwise, the adjacency list is from
+                node(s) to edge(s).  Default value is True.
+                Allowed values are:
+
+                * true
+                * false
+
+                The default value is 'true'.
+
+            edge_or_node_int_ids (list of longs)
+                The unique list of edge or node integer identifiers that will
+                be queried for adjacencies.    The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
+
+            edge_or_node_string_ids (list of str)
+                The unique list of edge or node string identifiers that will be
+                queried for adjacencies.    The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
+
+            edge_or_node_wkt_ids (list of str)
+                The unique list of edge or node WKTPOINT or WKTLINE string
+                identifiers that will be queried for adjacencies.    The user
+                can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
+
+            adjacency_table (str)
+                Name of the table to store the resulting adjacencies. If left
+                blank, the query results are instead returned in the response
+                even if *export_query_results* is set to *false*.  Default
+                value is ''.
+
+            options (dict of str to str)
+                Additional parameters  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **number_of_rings** --
+                  Sets the number of rings of edges around the node to query
+                  for adjacency, with '1' being the edges directly attached to
+                  the queried nodes. This setting is ignored if input parameter
+                  *edge_to_node* is set to *true*.
+
+                * **include_all_edges** --
+                  Includes only the edges directed out of the node for the
+                  query if set to *false*. If set to *true*, all edges are
+                  queried.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **export_query_results** --
+                  Returns query results in the response if set to *true*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **enable_graph_draw** --
+                  If set to *true*, adds an 'EDGE_WKTLINE' column identifier to
+                  the given input parameter *adjacency_table*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            result (bool)
+                Indicates a successful query.
+
+            adjacency_list_int_array (list of longs)
+                The adjacency entity integer ID: either edge IDs per node
+                requested (if input parameter *edge_to_node* is set to *false*)
+                or two node IDs per edge requested (if input parameter
+                *edge_to_node* is set to *true*).
+
+            adjacency_list_string_array (list of str)
+                The adjacency entity string ID: either edge IDs per node
+                requested (if input parameter *edge_to_node* is set to *false*)
+                or two node IDs per edge requested (if input parameter
+                *edge_to_node* is set to *true*).
+
+            adjacency_list_wkt_array (list of str)
+                The adjacency entity WKTPOINT or WKTLINE ID: either edge IDs
+                per node requested (if input parameter *edge_to_node* is set to
+                *false*) or two node IDs per edge requested (if input parameter
+                *edge_to_node* is set to *true*).
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( graph_name, (basestring)), "query_graph(): Argument 'graph_name' must be (one) of type(s) '(basestring)'; given %s" % type( graph_name ).__name__
+        assert isinstance( edge_to_node, (bool)), "query_graph(): Argument 'edge_to_node' must be (one) of type(s) '(bool)'; given %s" % type( edge_to_node ).__name__
+        edge_or_node_int_ids = edge_or_node_int_ids if isinstance( edge_or_node_int_ids, list ) else ( [] if (edge_or_node_int_ids is None) else [ edge_or_node_int_ids ] )
+        edge_or_node_string_ids = edge_or_node_string_ids if isinstance( edge_or_node_string_ids, list ) else ( [] if (edge_or_node_string_ids is None) else [ edge_or_node_string_ids ] )
+        edge_or_node_wkt_ids = edge_or_node_wkt_ids if isinstance( edge_or_node_wkt_ids, list ) else ( [] if (edge_or_node_wkt_ids is None) else [ edge_or_node_wkt_ids ] )
+        assert isinstance( adjacency_table, (basestring)), "query_graph(): Argument 'adjacency_table' must be (one) of type(s) '(basestring)'; given %s" % type( adjacency_table ).__name__
+        assert isinstance( options, (dict)), "query_graph(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/query/graph" )
+
+        obj = {}
+        obj['graph_name'] = graph_name
+        obj['edge_to_node'] = edge_to_node
+        obj['edge_or_node_int_ids'] = edge_or_node_int_ids
+        obj['edge_or_node_string_ids'] = edge_or_node_string_ids
+        obj['edge_or_node_wkt_ids'] = edge_or_node_wkt_ids
+        obj['adjacency_table'] = adjacency_table
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/query/graph' )
+
+        return AttrDict( response )
+    # end query_graph
+
+
     # begin admin_replace_tom
-    def admin_replace_tom( self, old_rank_tom = None, new_rank_tom = None ):
+    def admin_replace_tom( self, old_rank_tom = None, new_rank_tom = None, options =
+                           {} ):
 
         assert isinstance( old_rank_tom, (int, long, float)), "admin_replace_tom(): Argument 'old_rank_tom' must be (one) of type(s) '(int, long, float)'; given %s" % type( old_rank_tom ).__name__
         assert isinstance( new_rank_tom, (int, long, float)), "admin_replace_tom(): Argument 'new_rank_tom' must be (one) of type(s) '(int, long, float)'; given %s" % type( new_rank_tom ).__name__
+        assert isinstance( options, (dict)), "admin_replace_tom(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/replace/tom" )
 
         obj = {}
         obj['old_rank_tom'] = old_rank_tom
         obj['new_rank_tom'] = new_rank_tom
+        obj['options'] = self.__sanitize_dicts( options )
 
         response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/replace/tom' )
 
@@ -13510,6 +15852,9 @@ class GPUdb(object):
 
             permission (str)
                 Value of input parameter *permission*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( name, (basestring)), "revoke_permission_system(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
         assert isinstance( permission, (basestring)), "revoke_permission_system(): Argument 'permission' must be (one) of type(s) '(basestring)'; given %s" % type( permission ).__name__
@@ -13576,6 +15921,9 @@ class GPUdb(object):
 
             table_name (str)
                 Value of input parameter *table_name*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( name, (basestring)), "revoke_permission_table(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
         assert isinstance( permission, (basestring)), "revoke_permission_table(): Argument 'permission' must be (one) of type(s) '(basestring)'; given %s" % type( permission ).__name__
@@ -13621,6 +15969,9 @@ class GPUdb(object):
 
             member (str)
                 Value of input parameter *member*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( role, (basestring)), "revoke_role(): Argument 'role' must be (one) of type(s) '(basestring)'; given %s" % type( role ).__name__
         assert isinstance( member, (basestring)), "revoke_role(): Argument 'member' must be (one) of type(s) '(basestring)'; given %s" % type( member ).__name__
@@ -13693,6 +16044,9 @@ class GPUdb(object):
             options (list of dicts of str to str)
                 The optional parameters for the procs named in output parameter
                 *proc_names*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( proc_name, (basestring)), "show_proc(): Argument 'proc_name' must be (one) of type(s) '(basestring)'; given %s" % type( proc_name ).__name__
         assert isinstance( options, (dict)), "show_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -13809,6 +16163,9 @@ class GPUdb(object):
             timings (dict of str to dicts of str to dicts of str to longs)
                 Timing information for the returned run IDs, grouped by data
                 segment ID.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( run_id, (basestring)), "show_proc_status(): Argument 'run_id' must be (one) of type(s) '(basestring)'; given %s" % type( run_id ).__name__
         assert isinstance( options, (dict)), "show_proc_status(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -13823,6 +16180,97 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end show_proc_status
+
+
+    # begin show_resource_statistics
+    def show_resource_statistics( self, options = {} ):
+        """Shows various statistics for storage/memory tiers and resource groups.
+        Statistics are provided on a per rank basis.
+
+        Parameters:
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            statistics_map (dict of str to str)
+                Map of resource statistics
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( options, (dict)), "show_resource_statistics(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/show/resource/statistics" )
+
+        obj = {}
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/show/resource/statistics' )
+
+        return AttrDict( response )
+    # end show_resource_statistics
+
+
+    # begin show_resource_groups
+    def show_resource_groups( self, names = None, options = {} ):
+        """Shows resource group properties.
+
+        Parameters:
+
+            names (list of str)
+                List of names of groups to be shown. A single entry with an
+                empty string returns all groups.    The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **show_default_values** --
+                  If true include values of fields that are based on the
+                  default resource group.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **show_default_group** --
+                  If true include the default resource group in the response.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+        Returns:
+            A dict with the following entries--
+
+            groups (dict of str to dicts of str to str)
+                Map of resource group information.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        names = names if isinstance( names, list ) else ( [] if (names is None) else [ names ] )
+        assert isinstance( options, (dict)), "show_resource_groups(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/show/resourcegroups" )
+
+        obj = {}
+        obj['names'] = names
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/show/resourcegroups' )
+
+        return AttrDict( response )
+    # end show_resource_groups
 
 
     # begin show_security
@@ -13866,6 +16314,12 @@ class GPUdb(object):
             permissions (dict of str to lists of dicts of str to str)
                 Map of user/role name to a list of permissions directly granted
                 to that user/role.
+
+            resource_groups (dict of str to str)
+                Map of user name to resource group name.
+
+            info (dict of str to str)
+                Additional information.
         """
         names = names if isinstance( names, list ) else ( [] if (names is None) else [ names ] )
         assert isinstance( options, (dict)), "show_security(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -13880,6 +16334,24 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end show_security
+
+
+    # begin show_statistics
+    def show_statistics( self, table_names = None, options = {} ):
+
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        assert isinstance( options, (dict)), "show_statistics(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/show/statistics" )
+
+        obj = {}
+        obj['table_names'] = table_names
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/show/statistics' )
+
+        return AttrDict( response )
+    # end show_statistics
 
 
     # begin show_system_properties
@@ -13929,6 +16401,9 @@ class GPUdb(object):
 
                 * **conf.hm_http_port** --
                   The host manager port number (an integer value).
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( options, (dict)), "show_system_properties(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -13960,6 +16435,9 @@ class GPUdb(object):
 
             status_map (dict of str to str)
                 A map of server configuration and health related status.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( options, (dict)), "show_system_status(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -13997,6 +16475,9 @@ class GPUdb(object):
 
             jobIds (list of str)
                 List of the internal job ids for the recent requests.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( options, (dict)), "show_system_timing(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -14181,6 +16662,9 @@ class GPUdb(object):
             total_full_size (long)
                 -1 if the *get_sizes* option is *false*. The sum of the
                 elements of output parameter *full_sizes*.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "show_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( options, (dict)), "show_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -14233,6 +16717,9 @@ class GPUdb(object):
                 order the tables are listed in input parameter *table_names*.
                 Each map has (metadata attribute name, metadata attribute
                 value) pairs.
+
+            info (dict of str to str)
+                Additional information.
         """
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
         assert isinstance( options, (dict)), "show_table_metadata(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -14274,6 +16761,9 @@ class GPUdb(object):
 
             table_names (list of str)
                 List of tables matching the input criteria.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( type_id, (basestring)), "show_tables_by_type(): Argument 'type_id' must be (one) of type(s) '(basestring)'; given %s" % type( type_id ).__name__
         assert isinstance( label, (basestring)), "show_tables_by_type(): Argument 'label' must be (one) of type(s) '(basestring)'; given %s" % type( label ).__name__
@@ -14324,6 +16814,9 @@ class GPUdb(object):
                 trigger is associated with multiple tables, then the string
                 value for *table_name* contains a comma separated list of table
                 names.
+
+            info (dict of str to str)
+                Additional information.
         """
         trigger_ids = trigger_ids if isinstance( trigger_ids, list ) else ( [] if (trigger_ids is None) else [ trigger_ids ] )
         assert isinstance( options, (dict)), "show_triggers(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -14383,6 +16876,9 @@ class GPUdb(object):
 
             properties (list of dicts of str to lists of str)
 
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( type_id, (basestring)), "show_types(): Argument 'type_id' must be (one) of type(s) '(basestring)'; given %s" % type( type_id ).__name__
         assert isinstance( label, (basestring)), "show_types(): Argument 'label' must be (one) of type(s) '(basestring)'; given %s" % type( label ).__name__
@@ -14409,6 +16905,238 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end show_types
+
+
+    # begin solve_graph
+    def solve_graph( self, graph_name = None, weights_on_edges = [], restrictions =
+                     [], solver_type = 'SHORTEST_PATH', source_node_id = '0',
+                     destination_node_ids = None, node_type = 'NODE_ID',
+                     source_node = '0', destination_nodes = None, solution_table
+                     = 'graph_solutions', options = {} ):
+        """Solves an existing graph for a type of problem (e.g., shortest path,
+        page rank, travelling salesman, etc.) using source nodes, destination
+        nodes, and additional, optional weights and restrictions. See `Network
+        Graph Solvers <../../../graph_solver/network_graph_solver.html>`_ for
+        more information.
+
+        Parameters:
+
+            graph_name (str)
+                Name of the graph resource to solve.
+
+            weights_on_edges (list of str)
+                Additional weights to apply to the edges of an existing graph.
+                Example format: 'table.column AS WEIGHTS_EDGE_ID'. Any provided
+                weights will be added (in the case of 'WEIGHTS_VALUESPECIFIED')
+                to or multiplied with (in the case of
+                'WEIGHTS_FACTORSPECIFIED') the existing weight(s).  Default
+                value is an empty list ( [] ).   The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
+
+            restrictions (list of str)
+                Additional restrictions to apply to the nodes/edges of an
+                existing graph. Example format: 'table.column AS
+                RESTRICTIONS_NODE_ID'. If *remove_previous_restrictions* is set
+                to *true*, any provided restrictions will replace the existing
+                restrictions. If *remove_previous_restrictions* is set to
+                *false*, any provided weights will be added (in the case of
+                'RESTRICTIONS_VALUECOMPARED') to or replaced (in the case of
+                'RESTRICTIONS_ONOFFCOMPARED').  Default value is an empty list
+                ( [] ).   The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+
+            solver_type (str)
+                The type of solver to use for the graph.  Default value is
+                'SHORTEST_PATH'.
+                Allowed values are:
+
+                * **SHORTEST_PATH** --
+                  Solves for the optimal (shortest) path based on weights and
+                  restrictions from one source to destinations nodes. Also
+                  known as the Dijkstra solver.
+
+                * **PAGE_RANK** --
+                  Solves for the probability of each destination node being
+                  visited based on the links of the graph topology.
+
+                * **CENTRALITY** --
+                  Solves for the degree of a node to depict how many pairs of
+                  individuals that would have to go through the node to reach
+                  one another in the minimum number of hops. Also known as
+                  betweenness.
+
+                * **MULTIPLE_ROUTING** --
+                  Solves for finding the minimum cost cumulative path for a
+                  round-trip starting from the given source and visiting each
+                  given destination node once then returning to the source.
+                  Also known as the travelling salesman problem.
+
+                * **INVERSE_SHORTEST_PATH** --
+                  Solves for finding the optimal path cost for each destination
+                  node to route to the source node. Also known as inverse
+                  Dijkstra or the service man routing problem.
+
+                * **BACKHAUL_ROUTING** --
+                  Solves for optimal routes that connect remote asset nodes to
+                  the fixed (backbone) asset nodes. When *BACKHAUL_ROUTING* is
+                  invoked, the input parameter *destination_nodes* or input
+                  parameter *destination_node_ids* array is used for both fixed
+                  and remote asset nodes and the input parameter
+                  *source_node_id* represents the number of fixed asset nodes
+                  contained in input parameter *destination_nodes* / input
+                  parameter *destination_node_ids*.
+
+                The default value is 'SHORTEST_PATH'.
+
+            source_node_id (long)
+                If input parameter *node_type* is *NODE_ID*, the node ID
+                (integer) of the source (starting point) for the graph
+                solution. If the input parameter *solver_type* is set to
+                *BACKHAUL_ROUTING*, this number represents the number of fixed
+                asset nodes contained in input parameter *destination_nodes*,
+                e.g., if input parameter *source_node_id* is set to 24, the
+                first 24 nodes listed in input parameter *destination_nodes* /
+                input parameter *destination_node_ids* are the fixed asset
+                nodes and the rest of the nodes in the array are remote assets.
+                Default value is '0'.
+
+            destination_node_ids (list of longs)
+                List of destination node indices, or indices for pageranks. If
+                the input parameter *solver_type* is set to *BACKHAUL_ROUTING*,
+                it is the list of all fixed and remote asset nodes.    The user
+                can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
+
+            node_type (str)
+                Source and destination node identifier type.  Default value is
+                'NODE_ID'.
+                Allowed values are:
+
+                * **NODE_ID** --
+                  The graph's nodes were identified as integers, e.g., 1234.
+
+                * **NODE_WKTPOINT** --
+                  The graph's nodes were identified as geospatial coordinates,
+                  e.g., 'POINT(1.0 2.0)'.
+
+                * **NODE_NAME** --
+                  The graph's nodes were identified as strings, e.g.,
+                  'Arlington'.
+
+                The default value is 'NODE_ID'.
+
+            source_node (str)
+                If input parameter *node_type* is *NODE_WKTPOINT* or
+                *NODE_NAME*, the node (string) of the source (starting point)
+                for the graph solution.  Default value is '0'.
+
+            destination_nodes (list of str)
+                If input parameter *node_type* is *NODE_WKTPOINT* or
+                *NODE_NAME*, the list of destination node or page rank indices
+                (strings) for the graph solution. If the input parameter
+                *solver_type* is set to *BACKHAUL_ROUTING*, it is the list of
+                all fixed and remote asset nodes. The string type should be
+                consistent with the input parameter *node_type* parameter.
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+
+            solution_table (str)
+                Name of the table to store the solution.  Default value is
+                'graph_solutions'.
+
+            options (dict of str to str)
+                Additional parameters  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **max_solution_radius** --
+                  For *SHORTEST_PATH* and *INVERSE_SHORTEST_PATH* solvers only.
+                  Sets the maximum solution cost radius, which ignores the
+                  input parameter *destination_node_ids* list and instead
+                  outputs the nodes within the radius sorted by ascending cost.
+                  If set to '0.0', the setting is ignored.
+
+                * **max_solution_targets** --
+                  For *SHORTEST_PATH* and *INVERSE_SHORTEST_PATH* solvers only.
+                  Sets the maximum number of solution targets, which ignores
+                  the input parameter *destination_node_ids* list and instead
+                  outputs no more than n number of nodes sorted by ascending
+                  cost where n is equal to the setting value. If set to 0, the
+                  setting is ignored.
+
+                * **export_solve_results** --
+                  Returns solution results inside the output parameter
+                  *result_per_destination_node* array in the response if set to
+                  *true*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **remove_previous_restrictions** --
+                  Ignore the restrictions applied to the graph during the
+                  creation stage and only use the restrictions specified in
+                  this request if set to *true*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **restriction_threshold_value** --
+                  Value-based restriction comparison. Any node or edge with a
+                  RESTRICTIONS_VALUECOMPARED value greater than the
+                  *restriction_threshold_value* will not be included in the
+                  solution.
+
+        Returns:
+            A dict with the following entries--
+
+            result (bool)
+                Indicates a successful solution.
+
+            result_per_destination_node (list of floats)
+                Cost or Pagerank (based on solver type) for each destination
+                node requested. Only populated if *export_solve_results* is set
+                to *true*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( graph_name, (basestring)), "solve_graph(): Argument 'graph_name' must be (one) of type(s) '(basestring)'; given %s" % type( graph_name ).__name__
+        weights_on_edges = weights_on_edges if isinstance( weights_on_edges, list ) else ( [] if (weights_on_edges is None) else [ weights_on_edges ] )
+        restrictions = restrictions if isinstance( restrictions, list ) else ( [] if (restrictions is None) else [ restrictions ] )
+        assert isinstance( solver_type, (basestring)), "solve_graph(): Argument 'solver_type' must be (one) of type(s) '(basestring)'; given %s" % type( solver_type ).__name__
+        assert isinstance( source_node_id, (int, long, float)), "solve_graph(): Argument 'source_node_id' must be (one) of type(s) '(int, long, float)'; given %s" % type( source_node_id ).__name__
+        destination_node_ids = destination_node_ids if isinstance( destination_node_ids, list ) else ( [] if (destination_node_ids is None) else [ destination_node_ids ] )
+        assert isinstance( node_type, (basestring)), "solve_graph(): Argument 'node_type' must be (one) of type(s) '(basestring)'; given %s" % type( node_type ).__name__
+        assert isinstance( source_node, (basestring)), "solve_graph(): Argument 'source_node' must be (one) of type(s) '(basestring)'; given %s" % type( source_node ).__name__
+        destination_nodes = destination_nodes if isinstance( destination_nodes, list ) else ( [] if (destination_nodes is None) else [ destination_nodes ] )
+        assert isinstance( solution_table, (basestring)), "solve_graph(): Argument 'solution_table' must be (one) of type(s) '(basestring)'; given %s" % type( solution_table ).__name__
+        assert isinstance( options, (dict)), "solve_graph(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/solve/graph" )
+
+        obj = {}
+        obj['graph_name'] = graph_name
+        obj['weights_on_edges'] = weights_on_edges
+        obj['restrictions'] = restrictions
+        obj['solver_type'] = solver_type
+        obj['source_node_id'] = source_node_id
+        obj['destination_node_ids'] = destination_node_ids
+        obj['node_type'] = node_type
+        obj['source_node'] = source_node
+        obj['destination_nodes'] = destination_nodes
+        obj['solution_table'] = solution_table
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/solve/graph' )
+
+        return AttrDict( response )
+    # end solve_graph
 
 
     # begin update_records
@@ -14502,7 +17230,7 @@ class GPUdb(object):
                   the predicates listed in input parameter *expressions*.
 
                 * **bypass_safety_checks** --
-                  When set to 'true', all predicates are available for primary
+                  When set to *true*, all predicates are available for primary
                   key updates.  Keep in mind that it is possible to destroy
                   data in this case, since a single predicate may match
                   multiple objects (potentially all of records of a table), and
@@ -14528,9 +17256,12 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **use_expressions_in_new_values_maps** --
-                  When set to 'true', all new_values in new_values_maps are
-                  considered as expression values. When set to 'false', all
-                  new_values in new_values_maps are considered as constants.
+                  When set to *true*, all new values in input parameter
+                  *new_values_maps* are considered as expression values. When
+                  set to *false*, all new values in input parameter
+                  *new_values_maps* are considered as constants.  NOTE:  When
+                  *true*, string constants will need to be quoted to avoid
+                  being evaluated as expressions.
                   Allowed values are:
 
                   * true
@@ -14567,6 +17298,9 @@ class GPUdb(object):
                 Total number of records inserted per predicate in input
                 parameter *expressions* (will be either 0 or 1 for each
                 expression).
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "update_records(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         expressions = expressions if isinstance( expressions, list ) else ( [] if (expressions is None) else [ expressions ] )
@@ -14650,6 +17384,9 @@ class GPUdb(object):
 
             count (int)
 
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "update_records_by_series(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( world_table_name, (basestring)), "update_records_by_series(): Argument 'world_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( world_table_name ).__name__
@@ -14675,15 +17412,17 @@ class GPUdb(object):
     # begin visualize_image
     def visualize_image( self, table_names = None, world_table_names = None,
                          x_column_name = None, y_column_name = None,
-                         geometry_column_name = None, track_ids = None, min_x =
-                         None, max_x = None, min_y = None, max_y = None, width =
-                         None, height = None, projection = 'PLATE_CARREE',
-                         bg_color = None, style_options = None, options = {} ):
+                         symbol_column_name = None, geometry_column_name = None,
+                         track_ids = None, min_x = None, max_x = None, min_y =
+                         None, max_y = None, width = None, height = None,
+                         projection = 'PLATE_CARREE', bg_color = None,
+                         style_options = None, options = {} ):
 
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
         world_table_names = world_table_names if isinstance( world_table_names, list ) else ( [] if (world_table_names is None) else [ world_table_names ] )
         assert isinstance( x_column_name, (basestring)), "visualize_image(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
         assert isinstance( y_column_name, (basestring)), "visualize_image(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
+        assert isinstance( symbol_column_name, (basestring)), "visualize_image(): Argument 'symbol_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( symbol_column_name ).__name__
         assert isinstance( geometry_column_name, (basestring)), "visualize_image(): Argument 'geometry_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( geometry_column_name ).__name__
         track_ids = track_ids if isinstance( track_ids, list ) else ( [] if (track_ids is None) else [ track_ids ] )
         assert isinstance( min_x, (int, long, float)), "visualize_image(): Argument 'min_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_x ).__name__
@@ -14704,6 +17443,7 @@ class GPUdb(object):
         obj['world_table_names'] = world_table_names
         obj['x_column_name'] = x_column_name
         obj['y_column_name'] = y_column_name
+        obj['symbol_column_name'] = symbol_column_name
         obj['geometry_column_name'] = geometry_column_name
         obj['track_ids'] = track_ids
         obj['min_x'] = min_x
@@ -14872,11 +17612,11 @@ class GPUdb(object):
                   The default value is 'none'.
 
                 * **jitter_x** --
-                  Amplitude of horizontal jitter applied to non-numaric x
+                  Amplitude of horizontal jitter applied to non-numeric x
                   column values.
 
                 * **jitter_y** --
-                  Amplitude of vertical jitter applied to non-numaric y column
+                  Amplitude of vertical jitter applied to non-numeric y column
                   values.
 
                 * **plot_all** --
@@ -14943,6 +17683,9 @@ class GPUdb(object):
                 * **location_y** --
                   Y axis label positions of sorted_y_values in pixel
                   coordinates.
+
+            info (dict of str to str)
+                Additional information.
         """
         assert isinstance( table_name, (basestring)), "visualize_image_chart(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         x_column_names = x_column_names if isinstance( x_column_names, list ) else ( [] if (x_column_names is None) else [ x_column_names ] )
@@ -15484,7 +18227,7 @@ class GPUdbTable( object ):
                 ingestor flushes the data to the server when a worker queue
                 reaches *multihead_ingest_batch_size* in size, and any
                 remaining records will have to be manually flushed using
-                :meth:`.flush_data_to_server`. Default True.
+                :meth:`.flush_data_to_server`. Default False.
 
         Returns:
             A GPUdbTable object.
@@ -15636,7 +18379,7 @@ class GPUdbTable( object ):
                                   "".format( e.message ) )
         except Exception as e: # all other exceptions
             raise GPUdbException( "Error creating GPUdbTable; {}: '{}'"
-                                  "".format( e.__doc__, e.message ) )
+                                  "".format( e.__doc__, str(e) ) )
 
 
         # Set up multi-head ingestion, if needed
@@ -16162,6 +18905,8 @@ class GPUdbTable( object ):
             options = {}
 
         # Encode the data for insertion
+        if not args and not kwargs:
+            raise GPUdbException( "No data given to insert!" )
         encoded_data = self.__encode_data_for_insertion( *args, **kwargs )
 
 
@@ -16963,8 +19708,9 @@ class GPUdbTable( object ):
 
 
     @staticmethod
-    def create_join_table( db, join_table_name = None, table_names = [],
-                           column_names = [], expressions = [], options = {} ):
+    def create_join_table( db, join_table_name = None, table_names = None,
+                           column_names = None, expressions = [], options = {}
+                           ):
         """Creates a table that is the result of a SQL JOIN.
 
         For join details and examples see: `Joins
@@ -16980,9 +19726,9 @@ class GPUdbTable( object ):
 
             table_names (list of str)
                 The list of table names composing the join.  Corresponds to a
-                SQL statement FROM clause.  Default value is an empty list ( []
-                ).   The user can provide a single element (which will be
-                automatically promoted to a list internally) or a list.
+                SQL statement FROM clause.    The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
 
             column_names (list of str)
                 List of member table columns or column expressions to be
@@ -16994,9 +19740,8 @@ class GPUdbTable( object ):
                 table's columns.  Columns and column expressions composing the
                 join must be uniquely named or aliased--therefore, the '*' wild
                 card cannot be used if column names aren't unique across all
-                tables.  Default value is an empty list ( [] ).   The user can
-                provide a single element (which will be automatically promoted
-                to a list internally) or a list.
+                tables.    The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
 
             expressions (list of str)
                 An optional list of expressions to combine and filter the
@@ -17475,6 +20220,9 @@ class GPUdbTable( object ):
             is_valid (bool)
 
 
+            info (dict of str to str)
+                Additional information.
+
         Raises:
 
             GPUdbException -- 
@@ -17767,6 +20515,9 @@ class GPUdbTable( object ):
             has_more_records (bool)
                 Too many records. Returned a partial set.
 
+            info (dict of str to str)
+                Additional information.
+
             records (list of :class:`Record`)
                 A list of :class:`Record` objects which contain the decoded
                 records.
@@ -17859,6 +20610,9 @@ class GPUdbTable( object ):
             end (float)
                 Value of input parameter *end*.
 
+            info (dict of str to str)
+                Additional information.
+
         Raises:
 
             GPUdbException -- 
@@ -17948,6 +20702,9 @@ class GPUdbTable( object ):
             num_iters (int)
                 The number of iterations the algorithm executed before it quit.
 
+            info (dict of str to str)
+                Additional information.
+
         Raises:
 
             GPUdbException -- 
@@ -17984,6 +20741,9 @@ class GPUdbTable( object ):
 
             max (float)
                 Maximum value of the input parameter *column_name*.
+
+            info (dict of str to str)
+                Additional information.
 
         Raises:
 
@@ -18030,6 +20790,9 @@ class GPUdbTable( object ):
             max_y (float)
                 Maximum y-coordinate value of the input parameter
                 *column_name*.
+
+            info (dict of str to str)
+                Additional information.
 
         Raises:
 
@@ -18172,6 +20935,9 @@ class GPUdbTable( object ):
                 (statistic name, double value) pairs of the requested
                 statistics, including the total count by default.
 
+            info (dict of str to str)
+                Additional information.
+
         Raises:
 
             GPUdbException -- 
@@ -18274,6 +21040,9 @@ class GPUdbTable( object ):
                 parameter having a value that is a vector of the corresponding
                 value-column bin statistics. In a addition the key count has a
                 value that is a histogram of the binning-column.
+
+            info (dict of str to str)
+                Additional information.
 
         Raises:
 
@@ -18473,6 +21242,9 @@ class GPUdbTable( object ):
 
             has_more_records (bool)
                 Too many records. Returned a partial set.
+
+            info (dict of str to str)
+                Additional information.
 
             records (list of :class:`Record`)
                 A list of :class:`Record` objects which contain the decoded
@@ -18685,6 +21457,9 @@ class GPUdbTable( object ):
             has_more_records (bool)
                 Too many records. Returned a partial set.
 
+            info (dict of str to str)
+                Additional information.
+
             records (list of :class:`Record`)
                 A list of :class:`Record` objects which contain the decoded
                 records.
@@ -18729,8 +21504,7 @@ class GPUdbTable( object ):
 
     def alter_table( self, action = None, value = None, options = {} ):
         """Apply various modifications to a table, view, or collection.  The
-        available
-        modifications include the following:
+        available modifications include the following:
 
         Create or delete an `index
         <../../../concepts/indexes.html#column-index>`_ on a
@@ -18760,6 +21534,10 @@ class GPUdbTable( object ):
         allow automatic expiration. This can be applied to tables, views, and
         collections.
 
+        Manage a `range-partitioned
+        <../../../concepts/tables.html#partitioning>`_
+        table's partitions.
+
         Allow homogeneous tables within a collection.
 
         Manage a table's columns--a column can be added, removed, or have its
@@ -18775,10 +21553,7 @@ class GPUdbTable( object ):
                 Allowed values are:
 
                 * **allow_homogeneous_tables** --
-                  Sets whether homogeneous tables are allowed in the given
-                  collection. This action is only valid if input parameter
-                  *table_name* is a collection. The input parameter *value*
-                  must be either 'true' or 'false'.
+                  No longer supported; action will be ignored.
 
                 * **create_index** --
                   Creates an `index
@@ -18858,6 +21633,21 @@ class GPUdbTable( object ):
                   parameter *value* should be the foreign_key_name specified
                   when creating the key or the complete string used to define
                   it.
+
+                * **add_partition** --
+                  Partition definition to add (for range-partitioned tables
+                  only).  See `range partitioning example
+                  <../../../concepts/tables.html#partitioning-by-range-example>`_
+                  for example format.
+
+                * **remove_partition** --
+                  Name of partition to remove (for range-partitioned tables
+                  only).  All data in partition will be moved to the default
+                  partition
+
+                * **delete_partition** --
+                  Name of partition to delete (for range-partitioned tables
+                  only).  All data in the partition will be deleted.
 
                 * **set_global_access_mode** --
                   Sets the global access mode (i.e. locking) for the table
@@ -18994,6 +21784,9 @@ class GPUdbTable( object ):
                 return the type label  (when changing a table, a new type may
                 be created)
 
+            info (dict of str to str)
+                Additional information.
+
         Raises:
 
             GPUdbException -- 
@@ -19009,6 +21802,99 @@ class GPUdbTable( object ):
              self.name = value
         return response
     # end alter_table
+
+
+    def alter_table_columns( self, column_alterations = None, options = None ):
+        """Apply various modifications to columns in a table, view.  The available
+        modifications include the following:
+
+        Create or delete an `index
+        <../../../concepts/indexes.html#column-index>`_ on a
+        particular column. This can speed up certain operations when using
+        expressions
+        containing equality or relational operators on indexed columns. This
+        only
+        applies to tables.
+
+        Manage a table's columns--a column can be added, removed, or have its
+        `type and properties <../../../concepts/types.html>`_ modified.
+
+        Set or unset `compression <../../../concepts/compression.html>`_ for a
+        column.
+
+        Parameters:
+
+            column_alterations (list of dicts of str to str)
+                list of alter table add/delete/change column requests - all for
+                the same table.
+                                each request is a map that includes
+                'column_name', 'action' and the options specific for the
+                action,
+                                note that the same options as in alter table
+                requests but in the same map as the column name and the action.
+                For example:
+                [{'column_name':'col_1','action':'change_column','rename_column':'col_2'},
+                                {'column_name':'col_1','action':'add_column',
+                'type':'int','default_value':'1'}
+                                ]     The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
+
+            options (dict of str to str)
+                Optional parameters.
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            table_name (str)
+                Table on which the operation was performed.
+
+            type_id (str)
+                return the type_id (when changing a table, a new type may be
+                created)
+
+            type_definition (str)
+                return the type_definition  (when changing a table, a new type
+                may be created)
+
+            properties (dict of str to lists of str)
+                return the type properties  (when changing a table, a new type
+                may be created)
+
+            label (str)
+                return the type label  (when changing a table, a new type may
+                be created)
+
+            column_alterations (list of dicts of str to str)
+                list of alter table add/delete/change column requests - all for
+                the same table.
+                                each request is a map that includes
+                'column_name', 'action' and the options specific for the
+                action,
+                                note that the same options as in alter table
+                requests but in the same map as the column name and the action.
+                For example:
+                [{'column_name':'col_1','action':'change_column','rename_column':'col_2'},
+                                {'column_name':'col_1','action':'add_column',
+                'type':'int','default_value':'1'}
+                                ]
+
+            info (dict of str to str)
+                Additional information.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
+        response = self.db.alter_table_columns( self.name, column_alterations,
+                                                options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end alter_table_columns
 
 
     def append_records( self, source_table_name = None, field_map = None,
@@ -19041,25 +21927,24 @@ class GPUdbTable( object ):
 
                 * **offset** --
                   A positive integer indicating the number of initial results
-                  to skip from source table (specified by input parameter
-                  *source_table_name*). Default is 0. The minimum allowed value
-                  is 0. The maximum allowed value is MAX_INT.
+                  to skip from input parameter *source_table_name*. Default is
+                  0. The minimum allowed value is 0. The maximum allowed value
+                  is MAX_INT.
 
                 * **limit** --
                   A positive integer indicating the maximum number of results
-                  to be returned from source table (specified by input
-                  parameter *source_table_name*). Or END_OF_SET (-9999) to
-                  indicate that the max number of results should be returned.
+                  to be returned from input parameter *source_table_name*. Or
+                  END_OF_SET (-9999) to indicate that the max number of results
+                  should be returned.
 
                 * **expression** --
-                  Optional filter expression to apply to the source table
-                  (specified by input parameter *source_table_name*). Empty by
-                  default.
+                  Optional filter expression to apply to the input parameter
+                  *source_table_name*.
 
                 * **order_by** --
-                  Comma-separated list of the columns and expressions to be
-                  sorted by from the source table (specified by input parameter
-                  *source_table_name*); e.g. 'timestamp asc, x desc'.  The
+                  Comma-separated list of the columns to be sorted by from
+                  source table (specified by input parameter
+                  *source_table_name*), e.g., 'timestamp asc, x desc'. The
                   *order_by* columns do not have to be present in input
                   parameter *field_map*.
 
@@ -19091,6 +21976,9 @@ class GPUdbTable( object ):
             table_name (str)
 
 
+            info (dict of str to str)
+                Additional information.
+
         Raises:
 
             GPUdbException -- 
@@ -19103,6 +21991,16 @@ class GPUdbTable( object ):
 
         return response
     # end append_records
+
+
+    def clear_statistics( self, column_name = '', options = {} ):
+
+        response = self.db.clear_statistics( self.name, column_name, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end clear_statistics
 
 
     def clear( self, authorization = '', options = {} ):
@@ -19141,6 +22039,9 @@ class GPUdbTable( object ):
                 Value of input parameter *table_name* for a given table, or
                 'ALL CLEARED' in case of clearing all tables.
 
+            info (dict of str to str)
+                Additional information.
+
         Raises:
 
             GPUdbException -- 
@@ -19152,6 +22053,16 @@ class GPUdbTable( object ):
 
         return response
     # end clear
+
+
+    def collect_statistics( self, column_names = None, options = {} ):
+
+        response = self.db.collect_statistics( self.name, column_names, options )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( _Util.get_error_msg( response ) )
+
+        return response
+    # end collect_statistics
 
 
     def create_projection( self, column_names = None, options = {},
@@ -19347,6 +22258,9 @@ class GPUdbTable( object ):
                 JSON Avro schema of the table, for use in decoding published
                 records.
 
+            info (dict of str to str)
+                Additional information.
+
         Raises:
 
             GPUdbException -- 
@@ -19415,6 +22329,9 @@ class GPUdbTable( object ):
 
             counts_deleted (list of longs)
                 Total number of records deleted per expression.
+
+            info (dict of str to str)
+                Additional information.
 
         Raises:
 
@@ -20513,6 +23430,9 @@ class GPUdbTable( object ):
             lock_type (str)
                 Returns the lock state of the table.
 
+            info (dict of str to str)
+                Additional information.
+
         Raises:
 
             GPUdbException -- 
@@ -20570,6 +23490,9 @@ class GPUdbTable( object ):
 
             table_name (str)
                 Value of input parameter *table_name*.
+
+            info (dict of str to str)
+                Additional information.
 
         Raises:
 
@@ -20751,6 +23674,9 @@ class GPUdbTable( object ):
                 -1 if the *get_sizes* option is *false*. The sum of the
                 elements of output parameter *full_sizes*.
 
+            info (dict of str to str)
+                Additional information.
+
         Raises:
 
             GPUdbException -- 
@@ -20834,7 +23760,7 @@ class GPUdbTable( object ):
                   the predicates listed in input parameter *expressions*.
 
                 * **bypass_safety_checks** --
-                  When set to 'true', all predicates are available for primary
+                  When set to *true*, all predicates are available for primary
                   key updates.  Keep in mind that it is possible to destroy
                   data in this case, since a single predicate may match
                   multiple objects (potentially all of records of a table), and
@@ -20860,9 +23786,12 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **use_expressions_in_new_values_maps** --
-                  When set to 'true', all new_values in new_values_maps are
-                  considered as expression values. When set to 'false', all
-                  new_values in new_values_maps are considered as constants.
+                  When set to *true*, all new values in input parameter
+                  *new_values_maps* are considered as expression values. When
+                  set to *false*, all new values in input parameter
+                  *new_values_maps* are considered as constants.  NOTE:  When
+                  *true*, string constants will need to be quoted to avoid
+                  being evaluated as expressions.
                   Allowed values are:
 
                   * true
@@ -20894,6 +23823,9 @@ class GPUdbTable( object ):
                 Total number of records inserted per predicate in input
                 parameter *expressions* (will be either 0 or 1 for each
                 expression).
+
+            info (dict of str to str)
+                Additional information.
 
         Raises:
 
@@ -20943,6 +23875,9 @@ class GPUdbTable( object ):
 
             count (int)
 
+
+            info (dict of str to str)
+                Additional information.
 
         Raises:
 
@@ -21098,8 +24033,12 @@ class GPUdbTableOptions(object):
     __is_replicated               = "is_replicated"
     __foreign_keys                = "foreign_keys"
     __foreign_shard_key           = "foreign_shard_key"
+    __partition_type              = "partition_type"
+    __partition_keys              = "partition_keys"
+    __partition_definitions       = "partition_definitions"
     __ttl                         = "ttl"
     __chunk_size                  = "chunk_size"
+    __strategy_definition         = "strategy_definition"
     __is_result_table             = "is_result_table"
 
     _supported_options = [ __no_error_if_exists,
@@ -21109,8 +24048,12 @@ class GPUdbTableOptions(object):
                            __is_replicated,
                            __foreign_keys,
                            __foreign_shard_key,
+                           __partition_type,
+                           __partition_keys,
+                           __partition_definitions,
                            __ttl,
                            __chunk_size,
+                           __strategy_definition,
                            __is_result_table
     ]
 
@@ -21138,8 +24081,12 @@ class GPUdbTableOptions(object):
         self._is_replicated               = False
         self._foreign_keys                = None
         self._foreign_shard_key           = None
+        self._partition_type              = None
+        self._partition_keys              = None
+        self._partition_definitions       = None
         self._ttl                         = None
         self._chunk_size                  = None
+        self._strategy_definition         = None
         self._is_result_table             = None
 
         if (_dict is None):
@@ -21188,8 +24135,20 @@ class GPUdbTableOptions(object):
         if self._foreign_shard_key is not None:
             result[ self.__foreign_shard_key  ] = str( self._foreign_shard_key )
 
+        if self._partition_type is not None:
+            result[ self.__partition_type     ] = str( self._partition_type )
+
+        if self._partition_keys is not None:
+            result[ self.__partition_keys     ] = str( self._partition_keys )
+
+        if self._partition_definitions is not None:
+            result[ self.__partition_definitions  ] = str( self._partition_definitions )
+
         if self._ttl is not None:
-            result[ self.__ttl                ] = str( self._ttl )
+            result[ self.__ttl                    ] = str( self._ttl )
+
+        if self._strategy_definition is not None:
+            result[ self.__strategy_definition    ] = str( self._strategy_definition )
 
         if self._disallow_homogeneous_tables is not None:
             result[ self.__disallow_homogeneous_tables ] = "true" if self._disallow_homogeneous_tables else "false"
@@ -21305,6 +24264,24 @@ class GPUdbTableOptions(object):
     # end foreign_shard_key
 
 
+    def partition_type(self, val):
+        self._partition_type = val
+        return self
+    # end partition_type
+
+
+    def partition_keys(self, val):
+        self._partition_keys = val
+        return self
+    # end partition_keys
+
+
+    def partition_definitions(self, val):
+        self._partition_definitions = val
+        return self
+    # end partition_definitions
+
+
     def ttl(self, val):
         self._ttl = val
         return self
@@ -21315,6 +24292,12 @@ class GPUdbTableOptions(object):
         self._chunk_size = val
         return self
     # end chunk_size
+
+
+    def strategy_definition(self, val):
+        self._strategy_definition = val
+        return self
+    # end strategy_definition
 
 # end class GPUdbTableOptions
 

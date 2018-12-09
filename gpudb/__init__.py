@@ -9,6 +9,7 @@ from .protocol import Record
 if (sys.version_info[0] == 3): # checking the major component
     from gpudb.gpudb import GPUdb
     from gpudb.gpudb import GPUdbException
+    from gpudb.gpudb import GPUdbConnectionException
     from gpudb.gpudb import GPUdbRecordColumn
     from gpudb.gpudb import GPUdbRecordType
     from gpudb.gpudb import GPUdbRecord
@@ -25,6 +26,7 @@ if (sys.version_info[0] == 3): # checking the major component
 else:
     from gpudb import GPUdb
     from gpudb import GPUdbException
+    from gpudb import GPUdbConnectionException
     from gpudb import GPUdbRecordColumn
     from gpudb import GPUdbRecordType
     from gpudb import GPUdbRecord
