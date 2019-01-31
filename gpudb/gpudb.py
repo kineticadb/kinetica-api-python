@@ -28,6 +28,7 @@ import json
 import random
 import re
 import time
+import traceback
 import uuid
 
 from collections import Iterator
@@ -125,12 +126,28 @@ class GPUdbException( Exception ):
 
     def __init__( self, value ):
         self.value = value
-        self.message = value
+        if isinstance(value, (basestring, unicode)):
+            # We got a message only
+            self.message = value
+            self.traceback_msg = ""
+        elif isinstance(value, Exception):
+            # Preserve the message and also the stack trace
+            self.message = value.message
+            self.traceback_msg = "".join( traceback.format_exception( sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2] ) )
     # end __init__
 
     def __str__( self ):
         return repr( self.value )
     # end __str__
+
+
+    def get_formatted_traceback( self ):
+        """If this exception is created from another exception,
+        then returns a string containing the original traceback.
+        Otherwise, returns an empty string.
+        """
+        return self.traceback_msg
+    # end get_formatted_traceback
     
 # end class GPUdbException
 
@@ -989,7 +1006,7 @@ class GPUdbColumnProperty(object):
     DICT = "dict"
     """str: This property indicates that this column should be `dictionary encoded
     <../../../concepts/dictionary_encoding.html>`_. It can only be used in
-    conjunction with restricted string (charN), int, or long columns.
+    conjunction with restricted string (charN), int, long or date columns.
     Dictionary encoding is best for columns where the cardinality (the number
     of unique values) is expected to be low. This property can save a large
     amount of memory.
@@ -1212,10 +1229,13 @@ class GPUdbRecordType(object):
 
 
         # Construct the object from the given columns
-        if (columns != None):
-            self.__initiate_from_columns( columns )
-        else:
-            self.__initiate_from_schema_string( schema_string, column_properties )
+        try:
+            if (columns != None):
+                self.__initiate_from_columns( columns )
+            else:
+                self.__initiate_from_schema_string( schema_string, column_properties )
+        except Exception as ex:
+            raise GPUdbException( ex )
 
         # The type hasn't been registered with GPUdb yet
         self._type_id = None
@@ -3798,9 +3818,9 @@ class GPUdb(object):
                                        "RSP_SCHEMA_CEXT" : RSP_SCHEMA_CEXT,
                                        "ENDPOINT" : ENDPOINT }
         name = "/alter/resourcegroup"
-        REQ_SCHEMA_STR = """{"type":"record","name":"alter_resource_group_request","fields":[{"name":"name","type":"string"},{"name":"tier_attributes","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"tier_strategy","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"alter_resource_group_request","fields":[{"name":"name","type":"string"},{"name":"tier_attributes","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"alter_resource_group_response","fields":[{"name":"name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("name", "string"), ("tier_attributes", "map", [("map", [("string")])]), ("tier_strategy", "array", [("string")]), ("options", "map", [("string")])] )
+        REQ_SCHEMA = Schema( "record", [("name", "string"), ("tier_attributes", "map", [("map", [("string")])]), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/alter/resourcegroup"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -4007,9 +4027,9 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/create/resourcegroup"
-        REQ_SCHEMA_STR = """{"type":"record","name":"create_resource_group_request","fields":[{"name":"name","type":"string"},{"name":"tier_attributes","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"tier_strategy","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_resource_group_request","fields":[{"name":"name","type":"string"},{"name":"tier_attributes","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"create_resource_group_response","fields":[{"name":"name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("name", "string"), ("tier_attributes", "map", [("map", [("string")])]), ("tier_strategy", "array", [("string")]), ("options", "map", [("string")])] )
+        REQ_SCHEMA = Schema( "record", [("name", "string"), ("tier_attributes", "map", [("map", [("string")])]), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/resourcegroup"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -4425,9 +4445,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/get/vectortile"
         REQ_SCHEMA_STR = """{"type":"record","name":"get_vectortile_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"layers","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"tile_x","type":"int"},{"name":"tile_y","type":"int"},{"name":"zoom","type":"int"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"get_vectortile_response","fields":[{"name":"encoded_data","type":"bytes"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"get_vectortile_response","fields":[{"name":"encoded_data","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("column_names", "array", [("string")]), ("layers", "map", [("array", [("string")])]), ("tile_x", "int"), ("tile_y", "int"), ("zoom", "int"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("encoded_data", "bytes"), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("encoded_data", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/get/vectortile"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -5044,98 +5064,6 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["visualize_video_heatmap"] = "/visualize/video/heatmap"
     # end load_gpudb_func_to_endpoint_map
 
-    # begin admin_add_ranks
-    def admin_add_ranks( self, hosts = None, config_params = None, options = {} ):
-        """Add one or more new ranks to the Kinetica cluster. The new ranks will
-        not contain any data initially, other than replicated tables, and not
-        be assigned any shards. To rebalance data across the cluster, which
-        includes shifting some shard key assignments to newly added ranks, see
-        :meth:`.admin_rebalance`.
-
-        For example, if attempting to add three new ranks (two ranks on host
-        172.123.45.67 and one rank on host 172.123.45.68) to a Kinetica cluster
-        with additional configuration parameters:
-
-        * input parameter *hosts* would be an array including 172.123.45.67 in
-        the first two indices (signifying two ranks being added to host
-        172.123.45.67) and 172.123.45.68 in the last index (signifying one rank
-        being added to host 172.123.45.67)
-
-        * input parameter *config_params* would be an array of maps, with each
-        map corresponding to the ranks being added in input parameter *hosts*.
-        The key of each map would be the configuration parameter name and the
-        value would be the parameter's value, e.g. 'rank.gpu':'1'
-
-        Parameters:
-
-            hosts (list of str)
-                The IP address of each rank being added to the cluster. Insert
-                one entry per rank, even if they are on the same host. The
-                order of the hosts in the array only matters as it relates to
-                the input parameter *config_params*.    The user can provide a
-                single element (which will be automatically promoted to a list
-                internally) or a list.
-
-            config_params (list of dicts of str to str)
-                Configuration parameters to apply to the new ranks, e.g., which
-                GPU to use. Configuration parameters that start with 'rankN.',
-                where N is the rank number, should omit the N, as the new rank
-                number(s) are not allocated until the ranks are created. Each
-                entry in this array corresponds to the entry at the same array
-                index in the input parameter *hosts*. This array must either be
-                completely empty or have the same number of elements as the
-                hosts array.  An empty array will result in the new ranks being
-                set only with default parameters.    The user can provide a
-                single element (which will be automatically promoted to a list
-                internally) or a list.
-
-            options (dict of str to str)
-                Optional parameters.  Default value is an empty dict ( {} ).
-                Allowed keys are:
-
-                * **dry_run** --
-                  If *true*, only validation checks will be performed. No ranks
-                  are added.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
-        Returns:
-            A dict with the following entries--
-
-            added_ranks (list of ints)
-                The number assigned to each newly added rank, in the same order
-                as the ranks in the input parameter *hosts*. Will be empty if
-                the operation fails.
-
-            results (list of str)
-                Text description of the result of each rank being added.
-                Indicates the reason for any errors that occur. Entries are in
-                the same order as the input parameter *hosts*.
-
-            info (dict of str to str)
-                Additional information.
-        """
-        hosts = hosts if isinstance( hosts, list ) else ( [] if (hosts is None) else [ hosts ] )
-        config_params = config_params if isinstance( config_params, list ) else ( [] if (config_params is None) else [ config_params ] )
-        assert isinstance( options, (dict)), "admin_add_ranks(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/admin/add/ranks" )
-
-        obj = {}
-        obj['hosts'] = hosts
-        obj['config_params'] = config_params
-        obj['options'] = self.__sanitize_dicts( options )
-
-        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/admin/add/ranks' )
-
-        return AttrDict( response )
-    # end admin_add_ranks
-
-
     # begin admin_alter_jobs
     def admin_alter_jobs( self, job_ids = None, action = None, options = {} ):
         """Perform the requested action on a list of one or more job(s). Based on
@@ -5274,155 +5202,6 @@ class GPUdb(object):
     # end admin_offline
 
 
-    # begin admin_rebalance
-    def admin_rebalance( self, options = {} ):
-        """Rebalance the cluster so that all the nodes contain approximately an
-        equal number of records.  The rebalance will also cause the shards to
-        be equally distributed (as much as possible) across all the ranks.
-
-        Parameters:
-
-            options (dict of str to str)
-                Optional parameters.  Default value is an empty dict ( {} ).
-                Allowed keys are:
-
-                * **rebalance_sharded_data** --
-                  If *true*, sharded data will be rebalanced approximately
-                  equally across the cluster. Note that for big clusters, this
-                  data transfer could be time consuming and result in delayed
-                  query responses.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
-                * **rebalance_unsharded_data** --
-                  If *true*, unsharded data (data without primary keys and
-                  without shard keys) will be rebalanced approximately equally
-                  across the cluster. Note that for big clusters, this data
-                  transfer could be time consuming and result in delayed query
-                  responses.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
-                * **table_whitelist** --
-                  Comma-separated list of unsharded table names to rebalance.
-                  Not applicable to sharded tables because they are always
-                  balanced in accordance with their primary key or shard key.
-                  Cannot be used simultaneously with *table_blacklist*.
-
-                * **table_blacklist** --
-                  Comma-separated list of unsharded table names to not
-                  rebalance. Not applicable to sharded tables because they are
-                  always balanced in accordance with their primary key or shard
-                  key. Cannot be used simultaneously with *table_whitelist*.
-
-        Returns:
-            A dict with the following entries--
-
-            table_names (list of str)
-                Names of the rebalanced tables.
-
-            message (list of str)
-                Error Messages from rebalancing the tables.
-
-            info (dict of str to str)
-                Additional information.
-        """
-        assert isinstance( options, (dict)), "admin_rebalance(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/admin/rebalance" )
-
-        obj = {}
-        obj['options'] = self.__sanitize_dicts( options )
-
-        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/admin/rebalance' )
-
-        return AttrDict( response )
-    # end admin_rebalance
-
-
-    # begin admin_remove_ranks
-    def admin_remove_ranks( self, ranks = None, options = {} ):
-        """Remove one or more ranks from the cluster.  Note that this operation
-        could take a long time to complete for big clusters. All data in the
-        ranks to be removed is rebalanced to other ranks before the node is
-        removed unless the *rebalance_sharded_data* or
-        *rebalance_unsharded_data* parameters are set to *false* in the input
-        parameter *options*.
-
-        Parameters:
-
-            ranks (list of ints)
-                Rank numbers of the ranks to be removed from the cluster.
-                The user can provide a single element (which will be
-                automatically promoted to a list internally) or a list.
-
-            options (dict of str to str)
-                Optional parameters.  Default value is an empty dict ( {} ).
-                Allowed keys are:
-
-                * **rebalance_sharded_data** --
-                  When *true*, data with primary keys or shard keys will be
-                  rebalanced to other ranks prior to rank removal. Note that
-                  for big clusters, this data transfer could be time consuming
-                  and result in delayed query responses.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
-                * **rebalance_unsharded_data** --
-                  When *true*, unsharded data (data without primary keys and
-                  without shard keys) will be rebalanced to other ranks prior
-                  to rank removal. Note that for big clusters, this data
-                  transfer could be time consuming and result in delayed query
-                  responses.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
-        Returns:
-            A dict with the following entries--
-
-            removed_ranks (list of ints)
-                Ranks that were removed from the cluster.  May be empty in the
-                case of failures.
-
-            results (list of str)
-                Text description of the result of each rank being removed.
-                Indicates the reason for any errors that occur. Entries are in
-                the same order as the input parameter *ranks*.
-
-            info (dict of str to str)
-                Additional information.
-        """
-        ranks = ranks if isinstance( ranks, list ) else ( [] if (ranks is None) else [ ranks ] )
-        assert isinstance( options, (dict)), "admin_remove_ranks(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/admin/remove/ranks" )
-
-        obj = {}
-        obj['ranks'] = ranks
-        obj['options'] = self.__sanitize_dicts( options )
-
-        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/admin/remove/ranks' )
-
-        return AttrDict( response )
-    # end admin_remove_ranks
-
-
     # begin admin_show_alerts
     def admin_show_alerts( self, num_alerts = None, options = {} ):
         """Requests a list of the most recent alerts.
@@ -5479,19 +5258,18 @@ class GPUdb(object):
 
     # begin admin_show_cluster_operations
     def admin_show_cluster_operations( self, history_index = 0, options = {} ):
-        """Shows detailed status of current or prior cluster operations.
+        """Requests the detailed status of the current operation (by default) or a
+        prior cluster operation specified by input parameter *history_index*.
+        Returns details on the requested cluster operation.
 
-        By default will retrieve the current or most resent cluster operation.
-        The @{history_index} is used to specify which cluster operation to
-        retrieve. A value of zero will return the most recent, one will return
-        the second most recent, etc.  The response will also indicate how many
-        cluster operations are stored in the history.
+        The response will also indicate how many cluster operations are stored
+        in the history.
 
         Parameters:
 
             history_index (int)
-                Indicates which cluster operation to retrieve.  Zero is most
-                recent.  Default value is 0.
+                Indicates which cluster operation to retrieve.  Use 0 for the
+                most recent.  Default value is 0.
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
@@ -5500,52 +5278,81 @@ class GPUdb(object):
             A dict with the following entries--
 
             history_index (int)
-                Indicates how recent the cluster operation is, relative to all
-                prior cluster operations.  Zero is most recent, one is second
-                most recent, etc.
+                The index of this cluster operation in the
+                reverse-chronologically sorted list of operations, where 0 is
+                the most recent operation.
 
             history_size (int)
-                Number of cluster operations executed to date
+                Number of cluster operations executed to date.
 
             in_progress (bool)
-                Whether this cluster operation is currently in progress or not
+                Whether this cluster operation is currently in progress or not.
+                Allowed values are:
+
+                * true
+                * false
 
             start_time (str)
-                The start time of the cluster operation
+                The start time of the cluster operation.
 
             end_time (str)
-                The end time of the cluster operation, if completed
+                The end time of the cluster operation, if completed.
 
             endpoint (str)
                 The endpoint that initiated the cluster operation.
 
             endpoint_schema (str)
-                The schema for the original request
+                The schema for the original request.
 
             overall_status (str)
-                OK or ERROR.  If the operation is still in progress, OK means
-                it has been successful so far.
+                Overall success status of the operation.
+                Allowed values are:
+
+                * **OK** --
+                  The operation was successful, or, if still in progress, the
+                  operation is successful so far.
+
+                * **ERROR** --
+                  An error occurred executing the operation.
 
             user_stopped (bool)
-                Indicates if a user stopped this operation at any point while
-                in progress.
+                Whether a user stopped this operation at any point while in
+                progress.
+                Allowed values are:
+
+                * true
+                * false
 
             percent_complete (int)
                 Percent complete of this entire operation.
 
             dry_run (bool)
-                Indicates if this operation was a dry run.
+                Whether this operation was a dry run.
+                Allowed values are:
+
+                * true
+                * false
 
             messages (list of str)
-                Updates, and error messages if any.
+                Updates and error messages if any.
 
             add_ranks (bool)
-                Indicates that adding ranks is being performed or was performed
-                as part of this operation.
+                Whether adding ranks is (or was) part of this operation.
+                Allowed values are:
+
+                * true
+                * false
 
             add_ranks_status (str)
-                Will be one of NOT_STARTED, IN PROGRESS, INTERRUPTED,
-                COMPLETED_OK, or ERROR
+                If this was a rank-adding operation, the add-specific status of
+                the operation.
+                Allowed values are:
+
+                * NOT_STARTED
+                * IN_PROGRESS
+                * INTERRUPTED
+                * COMPLETED_OK
+                * ERROR
 
             ranks_being_added (list of ints)
                 The rank numbers of the ranks currently being added, or the
@@ -5556,54 +5363,90 @@ class GPUdb(object):
                 order as the output parameter *ranks_being_added* list.
 
             add_ranks_percent_complete (int)
-                Current percent complete of the add ranks operation
+                Current percent complete of the add ranks operation.
 
             remove_ranks (bool)
-                Indicates that removing ranks is being performed or was
-                performed as part of this operation.
+                Whether removing ranks is (or was) part of this operation.
+                Allowed values are:
+
+                * true
+                * false
 
             remove_ranks_status (str)
-                Will be one of NOT_STARTED, IN PROGRESS, INTERRUPTED,
-                COMPLETED_OK, or ERROR
+                If this was a rank-removing operation, the removal-specific
+                status of the operation.
+                Allowed values are:
+
+                * NOT_STARTED
+                * IN_PROGRESS
+                * INTERRUPTED
+                * COMPLETED_OK
+                * ERROR
 
             ranks_being_removed (list of ints)
                 The ranks being removed, or that have been removed if the
                 operation is completed.
 
             remove_ranks_percent_complete (int)
-                Current percent complete of the remove ranks operation
+                Current percent complete of the remove ranks operation.
 
             rebalance (bool)
-                Indicates whether data and/or shard rebalancing is part of this
-                operation
+                Whether data and/or shard rebalancing is (or was) part of this
+                operation.
+                Allowed values are:
+
+                * true
+                * false
 
             rebalance_unsharded_data (bool)
-                Indicates that a rebalance operation included rebalancing of
-                unsharded data.
+                Whether rebalancing of unsharded data is (or was) part of this
+                operation.
+                Allowed values are:
+
+                * true
+                * false
 
             rebalance_unsharded_data_status (str)
-                Will be one of NOT_STARTED, IN PROGRESS, INTERRUPTED,
-                COMPLETED_OK, or ERROR
+                If this was an operation that included rebalancing unsharded
+                data, the rebalancing-specific status of the operation.
+                Allowed values are:
+
+                * NOT_STARTED
+                * IN_PROGRESS
+                * INTERRUPTED
+                * COMPLETED_OK
+                * ERROR
 
             unsharded_rebalance_percent_complete (int)
                 Percentage of unsharded tables that completed rebalancing, out
-                of all unsharded tables to rebalance
+                of all unsharded tables to rebalance.
 
             rebalance_sharded_data (bool)
-                Indicates that a rebalance operation included rebalancing of
-                sharded data.
+                Whether rebalancing of sharded data is (or was) part of this
+                operation.
+                Allowed values are:
+
+                * true
+                * false
 
             shard_array_version (long)
-                shard array version that was/is being rebalanced to. Each
-                change to the shard array results in the version number
-                incrementing
+                Version of the shard array that is (or was) being rebalanced
+                to. Each change to the shard array results in the version
+                number incrementing.
 
             rebalance_sharded_data_status (str)
-                Will be one of NOT_STARTED, IN PROGRESS, INTERRUPTED,
-                COMPLETED_OK, or ERROR
+                If this was an operation that included rebalancing sharded
+                data, the rebalancing-specific status of the operation.
+                Allowed values are:
+
+                * NOT_STARTED
+                * IN_PROGRESS
+                * INTERRUPTED
+                * COMPLETED_OK
+                * ERROR
 
             num_shards_changing (int)
-                Number of shards that will change as part of rebalance
+                Number of shards that will change as part of rebalance.
 
             sharded_rebalance_percent_complete (int)
                 Percentage of shard keys, and their associated data if
@@ -5769,8 +5612,26 @@ class GPUdb(object):
                 Optional parameters.  Default value is an empty dict ( {} ).
                 Allowed keys are:
 
-                * rebuild_on_error
-                * verify_persist
+                * **concurrent_safe** --
+                  When enabled, allows this endpoint to be run safely with
+                  other concurrent database operations. Other operations may be
+                  slower while this is running.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **verify_rank0** --
+                  When enabled, compares rank0 table meta-data against workers
+                  meta-data
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -6107,6 +5968,12 @@ class GPUdb(object):
                   This option is used to specify the multidimensional
                   aggregates.
 
+                * **throw_error_on_refresh** --
+                  <DEVELOPER>
+
+                * **sleep_on_refresh** --
+                  <DEVELOPER>
+
         Returns:
             A dict with the following entries--
 
@@ -6415,6 +6282,12 @@ class GPUdb(object):
                 * **cube** --
                   This option is used to specify the multidimensional
                   aggregates.
+
+                * **throw_error_on_refresh** --
+                  <DEVELOPER>
+
+                * **sleep_on_refresh** --
+                  <DEVELOPER>
 
             record_type (:class:`RecordType` or None)
                 The record type expected in the results, or None to
@@ -8019,33 +7892,31 @@ class GPUdb(object):
 
 
     # begin alter_resource_group
-    def alter_resource_group( self, name = None, tier_attributes = {}, tier_strategy
-                              = None, options = {} ):
+    def alter_resource_group( self, name = None, tier_attributes = {}, options = {}
+                              ):
         """Alters properties of exisiting resource group to facilitate resource
         management.
 
         Parameters:
 
             name (str)
-                Name of the group to be altered. Must match existing resource
+                Name of the group to be altered. Must be an existing resource
                 group name.
 
             tier_attributes (dict of str to dicts of str to str)
-                Optional map containing group limits for tier-specific
-                attributes such as memory.  Default value is an empty dict ( {}
-                ).
+                Optional map containing tier names and their respective
+                attribute group limits.  The only valid attribute limit that
+                can be set is max_memory (in bytes) for the VRAM & RAM tiers.
+
+                For instance, to set max VRAM capacity to 1GB and max RAM
+                capacity to 10GB, use:  {'VRAM':{'max_memory':'1000000000'},
+                'RAM':{'max_memory':'10000000000'}}  Default value is an empty
+                dict ( {} ).
                 Allowed keys are:
 
                 * **max_memory** --
                   Maximum amount of memory usable in the given tier at one time
                   for this group.
-
-            tier_strategy (list of str)
-                Optional array that defines the default tiering strategy for
-                this group. Each element pair defines an existing tier and its
-                preferred priority. e.g. ['RAM 50',VRAM 30']    The user can
-                provide a single element (which will be automatically promoted
-                to a list internally) or a list.
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
@@ -8062,9 +7933,9 @@ class GPUdb(object):
                   Maximum priority of a tiered object for this group.
 
                 * **is_default_group** --
-                  If true this request applies to the global default resource
-                  group. It is an error for this field to be true when the
-                  input parameter *name* field is also populated.
+                  If *true*, this request applies to the global default
+                  resource group. It is an error for this field to be *true*
+                  when the input parameter *name* field is also populated.
                   Allowed values are:
 
                   * true
@@ -8083,7 +7954,6 @@ class GPUdb(object):
         """
         assert isinstance( name, (basestring)), "alter_resource_group(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
         assert isinstance( tier_attributes, (dict)), "alter_resource_group(): Argument 'tier_attributes' must be (one) of type(s) '(dict)'; given %s" % type( tier_attributes ).__name__
-        tier_strategy = tier_strategy if isinstance( tier_strategy, list ) else ( [] if (tier_strategy is None) else [ tier_strategy ] )
         assert isinstance( options, (dict)), "alter_resource_group(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/alter/resourcegroup" )
@@ -8091,7 +7961,6 @@ class GPUdb(object):
         obj = {}
         obj['name'] = name
         obj['tier_attributes'] = self.__sanitize_dicts( tier_attributes )
-        obj['tier_strategy'] = tier_strategy
         obj['options'] = self.__sanitize_dicts( options )
 
         response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/alter/resourcegroup' )
@@ -8196,11 +8065,6 @@ class GPUdb(object):
                   The maximum number of records the database will serve for a
                   given data retrieval call
 
-                * **memory_allocation_limit_mb** --
-                  Set the memory allocation limit for all rank processes in
-                  megabytes, 0 means no limit. Overrides any individual rank
-                  memory allocation limits.
-
                 * **enable_audit** --
                   Enable or disable auditing.
 
@@ -8213,16 +8077,16 @@ class GPUdb(object):
                 * **audit_data** --
                   Enable or disable auditing of request data.
 
-                * **enable_job_manager** --
-                  Enable JobManager to enforce processing of requests in the
-                  order received.
-
                 * **chunk_cache_enabled** --
                   Enable chunk level query caching. Flushes the chunk cache
                   when value is false
 
                 * **chunk_cache_size** --
                   Size of the chunk cache in bytes.
+
+                * **synchronous_compression** --
+                  compress vector on set_compression (instead of waiting for
+                  background thread)
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
@@ -8258,6 +8122,12 @@ class GPUdb(object):
         """Apply various modifications to a table, view, or collection.  The
         available modifications include the following:
 
+        Manage a table's columns--a column can be added, removed, or have its
+        `type and properties <../../../concepts/types.html>`_ modified,
+        including
+        whether it is `compressed <../../../concepts/compression.html>`_ or
+        not.
+
         Create or delete an `index
         <../../../concepts/indexes.html#column-index>`_ on a
         particular column. This can speed up certain operations when using
@@ -8265,6 +8135,21 @@ class GPUdb(object):
         containing equality or relational operators on indexed columns. This
         only
         applies to tables.
+
+        Create or delete a `foreign key
+        <../../../concepts/tables.html#foreign-key>`_
+        on a particular column.
+
+        Manage a `range-partitioned
+        <../../../concepts/tables.html#partitioning>`_
+        table's partitions.
+
+        Set (or reset) the `tier strategy
+        <../../../rm/concepts.html#tier-strategies>`_
+        of a table or view.
+
+        Refresh and manage the refresh mode of a
+        `materialized view <../../../concepts/materialized_views.html>`_.
 
         Set the `time-to-live (TTL) <../../../concepts/ttl.html>`_. This can be
         applied
@@ -8285,18 +8170,6 @@ class GPUdb(object):
         prevent or
         allow automatic expiration. This can be applied to tables, views, and
         collections.
-
-        Manage a `range-partitioned
-        <../../../concepts/tables.html#partitioning>`_
-        table's partitions.
-
-        Allow homogeneous tables within a collection.
-
-        Manage a table's columns--a column can be added, removed, or have its
-        `type and properties <../../../concepts/types.html>`_ modified.
-
-        Set or unset `compression <../../../concepts/compression.html>`_ for a
-        column.
 
         Parameters:
 
@@ -8370,7 +8243,8 @@ class GPUdb(object):
                 * **set_column_compression** --
                   Modifies the `compression
                   <../../../concepts/compression.html>`_ setting on the column
-                  specified in input parameter *value*.
+                  specified in input parameter *value* to the compression type
+                  specified in *compression_type*.
 
                 * **delete_column** --
                   Deletes the column specified in input parameter *value* from
@@ -8378,10 +8252,10 @@ class GPUdb(object):
 
                 * **create_foreign_key** --
                   Creates a `foreign key
-                  <../../../concepts/tables.html#foreign-key>`_ using the
-                  format '(source_column_name [, ...]) references
-                  target_table_name(primary_key_column_name [, ...]) [as
-                  foreign_key_name]'.
+                  <../../../concepts/tables.html#foreign-key>`_ specified in
+                  input parameter *value* using the format '(source_column_name
+                  [, ...]) references target_table_name(primary_key_column_name
+                  [, ...]) [as foreign_key_name]'.
 
                 * **delete_foreign_key** --
                   Deletes a `foreign key
@@ -8391,19 +8265,20 @@ class GPUdb(object):
                   it.
 
                 * **add_partition** --
-                  Partition definition to add (for range-partitioned tables
-                  only).  See `range partitioning example
+                  Adds a partition (for range-partitioned tables only)
+                  specified in input parameter *value*.  See `range
+                  partitioning example
                   <../../../concepts/tables.html#partitioning-by-range-example>`_
                   for example format.
 
                 * **remove_partition** --
-                  Name of partition to remove (for range-partitioned tables
-                  only).  All data in partition will be moved to the default
-                  partition
+                  Removes the partition specified in input parameter *value*
+                  and relocates all its data to the default partition (for
+                  range-partitioned tables only).
 
                 * **delete_partition** --
-                  Name of partition to delete (for range-partitioned tables
-                  only).  All data in the partition will be deleted.
+                  Deletes the partition specified in input parameter *value*
+                  and its data (for range-partitioned tables only).
 
                 * **set_global_access_mode** --
                   Sets the global access mode (i.e. locking) for the table
@@ -8418,30 +8293,50 @@ class GPUdb(object):
 
                 * **set_refresh_method** --
                   Sets the method by which this `materialized view
-                  <../../../concepts/materialized_views.html>`_ is refreshed -
-                  one of 'manual', 'periodic', 'on_change'.
+                  <../../../concepts/materialized_views.html>`_ is refreshed to
+                  the method specified in input parameter *value* - one of
+                  'manual', 'periodic', 'on_change'.
 
                 * **set_refresh_start_time** --
                   Sets the time to start periodic refreshes of this
                   `materialized view
-                  <../../../concepts/materialized_views.html>`_ to datetime
-                  string with format 'YYYY-MM-DD HH:MM:SS'.  Subsequent
-                  refreshes occur at the specified time + N * the refresh
-                  period.
+                  <../../../concepts/materialized_views.html>`_ to the datetime
+                  string specified in input parameter *value* with format
+                  'YYYY-MM-DD HH:MM:SS'.  Subsequent refreshes occur at the
+                  specified time + N * the refresh period.
 
                 * **set_refresh_period** --
                   Sets the time interval in seconds at which to refresh this
                   `materialized view
-                  <../../../concepts/materialized_views.html>`_.  Also, sets
-                  the refresh method to periodic if not alreay set.
+                  <../../../concepts/materialized_views.html>`_ to the value
+                  specified in input parameter *value*.  Also, sets the refresh
+                  method to periodic if not already set.
 
                 * **remove_text_search_attributes** --
-                  remove text_search attribute from all columns, if exists.
+                  Removes `text search
+                  <../../../concepts/full_text_search.html>`_ attribute from
+                  all columns.
+
+                * **set_strategy_definition** --
+                  Sets the `tier strategy
+                  <../../../rm/concepts.html#tier-strategies>`_ for the table
+                  and its columns to the one specified in input parameter
+                  *value*, replacing the existing tier strategy in its
+                  entirety. See `tier strategy usage
+                  <../../../rm/concepts.html#tier-strategies>`_ for format and
+                  `tier strategy examples
+                  <../../../rm/usage.html#tier-strategies>`_ for examples.
 
             value (str)
-                The value of the modification. May be a column name, 'true' or
-                'false', a TTL, or the global access mode depending on input
-                parameter *action*.
+                The value of the modification, depending on input parameter
+                *action*.  For example, if input parameter *action* is
+                *add_column*, this would be the column name; while the column's
+                definition would be covered by the *column_type*,
+                *column_properties*, *column_default_value*, and
+                *add_column_expression* in input parameter *options*.  If input
+                parameter *action* is *ttl*, it would be the number of minutes
+                for the new TTL. If input parameter *action* is *refresh*, this
+                field would be blank.
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
@@ -8476,7 +8371,7 @@ class GPUdb(object):
                   The default value is 'snappy'.
 
                 * **copy_values_from_column** --
-                  please see add_column_expression instead.
+                  Deprecated.  Please use *add_column_expression* instead.
 
                 * **rename_column** --
                   When changing a column, specify new column name.
@@ -8498,18 +8393,38 @@ class GPUdb(object):
                   The default value is 'true'.
 
                 * **update_last_access_time** --
-                  Indicates whether need to update the last_access_time.
+                  Indicates whether the `time-to-live
+                  <../../../concepts/ttl.html>`_ (TTL) expiration countdown
+                  timer should be reset to the table's TTL.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Reset the expiration countdown timer to the table's
+                    configured TTL.
+
+                  * **false** --
+                    Don't reset the timer; expiration countdown will continue
+                    from where it is, as if the table had not been accessed.
 
                   The default value is 'true'.
 
                 * **add_column_expression** --
-                  expression for new column's values (optional with
-                  add_column). Any valid expressions including existing
-                  columns.
+                  When adding a column, an optional expression to use for the
+                  new column's values. Any valid expression may be used,
+                  including one containing references to existing columns in
+                  the same table.
+
+                * **strategy_definition** --
+                  Optional parameter for specifying the `tier strategy
+                  <../../../rm/concepts.html#tier-strategies>`_ for the table
+                  and its columns when input parameter *action* is
+                  *set_strategy_definition*, replacing the existing tier
+                  strategy in its entirety. See `tier strategy usage
+                  <../../../rm/concepts.html#tier-strategies>`_ for format and
+                  `tier strategy examples
+                  <../../../rm/usage.html#tier-strategies>`_ for examples.
+                  This option will be ignored if input parameter *value* is
+                  also specified.
 
         Returns:
             A dict with the following entries--
@@ -8719,12 +8634,19 @@ class GPUdb(object):
 
     # begin alter_tier
     def alter_tier( self, name = None, options = {} ):
-        """Alters properties of exisiting tier to facilitate resource management.
+        """Alters properties of an exisiting `tier
+        <../../../rm/concepts.html#storage-tiers>`_ to facilitate `resource
+        management <../../../rm/concepts.html>`_.
+
+        To disable `watermark-based eviction
+        <../../../rm/concepts.html#watermark-based-eviction>`_, set both
+        *high_watermark* and *low_watermark* to 100.
 
         Parameters:
 
             name (str)
-                Name of the tier to be altered. Must match tier group name.
+                Name of the tier to be altered. Must be an existing tier group
+                name.
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
@@ -8734,12 +8656,14 @@ class GPUdb(object):
                   Maximum size in bytes this tier may hold at once.
 
                 * **high_watermark** --
-                  Triggers asynchronous eviction once a tiers resource usage
-                  exceeds this percentage down to the low watermark.
+                  Threshold of usage of this tier's resource that, once
+                  exceeded, will trigger watermark-based eviction from this
+                  tier.
 
                 * **low_watermark** --
-                  Percentage resource usage to evict down to once the high
-                  watermark has been hit.
+                  Threshold of resource usage that, once fallen below after
+                  crossing the *high_watermark*, will cease watermark-based
+                  eviction from this tier.
 
         Returns:
             A dict with the following entries--
@@ -8929,7 +8853,36 @@ class GPUdb(object):
 
     # begin clear_statistics
     def clear_statistics( self, table_name = '', column_name = '', options = {} ):
+        """Clears statistics (cardinality, mean value, etc.) for a column in a
+        specified table.
 
+        Parameters:
+
+            table_name (str)
+                Name of a table. Must be an existing table.  Default value is
+                ''.
+
+            column_name (str)
+                Name of the column in input parameter *table_name* for which to
+                clear statistics. The column must be from an existing table. An
+                empty string clears statistics for all columns in the table.
+                Default value is ''.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                Value of input parameter *table_name*.
+
+            column_name (str)
+                Value of input parameter *column_name*.
+
+            info (dict of str to str)
+                Additional information.
+        """
         assert isinstance( table_name, (basestring)), "clear_statistics(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( column_name, (basestring)), "clear_statistics(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
         assert isinstance( options, (dict)), "clear_statistics(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -9087,7 +9040,34 @@ class GPUdb(object):
     # begin collect_statistics
     def collect_statistics( self, table_name = None, column_names = None, options =
                             {} ):
+        """Collect statistics for a column(s) in a specified table.
 
+        Parameters:
+
+            table_name (str)
+                Name of a table. Must be an existing table.
+
+            column_names (list of str)
+                List of one or more column names in input parameter
+                *table_name* for which to collect statistics (cardinality, mean
+                value, etc.).    The user can provide a single element (which
+                will be automatically promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                Value of input parameter *table_name*.
+
+            column_names (list of str)
+                Value of input parameter *column_names*.
+
+            info (dict of str to str)
+                Additional information.
+        """
         assert isinstance( table_name, (basestring)), "collect_statistics(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         column_names = column_names if isinstance( column_names, list ) else ( [] if (column_names is None) else [ column_names ] )
         assert isinstance( options, (dict)), "collect_statistics(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -9136,9 +9116,11 @@ class GPUdb(object):
                 <../../../graph_solver/network_graph_solver.html#identifiers>`_;
                 identifiers are grouped as `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
-                Example format: 'table.column AS NODE_ID'    The user can
-                provide a single element (which will be automatically promoted
-                to a list internally) or a list.
+                Identifiers can be used with existing column names, e.g.,
+                'table.column AS NODE_ID', or expressions, e.g.,
+                'ST_MAKEPOINT(column1, column2) AS NODE_WKTPOINT'.    The user
+                can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
 
             edges (list of str)
                 Edges represent the required fundamental topological unit of a
@@ -9147,7 +9129,9 @@ class GPUdb(object):
                 <../../../graph_solver/network_graph_solver.html#identifiers>`_;
                 identifiers are grouped as `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
-                Example format: 'table.column AS EDGE_WKTLINE'    The user can
+                Identifiers can be used with existing column names, e.g.,
+                'table.column AS EDGE_ID', or expressions, e.g.,
+                'SUBSTR(column, 1, 6) AS EDGE_NODE1_NAME'.    The user can
                 provide a single element (which will be automatically promoted
                 to a list internally) or a list.
 
@@ -9158,9 +9142,11 @@ class GPUdb(object):
                 <../../../graph_solver/network_graph_solver.html#identifiers>`_;
                 identifiers are grouped as `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
-                Example format: 'table.column AS WEIGHTS_EDGE_ID'    The user
-                can provide a single element (which will be automatically
-                promoted to a list internally) or a list.
+                Identifiers can be used with existing column names, e.g.,
+                'table.column AS WEIGHTS_EDGE_ID', or expressions, e.g.,
+                'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED'.    The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
 
             restrictions (list of str)
                 Restrictions represent a method of informing the graph solver
@@ -9169,9 +9155,11 @@ class GPUdb(object):
                 <../../../graph_solver/network_graph_solver.html#identifiers>`_;
                 identifiers are grouped as `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
-                Example format: 'table.column AS RESTRICTIONS_EDGE_ID'    The
-                user can provide a single element (which will be automatically
-                promoted to a list internally) or a list.
+                Identifiers can be used with existing column names, e.g.,
+                'table.column AS RESTRICTIONS_EDGE_ID', or expressions, e.g.,
+                'column/2 AS RESTRICTIONS_VALUECOMPARED'.    The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
@@ -9910,7 +9898,7 @@ class GPUdb(object):
                   * true
                   * false
 
-                  The default value is 'true'.
+                  The default value is 'false'.
 
                 * **view_id** --
                   view this projection is part of
@@ -9944,8 +9932,8 @@ class GPUdb(object):
 
 
     # begin create_resource_group
-    def create_resource_group( self, name = None, tier_attributes = {},
-                               tier_strategy = None, options = {} ):
+    def create_resource_group( self, name = None, tier_attributes = {}, options = {}
+                               ):
         """Creates a new resource group to facilitate resource management.
 
         Parameters:
@@ -9956,21 +9944,19 @@ class GPUdb(object):
                 not match existing resource group name.
 
             tier_attributes (dict of str to dicts of str to str)
-                Optional map containing group limits for tier-specific
-                attributes such as memory.  Default value is an empty dict ( {}
-                ).
+                Optional map containing tier names and their respective
+                attribute group limits.  The only valid attribute limit that
+                can be set is max_memory (in bytes) for the VRAM & RAM tiers.
+
+                For instance, to set max VRAM capacity to 1GB and max RAM
+                capacity to 10GB, use:  {'VRAM':{'max_memory':'1000000000'},
+                'RAM':{'max_memory':'10000000000'}}  Default value is an empty
+                dict ( {} ).
                 Allowed keys are:
 
                 * **max_memory** --
                   Maximum amount of memory usable in the given tier at one time
                   for this group.
-
-            tier_strategy (list of str)
-                Optional array that defines the default tiering strategy for
-                this group. Each element pair defines an existing tier and its
-                preferred priority. e.g. ['RAM 50',VRAM 30']    The user can
-                provide a single element (which will be automatically promoted
-                to a list internally) or a list.
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
@@ -9997,7 +9983,6 @@ class GPUdb(object):
         """
         assert isinstance( name, (basestring)), "create_resource_group(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
         assert isinstance( tier_attributes, (dict)), "create_resource_group(): Argument 'tier_attributes' must be (one) of type(s) '(dict)'; given %s" % type( tier_attributes ).__name__
-        tier_strategy = tier_strategy if isinstance( tier_strategy, list ) else ( [] if (tier_strategy is None) else [ tier_strategy ] )
         assert isinstance( options, (dict)), "create_resource_group(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/create/resourcegroup" )
@@ -10005,7 +9990,6 @@ class GPUdb(object):
         obj = {}
         obj['name'] = name
         obj['tier_attributes'] = self.__sanitize_dicts( tier_attributes )
-        obj['tier_strategy'] = tier_strategy
         obj['options'] = self.__sanitize_dicts( options )
 
         response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/create/resourcegroup' )
@@ -10073,8 +10057,10 @@ class GPUdb(object):
         scheme,
         have `foreign keys <../../../concepts/tables.html#foreign-keys>`_ to
         other
-        tables assigned, or be assigned a
-        `partitioning <../../../concepts/tables.html#partitioning>`_ scheme.
+        tables assigned, be assigned a
+        `partitioning <../../../concepts/tables.html#partitioning>`_ scheme, or
+        have a
+        `tier strategy <../../../rm/concepts.html#tier-strategies>`_ assigned.
 
         Parameters:
 
@@ -10159,25 +10145,25 @@ class GPUdb(object):
 
                 * **foreign_shard_key** --
                   Foreign shard key of the format 'source_column references
-                  shard_by_column from target_table(primary_key_column)'
+                  shard_by_column from target_table(primary_key_column)'.
 
                 * **partition_type** --
                   `Partitioning <../../../concepts/tables.html#partitioning>`_
-                  scheme to use
+                  scheme to use.
                   Allowed values are:
 
                   * **RANGE** --
                     Use `range partitioning
-                    <../../../concepts/tables.html#partitioning-by-range>`_
+                    <../../../concepts/tables.html#partitioning-by-range>`_.
 
                   * **INTERVAL** --
                     Use `interval partitioning
-                    <../../../concepts/tables.html#partitioning-by-interval>`_
+                    <../../../concepts/tables.html#partitioning-by-interval>`_.
 
                 * **partition_keys** --
                   Comma-separated list of partition keys, which are the columns
                   or column expressions by which records will be assigned to
-                  partitions defined by *partition_definitions*
+                  partitions defined by *partition_definitions*.
 
                 * **partition_definitions** --
                   Comma-separated list of partition definitions, whose format
@@ -10206,6 +10192,14 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                * **strategy_definition** --
+                  The `tier strategy
+                  <../../../rm/concepts.html#tier-strategies>`_ for the table
+                  and its columns. See `tier strategy usage
+                  <../../../rm/concepts.html#tier-strategies>`_ for format and
+                  `tier strategy examples
+                  <../../../rm/usage.html#tier-strategies>`_ for examples.
 
         Returns:
             A dict with the following entries--
@@ -10672,7 +10666,7 @@ class GPUdb(object):
                   `dictionary encoded
                   <../../../concepts/dictionary_encoding.html>`_. It can only
                   be used in conjunction with restricted string (charN), int,
-                  or long columns. Dictionary encoding is best for columns
+                  long or date columns. Dictionary encoding is best for columns
                   where the cardinality (the number of unique values) is
                   expected to be low. This property can save a large amount of
                   memory.
@@ -11177,7 +11171,7 @@ class GPUdb(object):
         Parameters:
 
             name (str)
-                Name of the group to be deleted.
+                Name of the resource group to be deleted.
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
@@ -16184,8 +16178,9 @@ class GPUdb(object):
 
     # begin show_resource_statistics
     def show_resource_statistics( self, options = {} ):
-        """Shows various statistics for storage/memory tiers and resource groups.
-        Statistics are provided on a per rank basis.
+        """Requests various statistics for storage/memory tiers and resource
+        groups.
+        Returns statistics on a per-rank basis.
 
         Parameters:
 
@@ -16216,7 +16211,8 @@ class GPUdb(object):
 
     # begin show_resource_groups
     def show_resource_groups( self, names = None, options = {} ):
-        """Shows resource group properties.
+        """Requests resource group properties.
+        Returns detailed information about the requested resource groups.
 
         Parameters:
 
@@ -16231,7 +16227,7 @@ class GPUdb(object):
                 Allowed keys are:
 
                 * **show_default_values** --
-                  If true include values of fields that are based on the
+                  If *true* include values of fields that are based on the
                   default resource group.
                   Allowed values are:
 
@@ -16241,7 +16237,7 @@ class GPUdb(object):
                   The default value is 'true'.
 
                 * **show_default_group** --
-                  If true include the default resource group in the response.
+                  If *true* include the default resource group in the response.
                   Allowed values are:
 
                   * true
@@ -16338,7 +16334,32 @@ class GPUdb(object):
 
     # begin show_statistics
     def show_statistics( self, table_names = None, options = {} ):
+        """Retrieves the collected column statistics for the specified table.
 
+        Parameters:
+
+            table_names (list of str)
+                Tables whose metadata will be fetched. All provided tables must
+                exist, or an error is returned.    The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            table_names (list of str)
+                Value of input parameter *table_names*.
+
+            stastistics_map (list of lists of dicts of str to str)
+                A list of maps which contain the column statistics of the table
+                input parameter *table_names*.
+
+            info (dict of str to str)
+                Additional information.
+        """
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
         assert isinstance( options, (dict)), "show_statistics(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -16909,10 +16930,10 @@ class GPUdb(object):
 
     # begin solve_graph
     def solve_graph( self, graph_name = None, weights_on_edges = [], restrictions =
-                     [], solver_type = 'SHORTEST_PATH', source_node_id = '0',
-                     destination_node_ids = None, node_type = 'NODE_ID',
-                     source_node = '0', destination_nodes = None, solution_table
-                     = 'graph_solutions', options = {} ):
+                     [], solver_type = 'SHORTEST_PATH', source_node_id = None,
+                     destination_node_ids = [], node_type = 'NODE_ID',
+                     source_node = '', destination_nodes = [], solution_table =
+                     'graph_solutions', options = {} ):
         """Solves an existing graph for a type of problem (e.g., shortest path,
         page rank, travelling salesman, etc.) using source nodes, destination
         nodes, and additional, optional weights and restrictions. See `Network
@@ -16926,7 +16947,13 @@ class GPUdb(object):
 
             weights_on_edges (list of str)
                 Additional weights to apply to the edges of an existing graph.
-                Example format: 'table.column AS WEIGHTS_EDGE_ID'. Any provided
+                Weights must be specified using `identifiers
+                <../../../graph_solver/network_graph_solver.html#identifiers>`_;
+                identifiers are grouped as `combinations
+                <../../../graph_solver/network_graph_solver.html#id-combos>`_.
+                Identifiers can be used with existing column names, e.g.,
+                'table.column AS WEIGHTS_EDGE_ID', or expressions, e.g.,
+                'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED'. Any provided
                 weights will be added (in the case of 'WEIGHTS_VALUESPECIFIED')
                 to or multiplied with (in the case of
                 'WEIGHTS_FACTORSPECIFIED') the existing weight(s).  Default
@@ -16936,11 +16963,18 @@ class GPUdb(object):
 
             restrictions (list of str)
                 Additional restrictions to apply to the nodes/edges of an
-                existing graph. Example format: 'table.column AS
-                RESTRICTIONS_NODE_ID'. If *remove_previous_restrictions* is set
-                to *true*, any provided restrictions will replace the existing
-                restrictions. If *remove_previous_restrictions* is set to
-                *false*, any provided weights will be added (in the case of
+                existing graph. Restrictions must be specified using
+                `identifiers
+                <../../../graph_solver/network_graph_solver.html#identifiers>`_;
+                identifiers are grouped as `combinations
+                <../../../graph_solver/network_graph_solver.html#id-combos>`_.
+                Identifiers can be used with existing column names, e.g.,
+                'table.column AS RESTRICTIONS_EDGE_ID', or expressions, e.g.,
+                'column/2 AS RESTRICTIONS_VALUECOMPARED'. If
+                *remove_previous_restrictions* is set to *true*, any provided
+                restrictions will replace the existing restrictions. If
+                *remove_previous_restrictions* is set to *false*, any provided
+                weights will be added (in the case of
                 'RESTRICTIONS_VALUECOMPARED') to or replaced (in the case of
                 'RESTRICTIONS_ONOFFCOMPARED').  Default value is an empty list
                 ( [] ).   The user can provide a single element (which will be
@@ -16999,14 +17033,14 @@ class GPUdb(object):
                 first 24 nodes listed in input parameter *destination_nodes* /
                 input parameter *destination_node_ids* are the fixed asset
                 nodes and the rest of the nodes in the array are remote assets.
-                Default value is '0'.
 
             destination_node_ids (list of longs)
                 List of destination node indices, or indices for pageranks. If
                 the input parameter *solver_type* is set to *BACKHAUL_ROUTING*,
-                it is the list of all fixed and remote asset nodes.    The user
-                can provide a single element (which will be automatically
-                promoted to a list internally) or a list.
+                it is the list of all fixed and remote asset nodes.  Default
+                value is an empty list ( [] ).   The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
 
             node_type (str)
                 Source and destination node identifier type.  Default value is
@@ -17029,7 +17063,7 @@ class GPUdb(object):
             source_node (str)
                 If input parameter *node_type* is *NODE_WKTPOINT* or
                 *NODE_NAME*, the node (string) of the source (starting point)
-                for the graph solution.  Default value is '0'.
+                for the graph solution.  Default value is ''.
 
             destination_nodes (list of str)
                 If input parameter *node_type* is *NODE_WKTPOINT* or
@@ -17038,8 +17072,9 @@ class GPUdb(object):
                 *solver_type* is set to *BACKHAUL_ROUTING*, it is the list of
                 all fixed and remote asset nodes. The string type should be
                 consistent with the input parameter *node_type* parameter.
-                The user can provide a single element (which will be
-                automatically promoted to a list internally) or a list.
+                Default value is an empty list ( [] ).   The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
 
             solution_table (str)
                 Name of the table to store the solution.  Default value is
@@ -17248,6 +17283,16 @@ class GPUdb(object):
                   Can be used to customize behavior when the updated primary
                   key value already exists as described in
                   :meth:`.insert_records`.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **update_partition** --
+                  Force qualifying records to be deleted and reinserted so
+                  their partition membership will be reevaluated.
                   Allowed values are:
 
                   * true
@@ -20480,6 +20525,12 @@ class GPUdbTable( object ):
                   This option is used to specify the multidimensional
                   aggregates.
 
+                * **throw_error_on_refresh** --
+                  <DEVELOPER>
+
+                * **sleep_on_refresh** --
+                  <DEVELOPER>
+
             force_primitive_return_types (bool)
                 If `True`, then `OrderedDict` objects will be returned, where
                 string sub-type columns will have their values converted back
@@ -21506,6 +21557,12 @@ class GPUdbTable( object ):
         """Apply various modifications to a table, view, or collection.  The
         available modifications include the following:
 
+        Manage a table's columns--a column can be added, removed, or have its
+        `type and properties <../../../concepts/types.html>`_ modified,
+        including
+        whether it is `compressed <../../../concepts/compression.html>`_ or
+        not.
+
         Create or delete an `index
         <../../../concepts/indexes.html#column-index>`_ on a
         particular column. This can speed up certain operations when using
@@ -21513,6 +21570,21 @@ class GPUdbTable( object ):
         containing equality or relational operators on indexed columns. This
         only
         applies to tables.
+
+        Create or delete a `foreign key
+        <../../../concepts/tables.html#foreign-key>`_
+        on a particular column.
+
+        Manage a `range-partitioned
+        <../../../concepts/tables.html#partitioning>`_
+        table's partitions.
+
+        Set (or reset) the `tier strategy
+        <../../../rm/concepts.html#tier-strategies>`_
+        of a table or view.
+
+        Refresh and manage the refresh mode of a
+        `materialized view <../../../concepts/materialized_views.html>`_.
 
         Set the `time-to-live (TTL) <../../../concepts/ttl.html>`_. This can be
         applied
@@ -21533,18 +21605,6 @@ class GPUdbTable( object ):
         prevent or
         allow automatic expiration. This can be applied to tables, views, and
         collections.
-
-        Manage a `range-partitioned
-        <../../../concepts/tables.html#partitioning>`_
-        table's partitions.
-
-        Allow homogeneous tables within a collection.
-
-        Manage a table's columns--a column can be added, removed, or have its
-        `type and properties <../../../concepts/types.html>`_ modified.
-
-        Set or unset `compression <../../../concepts/compression.html>`_ for a
-        column.
 
         Parameters:
 
@@ -21614,7 +21674,8 @@ class GPUdbTable( object ):
                 * **set_column_compression** --
                   Modifies the `compression
                   <../../../concepts/compression.html>`_ setting on the column
-                  specified in input parameter *value*.
+                  specified in input parameter *value* to the compression type
+                  specified in *compression_type*.
 
                 * **delete_column** --
                   Deletes the column specified in input parameter *value* from
@@ -21622,10 +21683,10 @@ class GPUdbTable( object ):
 
                 * **create_foreign_key** --
                   Creates a `foreign key
-                  <../../../concepts/tables.html#foreign-key>`_ using the
-                  format '(source_column_name [, ...]) references
-                  target_table_name(primary_key_column_name [, ...]) [as
-                  foreign_key_name]'.
+                  <../../../concepts/tables.html#foreign-key>`_ specified in
+                  input parameter *value* using the format '(source_column_name
+                  [, ...]) references target_table_name(primary_key_column_name
+                  [, ...]) [as foreign_key_name]'.
 
                 * **delete_foreign_key** --
                   Deletes a `foreign key
@@ -21635,19 +21696,20 @@ class GPUdbTable( object ):
                   it.
 
                 * **add_partition** --
-                  Partition definition to add (for range-partitioned tables
-                  only).  See `range partitioning example
+                  Adds a partition (for range-partitioned tables only)
+                  specified in input parameter *value*.  See `range
+                  partitioning example
                   <../../../concepts/tables.html#partitioning-by-range-example>`_
                   for example format.
 
                 * **remove_partition** --
-                  Name of partition to remove (for range-partitioned tables
-                  only).  All data in partition will be moved to the default
-                  partition
+                  Removes the partition specified in input parameter *value*
+                  and relocates all its data to the default partition (for
+                  range-partitioned tables only).
 
                 * **delete_partition** --
-                  Name of partition to delete (for range-partitioned tables
-                  only).  All data in the partition will be deleted.
+                  Deletes the partition specified in input parameter *value*
+                  and its data (for range-partitioned tables only).
 
                 * **set_global_access_mode** --
                   Sets the global access mode (i.e. locking) for the table
@@ -21662,30 +21724,50 @@ class GPUdbTable( object ):
 
                 * **set_refresh_method** --
                   Sets the method by which this `materialized view
-                  <../../../concepts/materialized_views.html>`_ is refreshed -
-                  one of 'manual', 'periodic', 'on_change'.
+                  <../../../concepts/materialized_views.html>`_ is refreshed to
+                  the method specified in input parameter *value* - one of
+                  'manual', 'periodic', 'on_change'.
 
                 * **set_refresh_start_time** --
                   Sets the time to start periodic refreshes of this
                   `materialized view
-                  <../../../concepts/materialized_views.html>`_ to datetime
-                  string with format 'YYYY-MM-DD HH:MM:SS'.  Subsequent
-                  refreshes occur at the specified time + N * the refresh
-                  period.
+                  <../../../concepts/materialized_views.html>`_ to the datetime
+                  string specified in input parameter *value* with format
+                  'YYYY-MM-DD HH:MM:SS'.  Subsequent refreshes occur at the
+                  specified time + N * the refresh period.
 
                 * **set_refresh_period** --
                   Sets the time interval in seconds at which to refresh this
                   `materialized view
-                  <../../../concepts/materialized_views.html>`_.  Also, sets
-                  the refresh method to periodic if not alreay set.
+                  <../../../concepts/materialized_views.html>`_ to the value
+                  specified in input parameter *value*.  Also, sets the refresh
+                  method to periodic if not already set.
 
                 * **remove_text_search_attributes** --
-                  remove text_search attribute from all columns, if exists.
+                  Removes `text search
+                  <../../../concepts/full_text_search.html>`_ attribute from
+                  all columns.
+
+                * **set_strategy_definition** --
+                  Sets the `tier strategy
+                  <../../../rm/concepts.html#tier-strategies>`_ for the table
+                  and its columns to the one specified in input parameter
+                  *value*, replacing the existing tier strategy in its
+                  entirety. See `tier strategy usage
+                  <../../../rm/concepts.html#tier-strategies>`_ for format and
+                  `tier strategy examples
+                  <../../../rm/usage.html#tier-strategies>`_ for examples.
 
             value (str)
-                The value of the modification. May be a column name, 'true' or
-                'false', a TTL, or the global access mode depending on input
-                parameter *action*.
+                The value of the modification, depending on input parameter
+                *action*.  For example, if input parameter *action* is
+                *add_column*, this would be the column name; while the column's
+                definition would be covered by the *column_type*,
+                *column_properties*, *column_default_value*, and
+                *add_column_expression* in input parameter *options*.  If input
+                parameter *action* is *ttl*, it would be the number of minutes
+                for the new TTL. If input parameter *action* is *refresh*, this
+                field would be blank.
 
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
@@ -21720,7 +21802,7 @@ class GPUdbTable( object ):
                   The default value is 'snappy'.
 
                 * **copy_values_from_column** --
-                  please see add_column_expression instead.
+                  Deprecated.  Please use *add_column_expression* instead.
 
                 * **rename_column** --
                   When changing a column, specify new column name.
@@ -21742,18 +21824,38 @@ class GPUdbTable( object ):
                   The default value is 'true'.
 
                 * **update_last_access_time** --
-                  Indicates whether need to update the last_access_time.
+                  Indicates whether the `time-to-live
+                  <../../../concepts/ttl.html>`_ (TTL) expiration countdown
+                  timer should be reset to the table's TTL.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Reset the expiration countdown timer to the table's
+                    configured TTL.
+
+                  * **false** --
+                    Don't reset the timer; expiration countdown will continue
+                    from where it is, as if the table had not been accessed.
 
                   The default value is 'true'.
 
                 * **add_column_expression** --
-                  expression for new column's values (optional with
-                  add_column). Any valid expressions including existing
-                  columns.
+                  When adding a column, an optional expression to use for the
+                  new column's values. Any valid expression may be used,
+                  including one containing references to existing columns in
+                  the same table.
+
+                * **strategy_definition** --
+                  Optional parameter for specifying the `tier strategy
+                  <../../../rm/concepts.html#tier-strategies>`_ for the table
+                  and its columns when input parameter *action* is
+                  *set_strategy_definition*, replacing the existing tier
+                  strategy in its entirety. See `tier strategy usage
+                  <../../../rm/concepts.html#tier-strategies>`_ for format and
+                  `tier strategy examples
+                  <../../../rm/usage.html#tier-strategies>`_ for examples.
+                  This option will be ignored if input parameter *value* is
+                  also specified.
 
         Returns:
             The response from the server which is a dict containing the
@@ -21994,7 +22096,38 @@ class GPUdbTable( object ):
 
 
     def clear_statistics( self, column_name = '', options = {} ):
+        """Clears statistics (cardinality, mean value, etc.) for a column in a
+        specified table.
 
+        Parameters:
+
+            column_name (str)
+                Name of the column in input parameter *table_name* for which to
+                clear statistics. The column must be from an existing table. An
+                empty string clears statistics for all columns in the table.
+                Default value is ''.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            table_name (str)
+                Value of input parameter *table_name*.
+
+            column_name (str)
+                Value of input parameter *column_name*.
+
+            info (dict of str to str)
+                Additional information.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
         response = self.db.clear_statistics( self.name, column_name, options )
         if not _Util.is_ok( response ):
             raise GPUdbException( _Util.get_error_msg( response ) )
@@ -22056,7 +22189,37 @@ class GPUdbTable( object ):
 
 
     def collect_statistics( self, column_names = None, options = {} ):
+        """Collect statistics for a column(s) in a specified table.
 
+        Parameters:
+
+            column_names (list of str)
+                List of one or more column names in input parameter
+                *table_name* for which to collect statistics (cardinality, mean
+                value, etc.).    The user can provide a single element (which
+                will be automatically promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            The response from the server which is a dict containing the
+            following entries--
+
+            table_name (str)
+                Value of input parameter *table_name*.
+
+            column_names (list of str)
+                Value of input parameter *column_names*.
+
+            info (dict of str to str)
+                Additional information.
+
+        Raises:
+
+            GPUdbException -- 
+                Upon an error from the server.
+        """
         response = self.db.collect_statistics( self.name, column_names, options )
         if not _Util.is_ok( response ):
             raise GPUdbException( _Util.get_error_msg( response ) )
@@ -22199,7 +22362,7 @@ class GPUdbTable( object ):
                   * true
                   * false
 
-                  The default value is 'true'.
+                  The default value is 'false'.
 
                 * **view_id** --
                   view this projection is part of
@@ -23778,6 +23941,16 @@ class GPUdbTable( object ):
                   Can be used to customize behavior when the updated primary
                   key value already exists as described in
                   :meth:`.insert_records`.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **update_partition** --
+                  Force qualifying records to be deleted and reinserted so
+                  their partition membership will be reevaluated.
                   Allowed values are:
 
                   * true
