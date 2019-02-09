@@ -1,6 +1,11 @@
 # GPUdb Python API Changelog
 
-## Version 7.0.0 - 2019-01-31
+## Version 7.0.0
+
+### Version 7.0.0.1 - 2019-02-09
+-   Added support for high availability (HA) failover logic to the
+    GPUdb class
+
 
 ### Version 7.0.0.0 - 2019-01-31
 -   Added support for cluster reconfiguration to the multi-head I/O operations

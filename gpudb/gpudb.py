@@ -94,6 +94,16 @@ except ImportError:
 
 from tabulate import tabulate
 
+# ------------------------ LOGGING -----------------------------
+import logging
+
+logger    = logging.getLogger()
+handler   = logging.StreamHandler()
+formatter = logging.Formatter( "%(asctime)s %(levelname)-8s %(message)s",
+                               "%Y-%m-%d %H:%M:%S" )
+handler.setFormatter( formatter )
+logger.addHandler( handler )
+# ---------------------------------------------------------------
 
 
 # Some string constants used throughout the program
@@ -112,9 +122,12 @@ class C:
     _total_full_size = "total_full_size"
 
     # /show/system/properties response
-    _property_map = "property_map"
-    _gaia_version = "version.gpudb_core_version"
+    _property_map       = "property_map"
+    _gaia_version       = "version.gpudb_core_version"
+    _enable_ha          = "conf.enable_ha"
+    _ha_ring_head_nodes = "conf.ha_ring_head_nodes"
 
+    _kinetica_exit_msg = "Kinetica is exiting"
 # end class C
 
 
@@ -170,6 +183,23 @@ class GPUdbConnectionException( GPUdbException ):
 
 
 # ---------------------------------------------------------------------------
+# GPUdbExitException - Exception for when Kinetica is exiting
+# ---------------------------------------------------------------------------
+class GPUdbExitException( GPUdbException ):
+
+    def __init__( self, value ):
+        self.value = value
+        self.message = value
+    # end __init__
+
+    def __str__( self ):
+        return repr( self.value )
+    # end __str__
+    
+# end class GPUdbExitException
+
+
+# ---------------------------------------------------------------------------
 # _ConnectionToken - Private wrapper class to manage connection logic
 # ---------------------------------------------------------------------------
 class _ConnectionToken(object):
@@ -183,6 +213,7 @@ class _ConnectionToken(object):
 
         if host.startswith("http://") :    # Allow http://, but remove it.
             host = host[7:]
+            connection = "HTTP" # force it
         elif host.startswith("https://") : # Allow https://, but remove it.
             host = host[8:]
             connection = "HTTPS" # force it
@@ -242,11 +273,19 @@ class _ConnectionToken(object):
         if connection not in ["HTTP", "HTTPS"]:
             raise GPUdbException( "Expected connection to be 'HTTP' or 'HTTPS', got: '"+str(connection)+"'" )
 
+        # Construct the full URL
+        full_url = ( "{protocol}://{ip}:{port}{path}"
+                     "".format( protocol = connection.lower(),
+                                ip       = host,
+                                port     = port,
+                                path     = url_path ) )
+
         self._host              = str( host )
-        self._port              = int(port)
-        self._host_manager_port = int(host_manager_port)
+        self._port              = int( port )
+        self._host_manager_port = int( host_manager_port )
         self._connection        = str( connection )
         self._gpudb_url_path    = str( url_path )
+        self._gpudb_full_url    = str( full_url )
     # end __init__
 # end class _ConnectionToken
 
@@ -836,9 +875,8 @@ class GPUdbColumnProperty(object):
     """str: Works in conjunction with the *data* property for string columns. This
     property reduces system disk usage by disabling reverse string lookups.
     Queries like :meth:`.filter`, :meth:`.filter_by_list`, and
-    :meth:`.filter_by_value` work as usual but :meth:`.aggregate_unique`,
-    :meth:`.aggregate_group_by` and :meth:`.get_records_by_column` are not
-    allowed on columns with this property.
+    :meth:`.filter_by_value` work as usual but :meth:`.aggregate_unique` and
+    :meth:`.aggregate_group_by` are not allowed on columns with this property.
     """
 
 
@@ -2115,19 +2153,21 @@ class GPUdb(object):
 
         Parameters:
 
-            host (str)
-                The IP address of the GPUdb server. May be provided as a list
-                to support HA.  Also, can include the port following a colon
-                (the *port* argument then should be unused).  Host may take
-                the form "https://user:password@domain.com:port/path/".
+            host (str or list of str)
+                The IP address of the GPUdb server. May be provided as a comma
+                separated string or a list of strings to support HA.  Also, can
+                include the port following a colon (the *port* argument then
+                should be unused).  Host may take the form
+                "https://user:password@domain.com:port/path/".
 
-            port (str)
+            port (str or list of str)
                 The port of the GPUdb server at the given IP address. May be
                 provided as a list in conjunction with host; but if using the
                 same port for all hosts, then a single port value is OK.  Also,
                 can be omitted entirely if the host already contains the port.
                 If the *host* does include a port, then this argument will be
                 ignored.
+
             host_manager_port (str)
                 The port of the host manager for the GPUdb server at the given
                 IP address. May be provided as a list in conjunction with host;
@@ -2179,19 +2219,21 @@ class GPUdb(object):
 
         Parameters:
 
-            host (str)
-                The IP address of the GPUdb server. May be provided as a list
-                to support HA.  Also, can include the port following a colon
-                (the *port* argument then should be unused).  Host may take
-                the form "https://user:password@domain.com:port/path/".
+            host (str or list of str)
+                The IP address of the GPUdb server. May be provided as a comma
+                separated string or a list of strings to support HA.  Also, can
+                include the port following a colon (the *port* argument then
+                should be unused).  Host may take the form
+                "https://user:password@domain.com:port/path/".
 
-            port (str)
+            port (str or list of str)
                 The port of the GPUdb server at the given IP address. May be
                 provided as a list in conjunction with host; but if using the
                 same port for all hosts, then a single port value is OK.  Also,
                 can be omitted entirely if the host already contains the port.
                 If the *host* does include a port, then this argument will be
                 ignored.
+
             host_manager_port (str)
                 The port of the host manager for the GPUdb server at the given
                 IP address. May be provided as a list in conjunction with host;
@@ -2221,35 +2263,13 @@ class GPUdb(object):
                 server (e.g. for checking version compatibility).  Default
                 is False.
         """
-        if type(host) is list:
-            if not type(port) is list:
-                port = [port]*len(host)
-            if not type(host_manager_port) is list:
-                host_manager_port = [host_manager_port]*len(host)
-            if not type(connection) is list:
-                connection = [connection]*len(host)
-
-            assert len(host) == len(port) == len(host_manager_port) == len(connection), \
-                "Host, port, host_manager_port  and connection list must have the same number of items"
-        else:
-            assert (not (type(port) is list)
-                    and not (type(host_manager_port) is list)
-                    and not (type(connection) is list)), \
-                "Host is not a list, port and connection must not be either"
-
-            host = [host]
-            port = [port]
-            host_manager_port = [host_manager_port]
-            connection = [connection]
-
+        assert isinstance( encoding, (basestring, unicode) ), \
+            "Parameter 'encoding' must be a string; given {}".format( str(type(encoding)) )
+        encoding = encoding.upper() # Just in case a different case is given
         assert (encoding in ["BINARY", "JSON", "SNAPPY"]), "Expected encoding to be either 'BINARY', 'JSON' or 'SNAPPY' got: '"+str(encoding)+"'"
         if (encoding == 'SNAPPY' and not have_snappy):
-            print('SNAPPY encoding specified but python-snappy is not installed; reverting to BINARY')
+            logger.warn('SNAPPY encoding specified but python-snappy is not installed; reverting to BINARY')
             encoding = 'BINARY'
-
-        self._conn_tokens = tuple(_ConnectionToken(h, p, hmp, c) \
-                                  for h, p, hmp, c in zip(host, port, host_manager_port, connection))
-        self.current_host_index = random.randint(0, len(self._conn_tokens))
 
         self.encoding   = encoding
         self.username   = username
@@ -2286,9 +2306,60 @@ class GPUdb(object):
         # Initiate the type store
         self._known_types = {}
 
+        # Keep a count of how many times a request has been tried
+        self._num_retries = 0
+
+        # Note: The encoding, HTTP header etc. information must be set
+        #       before setting hosts since we'll be calling /show/system/properties
+
+        if type(host) is list:
+            if not type(port) is list:
+                port = [port]*len(host)
+            if not type(host_manager_port) is list:
+                host_manager_port = [host_manager_port]*len(host)
+            if not type(connection) is list:
+                connection = [connection]*len(host)
+        else:
+            assert (not (type(port) is list)
+                    and not (type(host_manager_port) is list)
+                    and not (type(connection) is list)), \
+                "Host is not a list, port and connection must not be either"
+
+            # If a comma separated list is given, then split it
+            comma = ','
+            if comma in host:
+                host = host.strip( comma ).split( comma )
+            else:
+                host = [host]
+
+            port = [port for i in host ]
+            host_manager_port = [host_manager_port for i in host ]
+            connection = [connection for i in host ]
+        # end if-else
+
+        assert len(host) == len(port) == len(host_manager_port) == len(connection), \
+            "Host, port, host_manager_port and connection list must have the same number of elements"
+
+        # Check that no duplicate host name was given
+        if ( ( len(host) > 1) and (len(host) != len( set(host) )) ):
+            logger.warn( "Given list of hosts has a duplicate; might cause unpredictable behavior ({})"
+                         "".format( host ) )
+
+
+        # Set up cluster information for high availability (HA)
+        self._conn_tokens = tuple(_ConnectionToken(h, p, hmp, c) \
+                                  for h, p, hmp, c in zip(host, port, host_manager_port, connection))
+        # We want to use the HA clusters (upon failover) at a random fashion
+        self._num_conn_tokens = len( self._conn_tokens )
+        self._conn_token_indices = range(0, self._num_conn_tokens)
+        random.shuffle( self._conn_token_indices )
+        self._current_conn_token_index  = 0
+
+        # Update the connection tokens with the available HA ring information
+        self.no_init_db_contact = no_init_db_contact
+        self.__get_ha_ring_head_node_addresses()
 
         # Make sure that a connection to the server can be established
-        self.no_init_db_contact = no_init_db_contact
         if not self.no_init_db_contact:
             server_status_response = self.show_system_status()
             if not _Util.is_ok( server_status_response ):
@@ -2298,7 +2369,7 @@ class GPUdb(object):
         # Check version compatibility with the server
         # -------------------------------------------
         if not no_init_db_contact:
-            self._perform_version_check()
+            self.__perform_version_check()
     # end __construct
 
 
@@ -2367,7 +2438,62 @@ class GPUdb(object):
     # end __setstate__
 
 
-    def _perform_version_check( self, do_print_warning = True ):
+    def __get_ha_ring_head_node_addresses( self ):
+        """If only one host name is given, and if the user has not explicitly
+        forbidden a DB contact at initialization, then contact the database
+        to find out any high availability (HA) ring head node addresses.
+        If any found, update the host etc. connection tokens with this.
+        """
+        if self.no_init_db_contact:
+            return # nothing to do at the user's explicit command
+
+        # Nothing to do if multiple host addresses is already given by the user
+        if (self._num_conn_tokens > 1):
+            return
+
+        # Call /show/system/properties to get the any HA ring information
+        system_props = self.show_system_properties()
+        if not system_props.is_ok():
+            return # Can't do anything if this call doesn't succeed
+        property_map = system_props.property_map
+
+        # If HA is enabled and some ring node addresses are given, then incorporate
+        # them into the existing connection tokens
+        if ( (C._enable_ha in property_map)
+             and (property_map[ C._enable_ha ].lower() == "true")
+             and (C._ha_ring_head_nodes in property_map)
+             and property_map[ C._ha_ring_head_nodes ]):
+
+            delimiter = ","
+            ha_ring_head_nodes = property_map[ C._ha_ring_head_nodes ]
+            ha_ring_head_nodes = ha_ring_head_nodes.split( delimiter )
+
+            # If the current host URL is not included in the ring nodes,
+            # include it
+            if self.gpudb_full_url not in ha_ring_head_nodes:
+                ha_ring_head_nodes.append( self.gpudb_full_url )
+
+            # Update the current connection tokens with the newly obtained ones
+            # -----------------------------------------------------------------
+            # Need a dummy list for the port and connection tokens
+            dummy = [None for i in ha_ring_head_nodes]
+            # Need a valid list of host manager ports
+            host_manager_ports = [ self.get_host_manager_port() for p in ha_ring_head_nodes]
+
+            # Set up cluster information for high availability (HA)
+            self._conn_tokens = tuple(_ConnectionToken(h, p, hmp, c) \
+                                      for h, p, hmp, c in zip(ha_ring_head_nodes, dummy, host_manager_ports, dummy))
+
+            # We want to use the HA clusters (upon failover) at a random fashion
+            self._num_conn_tokens = len( self._conn_tokens )
+            self._conn_token_indices = range(0, self._num_conn_tokens)
+            random.shuffle( self._conn_token_indices )
+            self._current_conn_token_index  = 0
+        # end if
+    # end __get_ha_ring_head_node_addresses
+
+
+    def __perform_version_check( self, do_print_warning = True ):
         """Perform a version check with the database server.
 
         Parameters:
@@ -2377,6 +2503,8 @@ class GPUdb(object):
 
         @returns True if versions match, False otherwise.
         """
+        error_msg = None
+
         system_props = self.show_system_properties()
         server_version = system_props[ C._property_map ][ C._gaia_version ]
 
@@ -2384,19 +2512,23 @@ class GPUdb(object):
         server_version = ".".join( server_version.split( "." )[ 0 : 3 ] )
         client_version = ".".join( self.api_version.split( "." )[ 0 : 3 ] )
         if (server_version != client_version):
+            error_msg = ("Client version ({0}) does not match that of the server ({1})"
+                         "".format( client_version, server_version ) )
             if (do_print_warning == True):
-                print ( "Warning: Client version ({0}) does not match that of the server ({1})"
-                        "".format( client_version, server_version ) )
-            return True # all is well
+                logger.warn( error_msg )
+            raise GPUdbException( error_msg )
         # end if
 
-        return False # version mismatch!
-    # end _perform_version_check
+        return True # all is well
+    # end __perform_version_check
 
 
     def _get_current_conn_token( self ):
         """Returns the connection information for the current server."""
-        return self._conn_tokens[self._current_conn_token_index]
+        # The connection token indices are randomly shuffled and kept in
+        # _conn_token_indices; we iterate over this in a sequential manner
+        return self._conn_tokens[ self._conn_token_indices[ self._current_conn_token_index ] ]
+
 
     def get_version_info( self ):
         """Return the version information for this API."""
@@ -2458,6 +2590,10 @@ class GPUdb(object):
     @gpudb_url_path.setter
     def gpudb_url_path(self, value):
         self._get_current_conn_token()._gpudb_url_path = str( value )
+
+    @property
+    def gpudb_full_url(self):
+        return self._get_current_conn_token()._gpudb_full_url
 
     @property
     def connection(self):
@@ -2531,7 +2667,8 @@ class GPUdb(object):
         return None # none found
     # end get_known_type
     
-    # members
+
+    # Members
     _current_conn_token_index = 0
     _conn_tokens   = ()          # Collection of parsed url entities
 
@@ -2539,13 +2676,15 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.0.0"
+    api_version   = "7.0.0.1"
 
-    # constants
+    # Constants
     END_OF_SET = -9999
     """(int) Used for indicating that all of the records (till the end of the
     set are desired)--generally used for /get/records/\* functions.
     """
+
+
 
     def __load_logger_schemas( self ):
         # Some other schemas for internal work
@@ -2586,6 +2725,46 @@ class GPUdb(object):
     # -----------------------------------------------------------------------
     # Helper functions
     # -----------------------------------------------------------------------
+
+    def __update_connection_token_index( self, initial_index = None ):
+        """Choose the next connection token (effect is random).  If an 'initial'
+        index is provided, then ensure we are not back to that cluster.  If so,
+        re-shuffle the cluster connection token indices and reset.
+
+        Parameters:
+            initial_index (int)
+                If None, nothing extra to do.  If an integer is given, then
+            check that we haven't circled back to it.
+
+        Returns:
+            None if no initial index is given; otherwise, boolean flag indicating
+        if we've exhausted all the HA clusters.
+        """
+        # Update the token index
+        self._current_conn_token_index = ( (self._current_conn_token_index + 1)
+                                           % self._num_conn_tokens )
+
+        if initial_index is None:
+            return None
+
+        # Type and range checking
+        if not isinstance( initial_index, int ):
+            raise GPUdbException( "Parameter 'initial_index' must be an integer; given"
+                                  " {}".format( initial_index ) )
+        if ( (initial_index < 0 ) or (initial_index > self._num_conn_tokens) ):
+            raise GPUdbException( "Parameter 'initial_index' must be between [0, {}]; given"
+                                  " {}".format( (self._num_conn_tokens - 1),
+                                                initial_index ) )
+        # Check if we've run through all the clusters already
+        exhausted_all_conn_tokens = (self._current_conn_token_index == initial_index)
+        if exhausted_all_conn_tokens:
+            # Re-shuffle the connection token indices
+            random.shuffle( self._conn_token_indices )
+            # And start from the beginning again
+            self._current_conn_token_index = 0
+        return exhausted_all_conn_tokens
+    # end __update_connection_token_index
+
 
     def __create_header_and_process_body_data( self, body_data ):
         """Create an HTTP or HTTPS header, and compress the body data
@@ -2686,13 +2865,18 @@ class GPUdb(object):
     # end __post_and_get
 
 
-    def __post_to_gpudb_read(self, body_data, endpoint):
+    def __post_to_gpudb_read(self, body_data, endpoint, is_retry = False,
+                             previous_error_msg = None ):
         """
         Create a HTTP connection and POST then get GET, returning the server response.
 
         Parameters:
             body_data : Data to POST to GPUdb server.
             endpoint  : Server path to POST to, e.g. "/add".
+            is_retry  : Boolean value indicating if this request was already
+                        tried once and this is a re-try.
+            previous_error_msg : Optional string indicating what error occurred
+                                 during the previous trial.
         """
         # Get the header and process the body data
         ( headers, body_data ) = self.__create_header_and_process_body_data( body_data )
@@ -2705,9 +2889,34 @@ class GPUdb(object):
         cond = True
         error = None
 
+        # For re-tries, we need to use the next cluster in line
+        # and also make sure we're not going round and round in a circle
+        if is_retry: # Need to try the next cluster in line
+            self._num_retries += 1
+            # Ensure we don't fall into an inifite loop by going in a circle
+            if (self._num_retries == self._num_conn_tokens):
+                random.shuffle( self._conn_token_indices )
+                self._current_conn_token_index = 0
+                self._num_retries = 0
+
+                # No more cluster to try!
+                error_msg = "Connection failed!"
+                if (self._num_conn_tokens > 1):
+                    error_msg = "Connection failed; all clusters in the HA ring have been tried!"
+
+                if previous_error_msg:
+                    error_msg += " Error encountered: {}".format( previous_error_msg )
+                    
+                raise GPUdbException( error_msg )
+            else:
+                # Haven't exhausted all the clusters in the HA; try the next one
+                self.__update_connection_token_index()
+        # end re-try
+
         while cond:
             loop_error = None
             conn_token = self._get_current_conn_token()
+            exhausted_all_conn_tokens = False
 
             # Try to post and get the message using the current connection
             # token's information
@@ -2721,11 +2930,12 @@ class GPUdb(object):
                                                      endpoint )
             except (GPUdbException, GPUdbConnectionException) as ex:
                 loop_error = ex
-                self._current_conn_token_index = \
-                    (self._current_conn_token_index+1) % len(self._conn_tokens)
-            error = loop_error
+                # Pick another cluster from the HA
+                exhausted_all_conn_tokens = self.__update_connection_token_index( initial_index )
+            # end try-catch
 
-            cond = error and (self._current_conn_token_index != initial_index)
+            error = loop_error
+            cond  = (error and not exhausted_all_conn_tokens)
         # end while loop
 
         if error:
@@ -2740,7 +2950,9 @@ class GPUdb(object):
     # end __post_to_gpudb_read
 
 
-    def __post_to_hm_read(self, body_data, endpoint):
+    
+    def __post_to_hm_read( self, body_data, endpoint, is_retry = False,
+                           previous_error_msg = None ):
         """
         Create a HTTP connection and POST to the host manager, then get GET
         returning the server response.
@@ -2748,6 +2960,10 @@ class GPUdb(object):
         Parameters:
             body_data : Data to POST to GPUdb server.
             endpoint  : Server path to POST to, e.g. "/add".
+            is_retry  : Boolean value indicating if this request was already
+                        tried once and this is a re-try.
+            previous_error_msg : Optional string indicating what error occurred
+                                 during the previous trial.
         """
 
         # Get the header and process the body data
@@ -2760,6 +2976,30 @@ class GPUdb(object):
         initial_index = self._current_conn_token_index
         cond = True
         error = None
+
+        # For re-tries, we need to use the next cluster in line
+        # and also make sure we're not going round and round in a circle
+        if is_retry: # Need to try the next cluster in line
+            self._num_retries += 1
+            # Ensure we don't fall into an inifite loop by going in a circle
+            if (self._num_retries == self._num_conn_tokens):
+                random.shuffle( self._conn_token_indices )
+                self._current_conn_token_index = 0
+                self._num_retries = 0
+
+                # No more cluster to try!
+                error_msg = "Connection failed!"
+                if (self._num_conn_tokens > 1):
+                    error_msg = "Connection failed; all clusters in the HA ring have been tried!"
+
+                if previous_error_msg:
+                    error_msg += " Error encountered: {}".format( previous_error_msg )
+                    
+                raise GPUdbException( error_msg )
+            else:
+                # Haven't exhausted all the clusters in the HA; try the next one
+                self.__update_connection_token_index()
+        # end re-try
 
         while cond:
             loop_error = None
@@ -2776,11 +3016,12 @@ class GPUdb(object):
                                                      endpoint )
             except (GPUdbException, GPUdbConnectionException) as ex:
                 loop_error = ex
-                self._current_conn_token_index = \
-                    (self._current_conn_token_index+1) % len(self._conn_tokens)
-            error = loop_error
+                # Pick another cluster from the HA
+                exhausted_all_conn_tokens = self.__update_connection_token_index( initial_index )
+            # end try-catch
 
-            cond = error and (self._current_conn_token_index != initial_index)
+            error = loop_error
+            cond = (error and exhausted_all_conn_tokens)
         # end while loop
 
         # Last ditch effort: if error due to wrong port, inquire the head node
@@ -2913,12 +3154,20 @@ class GPUdb(object):
         if encoding == None:
             encoding = self.encoding
 
-        if (encoding == 'BINARY') or (encoding == 'SNAPPY'):
-            return SCHEMA.decode( encoded_datum )
-        elif encoding == 'JSON':
-            data_str = json.loads( _Util.ensure_str(encoded_datum).replace('\\U','\\u') )
-            return data_str
+        try:
+            if (encoding == 'BINARY') or (encoding == 'SNAPPY'):
+                return SCHEMA.decode( encoded_datum )
+            elif encoding == 'JSON':
+                data_str = json.loads( _Util.ensure_str(encoded_datum).replace('\\U','\\u') )
+                return data_str
+        except (Exception, RuntimeError) as e:
+            raise GPUdbException ( "Unable to parse server response {}; "
+                                   "please check that the client and server "
+                                   "versions match."
+                                   "".format( self.gpudb_full_url ) )
     # end __read_orig_datum_cext
+
+
 
 
     def __read_datum_cext(self, SCHEMA, encoded_datum, encoding=None, response_time=None):
@@ -2935,6 +3184,7 @@ class GPUdb(object):
         # Parse the gpudb_response message
         RSP_SCHEMA = self.gpudb_schemas["gpudb_response"]["RSP_SCHEMA"]
         resp = self.__read_orig_datum_cext( RSP_SCHEMA, encoded_datum, encoding )
+            
 
         # Now parse the actual response if there is no error
         # NOTE: DATA_SCHEMA should be equivalent to SCHEMA but is NOT for get_set_sorted
@@ -2945,7 +3195,15 @@ class GPUdb(object):
             if self.encoding == 'JSON':
                 out = self.__read_orig_datum_cext(SCHEMA, resp['data_str'], 'JSON')
             elif (self.encoding == 'BINARY') or (self.encoding == 'SNAPPY'):
-                out = SCHEMA.decode( encoded_datum, resp['data'] )
+                try:
+                    out = SCHEMA.decode( encoded_datum, resp['data'] )
+                except (Exception, RuntimeError) as e:
+                    raise GPUdbException ( "Unable to parse server response from {}; "
+                                           "please check that the client and "
+                                           "server versions match."
+                                           "".format( self.gpudb_full_url ) )
+            # end inner if
+        # end if
 
         del resp['data']
         del resp['data_str']
@@ -2955,8 +3213,16 @@ class GPUdb(object):
         if (response_time is not None):
             out['status_info']['response_time'] = float(response_time)
 
+        # If Kinetica is exiting, we need special handling for HA failover
+        if ( (out['status_info']['status'] == 'ERROR')
+             and (C._kinetica_exit_msg in out['status_info']['message']) ):
+            raise GPUdbExitException( out['status_info']['message'] )
+        # end if
+            
         return out
     # end __read_datum_cext
+
+
 
 
     def __get_schemas(self, base_name,
@@ -3028,7 +3294,8 @@ class GPUdb(object):
     # end __post_then_get
 
 
-    def __post_then_get_cext(self, REQ_SCHEMA, REP_SCHEMA, datum, endpoint):
+    def __post_then_get_cext( self, REQ_SCHEMA, REP_SCHEMA, datum, endpoint,
+                              is_retry = False, previous_error_msg = None ):
         """
         Encode the datum dict using the REQ_SCHEMA, POST to GPUdb server and
         decode the reply using the REP_SCHEMA.
@@ -3038,16 +3305,35 @@ class GPUdb(object):
             REP_SCHEMA : The parsed schema from avro.schema.parse() of the reply.
             datum      : Request dict matching the REQ_SCHEMA.
             endpoint   : Server path to POST to, e.g. "/add".
+            is_retry   : Boolean value indicating if this request was already
+                         tried once and this is a re-try.
+            previous_error_msg : Optional string indicating what error occurred
+                                 during the previous trial.
 
         Returns:
             The decoded response.
         """
         encoded_datum = self.encode_datum_cext(REQ_SCHEMA, datum)
-        response, response_time  = self.__post_to_gpudb_read(encoded_datum, endpoint)
+        response, response_time  = self.__post_to_gpudb_read( encoded_datum, endpoint,
+                                                              is_retry,
+                                                              previous_error_msg )
 
-        return self.__read_datum_cext(REP_SCHEMA, response, None, response_time)
+        try:
+            # Decode the response
+            decoded_response = self.__read_datum_cext(REP_SCHEMA, response, None, response_time)
+            self._num_retries = 0 # Reset in case used
+            return decoded_response
+        except GPUdbExitException as ex:
+            return self.__post_then_get_cext(REQ_SCHEMA, REP_SCHEMA, datum, endpoint, True)
+        except GPUdbException as ex:
+            return self.__post_then_get_cext(REQ_SCHEMA, REP_SCHEMA, datum, endpoint, True, str(ex) )
     # end __post_then_get_cext
-    def __post_to_hm_then_get_cext(self, REQ_SCHEMA, REP_SCHEMA, datum, endpoint):
+
+
+
+
+    def __post_to_hm_then_get_cext(self, REQ_SCHEMA, REP_SCHEMA, datum, endpoint,
+                                   is_retry = False, previous_error_msg = None ):
         """
         Encode the datum dict using the REQ_SCHEMA, POST to the host manager and
         decode the reply using the REP_SCHEMA.
@@ -3057,15 +3343,31 @@ class GPUdb(object):
             REP_SCHEMA : The parsed schema from avro.schema.parse() of the reply.
             datum      : Request dict matching the REQ_SCHEMA.
             endpoint   : Server path to POST to, e.g. "/add".
+            is_retry   : Boolean value indicating if this request was already
+                         tried once and this is a re-try.
+            previous_error_msg : Optional string indicating what error occurred
+                                 during the previous trial.
 
         Returns:
             The decoded response.
         """
         encoded_datum = self.encode_datum_cext(REQ_SCHEMA, datum)
-        response, response_time  = self.__post_to_hm_read(encoded_datum, endpoint)
+        response, response_time  = self.__post_to_hm_read( encoded_datum, endpoint,
+                                                           is_retry,
+                                                           previous_error_msg )
 
-        return self.__read_datum_cext(REP_SCHEMA, response, None, response_time)
+        try:
+            # Decode the response
+            decoded_response = self.__read_datum_cext(REP_SCHEMA, response, None, response_time)
+            self._num_retries = 0 # Reset in case used
+            return decoded_response
+        except GPUdbExitException as ex:
+            return self.__post_to_hm_then_get_cext(REQ_SCHEMA, REP_SCHEMA, datum, endpoint, True)
+        except GPUdbException as ex:
+            return self.__post_to_hm_then_get_cext(REQ_SCHEMA, REP_SCHEMA, datum, endpoint, True, str(ex) )
     # end __post_to_hm_then_get_cext
+
+
 
 
     def __post_then_get_cext_raw(self, REQ_SCHEMA, REP_SCHEMA, datum, endpoint):
@@ -5254,220 +5556,6 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end admin_show_alerts
-
-
-    # begin admin_show_cluster_operations
-    def admin_show_cluster_operations( self, history_index = 0, options = {} ):
-        """Requests the detailed status of the current operation (by default) or a
-        prior cluster operation specified by input parameter *history_index*.
-        Returns details on the requested cluster operation.
-
-        The response will also indicate how many cluster operations are stored
-        in the history.
-
-        Parameters:
-
-            history_index (int)
-                Indicates which cluster operation to retrieve.  Use 0 for the
-                most recent.  Default value is 0.
-
-            options (dict of str to str)
-                Optional parameters.  Default value is an empty dict ( {} ).
-
-        Returns:
-            A dict with the following entries--
-
-            history_index (int)
-                The index of this cluster operation in the
-                reverse-chronologically sorted list of operations, where 0 is
-                the most recent operation.
-
-            history_size (int)
-                Number of cluster operations executed to date.
-
-            in_progress (bool)
-                Whether this cluster operation is currently in progress or not.
-                Allowed values are:
-
-                * true
-                * false
-
-            start_time (str)
-                The start time of the cluster operation.
-
-            end_time (str)
-                The end time of the cluster operation, if completed.
-
-            endpoint (str)
-                The endpoint that initiated the cluster operation.
-
-            endpoint_schema (str)
-                The schema for the original request.
-
-            overall_status (str)
-                Overall success status of the operation.
-                Allowed values are:
-
-                * **OK** --
-                  The operation was successful, or, if still in progress, the
-                  operation is successful so far.
-
-                * **ERROR** --
-                  An error occurred executing the operation.
-
-            user_stopped (bool)
-                Whether a user stopped this operation at any point while in
-                progress.
-                Allowed values are:
-
-                * true
-                * false
-
-            percent_complete (int)
-                Percent complete of this entire operation.
-
-            dry_run (bool)
-                Whether this operation was a dry run.
-                Allowed values are:
-
-                * true
-                * false
-
-            messages (list of str)
-                Updates and error messages if any.
-
-            add_ranks (bool)
-                Whether adding ranks is (or was) part of this operation.
-                Allowed values are:
-
-                * true
-                * false
-
-            add_ranks_status (str)
-                If this was a rank-adding operation, the add-specific status of
-                the operation.
-                Allowed values are:
-
-                * NOT_STARTED
-                * IN_PROGRESS
-                * INTERRUPTED
-                * COMPLETED_OK
-                * ERROR
-
-            ranks_being_added (list of ints)
-                The rank numbers of the ranks currently being added, or the
-                rank numbers that were added if the operation is complete.
-
-            rank_hosts (list of str)
-                The host IP addresses of the ranks being added, in the same
-                order as the output parameter *ranks_being_added* list.
-
-            add_ranks_percent_complete (int)
-                Current percent complete of the add ranks operation.
-
-            remove_ranks (bool)
-                Whether removing ranks is (or was) part of this operation.
-                Allowed values are:
-
-                * true
-                * false
-
-            remove_ranks_status (str)
-                If this was a rank-removing operation, the removal-specific
-                status of the operation.
-                Allowed values are:
-
-                * NOT_STARTED
-                * IN_PROGRESS
-                * INTERRUPTED
-                * COMPLETED_OK
-                * ERROR
-
-            ranks_being_removed (list of ints)
-                The ranks being removed, or that have been removed if the
-                operation is completed.
-
-            remove_ranks_percent_complete (int)
-                Current percent complete of the remove ranks operation.
-
-            rebalance (bool)
-                Whether data and/or shard rebalancing is (or was) part of this
-                operation.
-                Allowed values are:
-
-                * true
-                * false
-
-            rebalance_unsharded_data (bool)
-                Whether rebalancing of unsharded data is (or was) part of this
-                operation.
-                Allowed values are:
-
-                * true
-                * false
-
-            rebalance_unsharded_data_status (str)
-                If this was an operation that included rebalancing unsharded
-                data, the rebalancing-specific status of the operation.
-                Allowed values are:
-
-                * NOT_STARTED
-                * IN_PROGRESS
-                * INTERRUPTED
-                * COMPLETED_OK
-                * ERROR
-
-            unsharded_rebalance_percent_complete (int)
-                Percentage of unsharded tables that completed rebalancing, out
-                of all unsharded tables to rebalance.
-
-            rebalance_sharded_data (bool)
-                Whether rebalancing of sharded data is (or was) part of this
-                operation.
-                Allowed values are:
-
-                * true
-                * false
-
-            shard_array_version (long)
-                Version of the shard array that is (or was) being rebalanced
-                to. Each change to the shard array results in the version
-                number incrementing.
-
-            rebalance_sharded_data_status (str)
-                If this was an operation that included rebalancing sharded
-                data, the rebalancing-specific status of the operation.
-                Allowed values are:
-
-                * NOT_STARTED
-                * IN_PROGRESS
-                * INTERRUPTED
-                * COMPLETED_OK
-                * ERROR
-
-            num_shards_changing (int)
-                Number of shards that will change as part of rebalance.
-
-            sharded_rebalance_percent_complete (int)
-                Percentage of shard keys, and their associated data if
-                applicable, that have completed rebalancing.
-
-            info (dict of str to str)
-                Additional information.
-        """
-        assert isinstance( history_index, (int, long, float)), "admin_show_cluster_operations(): Argument 'history_index' must be (one) of type(s) '(int, long, float)'; given %s" % type( history_index ).__name__
-        assert isinstance( options, (dict)), "admin_show_cluster_operations(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/admin/show/cluster/operations" )
-
-        obj = {}
-        obj['history_index'] = history_index
-        obj['options'] = self.__sanitize_dicts( options )
-
-        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/admin/show/cluster/operations' )
-
-        return AttrDict( response )
-    # end admin_show_cluster_operations
 
 
     # begin admin_show_jobs
@@ -8214,14 +8302,6 @@ class GPUdb(object):
                   minutes of the table, view, or collection specified in input
                   parameter *table_name*.
 
-                * **memory_ttl** --
-                  Sets the time-to-live in minutes for the individual chunks of
-                  the columns of the table, view, or collection specified in
-                  input parameter *table_name* to free their memory if unused
-                  longer than the given time. Specify an empty string to
-                  restore the global memory_ttl setting and a value of '-1' for
-                  an infinite timeout.
-
                 * **add_column** --
                   Adds the column specified in input parameter *value* to the
                   table specified in input parameter *table_name*.  Use
@@ -10160,6 +10240,9 @@ class GPUdb(object):
                     Use `interval partitioning
                     <../../../concepts/tables.html#partitioning-by-interval>`_.
 
+                  * **LIST** --
+                    Not yet supported
+
                 * **partition_keys** --
                   Comma-separated list of partition keys, which are the columns
                   or column expressions by which records will be assigned to
@@ -10173,6 +10256,17 @@ class GPUdb(object):
                   or `interval partitioning example
                   <../../../concepts/tables.html#partitioning-by-interval-example>`_
                   for example formats.
+
+                * **is_automatic_partition** --
+                  If true, a new partition will be created for values which
+                  don't fall into an existing partition.  Currently only
+                  supported for LIST partitions
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **ttl** --
                   For a table, sets the `TTL <../../../concepts/ttl.html>`_ of
@@ -10530,10 +10624,9 @@ class GPUdb(object):
                   columns. This property reduces system disk usage by disabling
                   reverse string lookups. Queries like :meth:`.filter`,
                   :meth:`.filter_by_list`, and :meth:`.filter_by_value` work as
-                  usual but :meth:`.aggregate_unique`,
-                  :meth:`.aggregate_group_by` and
-                  :meth:`.get_records_by_column` are not allowed on columns
-                  with this property.
+                  usual but :meth:`.aggregate_unique` and
+                  :meth:`.aggregate_group_by` are not allowed on columns with
+                  this property.
 
                 * **timestamp** --
                   Valid only for 'long' columns. Indicates that this field
@@ -11120,10 +11213,12 @@ class GPUdb(object):
                   the input parameter *expressions*.
 
                 * **record_id** --
-                  A record id identifying a single record, obtained at the time
+                  A record ID identifying a single record, obtained at the time
                   of :meth:`insertion of the record <.insert_records>` or by
                   calling :meth:`.get_records_from_collection` with the
-                  *return_record_ids* option.
+                  *return_record_ids* option. This option cannot be used to
+                  delete records from `replicated
+                  <../../../concepts/tables.html#replication>`_ tables.
 
                 * **delete_all_records** --
                   If set to *true*, all records in the table will be deleted.
@@ -16423,6 +16518,14 @@ class GPUdb(object):
                 * **conf.hm_http_port** --
                   The host manager port number (an integer value).
 
+                * **conf.enable_ha** --
+                  Flag indicating whether high availability (HA) is set up (a
+                  boolean value).
+
+                * **conf.ha_ring_head_nodes** --
+                  A comma-separated string of high availability (HA) ring node
+                  URLs.  If HA is not set up, then an empty string.
+
             info (dict of str to str)
                 Additional information.
         """
@@ -16532,6 +16635,10 @@ class GPUdb(object):
         only information about the collection itself; setting *show_children*
         to *true* returns a list of tables and views contained in the
         collection, along with their corresponding detail.
+
+        To retrieve a list of every table, view, and collection in the
+        database, set input parameter *table_name* to '*' and *show_children*
+        to *true*.
 
         Parameters:
 
@@ -18627,6 +18734,9 @@ class GPUdbTable( object ):
         then returns True.  If the cached type is still valid, then returns False.
         """
         show_table_rsp = self.db.show_table( self.name )
+        if not show_table_rsp.is_ok():
+            raise GPUdbException("Problem while updating table type: '{}'"
+                                 "".format( show_table_rsp.get_error_msg() ) )
         
         # Check if the type ID matches with the cached type
         type_id = show_table_rsp["type_ids"][0]
@@ -21645,14 +21755,6 @@ class GPUdbTable( object ):
                   minutes of the table, view, or collection specified in input
                   parameter *table_name*.
 
-                * **memory_ttl** --
-                  Sets the time-to-live in minutes for the individual chunks of
-                  the columns of the table, view, or collection specified in
-                  input parameter *table_name* to free their memory if unused
-                  longer than the given time. Specify an empty string to
-                  restore the global memory_ttl setting and a value of '-1' for
-                  an infinite timeout.
-
                 * **add_column** --
                   Adds the column specified in input parameter *value* to the
                   table specified in input parameter *table_name*.  Use
@@ -22468,10 +22570,12 @@ class GPUdbTable( object ):
                   the input parameter *expressions*.
 
                 * **record_id** --
-                  A record id identifying a single record, obtained at the time
+                  A record ID identifying a single record, obtained at the time
                   of :meth:`insertion of the record <.insert_records>` or by
                   calling :meth:`.get_records_from_collection` with the
-                  *return_record_ids* option.
+                  *return_record_ids* option. This option cannot be used to
+                  delete records from `replicated
+                  <../../../concepts/tables.html#replication>`_ tables.
 
                 * **delete_all_records** --
                   If set to *true*, all records in the table will be deleted.
@@ -23689,6 +23793,10 @@ class GPUdbTable( object ):
         only information about the collection itself; setting *show_children*
         to *true* returns a list of tables and views contained in the
         collection, along with their corresponding detail.
+
+        To retrieve a list of every table, view, and collection in the
+        database, set input parameter *table_name* to '*' and *show_children*
+        to *true*.
 
         Parameters:
 
