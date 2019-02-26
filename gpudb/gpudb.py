@@ -25,6 +25,7 @@ import base64
 import os, sys
 import datetime
 import json
+import logging
 import random
 import re
 import time
@@ -94,16 +95,6 @@ except ImportError:
 
 from tabulate import tabulate
 
-# ------------------------ LOGGING -----------------------------
-import logging
-
-logger    = logging.getLogger()
-handler   = logging.StreamHandler()
-formatter = logging.Formatter( "%(asctime)s %(levelname)-8s %(message)s",
-                               "%Y-%m-%d %H:%M:%S" )
-handler.setFormatter( formatter )
-logger.addHandler( handler )
-# ---------------------------------------------------------------
 
 
 # Some string constants used throughout the program
@@ -1048,6 +1039,12 @@ class GPUdbColumnProperty(object):
     Dictionary encoding is best for columns where the cardinality (the number
     of unique values) is expected to be low. This property can save a large
     amount of memory.
+    """
+
+
+    INIT_WITH_NOW = "init_with_now"
+    """str: For columns with attributes of date, time, datetime or timestamp, at
+    insert time, replace empty strings and invalid timestamps with NOW()
     """
 
 # end class GPUdbColumnProperty
@@ -2263,12 +2260,20 @@ class GPUdb(object):
                 server (e.g. for checking version compatibility).  Default
                 is False.
         """
+        # Logging
+        self.log  = logging.getLogger( "gpudb.GPUdb" )
+        handler   = logging.StreamHandler()
+        formatter = logging.Formatter( "%(asctime)s %(levelname)-8s %(message)s",
+                                         "%Y-%m-%d %H:%M:%S" )
+        handler.setFormatter( formatter )
+        self.log.addHandler( handler )
+
         assert isinstance( encoding, (basestring, unicode) ), \
             "Parameter 'encoding' must be a string; given {}".format( str(type(encoding)) )
         encoding = encoding.upper() # Just in case a different case is given
         assert (encoding in ["BINARY", "JSON", "SNAPPY"]), "Expected encoding to be either 'BINARY', 'JSON' or 'SNAPPY' got: '"+str(encoding)+"'"
         if (encoding == 'SNAPPY' and not have_snappy):
-            logger.warn('SNAPPY encoding specified but python-snappy is not installed; reverting to BINARY')
+            self.log.warn('SNAPPY encoding specified but python-snappy is not installed; reverting to BINARY')
             encoding = 'BINARY'
 
         self.encoding   = encoding
@@ -2342,8 +2347,8 @@ class GPUdb(object):
 
         # Check that no duplicate host name was given
         if ( ( len(host) > 1) and (len(host) != len( set(host) )) ):
-            logger.warn( "Given list of hosts has a duplicate; might cause unpredictable behavior ({})"
-                         "".format( host ) )
+            self.log.warn( "Given list of hosts has a duplicate; might cause unpredictable behavior ({})"
+                           "".format( host ) )
 
 
         # Set up cluster information for high availability (HA)
@@ -2515,7 +2520,7 @@ class GPUdb(object):
             error_msg = ("Client version ({0}) does not match that of the server ({1})"
                          "".format( client_version, server_version ) )
             if (do_print_warning == True):
-                logger.warn( error_msg )
+                self.log.warn( error_msg )
             raise GPUdbException( error_msg )
         # end if
 
@@ -2676,7 +2681,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.0.1"
+    api_version   = "7.0.0.2"
 
     # Constants
     END_OF_SET = -9999
@@ -4902,22 +4907,11 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/query/graph"
-        REQ_SCHEMA_STR = """{"name":"query_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"edge_to_node","type":"boolean"},{"name":"edge_or_node_int_ids","type":{"type":"array","items":"long"}},{"name":"edge_or_node_string_ids","type":{"type":"array","items":"string"}},{"name":"edge_or_node_wkt_ids","type":{"type":"array","items":"string"}},{"name":"adjacency_table","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"name":"query_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"queries","type":{"type":"array","items":"string"}},{"name":"edge_to_node","type":"boolean"},{"name":"edge_or_node_int_ids","type":{"type":"array","items":"long"}},{"name":"edge_or_node_string_ids","type":{"type":"array","items":"string"}},{"name":"edge_or_node_wkt_ids","type":{"type":"array","items":"string"}},{"name":"adjacency_table","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"name":"query_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"adjacency_list_int_array","type":{"type":"array","items":"long"}},{"name":"adjacency_list_string_array","type":{"type":"array","items":"string"}},{"name":"adjacency_list_wkt_array","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("edge_to_node", "boolean"), ("edge_or_node_int_ids", "array", [("long")]), ("edge_or_node_string_ids", "array", [("string")]), ("edge_or_node_wkt_ids", "array", [("string")]), ("adjacency_table", "string"), ("options", "map", [("string")])] )
+        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("queries", "array", [("string")]), ("edge_to_node", "boolean"), ("edge_or_node_int_ids", "array", [("long")]), ("edge_or_node_string_ids", "array", [("string")]), ("edge_or_node_wkt_ids", "array", [("string")]), ("adjacency_table", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("adjacency_list_int_array", "array", [("long")]), ("adjacency_list_string_array", "array", [("string")]), ("adjacency_list_wkt_array", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/query/graph"
-        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
-                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
-                                       "REQ_SCHEMA" : REQ_SCHEMA,
-                                       "RSP_SCHEMA" : RSP_SCHEMA,
-                                       "ENDPOINT" : ENDPOINT }
-        name = "/replace/tom"
-        REQ_SCHEMA_STR = """{"type":"record","name":"admin_replace_tom_request","fields":[{"name":"old_rank_tom","type":"long"},{"name":"new_rank_tom","type":"long"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_replace_tom_response","fields":[{"name":"old_rank_tom","type":"long"},{"name":"new_rank_tom","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("old_rank_tom", "long"), ("new_rank_tom", "long"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("old_rank_tom", "long"), ("new_rank_tom", "long"), ("info", "map", [("string")])] )
-        ENDPOINT = "/replace/tom"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -5335,7 +5329,6 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["lock_table"] = "/lock/table"
         self.gpudb_func_to_endpoint_map["merge_records"] = "/merge/records"
         self.gpudb_func_to_endpoint_map["query_graph"] = "/query/graph"
-        self.gpudb_func_to_endpoint_map["admin_replace_tom"] = "/replace/tom"
         self.gpudb_func_to_endpoint_map["revoke_permission_system"] = "/revoke/permission/system"
         self.gpudb_func_to_endpoint_map["revoke_permission_table"] = "/revoke/permission/table"
         self.gpudb_func_to_endpoint_map["revoke_role"] = "/revoke/role"
@@ -5365,6 +5358,103 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["visualize_video"] = "/visualize/video"
         self.gpudb_func_to_endpoint_map["visualize_video_heatmap"] = "/visualize/video/heatmap"
     # end load_gpudb_func_to_endpoint_map
+
+    # begin admin_add_ranks
+    def admin_add_ranks( self, hosts = None, config_params = None, options = {} ):
+        """Add one or more new ranks to the Kinetica cluster. The new ranks will
+        not contain any data initially, other than replicated tables, and not
+        be assigned any shards. To rebalance data across the cluster, which
+        includes shifting some shard key assignments to newly added ranks, see
+        :meth:`.admin_rebalance`.
+
+        For example, if attempting to add three new ranks (two ranks on host
+        172.123.45.67 and one rank on host 172.123.45.68) to a Kinetica cluster
+        with additional configuration parameters:
+
+        * input parameter *hosts* would be an array including 172.123.45.67 in
+        the first two indices (signifying two ranks being added to host
+        172.123.45.67) and 172.123.45.68 in the last index (signifying one rank
+        being added to host 172.123.45.67)
+
+        * input parameter *config_params* would be an array of maps, with each
+        map corresponding to the ranks being added in input parameter *hosts*.
+        The key of each map would be the configuration parameter name and the
+        value would be the parameter's value, e.g. 'rank.gpu':'1'
+
+        This endpoint's processing includes copying all replicated table data
+        to the new rank(s) and therefore could take a long time. The API call
+        may time out if run directly.  It is recommended to run this endpoint
+        asynchronously via :meth:`.create_job`.
+
+        Parameters:
+
+            hosts (list of str)
+                The IP address of each rank being added to the cluster. Insert
+                one entry per rank, even if they are on the same host. The
+                order of the hosts in the array only matters as it relates to
+                the input parameter *config_params*.    The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            config_params (list of dicts of str to str)
+                Configuration parameters to apply to the new ranks, e.g., which
+                GPU to use. Configuration parameters that start with 'rankN.',
+                where N is the rank number, should omit the N, as the new rank
+                number(s) are not allocated until the ranks are created. Each
+                entry in this array corresponds to the entry at the same array
+                index in the input parameter *hosts*. This array must either be
+                completely empty or have the same number of elements as the
+                hosts array.  An empty array will result in the new ranks being
+                set only with default parameters.    The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **dry_run** --
+                  If *true*, only validation checks will be performed. No ranks
+                  are added.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            added_ranks (list of ints)
+                The number assigned to each newly added rank, in the same order
+                as the ranks in the input parameter *hosts*. Will be empty if
+                the operation fails.
+
+            results (list of str)
+                Text description of the result of each rank being added.
+                Indicates the reason for any errors that occur. Entries are in
+                the same order as the input parameter *hosts*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        hosts = hosts if isinstance( hosts, list ) else ( [] if (hosts is None) else [ hosts ] )
+        config_params = config_params if isinstance( config_params, list ) else ( [] if (config_params is None) else [ config_params ] )
+        assert isinstance( options, (dict)), "admin_add_ranks(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/admin/add/ranks" )
+
+        obj = {}
+        obj['hosts'] = hosts
+        obj['config_params'] = config_params
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/admin/add/ranks' )
+
+        return AttrDict( response )
+    # end admin_add_ranks
+
 
     # begin admin_alter_jobs
     def admin_alter_jobs( self, job_ids = None, action = None, options = {} ):
@@ -5423,38 +5513,6 @@ class GPUdb(object):
     # end admin_alter_jobs
 
 
-    # begin admin_alter_shards
-    def admin_alter_shards( self, version = None, use_index = None, rank = None, tom
-                            = None, index = None, backup_map_list = None,
-                            backup_map_values = None, options = {} ):
-
-        assert isinstance( version, (int, long, float)), "admin_alter_shards(): Argument 'version' must be (one) of type(s) '(int, long, float)'; given %s" % type( version ).__name__
-        assert isinstance( use_index, (bool)), "admin_alter_shards(): Argument 'use_index' must be (one) of type(s) '(bool)'; given %s" % type( use_index ).__name__
-        rank = rank if isinstance( rank, list ) else ( [] if (rank is None) else [ rank ] )
-        tom = tom if isinstance( tom, list ) else ( [] if (tom is None) else [ tom ] )
-        index = index if isinstance( index, list ) else ( [] if (index is None) else [ index ] )
-        backup_map_list = backup_map_list if isinstance( backup_map_list, list ) else ( [] if (backup_map_list is None) else [ backup_map_list ] )
-        backup_map_values = backup_map_values if isinstance( backup_map_values, list ) else ( [] if (backup_map_values is None) else [ backup_map_values ] )
-        assert isinstance( options, (dict)), "admin_alter_shards(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/admin/alter/shards" )
-
-        obj = {}
-        obj['version'] = version
-        obj['use_index'] = use_index
-        obj['rank'] = rank
-        obj['tom'] = tom
-        obj['index'] = index
-        obj['backup_map_list'] = backup_map_list
-        obj['backup_map_values'] = backup_map_values
-        obj['options'] = self.__sanitize_dicts( options )
-
-        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/admin/alter/shards' )
-
-        return AttrDict( response )
-    # end admin_alter_shards
-
-
     # begin admin_offline
     def admin_offline( self, offline = None, options = {} ):
         """Take the system offline. When the system is offline, no user operations
@@ -5502,6 +5560,163 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end admin_offline
+
+
+    # begin admin_rebalance
+    def admin_rebalance( self, options = {} ):
+        """Rebalance the cluster so that all the nodes contain approximately an
+        equal number of records.  The rebalance will also cause the shards to
+        be equally distributed (as much as possible) across all the ranks.
+
+        This endpoint may take a long time to run, depending on the amount of
+        data in the system. The API call may time out if run directly.  It is
+        recommended to run this endpoint asynchronously via
+        :meth:`.create_job`.
+
+        Parameters:
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **rebalance_sharded_data** --
+                  If *true*, sharded data will be rebalanced approximately
+                  equally across the cluster. Note that for big clusters, this
+                  data transfer could be time consuming and result in delayed
+                  query responses.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **rebalance_unsharded_data** --
+                  If *true*, unsharded data (data without primary keys and
+                  without shard keys) will be rebalanced approximately equally
+                  across the cluster. Note that for big clusters, this data
+                  transfer could be time consuming and result in delayed query
+                  responses.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **table_whitelist** --
+                  Comma-separated list of unsharded table names to rebalance.
+                  Not applicable to sharded tables because they are always
+                  balanced in accordance with their primary key or shard key.
+                  Cannot be used simultaneously with *table_blacklist*.
+
+                * **table_blacklist** --
+                  Comma-separated list of unsharded table names to not
+                  rebalance. Not applicable to sharded tables because they are
+                  always balanced in accordance with their primary key or shard
+                  key. Cannot be used simultaneously with *table_whitelist*.
+
+        Returns:
+            A dict with the following entries--
+
+            table_names (list of str)
+                Names of the rebalanced tables.
+
+            message (list of str)
+                Error Messages from rebalancing the tables.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( options, (dict)), "admin_rebalance(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/admin/rebalance" )
+
+        obj = {}
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/admin/rebalance' )
+
+        return AttrDict( response )
+    # end admin_rebalance
+
+
+    # begin admin_remove_ranks
+    def admin_remove_ranks( self, ranks = None, options = {} ):
+        """Remove one or more ranks from the cluster. All data in the ranks to be
+        removed is rebalanced to other ranks before the node is removed unless
+        the *rebalance_sharded_data* or *rebalance_unsharded_data* parameters
+        are set to *false* in the input parameter *options*.
+
+        Due to the rebalancing, this endpoint may take a long time to run,
+        depending on the amount of data in the system. The API call may time
+        out if run directly.  It is recommended to run this endpoint
+        asynchronously via :meth:`.create_job`.
+
+        Parameters:
+
+            ranks (list of ints)
+                Rank numbers of the ranks to be removed from the cluster.
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+                Allowed keys are:
+
+                * **rebalance_sharded_data** --
+                  When *true*, data with primary keys or shard keys will be
+                  rebalanced to other ranks prior to rank removal. Note that
+                  for big clusters, this data transfer could be time consuming
+                  and result in delayed query responses.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **rebalance_unsharded_data** --
+                  When *true*, unsharded data (data without primary keys and
+                  without shard keys) will be rebalanced to other ranks prior
+                  to rank removal. Note that for big clusters, this data
+                  transfer could be time consuming and result in delayed query
+                  responses.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+        Returns:
+            A dict with the following entries--
+
+            removed_ranks (list of ints)
+                Ranks that were removed from the cluster.  May be empty in the
+                case of failures.
+
+            results (list of str)
+                Text description of the result of each rank being removed.
+                Indicates the reason for any errors that occur. Entries are in
+                the same order as the input parameter *ranks*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        ranks = ranks if isinstance( ranks, list ) else ( [] if (ranks is None) else [ ranks ] )
+        assert isinstance( options, (dict)), "admin_remove_ranks(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/admin/remove/ranks" )
+
+        obj = {}
+        obj['ranks'] = ranks
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/admin/remove/ranks' )
+
+        return AttrDict( response )
+    # end admin_remove_ranks
 
 
     # begin admin_show_alerts
@@ -5556,6 +5771,220 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end admin_show_alerts
+
+
+    # begin admin_show_cluster_operations
+    def admin_show_cluster_operations( self, history_index = 0, options = {} ):
+        """Requests the detailed status of the current operation (by default) or a
+        prior cluster operation specified by input parameter *history_index*.
+        Returns details on the requested cluster operation.
+
+        The response will also indicate how many cluster operations are stored
+        in the history.
+
+        Parameters:
+
+            history_index (int)
+                Indicates which cluster operation to retrieve.  Use 0 for the
+                most recent.  Default value is 0.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            history_index (int)
+                The index of this cluster operation in the
+                reverse-chronologically sorted list of operations, where 0 is
+                the most recent operation.
+
+            history_size (int)
+                Number of cluster operations executed to date.
+
+            in_progress (bool)
+                Whether this cluster operation is currently in progress or not.
+                Allowed values are:
+
+                * true
+                * false
+
+            start_time (str)
+                The start time of the cluster operation.
+
+            end_time (str)
+                The end time of the cluster operation, if completed.
+
+            endpoint (str)
+                The endpoint that initiated the cluster operation.
+
+            endpoint_schema (str)
+                The schema for the original request.
+
+            overall_status (str)
+                Overall success status of the operation.
+                Allowed values are:
+
+                * **OK** --
+                  The operation was successful, or, if still in progress, the
+                  operation is successful so far.
+
+                * **ERROR** --
+                  An error occurred executing the operation.
+
+            user_stopped (bool)
+                Whether a user stopped this operation at any point while in
+                progress.
+                Allowed values are:
+
+                * true
+                * false
+
+            percent_complete (int)
+                Percent complete of this entire operation.
+
+            dry_run (bool)
+                Whether this operation was a dry run.
+                Allowed values are:
+
+                * true
+                * false
+
+            messages (list of str)
+                Updates and error messages if any.
+
+            add_ranks (bool)
+                Whether adding ranks is (or was) part of this operation.
+                Allowed values are:
+
+                * true
+                * false
+
+            add_ranks_status (str)
+                If this was a rank-adding operation, the add-specific status of
+                the operation.
+                Allowed values are:
+
+                * NOT_STARTED
+                * IN_PROGRESS
+                * INTERRUPTED
+                * COMPLETED_OK
+                * ERROR
+
+            ranks_being_added (list of ints)
+                The rank numbers of the ranks currently being added, or the
+                rank numbers that were added if the operation is complete.
+
+            rank_hosts (list of str)
+                The host IP addresses of the ranks being added, in the same
+                order as the output parameter *ranks_being_added* list.
+
+            add_ranks_percent_complete (int)
+                Current percent complete of the add ranks operation.
+
+            remove_ranks (bool)
+                Whether removing ranks is (or was) part of this operation.
+                Allowed values are:
+
+                * true
+                * false
+
+            remove_ranks_status (str)
+                If this was a rank-removing operation, the removal-specific
+                status of the operation.
+                Allowed values are:
+
+                * NOT_STARTED
+                * IN_PROGRESS
+                * INTERRUPTED
+                * COMPLETED_OK
+                * ERROR
+
+            ranks_being_removed (list of ints)
+                The ranks being removed, or that have been removed if the
+                operation is completed.
+
+            remove_ranks_percent_complete (int)
+                Current percent complete of the remove ranks operation.
+
+            rebalance (bool)
+                Whether data and/or shard rebalancing is (or was) part of this
+                operation.
+                Allowed values are:
+
+                * true
+                * false
+
+            rebalance_unsharded_data (bool)
+                Whether rebalancing of unsharded data is (or was) part of this
+                operation.
+                Allowed values are:
+
+                * true
+                * false
+
+            rebalance_unsharded_data_status (str)
+                If this was an operation that included rebalancing unsharded
+                data, the rebalancing-specific status of the operation.
+                Allowed values are:
+
+                * NOT_STARTED
+                * IN_PROGRESS
+                * INTERRUPTED
+                * COMPLETED_OK
+                * ERROR
+
+            unsharded_rebalance_percent_complete (int)
+                Percentage of unsharded tables that completed rebalancing, out
+                of all unsharded tables to rebalance.
+
+            rebalance_sharded_data (bool)
+                Whether rebalancing of sharded data is (or was) part of this
+                operation.
+                Allowed values are:
+
+                * true
+                * false
+
+            shard_array_version (long)
+                Version of the shard array that is (or was) being rebalanced
+                to. Each change to the shard array results in the version
+                number incrementing.
+
+            rebalance_sharded_data_status (str)
+                If this was an operation that included rebalancing sharded
+                data, the rebalancing-specific status of the operation.
+                Allowed values are:
+
+                * NOT_STARTED
+                * IN_PROGRESS
+                * INTERRUPTED
+                * COMPLETED_OK
+                * ERROR
+
+            num_shards_changing (int)
+                Number of shards that will change as part of rebalance.
+
+            sharded_rebalance_percent_complete (int)
+                Percentage of shard keys, and their associated data if
+                applicable, that have completed rebalancing.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( history_index, (int, long, float)), "admin_show_cluster_operations(): Argument 'history_index' must be (one) of type(s) '(int, long, float)'; given %s" % type( history_index ).__name__
+        assert isinstance( options, (dict)), "admin_show_cluster_operations(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/admin/show/cluster/operations" )
+
+        obj = {}
+        obj['history_index'] = history_index
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/admin/show/cluster/operations' )
+
+        return AttrDict( response )
+    # end admin_show_cluster_operations
 
 
     # begin admin_show_jobs
@@ -6062,6 +6491,9 @@ class GPUdb(object):
                 * **sleep_on_refresh** --
                   <DEVELOPER>
 
+                * **refresh_type** --
+                  <DEVELOPER>
+
         Returns:
             A dict with the following entries--
 
@@ -6375,6 +6807,9 @@ class GPUdb(object):
                   <DEVELOPER>
 
                 * **sleep_on_refresh** --
+                  <DEVELOPER>
+
+                * **refresh_type** --
                   <DEVELOPER>
 
             record_type (:class:`RecordType` or None)
@@ -9516,9 +9951,7 @@ class GPUdb(object):
                   top level.
 
                 * **max_query_dimensions** --
-                  The maximum number of tables in a join that can be accessed
-                  by a query and are not equated by a foreign-key to
-                  primary-key equality predicate
+                  Obsolete in GPUdb v7.0
 
                 * **optimize_lookups** --
                   Use more memory to speed up the joining of tables.
@@ -10764,6 +11197,11 @@ class GPUdb(object):
                   expected to be low. This property can save a large amount of
                   memory.
 
+                * **init_with_now** --
+                  For columns with attributes of date, time, datetime or
+                  timestamp, at insert time, replace empty strings and invalid
+                  timestamps with NOW()
+
             options (dict of str to str)
                 Optional parameters.  Default value is an empty dict ( {} ).
 
@@ -11668,6 +12106,17 @@ class GPUdb(object):
 
                   The default value is 'true'.
 
+                * **prepare_mode** --
+                  If *true*, compiles a query into an execution plan and saves
+                  it in query cache. Query execution is not performed and an
+                  empty response will be returned to user
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
         Returns:
             A dict with the following entries--
 
@@ -11921,6 +12370,17 @@ class GPUdb(object):
                     false
 
                   The default value is 'true'.
+
+                * **prepare_mode** --
+                  If *true*, compiles a query into an execution plan and saves
+                  it in query cache. Query execution is not performed and an
+                  empty response will be returned to user
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
             record_type (:class:`RecordType` or None)
                 The record type expected in the results, or None to
@@ -15744,7 +16204,7 @@ class GPUdb(object):
 
 
     # begin query_graph
-    def query_graph( self, graph_name = None, edge_to_node = True,
+    def query_graph( self, graph_name = None, queries = None, edge_to_node = True,
                      edge_or_node_int_ids = None, edge_or_node_string_ids =
                      None, edge_or_node_wkt_ids = None, adjacency_table = '',
                      options = {} ):
@@ -15757,6 +16217,14 @@ class GPUdb(object):
 
             graph_name (str)
                 Name of the graph resource to query.
+
+            queries (list of str)
+                ['Schema.collection.table.column', 'node_identifier', ... ];
+                e.g., ['graph_nodes.id AS QUERY_NODE_ID'] It appends to the
+                respective arrays below. QUERY identifier overrides
+                edge_to_node parameter.    The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
 
             edge_to_node (bool)
                 If set to *true*, the query gives the adjacency list from
@@ -15861,6 +16329,7 @@ class GPUdb(object):
                 Additional information.
         """
         assert isinstance( graph_name, (basestring)), "query_graph(): Argument 'graph_name' must be (one) of type(s) '(basestring)'; given %s" % type( graph_name ).__name__
+        queries = queries if isinstance( queries, list ) else ( [] if (queries is None) else [ queries ] )
         assert isinstance( edge_to_node, (bool)), "query_graph(): Argument 'edge_to_node' must be (one) of type(s) '(bool)'; given %s" % type( edge_to_node ).__name__
         edge_or_node_int_ids = edge_or_node_int_ids if isinstance( edge_or_node_int_ids, list ) else ( [] if (edge_or_node_int_ids is None) else [ edge_or_node_int_ids ] )
         edge_or_node_string_ids = edge_or_node_string_ids if isinstance( edge_or_node_string_ids, list ) else ( [] if (edge_or_node_string_ids is None) else [ edge_or_node_string_ids ] )
@@ -15872,6 +16341,7 @@ class GPUdb(object):
 
         obj = {}
         obj['graph_name'] = graph_name
+        obj['queries'] = queries
         obj['edge_to_node'] = edge_to_node
         obj['edge_or_node_int_ids'] = edge_or_node_int_ids
         obj['edge_or_node_string_ids'] = edge_or_node_string_ids
@@ -15883,27 +16353,6 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end query_graph
-
-
-    # begin admin_replace_tom
-    def admin_replace_tom( self, old_rank_tom = None, new_rank_tom = None, options =
-                           {} ):
-
-        assert isinstance( old_rank_tom, (int, long, float)), "admin_replace_tom(): Argument 'old_rank_tom' must be (one) of type(s) '(int, long, float)'; given %s" % type( old_rank_tom ).__name__
-        assert isinstance( new_rank_tom, (int, long, float)), "admin_replace_tom(): Argument 'new_rank_tom' must be (one) of type(s) '(int, long, float)'; given %s" % type( new_rank_tom ).__name__
-        assert isinstance( options, (dict)), "admin_replace_tom(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/replace/tom" )
-
-        obj = {}
-        obj['old_rank_tom'] = old_rank_tom
-        obj['new_rank_tom'] = new_rank_tom
-        obj['options'] = self.__sanitize_dicts( options )
-
-        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/replace/tom' )
-
-        return AttrDict( response )
-    # end admin_replace_tom
 
 
     # begin revoke_permission_system
@@ -19918,9 +20367,7 @@ class GPUdbTable( object ):
                   top level.
 
                 * **max_query_dimensions** --
-                  The maximum number of tables in a join that can be accessed
-                  by a query and are not equated by a foreign-key to
-                  primary-key equality predicate
+                  Obsolete in GPUdb v7.0
 
                 * **optimize_lookups** --
                   Use more memory to speed up the joining of tables.
@@ -20639,6 +21086,9 @@ class GPUdbTable( object ):
                   <DEVELOPER>
 
                 * **sleep_on_refresh** --
+                  <DEVELOPER>
+
+                * **refresh_type** --
                   <DEVELOPER>
 
             force_primitive_return_types (bool)
