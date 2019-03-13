@@ -1,5 +1,14 @@
 # GPUdb Python API Changelog
 
+## Version 7.0.1
+
+### Version 7.0.1.0 - 2019-03-12
+-   Added support for selecting a primary host for the GPUdb class
+-   Added support for high availability (HA) to multi-head ingestion
+    retrieval
+
+
+
 ## Version 7.0.0
 
 ### Version 7.0.0.2 - 2019-02-26

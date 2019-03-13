@@ -96,6 +96,32 @@ except ImportError:
 from tabulate import tabulate
 
 
+# -----------------------------------------------------------------
+#                          LOGGERS
+# -----------------------------------------------------------------
+# Module Level Loggers
+GPUDB_LOGGER      = logging.getLogger( "gpudb.GPUdb"      )
+GPUDBTABLE_LOGGER = logging.getLogger( "gpudb.GPUdbTable" )
+
+# Handlers need to be instantiated only ONCE for a given module
+# (i.e. not per class instance)
+handler1   = logging.StreamHandler()
+handler2   = logging.StreamHandler()
+formatter1 = logging.Formatter( "%(asctime)s %(levelname)-8s %(message)s",
+                                "%Y-%m-%d %H:%M:%S" )
+formatter2 = logging.Formatter( "%(asctime)s %(levelname)-8s %(message)s",
+                                "%Y-%m-%d %H:%M:%S" )
+handler1.setFormatter( formatter1 )
+handler2.setFormatter( formatter2 )
+
+GPUDB_LOGGER.addHandler( handler1 )
+GPUDBTABLE_LOGGER.addHandler( handler2 )
+
+# Prevent logging statements from being duplicated
+GPUDB_LOGGER.propagate = False
+GPUDBTABLE_LOGGER.propagate = False
+# -----------------------------------------------------------------
+
 
 # Some string constants used throughout the program
 class C:
@@ -118,7 +144,15 @@ class C:
     _enable_ha          = "conf.enable_ha"
     _ha_ring_head_nodes = "conf.ha_ring_head_nodes"
 
-    _kinetica_exit_msg = "Kinetica is exiting"
+    # Special error messages coming from the database
+    _KINETICA_EXITING   = "Kinetica is exiting"
+    _CONNECTION_REFUSED = "Connection refused"
+    _CONNECTION_RESET   = "Connection reset"
+
+    # Some pre-fixes used in creating error messages
+    _FAILED_CONNECTION_HAS_HA = "Connection failed; all clusters in the HA ring have been tried! Error encountered: "
+    _FAILED_CONNECTION_NO_HA  = "Connection failed (no HA available); Error encountered: "
+    
 # end class C
 
 
@@ -152,7 +186,22 @@ class GPUdbException( Exception ):
         """
         return self.traceback_msg
     # end get_formatted_traceback
-    
+
+
+    def is_connection_failure( self ):
+        """Returns:
+               True if the error is related to a connection failure; False
+               otherwise.
+        """
+        if ( ( C._FAILED_CONNECTION_NO_HA in self.message )
+             or ( C._FAILED_CONNECTION_HAS_HA in self.message )
+             or ( "Connection refused" in self.message )
+             or ( "Connection reset" in self.message ) ):
+        # if ( ( C._FAILED_CONNECTION_NO_HA in self.message )
+        #      or ( C._FAILED_CONNECTION_HAS_HA in self.message ) ):
+            return True
+        return False
+    # end is_connection_failure
 # end class GPUdbException
 
 
@@ -171,6 +220,23 @@ class GPUdbConnectionException( GPUdbException ):
     # end __str__
     
 # end class GPUdbConnectionException
+
+
+# ---------------------------------------------------------------------------
+# GPUdbDecodingException - Exception for HTTP Issues
+# ---------------------------------------------------------------------------
+class GPUdbDecodingException( GPUdbException ):
+
+    def __init__( self, value ):
+        self.value = value
+        self.message = value
+    # end __init__
+
+    def __str__( self ):
+        return repr( self.value )
+    # end __str__
+    
+# end class GPUdbDecodingException
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +261,7 @@ class GPUdbExitException( GPUdbException ):
 # ---------------------------------------------------------------------------
 class _ConnectionToken(object):
     """Internal wrapper class to handle multiple server logic."""
-    def __init__(self, host, port, host_manager_port, connection):
+    def __init__(self, host, port = 9191, host_manager_port = 9300, connection = "http"):
         if not isinstance(host, (basestring, unicode)):
             raise GPUdbException( "Expected a string host address, got: '"+str(host)+"'" )
 
@@ -278,6 +344,28 @@ class _ConnectionToken(object):
         self._gpudb_url_path    = str( url_path )
         self._gpudb_full_url    = str( full_url )
     # end __init__
+
+    
+    def __eq__( self, other ):
+        if isinstance(other, self.__class__):
+            if ( self._host != other._host ):
+                return False
+            if ( self._port != other._port ):
+                return False
+            if ( self._host_manager_port != other._host_manager_port ):
+                return False
+            if ( self._connection != other._connection ):
+                return False
+            if ( self._gpudb_url_path != other._gpudb_url_path ):
+                return False
+            if ( self._gpudb_full_url != other._gpudb_full_url ):
+                return False
+            return True
+        else:
+            return False
+    # end __eq__
+
+
 # end class _ConnectionToken
 
 
@@ -2139,11 +2227,13 @@ class GPUdbRecord( object ):
 
 class GPUdb(object):
 
+    
     def __init__( self, host = "127.0.0.1", port = "9191",
                   host_manager_port = "9300",
                   encoding = "BINARY", connection = 'HTTP',
                   username = "", password = "", timeout = None,
                   no_init_db_contact = False,
+                  primary_host = None,
                   **kwargs ):
         """
         Construct a new GPUdb client instance.
@@ -2193,6 +2283,15 @@ class GPUdb(object):
                 If True, the constructor won't communicate with the database
                 server (e.g. for checking version compatibility).  Default
                 is False.
+
+            primary_host (str)
+                Optional parameter; if given, indicates that this host is the
+                primary cluster in the HA ring and must always be attempted to
+                be used first.  Switching to another cluster should happen only
+                if this cluster is unavailable.  Must be given in the form of
+                'http[s]://X.X.X.X:PORT[/httpd-name]'.  If this is not given,
+                then all available clusters will be treated with equal probability
+                of use.
         """
         # Call the internal function to initialize the object
         self.__construct( host = host, port = port,
@@ -2201,16 +2300,18 @@ class GPUdb(object):
                           username = username, password = password,
                           timeout = timeout,
                           no_init_db_contact = no_init_db_contact,
+                          primary_host = primary_host,
                           **kwargs )
     # end __init__
 
 
     def __construct( self, host = "127.0.0.1", port = "9191",
                      host_manager_port = "9300",
-                       encoding = "BINARY", connection = 'HTTP',
-                       username = "", password = "", timeout = None,
-                       no_init_db_contact = False,
-                       **kwargs ):
+                     encoding = "BINARY", connection = 'HTTP',
+                     username = "", password = "", timeout = None,
+                     no_init_db_contact = False,
+                     primary_host = None,
+                     **kwargs ):
         """
         Construct a new GPUdb client instance.
 
@@ -2259,27 +2360,35 @@ class GPUdb(object):
                 If True, the constructor won't communicate with the database
                 server (e.g. for checking version compatibility).  Default
                 is False.
+
+            primary_host (str)
+                Optional parameter; if given, indicates that this host is the
+                primary cluster in the HA ring and must always be attempted to
+                be used first.  Switching to another cluster should happen only
+                if this cluster is unavailable.  Must be given in the form of
+                'http[s]://X.X.X.X:PORT[/httpd-name]'.  If this is not given,
+                then all available clusters will be treated with equal probability
+                of use.
         """
         # Logging
-        self.log  = logging.getLogger( "gpudb.GPUdb" )
-        handler   = logging.StreamHandler()
-        formatter = logging.Formatter( "%(asctime)s %(levelname)-8s %(message)s",
-                                         "%Y-%m-%d %H:%M:%S" )
-        handler.setFormatter( formatter )
-        self.log.addHandler( handler )
+        self.log = GPUDB_LOGGER
 
+        # Identification for this instance (useful in logging)
+        self._id = str( uuid.uuid4() )
+        
         assert isinstance( encoding, (basestring, unicode) ), \
             "Parameter 'encoding' must be a string; given {}".format( str(type(encoding)) )
         encoding = encoding.upper() # Just in case a different case is given
         assert (encoding in ["BINARY", "JSON", "SNAPPY"]), "Expected encoding to be either 'BINARY', 'JSON' or 'SNAPPY' got: '"+str(encoding)+"'"
         if (encoding == 'SNAPPY' and not have_snappy):
-            self.log.warn('SNAPPY encoding specified but python-snappy is not installed; reverting to BINARY')
+            self.__log_warn('SNAPPY encoding specified but python-snappy is not installed; reverting to BINARY')
             encoding = 'BINARY'
 
-        self.encoding   = encoding
-        self.username   = username
-        self.password   = password
-        self.timeout    = timeout
+        self.encoding     = encoding
+        self.username     = username
+        self.password     = password
+        self.timeout      = timeout
+        self.primary_host = primary_host
 
         # Set up the credentials to be used per POST
         self.auth = None
@@ -2347,18 +2456,25 @@ class GPUdb(object):
 
         # Check that no duplicate host name was given
         if ( ( len(host) > 1) and (len(host) != len( set(host) )) ):
-            self.log.warn( "Given list of hosts has a duplicate; might cause unpredictable behavior ({})"
-                           "".format( host ) )
+            self.__log_warn( "Given list of hosts has a duplicate; might cause unpredictable behavior ({})"
+                             "".format( host ) )
 
 
         # Set up cluster information for high availability (HA)
-        self._conn_tokens = tuple(_ConnectionToken(h, p, hmp, c) \
-                                  for h, p, hmp, c in zip(host, port, host_manager_port, connection))
+        self._conn_tokens = [ _ConnectionToken(h, p, hmp, c) \
+                                  for h, p, hmp, c in zip(host, port, host_manager_port, connection) ]
+
+
+        # Handle the primary host parameter, if given any
+        self.__handle_primary_host()
+
         # We want to use the HA clusters (upon failover) at a random fashion
-        self._num_conn_tokens = len( self._conn_tokens )
-        self._conn_token_indices = range(0, self._num_conn_tokens)
-        random.shuffle( self._conn_token_indices )
+        self.__randomize_conn_token_indices()
         self._current_conn_token_index  = 0
+
+        # We need to keep a running count of how many times we've failed and had
+        # to switch to a different HA ring head node (useful for multi-head I/O)
+        self._num_ha_switches = 0
 
         # Update the connection tokens with the available HA ring information
         self.no_init_db_contact = no_init_db_contact
@@ -2452,10 +2568,6 @@ class GPUdb(object):
         if self.no_init_db_contact:
             return # nothing to do at the user's explicit command
 
-        # Nothing to do if multiple host addresses is already given by the user
-        if (self._num_conn_tokens > 1):
-            return
-
         # Call /show/system/properties to get the any HA ring information
         system_props = self.show_system_properties()
         if not system_props.is_ok():
@@ -2486,16 +2598,82 @@ class GPUdb(object):
             host_manager_ports = [ self.get_host_manager_port() for p in ha_ring_head_nodes]
 
             # Set up cluster information for high availability (HA)
-            self._conn_tokens = tuple(_ConnectionToken(h, p, hmp, c) \
-                                      for h, p, hmp, c in zip(ha_ring_head_nodes, dummy, host_manager_ports, dummy))
+            self._conn_tokens = [ _ConnectionToken(h, p, hmp, c) \
+                                      for h, p, hmp, c in zip(ha_ring_head_nodes, dummy, host_manager_ports, dummy) ]
 
             # We want to use the HA clusters (upon failover) at a random fashion
-            self._num_conn_tokens = len( self._conn_tokens )
-            self._conn_token_indices = range(0, self._num_conn_tokens)
-            random.shuffle( self._conn_token_indices )
+            self.__handle_primary_host()
+            self.__randomize_conn_token_indices()
             self._current_conn_token_index  = 0
         # end if
     # end __get_ha_ring_head_node_addresses
+
+
+
+    def __handle_primary_host( self ):
+        """Ensures that any given primary host is included in the list
+        of all HA ring head nodes, and is the very first in line.  No-op
+        if no primary host is given by the user.
+        """
+        self._primary_conn_token = None
+
+        # Handle the primary host parameter, if given any
+        if (self.primary_host):
+            # Make sure that it's a valid URL
+            try:
+                self._primary_conn_token = _ConnectionToken( self.primary_host )
+            except GPUdbException as ex:
+                raise GPUdbException( "Bad primary host URL given {}; error: {}"
+                                      "".format( self.primary_host, str(ex) ) )
+
+            # Check if the primary host exists in the list of other hosts
+            if self._primary_conn_token not in self._conn_tokens:
+                # Insert as the first element
+                self._conn_tokens.insert( 0, self._primary_conn_token )
+            else: # already exists; make sure it is the first element
+                self._conn_tokens.remove( self._primary_conn_token )
+                self._conn_tokens.insert( 0, self._primary_conn_token )
+        # end if
+    # end __handle_primary_host
+
+    
+
+    def __get_current_conn_token( self ):
+        """Returns the connection information for the current server."""
+        # The connection token indices are randomly shuffled and kept in
+        # _conn_token_indices; we iterate over this in a sequential manner
+        return self._conn_tokens[ self._conn_token_indices[ self._current_conn_token_index ] ]
+    # end __get_current_conn_token
+
+
+    def __randomize_conn_token_indices( self ):
+        """Shuffles the list of connection token indices so that HA failover
+        happens at a random of fashion.  One caveat is when a primary host
+        is given by the user.  In that case, we need to keep the primary
+        host's index as the first one in the list so that upon failover,
+        when we circle back, we always pick the first/primary one up again.
+        """
+        self._num_conn_tokens = len( self._conn_tokens )
+        if not self.primary_host:
+            # No primary host given, so just randomly shuffle without worries
+            self._conn_token_indices = range(0, self._num_conn_tokens)
+            random.shuffle( self._conn_token_indices )
+        else: # Need to treat the primary host specially
+            # Ensure that the first one is the primary host
+            # (this is a somewhat redundant check, but let's be 100% sure)
+            if ( self._conn_tokens[0] != self._primary_conn_token ):
+                self._conn_tokens.remove( self._primary_conn_token )
+                self._conn_tokens.insert( 0, self._primary_conn_token )
+            # end if
+
+            # Shuffle from the 2nd element onward
+            non_primary_host_indices = range(1, self._num_conn_tokens)
+            random.shuffle( non_primary_host_indices )
+            
+            # Put them back together
+            self._conn_token_indices = ([ 0 ] + non_primary_host_indices)
+        # end if
+    # end __randomize_conn_token_indices
 
 
     def __perform_version_check( self, do_print_warning = True ):
@@ -2513,26 +2691,19 @@ class GPUdb(object):
         system_props = self.show_system_properties()
         server_version = system_props[ C._property_map ][ C._gaia_version ]
 
-        # Extract the version for both server and client: major.minor.revision (ignore ABI)
-        server_version = ".".join( server_version.split( "." )[ 0 : 3 ] )
-        client_version = ".".join( self.api_version.split( "." )[ 0 : 3 ] )
+        # Extract the version for both server and client: major.minor (ignore revision and ABI)
+        server_version = ".".join( server_version.split( "." )[ 0 : 2 ] )
+        client_version = ".".join( self.api_version.split( "." )[ 0 : 2 ] )
         if (server_version != client_version):
             error_msg = ("Client version ({0}) does not match that of the server ({1})"
                          "".format( client_version, server_version ) )
             if (do_print_warning == True):
-                self.log.warn( error_msg )
+                self.__log_warn( error_msg )
             raise GPUdbException( error_msg )
         # end if
 
         return True # all is well
     # end __perform_version_check
-
-
-    def _get_current_conn_token( self ):
-        """Returns the connection information for the current server."""
-        # The connection token indices are randomly shuffled and kept in
-        # _conn_token_indices; we iterate over this in a sequential manner
-        return self._conn_tokens[ self._conn_token_indices[ self._current_conn_token_index ] ]
 
 
     def get_version_info( self ):
@@ -2543,19 +2714,86 @@ class GPUdb(object):
 
     def get_host( self ):
         """Return the host this client is talking to."""
-        return self._get_current_conn_token()._host
+        return self.__get_current_conn_token()._host
     # end get_host
+
+    def get_primary_host( self ):
+        """Return the primary host for this client."""
+        return self.primary_host
+    # end get_primary_host
+
+    def set_primary_host( self, new_primary_host,
+                          start_using_new_primary_host = False,
+                          delete_old_primary_host      = False ):
+        """Set the primary host for this client.  Start using this host
+        per the user's directions.  Also, either delete any existing primary
+        host information, or relegate it to the ranks of a backup host.
+
+        Parameters:
+            value (str)
+                A string containing the full URL of the new primary host (of
+                the format 'http[s]://X.X.X.X:PORT[/httpd-name]').  Must have
+                valid URL format.  May be part of the given back-up hosts, or
+                be a completely new one.
+
+            start_using_new_primary_host (bool)
+                Boolean flag indicating if the new primary host should be used
+                starting immediately.  Please be cautious about setting the value
+                of this flag to True; there may be unintended consequences regarding
+                query chaining.  Caveat: if values given is False, but
+                *delete_old_primary_host* is True and the old primary host, if any,
+                was being used at the time of this function call, then the client
+                still DOES switch over to the new primary host.  Default value is False.
+
+            delete_old_primary_host (bool)
+                Boolean flag indicating that if a primary host was already set, delete
+                that information.  If False, then any existing primary host URL would
+                treated as a regular back-up cluster's host.  Default value is False.
+        """
+        # Save the current host being used
+        current_conn_token = self.__get_current_conn_token()
+        old_primary_conn_token = self._primary_conn_token
+
+        # Delete the old primary host, if any
+        if (delete_old_primary_host and old_primary_conn_token):
+            self._conn_tokens.remove( old_primary_conn_token )
+            
+        # Save the new primary host
+        self.primary_host = new_primary_host
+
+        # Update the connection tokens given this new primary host
+        self.__handle_primary_host()
+        self.__randomize_conn_token_indices()
+
+        # Select which host to keep working with
+        if start_using_new_primary_host:
+            # Use the new host (might as well randomize rest now)
+            self.__randomize_conn_token_indices()
+        else: # keep using the old/current one
+            # First ensure that the "current" one isn't the old primary host;
+            # If so, AND if the old primary was deleted, then start using the
+            # new primary
+            if ( ( current_conn_token == old_primary_conn_token )
+                 and delete_old_primary_host ):
+                self.__randomize_conn_token_indices()
+            else:
+                # Re-set the current host identifying index so the one being
+                # used is continued to be used
+                current_conn_token_new_index = self._conn_tokens.index( current_conn_token )
+                self._current_conn_token_index = self._conn_token_indices.index( current_conn_token_new_index )
+        # end if
+    # end set_primary_host
 
 
     def get_port( self ):
         """Return the port the host is listening to."""
-        return self._get_current_conn_token()._port
+        return self.__get_current_conn_token()._port
     # end get_port
 
 
     def get_host_manager_port( self ):
         """Return the port the host manager is listening to."""
-        return self._get_current_conn_token()._host_manager_port
+        return self.__get_current_conn_token()._host_manager_port
     # end get_host_manager_port
 
 
@@ -2565,13 +2803,14 @@ class GPUdb(object):
                                        port = self.get_port() )
     # end get_host
 
+
     @property
     def host(self):
         return self.get_host()
 
     @host.setter
     def host(self, value):
-        self._get_current_conn_token()._host = str( value )
+        self.__get_current_conn_token()._host = str( value )
 
     @property
     def port(self):
@@ -2579,35 +2818,34 @@ class GPUdb(object):
 
     @port.setter
     def port(self, value):
-        self._get_current_conn_token()._port = value
+        self.__get_current_conn_token()._port = value
     @property
     def host_manager_port(self):
         return self.get_host_manager_port()
 
     @host_manager_port.setter
     def host_manager_port(self, value):
-        self._get_current_conn_token()._host_manager_port = value
+        self.__get_current_conn_token()._host_manager_port = value
 
     @property
     def gpudb_url_path(self):
-        return self._get_current_conn_token()._gpudb_url_path
+        return self.__get_current_conn_token()._gpudb_url_path
 
     @gpudb_url_path.setter
     def gpudb_url_path(self, value):
-        self._get_current_conn_token()._gpudb_url_path = str( value )
+        self.__get_current_conn_token()._gpudb_url_path = str( value )
 
     @property
     def gpudb_full_url(self):
-        return self._get_current_conn_token()._gpudb_full_url
+        return self.__get_current_conn_token()._gpudb_full_url
 
     @property
     def connection(self):
-        return self._get_current_conn_token()._connection
+        return self.__get_current_conn_token()._connection
 
     @connection.setter
     def connection(self, value):
-        self._get_current_conn_token()._connection = value
-
+        self.__get_current_conn_token()._connection = value
 
     @property
     def encoding(self):
@@ -2671,7 +2909,19 @@ class GPUdb(object):
         
         return None # none found
     # end get_known_type
+
     
+    def get_num_ha_switches(self):
+        return self._num_ha_switches
+
+    def get_all_available_full_urls(self):
+        """Returns:
+            A list of all the full URLs.
+        """
+        return [token._gpudb_full_url for token in self._conn_tokens]
+    # end get_all_available_full_urls
+
+    # ==========================================================================
 
     # Members
     _current_conn_token_index = 0
@@ -2681,7 +2931,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.0.2"
+    api_version   = "7.0.1.0"
 
     # Constants
     END_OF_SET = -9999
@@ -2731,6 +2981,39 @@ class GPUdb(object):
     # Helper functions
     # -----------------------------------------------------------------------
 
+    def __log_debug_with_id( self, message ):
+        self.log.debug( "[GPUdb] {} {}".format( self._id, message ) )
+    # end __debug_with_id
+
+    def __log_warn_with_id( self, message ):
+        self.log.warn( "[GPUdb] {} {}".format( self._id, message ) )
+    # end __warn_with_id
+    
+    def __log_info_with_id( self, message ):
+        self.log.info( "[GPUdb] {} {}".format( self._id, message ) )
+    # end __log_info_with_id
+
+    def __log_error_with_id( self, message ):
+        self.log.error( "[GPUdb] {} {}".format( self._id, message ) )
+    # end __log_error_with_id
+
+    def __log_debug( self, message ):
+        self.log.debug( "[GPUdb] {}".format( message ) )
+    # end __debug
+
+    def __log_warn( self, message ):
+        self.log.warn( "[GPUdb] {}".format( message ) )
+    # end __warn
+    
+    def __log_info( self, message ):
+        self.log.info( "[GPUdb] {}".format( message ) )
+    # end __log_info
+    
+    def __log_error( self, message ):
+        self.log.error( "[GPUdb] {}".format( message ) )
+    # end __log_error
+    
+
     def __update_connection_token_index( self, initial_index = None ):
         """Choose the next connection token (effect is random).  If an 'initial'
         index is provided, then ensure we are not back to that cluster.  If so,
@@ -2748,6 +3031,8 @@ class GPUdb(object):
         # Update the token index
         self._current_conn_token_index = ( (self._current_conn_token_index + 1)
                                            % self._num_conn_tokens )
+        # Keep a running count of how many times we had to switch clusters
+        self._num_ha_switches += 1
 
         if initial_index is None:
             return None
@@ -2764,11 +3049,51 @@ class GPUdb(object):
         exhausted_all_conn_tokens = (self._current_conn_token_index == initial_index)
         if exhausted_all_conn_tokens:
             # Re-shuffle the connection token indices
-            random.shuffle( self._conn_token_indices )
+            self.__randomize_conn_token_indices()
             # And start from the beginning again
             self._current_conn_token_index = 0
+        # end if
+            
         return exhausted_all_conn_tokens
     # end __update_connection_token_index
+
+
+    def __update_host_manager_port( self, endpoint, headers, body_data ):
+        """Automatically resets the host manager port for the host
+        manager URLs by querying the database for the port number.
+        """
+        # Get the host manager port from the head node
+        try:
+            sys_properties = self.show_system_properties().property_map
+        except (GPUdbException, GPUdbConnectionException) as ex:
+            raise GPUdbException( ex.message )
+
+        if "conf.hm_http_port" not in sys_properties:
+            raise GPUdbException( 'Error: "conf.hm_http_port" not found '
+                                  'system properties!' )
+        try :
+            hm_port = int( sys_properties[ "conf.hm_http_port" ] )
+        except:
+            raise GPUdbException ( "Expected a numeric port, got: '{}'"
+                                   "".format( str(sys_properties[ "conf.hm_http_port" ]) ) )
+
+        # Check if this host manager port works
+        try:
+            conn_token = self.__get_current_conn_token()
+            ( resp_data,
+              resp_time ) = self.__post_and_get( conn_token._host,
+                                                 hm_port,
+                                                 conn_token._gpudb_url_path,
+                                                 conn_token._connection,
+                                                 headers,
+                                                 body_data,
+                                                 endpoint )
+            
+            # Upon success, update the connection token's host manager port
+            conn_token._host_manager_port = hm_port
+        except (GPUdbException, GPUdbConnectionException) as ex:
+            raise
+    # end __update_host_manager_port
 
 
     def __create_header_and_process_body_data( self, body_data ):
@@ -2898,19 +3223,27 @@ class GPUdb(object):
         # and also make sure we're not going round and round in a circle
         if is_retry: # Need to try the next cluster in line
             self._num_retries += 1
-            # Ensure we don't fall into an inifite loop by going in a circle
-            if (self._num_retries == self._num_conn_tokens):
-                random.shuffle( self._conn_token_indices )
+            # Ensure we don't fall into an inifite loop by going in a circle (we
+            # can _try_ as many times as there are clusters/tokens)
+            if ( (self._num_conn_tokens == 1)
+                 or (self._num_retries >= (self._num_conn_tokens-1)) ):
+
+                self.__randomize_conn_token_indices()
                 self._current_conn_token_index = 0
                 self._num_retries = 0
 
-                # No more cluster to try!
-                error_msg = "Connection failed!"
+                # Keep a running count of how many times we had to switch clusters
                 if (self._num_conn_tokens > 1):
-                    error_msg = "Connection failed; all clusters in the HA ring have been tried!"
+                    self._num_ha_switches += 1
+
+                # No more cluster to try!
+                if (self._num_conn_tokens > 1):
+                    error_msg = C._FAILED_CONNECTION_HAS_HA
+                else:
+                    error_msg = C._FAILED_CONNECTION_NO_HA
 
                 if previous_error_msg:
-                    error_msg += " Error encountered: {}".format( previous_error_msg )
+                    error_msg += previous_error_msg
                     
                 raise GPUdbException( error_msg )
             else:
@@ -2920,7 +3253,7 @@ class GPUdb(object):
 
         while cond:
             loop_error = None
-            conn_token = self._get_current_conn_token()
+            conn_token = self.__get_current_conn_token()
             exhausted_all_conn_tokens = False
 
             # Try to post and get the message using the current connection
@@ -2944,12 +3277,22 @@ class GPUdb(object):
         # end while loop
 
         if error:
-            if isinstance( error, (basestring, unicode)):
-                raise GPUdbException( error )
-            elif isinstance( error, GPUdbException ):
-                raise error
-            else:
-                raise GPUdbException( error )
+            error_msg = str( error )
+            # Pre-fix the error message with a note about what we've tried so far
+            if exhausted_all_conn_tokens:
+                error_msg_prefix = ""
+                if (self._num_conn_tokens > 1):
+                    if (C._FAILED_CONNECTION_HAS_HA not in error_msg):
+                        error_msg_prefix = C._FAILED_CONNECTION_HAS_HA
+                    # end inner if
+                elif (C._FAILED_CONNECTION_NO_HA not in error_msg):
+                    error_msg_prefix = C._FAILED_CONNECTION_NO_HA
+                # end if
+                error_msg = error_msg_prefix + error_msg
+            # end inner if
+                
+            raise GPUdbException( error_msg )
+        # done handling errors
 
         return  resp_data, resp_time
     # end __post_to_gpudb_read
@@ -2988,7 +3331,7 @@ class GPUdb(object):
             self._num_retries += 1
             # Ensure we don't fall into an inifite loop by going in a circle
             if (self._num_retries == self._num_conn_tokens):
-                random.shuffle( self._conn_token_indices )
+                self.__randomize_conn_token_indices()
                 self._current_conn_token_index = 0
                 self._num_retries = 0
 
@@ -3008,7 +3351,7 @@ class GPUdb(object):
 
         while cond:
             loop_error = None
-            conn_token = self._get_current_conn_token()
+            conn_token = self.__get_current_conn_token()
 
             try:
                 ( resp_data,
@@ -3050,7 +3393,7 @@ class GPUdb(object):
 
                 # Check if this host manager port works
                 try:
-                    conn_token = self._get_current_conn_token()
+                    conn_token = self.__get_current_conn_token()
                     ( resp_data,
                       resp_time ) = self.__post_and_get( conn_token._host,
                                                          hm_port,
@@ -3166,10 +3509,10 @@ class GPUdb(object):
                 data_str = json.loads( _Util.ensure_str(encoded_datum).replace('\\U','\\u') )
                 return data_str
         except (Exception, RuntimeError) as e:
-            raise GPUdbException ( "Unable to parse server response {}; "
-                                   "please check that the client and server "
-                                   "versions match."
-                                   "".format( self.gpudb_full_url ) )
+            raise GPUdbDecodingException ( "Unable to parse server response {}; "
+                                           "please check that the client and server "
+                                           "versions match.  Got error '{}'"
+                                           "".format( self.gpudb_full_url, str(e) ) )
     # end __read_orig_datum_cext
 
 
@@ -3203,10 +3546,10 @@ class GPUdb(object):
                 try:
                     out = SCHEMA.decode( encoded_datum, resp['data'] )
                 except (Exception, RuntimeError) as e:
-                    raise GPUdbException ( "Unable to parse server response from {}; "
-                                           "please check that the client and "
-                                           "server versions match."
-                                           "".format( self.gpudb_full_url ) )
+                    raise GPUdbDecodingException ( "Unable to parse server response from {}; "
+                                                   "please check that the client and "
+                                                   "server versions match. Got error '{}'"
+                                                   "".format( self.gpudb_full_url, str(e) ) )
             # end inner if
         # end if
 
@@ -3220,7 +3563,9 @@ class GPUdb(object):
 
         # If Kinetica is exiting, we need special handling for HA failover
         if ( (out['status_info']['status'] == 'ERROR')
-             and (C._kinetica_exit_msg in out['status_info']['message']) ):
+             and ( (C._KINETICA_EXITING in out['status_info']['message'])
+                   or (C._CONNECTION_REFUSED in out['status_info']['message'])
+                   or (C._CONNECTION_RESET in out['status_info']['message']) ) ):
             raise GPUdbExitException( out['status_info']['message'] )
         # end if
             
@@ -3300,7 +3645,7 @@ class GPUdb(object):
 
 
     def __post_then_get_cext( self, REQ_SCHEMA, REP_SCHEMA, datum, endpoint,
-                              is_retry = False, previous_error_msg = None ):
+                              return_raw_response = False ):
         """
         Encode the datum dict using the REQ_SCHEMA, POST to GPUdb server and
         decode the reply using the REP_SCHEMA.
@@ -3310,28 +3655,79 @@ class GPUdb(object):
             REP_SCHEMA : The parsed schema from avro.schema.parse() of the reply.
             datum      : Request dict matching the REQ_SCHEMA.
             endpoint   : Server path to POST to, e.g. "/add".
-            is_retry   : Boolean value indicating if this request was already
-                         tried once and this is a re-try.
-            previous_error_msg : Optional string indicating what error occurred
-                                 during the previous trial.
-
+            return_raw_response : If True, return the raw response along with the
+                                  decoded response.
+ 
         Returns:
-            The decoded response.
+            The decoded response.  If `return_raw_response` is True, then return
+            a tuple of the decoded response and the raw response.
         """
+        # Encode the request
         encoded_datum = self.encode_datum_cext(REQ_SCHEMA, datum)
-        response, response_time  = self.__post_to_gpudb_read( encoded_datum, endpoint,
-                                                              is_retry,
-                                                              previous_error_msg )
 
-        try:
-            # Decode the response
-            decoded_response = self.__read_datum_cext(REP_SCHEMA, response, None, response_time)
-            self._num_retries = 0 # Reset in case used
-            return decoded_response
-        except GPUdbExitException as ex:
-            return self.__post_then_get_cext(REQ_SCHEMA, REP_SCHEMA, datum, endpoint, True)
-        except GPUdbException as ex:
-            return self.__post_then_get_cext(REQ_SCHEMA, REP_SCHEMA, datum, endpoint, True, str(ex) )
+        # Get the header and process the body data
+        ( headers, body_data ) = self.__create_header_and_process_body_data( encoded_datum )
+
+        # NOTE: Creating a new httplib.HTTPConnection is suprisingly just as
+        #       fast as reusing a persistent one and has the advantage of
+        #       fully retrying from scratch if the connection fails.
+
+        initial_index = self._current_conn_token_index
+
+        while True:
+            conn_token = self.__get_current_conn_token()
+            exhausted_all_conn_tokens = False
+            error_msg = ""
+
+            # Try to post and get the message using the current connection
+            # token's information and decode the response
+            try:
+                # Post the request
+                ( response,
+                  resp_time ) = self.__post_and_get( conn_token._host, conn_token._port,
+                                                     conn_token._gpudb_url_path,
+                                                     conn_token._connection,
+                                                     headers,
+                                                     body_data,
+                                                     endpoint )
+
+                # Decode and return the response
+                decoded_response = self.__read_datum_cext(REP_SCHEMA, response, None, resp_time)
+
+                if return_raw_response:
+                    return (decoded_response, response)
+                # Else, return just the decoded response
+                return decoded_response
+            except GPUdbExitException as ex:
+                # Kinetica is exiting; try other clusters, if any
+                exhausted_all_conn_tokens = self.__update_connection_token_index( initial_index )
+                error_msg = str( ex )
+            except GPUdbConnectionException as ex:
+                # Some error occurred during the HTTP request
+                exhausted_all_conn_tokens = self.__update_connection_token_index( initial_index )
+                error_msg = str( ex )
+            except GPUdbException as ex:
+                # Any other GPUdbException is a valid failure
+                raise GPUdbException( "Error from {}: {}".format( self.gpudb_full_url, str( ex ) ) )
+            except Exception as ex:
+                # And other random exceptions probably are also connection errors
+                exhausted_all_conn_tokens = self.__update_connection_token_index( initial_index )
+                error_msg = str( ex )
+            # end try-catch
+
+            # Handle HA complete failure cases
+            if exhausted_all_conn_tokens:
+                if (self._num_conn_tokens > 1):
+                    if (C._FAILED_CONNECTION_HAS_HA not in error_msg):
+                        error_msg = ("{} {}".format( C._FAILED_CONNECTION_HAS_HA, error_msg ) )
+                    # end inner if
+                elif (C._FAILED_CONNECTION_NO_HA not in error_msg):
+                    error_msg = ("{} {}".format( C._FAILED_CONNECTION_NO_HA, error_msg ) )
+                # end if
+
+                raise GPUdbException( error_msg )
+            # end inner if
+        # end while loop
     # end __post_then_get_cext
 
 
@@ -3356,20 +3752,85 @@ class GPUdb(object):
         Returns:
             The decoded response.
         """
+        # Encode the request
         encoded_datum = self.encode_datum_cext(REQ_SCHEMA, datum)
-        response, response_time  = self.__post_to_hm_read( encoded_datum, endpoint,
-                                                           is_retry,
-                                                           previous_error_msg )
 
-        try:
-            # Decode the response
-            decoded_response = self.__read_datum_cext(REP_SCHEMA, response, None, response_time)
-            self._num_retries = 0 # Reset in case used
-            return decoded_response
-        except GPUdbExitException as ex:
-            return self.__post_to_hm_then_get_cext(REQ_SCHEMA, REP_SCHEMA, datum, endpoint, True)
-        except GPUdbException as ex:
-            return self.__post_to_hm_then_get_cext(REQ_SCHEMA, REP_SCHEMA, datum, endpoint, True, str(ex) )
+        # Get the header and process the body data
+        ( headers, body_data ) = self.__create_header_and_process_body_data( encoded_datum )
+
+        # NOTE: Creating a new httplib.HTTPConnection is suprisingly just as
+        #       fast as reusing a persistent one and has the advantage of
+        #       fully retrying from scratch if the connection fails.
+
+        DB_OFFLINE_ERROR_MESSAGE = "System is offline"
+
+        initial_index = self._current_conn_token_index
+        
+        while True:
+            conn_token = self.__get_current_conn_token()
+            exhausted_all_conn_tokens = False
+            error_msg = ""
+
+            try:
+                # Post the request
+                ( response,
+                  resp_time ) = self.__post_and_get( conn_token._host,
+                                                     conn_token._host_manager_port,
+                                                     conn_token._gpudb_url_path,
+                                                     conn_token._connection,
+                                                     headers,
+                                                     body_data,
+                                                     endpoint )
+                
+                # Decode and return the response
+                decoded_response = self.__read_datum_cext(REP_SCHEMA, response, None, resp_time)
+
+                # Check that the database is actually online and we got the correct message
+                # (the host manager can stay up and return error messages if the db is down)
+                if not _Util.is_ok( decoded_response ):
+                    error_msg = _Util.get_error_msg( decoded_response )
+                    if (DB_OFFLINE_ERROR_MESSAGE in error_msg):
+                        # The database is offline
+                        raise GPUdbExitException( error_msg )
+                
+                return decoded_response
+            except GPUdbExitException as ex:
+                # Kinetica is exiting; try other clusters, if any
+                exhausted_all_conn_tokens = self.__update_connection_token_index( initial_index )
+                error_msg = str( ex )
+            except GPUdbConnectionException as ex:
+                # Just in case the error is due to having the wrong HM port, inquire the head node
+                # what the port is and use that going forward (if different)
+                try:
+                    self.__update_host_manager_port( endpoint, headers, body_data )
+                except GPUdbConnectionException as ex2:
+                    # Some other error occurred during the HTTP request
+                    exhausted_all_conn_tokens = self.__update_connection_token_index( initial_index )
+                    error_msg = str( ex2 )
+                except Exception as ex2:
+                    raise ex2
+            except GPUdbException as ex:
+                # Any other GPUdbException is a valid failure
+                raise ex
+            except Exception as ex:
+                # And other random exceptions probably are also connection errors
+                exhausted_all_conn_tokens = self.__update_connection_token_index( initial_index )
+                error_msg = str( ex )
+            # end try-catch
+
+            # Handle HA complete failure cases
+            if exhausted_all_conn_tokens:
+                if (self._num_conn_tokens > 1):
+                    if (C._FAILED_CONNECTION_HAS_HA not in error_msg):
+                        error_msg = ("{} {}".format( C._FAILED_CONNECTION_HAS_HA, error_msg ) )
+                    # end 2ne inner if
+                elif (C._FAILED_CONNECTION_NO_HA not in error_msg):
+                    error_msg = ("{} {}".format( C._FAILED_CONNECTION_NO_HA, error_msg ) )
+                # end 1st inner if
+
+                raise GPUdbException( error_msg )
+            # end if
+        # end while loop
     # end __post_to_hm_then_get_cext
 
 
@@ -3390,13 +3851,12 @@ class GPUdb(object):
             A tuple where the first element is the decoded response, and the second
             element is the raw encoded response from the database.
         """
-        encoded_datum = self.encode_datum_cext(REQ_SCHEMA, datum)
-        response, response_time  = self.__post_to_gpudb_read(encoded_datum, endpoint)
-
         # Return the decoded response and the raw response
-        return ( self.__read_datum_cext(REP_SCHEMA, response, None, response_time),
-                 response )
+        return self.__post_then_get_cext( REQ_SCHEMA, REP_SCHEMA, datum, endpoint,
+                                          return_raw_response = True )
     # end __post_then_get_cext
+
+
 
 
     def __post_then_get_async_cext(self, REQ_SCHEMA, REP_SCHEMA, datum, endpoint,
@@ -3680,6 +4140,7 @@ class GPUdb(object):
         return self.__read_orig_datum_cext(RSP_SCHEMA, encoded_datum, 'BINARY')
 
 
+
     def logger(self, ranks, log_levels, options = {}):
         """Convenience function to change log levels of some
         or all GPUdb ranks.
@@ -3710,7 +4171,7 @@ class GPUdb(object):
         datum["log_levels"] = log_levels
         datum["options"]    = options
 
-        print('Using host: %s\n' % (self.host))
+        self.__log_info("Setting logger for host at {}\n".format( (self.host)) )
         response = self.__post_then_get_cext(REQ_SCHEMA, RSP_SCHEMA, datum, "/logger")
 
         if not _Util.is_ok( response ): # problem setting the log levels
@@ -3721,6 +4182,46 @@ class GPUdb(object):
     # end logger
 
 
+    def set_server_logger_level(self, ranks, log_levels, options = {}):
+        """Convenience function to change log levels of some
+        or all GPUdb ranks.
+        Parameters:
+            ranks (list of ints)
+                A list containing the ranks to which to apply the new log levels.
+
+            log_levels (dict of str to str)
+                A map where the keys dictacte which log's levels to change, and the
+                values dictate what the new log levels will be.
+
+            options (dict of str to str)
+                Optional parameters.  Default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            status (str)
+                The status of the endpoint ('OK' or 'ERROR').
+
+            log_levels (map of str to str)
+        """
+        self.logger(ranks, log_levels, options)
+    # end set_server_logger_level
+
+
+    def set_client_logger_level( self, log_level ):
+        """Set the log level for the client GPUdb class.
+
+        Parameters:
+            log_level (int, long, or str)
+                A valid log level for the logging module
+        """
+        try:
+            self.log.setLevel( log_level )
+        except (ValueError, TypeError, Exception) as ex:
+            raise GPUdbException("Invalid log level: '{}'".format( str(ex) ))
+    # end set_client_logger_level
+
+    
     # Helper function to emulate old /add (single object insert) capability
     def insert_object(self, set_id, object_data, params=None):
         if (params):
@@ -3733,7 +4234,6 @@ class GPUdb(object):
     def parse_dynamic_response(self, retobj, do_print=False, convert_nulls = True):
 
         if (retobj['status_info']['status'] == 'ERROR'):
-            print('Error: ', retobj['status_info']['message'])
             return retobj
 
         my_schema = schema.parse(retobj['response_schema_str'])
@@ -9338,6 +9838,20 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **truncate_strings** --
+                  If set to {true}@{, it allows to append unbounded string to
+                  charN string. If 'truncate_strings' is 'true', the desination
+                  column is charN datatype, and the source column is unnbounded
+                  string, it will truncate the source string to length of N
+                  first, and then append the truncated string to the
+                  destination charN column. The default value is false.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
         Returns:
             A dict with the following entries--
 
@@ -10027,6 +10541,10 @@ class GPUdb(object):
                   return a count of 0 for the join table for logging and for
                   show_table. optimization needed for large overlapped
                   equi-join stencils
+
+                * **chunk_size** --
+                  Maximum size of a joined-chunk for this table. Defaults to
+                  the gpudb.conf file chunk size
 
         Returns:
             A dict with the following entries--
@@ -12034,17 +12552,30 @@ class GPUdb(object):
                   table.
 
                 * **distributed_joins** --
-                  If *false*, disables the use of distributed joins in
-                  servicing the given query.  Any query requiring a distributed
-                  join to succeed will fail, though hints can be used in the
-                  query to change the distribution of the source data to allow
-                  the query to succeed.
+                  If *true*, enables the use of distributed joins in servicing
+                  the given query.  Any query requiring a distributed join will
+                  succeed, though hints can be used in the query to change the
+                  distribution of the source data to allow the query to
+                  succeed.
                   Allowed values are:
 
                   * true
                   * false
 
-                  The default value is 'true'.
+                  The default value is 'false'.
+
+                * **distributed_operations** --
+                  If *true*, enables the use of distributed operations in
+                  servicing the given query.  Any query requiring a distributed
+                  join will succeed, though hints can be used in the query to
+                  change the distribution of the source data to allow the query
+                  to succeed.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **ssq_optimization** --
                   If *false*, scalar subqueries will be translated into joins
@@ -12116,6 +12647,15 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                * **planner_join_validations** --
+                  <DEVELOPER>
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
         Returns:
             A dict with the following entries--
@@ -12299,17 +12839,30 @@ class GPUdb(object):
                   table.
 
                 * **distributed_joins** --
-                  If *false*, disables the use of distributed joins in
-                  servicing the given query.  Any query requiring a distributed
-                  join to succeed will fail, though hints can be used in the
-                  query to change the distribution of the source data to allow
-                  the query to succeed.
+                  If *true*, enables the use of distributed joins in servicing
+                  the given query.  Any query requiring a distributed join will
+                  succeed, though hints can be used in the query to change the
+                  distribution of the source data to allow the query to
+                  succeed.
                   Allowed values are:
 
                   * true
                   * false
 
-                  The default value is 'true'.
+                  The default value is 'false'.
+
+                * **distributed_operations** --
+                  If *true*, enables the use of distributed operations in
+                  servicing the given query.  Any query requiring a distributed
+                  join will succeed, though hints can be used in the query to
+                  change the distribution of the source data to allow the query
+                  to succeed.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **ssq_optimization** --
                   If *false*, scalar subqueries will be translated into joins
@@ -12381,6 +12934,15 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                * **planner_join_validations** --
+                  <DEVELOPER>
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
             record_type (:class:`RecordType` or None)
                 The record type expected in the results, or None to
@@ -16209,7 +16771,69 @@ class GPUdb(object):
                      None, edge_or_node_wkt_ids = None, adjacency_table = '',
                      options = {} ):
         """Employs a topological query on a network graph generated a-priori by
-        :meth:`.create_graph`. See `Network Graph Solvers
+        :meth:`.create_graph` and returns a list of adjacent edge(s) or
+        node(s), also known as an adjacency list, depending on what's been
+        provided to the endpoint; providing edges will return nodes and
+        providing nodes will return edges. There are two ways to provide
+        edge(s) or node(s) to be queried: using column names and `query
+        identifiers
+        <../../../graph_solver/network_graph_solver.html#query-identifiers>`_
+        with the input parameter *queries* with or using a list of specific IDs
+        with one of the input parameter *edge_or_node_int_ids*, input parameter
+        *edge_or_node_string_ids*, and input parameter *edge_or_node_wkt_ids*
+        arrays and input parameter *edge_to_node* to determine if the IDs are
+        edges or nodes.
+
+        To determine the node(s) or edge(s) adjacent to a value from a given
+        column, provide a list of column names aliased as a particular query
+        identifier to input parameter *queries*. This field can be populated
+        with column values from any table as long as the type is supported by
+        the given identifier. See `Query Identifiers
+        <../../../graph_solver/network_graph_solver.html#query-identifiers>`_
+        for more information. I
+
+        To query for nodes that are adjacent to a given set of edges, set input
+        parameter *edge_to_node* to *true* and provide values to the input
+        parameter *edge_or_node_int_ids*, input parameter
+        *edge_or_node_string_ids*, and input parameter *edge_or_node_wkt_ids*
+        arrays; it is assumed the values in the arrays are edges and the
+        corresponding adjacency list array in the response will be populated
+        with nodes.
+
+        To query for edges that are adjacent to a given set of nodes, set input
+        parameter *edge_to_node* to *false* and provide values to the input
+        parameter *edge_or_node_int_ids*, input parameter
+        *edge_or_node_string_ids*, and input parameter *edge_or_node_wkt_ids*
+        arrays; it is assumed the values in arrays are nodes and the given
+        node(s) will be queried for adjacent edges and the corresponding
+        adjacency list array in the response will be populated with edges.
+
+        To query for adjacencies relative to a given column and a given set of
+        edges/nodes, the input parameter *queries* and input parameter
+        *edge_or_node_int_ids* / input parameter *edge_or_node_string_ids* /
+        input parameter *edge_or_node_wkt_ids* parameters can be used in
+        conjuction with each other. If both input parameter *queries* and one
+        of the arrays are populated, values from input parameter *queries* will
+        be prioritized over values in the array and all values parsed from the
+        input parameter *queries* array will be appended to the corresponding
+        arrays (depending on the type). If using both input parameter *queries*
+        and the edge_or_node arrays, the types must match, e.g., if input
+        parameter *queries* utilizes the 'QUERY_NODE_ID' identifier, only the
+        input parameter *edge_or_node_int_ids* array should be used. Note that
+        using input parameter *queries* will override input parameter
+        *edge_to_node*, so if input parameter *queries* contains a node-based
+        query identifier, e.g., 'table.column AS QUERY_NODE_ID', it is assumed
+        that the input parameter *edge_or_node_int_ids* will contain node IDs.
+
+        To return the adjacency list in the response, leave input parameter
+        *adjacency_table* empty. To return the adjacency list in a table and
+        not in the response, provide a value to input parameter
+        *adjacency_table* and set *export_query_results* to *false*. To return
+        the adjacency list both in a table and the response, provide a value to
+        input parameter *adjacency_table* and set *export_query_results* to
+        *true*.
+
+        See `Network Graph Solver
         <../../../graph_solver/network_graph_solver.html>`_ for more
         information.
 
@@ -16219,17 +16843,19 @@ class GPUdb(object):
                 Name of the graph resource to query.
 
             queries (list of str)
-                ['Schema.collection.table.column', 'node_identifier', ... ];
-                e.g., ['graph_nodes.id AS QUERY_NODE_ID'] It appends to the
-                respective arrays below. QUERY identifier overrides
-                edge_to_node parameter.    The user can provide a single
-                element (which will be automatically promoted to a list
-                internally) or a list.
+                Nodes or edges to be queried specified using `query identifiers
+                <../../../graph_solver/network_graph_solver.html#query-identifiers>`_,
+                e.g., 'table.column AS QUERY_NODE_ID' or 'table.column AS
+                QUERY_EDGE_WKTLINE'. Multiple columns can be used as long as
+                the same identifier is used for all columns. Passing in a query
+                identifier will override the input parameter *edge_to_node*
+                parameter.    The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
 
             edge_to_node (bool)
-                If set to *true*, the query gives the adjacency list from
-                edge(s) to node(s); otherwise, the adjacency list is from
-                node(s) to edge(s).  Default value is True.
+                If set to *true*, the given edge(s) will be queried for
+                adjacent nodes. If set to *false*, the given node(s) will be
+                queried for adjacent edges.  Default value is True.
                 Allowed values are:
 
                 * true
@@ -16268,13 +16894,21 @@ class GPUdb(object):
                 * **number_of_rings** --
                   Sets the number of rings of edges around the node to query
                   for adjacency, with '1' being the edges directly attached to
-                  the queried nodes. This setting is ignored if input parameter
-                  *edge_to_node* is set to *true*.
+                  the queried nodes. For example, if *number_of_rings* is set
+                  to '2', the edge(s) directly attached to the queried nodes
+                  will be returned; in addition, the edge(s) attached to the
+                  node(s) attached to the initial ring of edge(s) surrounding
+                  the queried node(s) will be returned. This setting is ignored
+                  if input parameter *edge_to_node* is set to *true*. This
+                  setting cannot be less than '1'.
 
                 * **include_all_edges** --
-                  Includes only the edges directed out of the node for the
-                  query if set to *false*. If set to *true*, all edges are
-                  queried.
+                  This parameter is only applicable if the queried graph is
+                  directed and input parameter *edge_to_node* is set to
+                  *false*. If set to *true*, all inbound edges and outbound
+                  edges relative to the node will be returned. If set to
+                  *false*, only outbound edges relative to the node will be
+                  returned.
                   Allowed values are:
 
                   * true
@@ -16292,8 +16926,13 @@ class GPUdb(object):
                   The default value is 'true'.
 
                 * **enable_graph_draw** --
-                  If set to *true*, adds an 'EDGE_WKTLINE' column identifier to
-                  the given input parameter *adjacency_table*.
+                  If set to *true*, adds a WKT-type column named
+                  'QUERY_EDGE_WKTLINE' to the given input parameter
+                  *adjacency_table* and inputs WKT values from the source graph
+                  (if available) or auto-generated WKT values (if there are no
+                  WKT values in the source graph). A subsequent call to the
+                  `/wms <../../../api/rest/wms_rest.html>`_ endpoint can then
+                  be made to display the query results on a map.
                   Allowed values are:
 
                   * true
@@ -17969,8 +18608,8 @@ class GPUdb(object):
                 information.
 
             view_name (str)
-                Optional name of the view containing the series (tracks) which
-                have to be updated.  Default value is ''.
+                name of the view containing the series (tracks) which have to
+                be updated.  Default value is ''.
 
             reserved (list of str)
                 Default value is an empty list ( [] ).   The user can provide a
@@ -18715,7 +19354,7 @@ class GPUdbTable( object ):
     @staticmethod
     def random_name():
         """Returns a randomly generated uuid-based name"""
-        return str(uuid.uuid1())
+        return str( uuid.uuid4() )
     # end random_name
 
 
@@ -18833,6 +19472,9 @@ class GPUdbTable( object ):
         Returns:
             A GPUdbTable object.
         """
+        # Logging
+        self.log = GPUDBTABLE_LOGGER
+
         # The given DB handle must be a GPUdb instance
         if not isinstance( db, GPUdb ):
             raise GPUdbException( "Argument 'db' must be a GPUdb object; "
@@ -19024,7 +19666,8 @@ class GPUdbTable( object ):
         self._multihead_retriever = None
         if use_multihead_io:
             self._multihead_retriever = RecordRetriever( self.db, self.name,
-                                                         self.gpudbrecord_type )
+                                                         self.gpudbrecord_type,
+                                                         is_table_replicated = self._is_replicated )
 
             # Set the function used by multihead ingestor for encoding records
             # TODO: Convert the multi-head record retriever to use the c-extension
@@ -19184,8 +19827,14 @@ class GPUdbTable( object ):
         """
         show_table_rsp = self.db.show_table( self.name )
         if not show_table_rsp.is_ok():
+            # First check that whether table still exists
+            if not self.exists():
+                raise GPUdbException("Table does not exist anymore; error from server: '{}'"
+                                     "".format( show_table_rsp.get_error_msg() ) )
+            # Table exists; so the problem is something else
             raise GPUdbException("Problem while updating table type: '{}'"
                                  "".format( show_table_rsp.get_error_msg() ) )
+            
         
         # Check if the type ID matches with the cached type
         type_id = show_table_rsp["type_ids"][0]
@@ -19201,6 +19850,33 @@ class GPUdbTable( object ):
     # end __update_table_type
 
 
+    def set_logger_level( self, log_level ):
+        """Set the log level for the GPUdbTable class and any multi-head i/o
+        related classes it uses.
+
+        Parameters:
+            log_level (int, long, or str)
+                A valid log level for the logging module
+        """
+        try:
+            # This class's logger
+            self.log.setLevel( log_level )
+
+            # The DB handle's logger
+            self.db.set_client_logger_level( log_level )
+
+            # The multi-head ingestor's logger
+            if self._multihead_ingestor:
+                self._multihead_ingestor.set_logger_level( log_level )
+                
+            # The multi-head retriever's logger
+            if self._multihead_retriever:
+                self._multihead_retriever.set_logger_level( log_level )
+        except (ValueError, TypeError, Exception) as ex:
+            raise GPUdbException("Invalid log level: '{}'".format( str(ex) ))
+    # end set_logger_level
+
+    
     @property
     def table_name( self ):
         return self.name
@@ -19319,6 +19995,23 @@ class GPUdbTable( object ):
             self._multihead_ingestor.flush()
     # end flush_data_to_server
 
+
+    def __log_debug( self, message ):
+        self.log.debug( "[GPUdbTable] {}".format( message ) )
+    # end __debug
+
+    def __log_warn( self, message ):
+        self.log.warn( "[GPUdbTable] {}".format( message ) )
+    # end __warn
+    
+    def __log_info( self, message ):
+        self.log.info( "[GPUdbTable] {}".format( message ) )
+    # end __log_info
+    
+    def __log_error( self, message ):
+        self.log.error( "[GPUdbTable] {}".format( message ) )
+    # end __log_error
+    
 
     def __encode_data_for_insertion_avro( self, values ):
         """Encode the given values with the database client's encoding
@@ -20443,6 +21136,10 @@ class GPUdbTable( object ):
                   return a count of 0 for the join table for logging and for
                   show_table. optimization needed for large overlapped
                   equi-join stencils
+
+                * **chunk_size** --
+                  Maximum size of a joined-chunk for this table. Defaults to
+                  the gpudb.conf file chunk size
 
         Returns:
             A read-only GPUdbTable object.
@@ -22623,6 +23320,20 @@ class GPUdbTable( object ):
 
                   The default value is 'false'.
 
+                * **truncate_strings** --
+                  If set to {true}@{, it allows to append unbounded string to
+                  charN string. If 'truncate_strings' is 'true', the desination
+                  column is charN datatype, and the source column is unnbounded
+                  string, it will truncate the source string to length of N
+                  first, and then append the truncated string to the
+                  destination charN column. The default value is false.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
         Returns:
             The response from the server which is a dict containing the
             following entries--
@@ -24589,8 +25300,8 @@ class GPUdbTable( object ):
                 information.
 
             view_name (str)
-                Optional name of the view containing the series (tracks) which
-                have to be updated.  Default value is ''.
+                name of the view containing the series (tracks) which have to
+                be updated.  Default value is ''.
 
             reserved (list of str)
                 Default value is an empty list ( [] ).   The user can provide a
