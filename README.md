@@ -1,7 +1,7 @@
 Kinetica Python API
 ===================
 
-This is the 7.0.0.0 version of the client-side Python API for Kinetica.  The
+This is the 7.0.x.y version of the client-side Python API for Kinetica.  The
 first two components of the client version must match that of the Kinetica
 server.  When the versions do not match, the API will print a warning.  Often,
 there are breaking changes between versions, so it is critical that they match.
@@ -50,3 +50,4 @@ please try downgrading your version of pip setuptools with command:
 ```
     pip install setuptools==33.1.1
 ```
+

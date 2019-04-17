@@ -2,6 +2,13 @@
 
 ## Version 7.0.1
 
+### Version 7.0.1.1 - 2019-03-31
+-   Changed GPUdbTable constructor behavior--it no longer calls /show/table
+    with `get_sizes = true` since that can be a relatively costly query.
+    __len__() now calls /show/table as needed, even for read-only tables.
+-   Added option `is_automatic_partition` to GPUdbTableOptions
+
+
 ### Version 7.0.1.0 - 2019-03-12
 -   Added support for selecting a primary host for the GPUdb class
 -   Added support for high availability (HA) to multi-head ingestion
@@ -23,8 +30,22 @@
 -   Added support for cluster reconfiguration to the multi-head I/O operations
 
 
-## Version 6.2.0 - 2018-05-09
+## Version 6.2.0
 
+### Version 6.2.0.11 - 2019-03-22
+-   Changed GPUdbTable constructor behavior--it no longer calls /show/table
+    with `get_sizes = true` since that can be a relatively costly query.
+    __len__() now calls /show/table as needed, even for read-only tables.
+
+
+### Version 6.2.0.10 - 2018-09-16
+-   Added support for host manager endpoints
+-   Added support for replicated tables to multi-head ingestion via GPUdbTable
+    and GPUdbIngestor
+-   Added head-node only usage support to GPUdbWorkerList
+
+
+### Version 6.2.0.0 - 2018-05-09
 -   New RecordRetriever class to support multi-head record lookup by
     shard key in gpudb_multihead_io.py (file previously named gpudb_ingestor.py)
 -   Renamed gpudb_ingestor.py to gpudb_multihead_io.py
@@ -35,12 +56,6 @@
 -   Added a convenience method get_geo_json() to GPUdbTable that returns a
     GeoJSON object from a table.
 
-
-### Version 6.2.0.10 - 2018-09-16
--   Added support for host manager endpoints
--   Added support for replicated tables to multi-head ingestion via GPUdbTable
-    and GPUdbIngestor
--   Added head-node only usage support to GPUdbWorkerList
 
 
 ## Version 6.1.0 - 2017-10-05
