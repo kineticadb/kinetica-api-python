@@ -36,7 +36,7 @@ from collections import Iterator
 from decimal import Decimal
 
 
-if sys.version_info.major >= 3: # checking the major component
+if sys.version_info[0] >= 3: # checking the major component
     long = int
     basestring = str
     class unicode:
@@ -80,7 +80,7 @@ else:
 
 
 # Override some python3 avro things
-if sys.version_info.major >= 3:
+if sys.version_info[0] >= 3:
     schema.parse = schema.Parse
     schema.RecordSchema.fields_dict = schema.RecordSchema.field_map
 
@@ -400,7 +400,7 @@ class _Util(object):
                  or isinstance( arg, collections.OrderedDict ) )
     # end is_list_or_dict
 
-    if sys.version_info.major >= 3: # checking the major component
+    if sys.version_info[0] >= 3: # checking the major component
         # Declaring the python 3 version of this static method
         @staticmethod
         def str_to_bytes(value):
@@ -450,7 +450,7 @@ class _Util(object):
     def ensure_str(value):
         if isinstance(value, basestring):
             if ( ( not isinstance(value, unicode) )
-                 and (sys.version_info.major == 2) ): # Python 2
+                 and (sys.version_info[0] == 2) ): # Python 2
                 return unicode( value, 'utf-8' )
             # Python 3
             return value
@@ -619,7 +619,7 @@ class _Util(object):
 
                     # Handle unicode
                     if (col_data_type == "string"):
-                        if (sys.version_info.major == 2): # checking the major component
+                        if (sys.version_info[0] == 2): # checking the major component
                             col_value = _Util.ensure_str( col_value )
                     # Handle datetime
                     elif (col_data_type == "datetime"):
@@ -2393,7 +2393,7 @@ class GPUdb(object):
         # Set up the credentials to be used per POST
         self.auth = None
         if len(self.username) != 0:
-            if sys.version_info.major >= 3: # Python 3.x
+            if sys.version_info[0] >= 3: # Python 3.x
                 # base64 encode the username and password
                 self.auth = ('%s:%s' % (self.username, self.password) )
                 self.auth = _Util.str_to_bytes( self.auth )
@@ -2931,7 +2931,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.2.0"
+    api_version   = "7.0.3.0"
 
     # Constants
     END_OF_SET = -9999
@@ -5428,9 +5428,9 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/query/graph"
-        REQ_SCHEMA_STR = """{"name":"query_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"queries","type":{"type":"array","items":"string"}},{"name":"edge_to_node","type":"boolean"},{"name":"edge_or_node_int_ids","type":{"type":"array","items":"long"}},{"name":"edge_or_node_string_ids","type":{"type":"array","items":"string"}},{"name":"edge_or_node_wkt_ids","type":{"type":"array","items":"string"}},{"name":"adjacency_table","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"name":"query_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"queries","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"adjacency_table","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"name":"query_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"adjacency_list_int_array","type":{"type":"array","items":"long"}},{"name":"adjacency_list_string_array","type":{"type":"array","items":"string"}},{"name":"adjacency_list_wkt_array","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("queries", "array", [("string")]), ("edge_to_node", "boolean"), ("edge_or_node_int_ids", "array", [("long")]), ("edge_or_node_string_ids", "array", [("string")]), ("edge_or_node_wkt_ids", "array", [("string")]), ("adjacency_table", "string"), ("options", "map", [("string")])] )
+        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("queries", "array", [("string")]), ("restrictions", "array", [("string")]), ("adjacency_table", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("adjacency_list_int_array", "array", [("long")]), ("adjacency_list_string_array", "array", [("string")]), ("adjacency_list_wkt_array", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/query/graph"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -6827,11 +6827,13 @@ class GPUdb(object):
         <../../../concepts/tables.html#table>`_; column/aggregation expressions
         will need to be aliased.  If the source table's `shard key
         <../../../concepts/tables.html#shard-keys>`_ is used as the grouping
-        column(s), the result table will be sharded, in all other cases it will
-        be replicated.  Sorting will properly function only if the result table
-        is replicated or if there is only one processing node and should not be
-        relied upon in other cases.  Not available when any of the values of
-        input parameter *column_names* is an unrestricted-length string.
+        column(s) and all result records are selected (input parameter *offset*
+        is 0 and input parameter *limit* is -9999), the result table will be
+        sharded, in all other cases it will be replicated.  Sorting will
+        properly function only if the result table is replicated or if there is
+        only one processing node and should not be relied upon in other cases.
+        Not available when any of the values of input parameter *column_names*
+        is an unrestricted-length string.
 
         Parameters:
 
@@ -7014,15 +7016,6 @@ class GPUdb(object):
                 * **cube** --
                   This option is used to specify the multidimensional
                   aggregates.
-
-                * **throw_error_on_refresh** --
-                  <DEVELOPER>
-
-                * **sleep_on_refresh** --
-                  <DEVELOPER>
-
-                * **refresh_type** --
-                  <DEVELOPER>
 
         Returns:
             A dict with the following entries--
@@ -7146,11 +7139,13 @@ class GPUdb(object):
         <../../../concepts/tables.html#table>`_; column/aggregation expressions
         will need to be aliased.  If the source table's `shard key
         <../../../concepts/tables.html#shard-keys>`_ is used as the grouping
-        column(s), the result table will be sharded, in all other cases it will
-        be replicated.  Sorting will properly function only if the result table
-        is replicated or if there is only one processing node and should not be
-        relied upon in other cases.  Not available when any of the values of
-        input parameter *column_names* is an unrestricted-length string.
+        column(s) and all result records are selected (input parameter *offset*
+        is 0 and input parameter *limit* is -9999), the result table will be
+        sharded, in all other cases it will be replicated.  Sorting will
+        properly function only if the result table is replicated or if there is
+        only one processing node and should not be relied upon in other cases.
+        Not available when any of the values of input parameter *column_names*
+        is an unrestricted-length string.
 
         Parameters:
 
@@ -7333,15 +7328,6 @@ class GPUdb(object):
                 * **cube** --
                   This option is used to specify the multidimensional
                   aggregates.
-
-                * **throw_error_on_refresh** --
-                  <DEVELOPER>
-
-                * **sleep_on_refresh** --
-                  <DEVELOPER>
-
-                * **refresh_type** --
-                  <DEVELOPER>
 
             record_type (:class:`RecordType` or None)
                 The record type expected in the results, or None to
@@ -9416,8 +9402,8 @@ class GPUdb(object):
                   it.
 
                 * **add_partition** --
-                  Adds a partition (for range-partitioned tables only)
-                  specified in input parameter *value*.  See `range
+                  Adds a partition (for range-partitioned or list-partitioned
+                  tables) specified in input parameter *value*.  See `range
                   partitioning example
                   <../../../concepts/tables.html#partitioning-by-range-example>`_
                   for example format.
@@ -9425,11 +9411,12 @@ class GPUdb(object):
                 * **remove_partition** --
                   Removes the partition specified in input parameter *value*
                   and relocates all its data to the default partition (for
-                  range-partitioned tables only).
+                  range-partitioned or list-partition tables).
 
                 * **delete_partition** --
                   Deletes the partition specified in input parameter *value*
-                  and its data (for range-partitioned tables only).
+                  and its data (for range-partitioned or list-partitioned
+                  tables).
 
                 * **set_global_access_mode** --
                   Sets the global access mode (i.e. locking) for the table
@@ -10899,27 +10886,11 @@ class GPUdb(object):
         `Projection Limitations and Cautions
         <../../../concepts/projections.html#limitations-and-cautions>`_.
 
-        `Window functions <../../../concepts/window.html>`_ are available
-        through this endpoint as well as :meth:`.get_records_by_column`.
+        `Window functions <../../../concepts/window.html>`_, which can perform
+        operations like moving averages, are available through this endpoint as
+        well as :meth:`.get_records_by_column`.
 
-        Notes:
-
-        A moving average can be calculated on a given column using the
-        following syntax in the input parameter *column_names* parameter:
-
-        'moving_average(column_name,num_points_before,num_points_after) as
-        new_column_name'
-
-        For each record in the moving_average function's 'column_name'
-        parameter, it computes the average over the previous
-        'num_points_before' records and the subsequent 'num_points_after'
-        records.
-
-        Note that moving average relies on *order_by*, and *order_by* requires
-        that all the data being ordered resides on the same processing node, so
-        it won't make sense to use *order_by* without moving average.
-
-        Also, a projection can be created with a different `shard key
+        A projection can be created with a different `shard key
         <../../../concepts/tables.html#shard-keys>`_ than the source table.  By
         specifying *shard_key*, the projection will be sharded according to the
         specified columns, regardless of how the source table is sharded.  The
@@ -11323,7 +11294,9 @@ class GPUdb(object):
                     <../../../concepts/tables.html#partitioning-by-interval>`_.
 
                   * **LIST** --
-                    Not yet supported
+                    Allows specifying a list of VALUES for a partition, or
+                    optionally to create an AUTOMATIC partition for each unique
+                    value
 
                 * **partition_keys** --
                   Comma-separated list of partition keys, which are the columns
@@ -12798,15 +12771,6 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-                * **planner_join_validations** --
-                  <DEVELOPER>
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
         Returns:
             A dict with the following entries--
 
@@ -13086,15 +13050,6 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
-
-                * **planner_join_validations** --
-                  <DEVELOPER>
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
 
             record_type (:class:`RecordType` or None)
                 The record type expected in the results, or None to
@@ -14984,8 +14939,9 @@ class GPUdb(object):
         type are returned. This endpoint supports pagination with the input
         parameter *offset* and input parameter *limit* parameters.
 
-        `Window functions <../../../concepts/window.html>`_ are available
-        through this endpoint as well as :meth:`.create_projection`.
+        `Window functions <../../../concepts/window.html>`_, which can perform
+        operations like moving averages, are available through this endpoint as
+        well as :meth:`.create_projection`.
 
         When using pagination, if the table (or the underlying table in the
         case of a view) is modified (records are inserted, updated, or deleted)
@@ -15142,8 +15098,9 @@ class GPUdb(object):
         type are returned. This endpoint supports pagination with the input
         parameter *offset* and input parameter *limit* parameters.
 
-        `Window functions <../../../concepts/window.html>`_ are available
-        through this endpoint as well as :meth:`.create_projection`.
+        `Window functions <../../../concepts/window.html>`_, which can perform
+        operations like moving averages, are available through this endpoint as
+        well as :meth:`.create_projection`.
 
         When using pagination, if the table (or the underlying table in the
         case of a view) is modified (records are inserted, updated, or deleted)
@@ -16831,37 +16788,64 @@ class GPUdb(object):
 
     # begin match_graph
     def match_graph( self, graph_name = None, sample_points = None, solve_method =
-                     'incremental_weighted', solution_table =
-                     'map_matching_solution', options = {} ):
-        """Matches measured lon/lat points to an underlying graph network.
+                     'markov_chain', solution_table = '', options = {} ):
+        """Matches a directed route implied by a given set of latitude/longitude
+        points to an existing underlying road network graph using a given
+        solution type. See `Network Graph Solvers
+        <../../../graph_solver/network_graph_solver.html>`_ for more
+        information.
 
         Parameters:
 
             graph_name (str)
-                Name of the underlying graph network.
+                Name of the underlying geospatial graph resource to match to
+                using input parameter *sample_points*.
 
             sample_points (list of str)
-                ['Table.column AS node_identifier', 'Table.column AS
-                SAMPLE_TIME' ]; e.g., 't1.wkt' AS 'SAMPLE_WKTPOINT', t1.t' AS
-                'SAMPLE_TIME'    The user can provide a single element (which
-                will be automatically promoted to a list internally) or a list.
+                Sample points used to match to an underlying geospatial graph.
+                Sample points must be specified using `identifiers
+                <../../../graph_solver/network_graph_solver.html#match-identifiers>`_;
+                identifiers are grouped as `combinations
+                <../../../graph_solver/network_graph_solver.html#match-combinations>`_.
+                Identifiers are used with existing column names, e.g.,
+                'table.column AS SAMPLE_WKTPOINT'.    The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
 
             solve_method (str)
-                Solver used for mapmatching.
+                The type of solver to use for graph matching.
                 Allowed values are:
 
                 * **markov_chain** --
-                  Hidden Markov Model (HMM) based method.
+                  Matches input parameter *sample_points* to the graph using
+                  the Hidden Markov Model (HMM)-based method, which conducts a
+                  range-tree closest-edge search to find the best combinations
+                  of possible road segments (*num_segments*) for each sample
+                  point to create the best route. The route is secured one
+                  point at a time while looking ahead *chain_width* number of
+                  points, so the prediction is corrected after each point. This
+                  solution type is the most accurate but also the most
+                  computationally intensive.
 
                 * **incremental_weighted** --
-                  Uses time and/or distance to influence one or more shortest
-                  paths along the sample points.
+                  Matches input parameter *sample_points* to the graph using
+                  time and/or distance between points to influence one or more
+                  shortest paths across the sample points.
 
-                The default value is 'incremental_weighted'.
+                The default value is 'markov_chain'.
 
             solution_table (str)
-                Name of the table to store the solution. Error if table already
-                exists.  The default value is 'map_matching_solution'.
+                The name of the table used to store the results; this table
+                contains a `track
+                <../../../geospatial/geo_objects.html#geospatial-tracks>`_ of
+                geospatial points for the matched portion of the graph, a track
+                ID, and a score value. Also outputs a details table containing
+                a trip ID (that matches the track ID), the latitude/longitude
+                pair, the timestamp the point was recorded at, and an edge ID
+                corresponding to the matched road segment. Has the same naming
+                restrictions as `tables <../../../concepts/tables.html>`_. Must
+                not be an existing table of the same name.  The default value
+                is ''.
 
             options (dict of str to str)
                 Additional parameters.  The default value is an empty dict ( {}
@@ -16869,59 +16853,76 @@ class GPUdb(object):
                 Allowed keys are:
 
                 * **gps_noise** --
-                  GPS noise value - in meters - to remove redundant
-                  samplespoints (95th percentile). -1 to disable.  The default
-                  value is '5.0'.
+                  GPS noise value (in meters) to remove redundant sample
+                  points. Use -1 to disable noise reduction. The default value
+                  accounts for 95% of point variation (+ or -5 meters).  The
+                  default value is '5.0'.
 
                 * **num_segments** --
-                  Number of potentially matching road segments for each sample
-                  point. (Defaults to 3 for 'markov_chain' and 5 for
-                  'incremental_weighted').  The default value is '0'.
+                  Maximum number of potentially matching road segments for each
+                  sample point. For the *markov_chain* solver, the default is
+                  3; for the *incremental_weighted*, the default is 5.  The
+                  default value is ''.
 
                 * **search_radius** --
-                  Maximum search radius used when snapping samples points onto
-                  potentially matching road segments. This corresponds to
-                  approximately 100m when using geodesic coordinates.  The
-                  default value is '0.001'.
+                  Maximum search radius used when snapping sample points onto
+                  potentially matching surrounding segments. The default value
+                  corresponds to approximately 100 meters.  The default value
+                  is '0.001'.
 
                 * **chain_width** --
-                  Only applicable if method is 'markov_chain'. Length of the
-                  sample points window within the Markov kernel.  The default
+                  For the *markov_chain* solver only. Length of the sample
+                  points lookahead window within the Markov kernel; the larger
+                  the number, the more accurate the solution.  The default
                   value is '9'.
 
                 * **max_solve_length** --
-                  Only applicable if method is 'incremental_weighted'. Maximum
-                  number of samples along the path to solve on.  The default
-                  value is '200'.
+                  For the *incremental_weighted* solver only. Maximum number of
+                  samples along the path on which to solve.  The default value
+                  is '200'.
 
                 * **time_window_width** --
-                  Only applicable if method is 'incremental_weighted'. Time
-                  window in which sample points are favored (dt of 1 is the
-                  most attractive).  The default value is '30'.
+                  For the *incremental_weighted* solver only. Time window, also
+                  known as sampling period, in which points are favored. To
+                  determine the raw window value, the *time_window_width* value
+                  is multiplied by the mean sample time (in seconds) across all
+                  points, e.g., if *time_window_width* is 30 and the mean
+                  sample time is 2 seconds, points that are sampled greater
+                  than 60 seconds after the previous point are no longer
+                  favored in the solution.  The default value is '30'.
 
                 * **detect_loops** --
-                  Only applicable if method is 'incremental_weighted'. If true,
-                  add a break point within any loop.  The default value is
-                  'true'.
+                  For the *incremental_weighted* solver only. If *true*, a loop
+                  will be detected and traversed even if it would make a
+                  shorter path to ignore the loop.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
                 * **source** --
-                  Optional WKT point on the trace; otherwise the beginning (in
-                  time) is taken as the source.  The default value is 'POINT
-                  NULL'.
+                  Optional WKT starting point from input parameter
+                  *sample_points* for the solver. The default behavior for the
+                  endpoint is to use time to determine the starting point.  The
+                  default value is 'POINT NULL'.
 
                 * **destination** --
-                  Optional WKT point on the trace; otherwise the end (in time)
-                  is taken as the destination.  The default value is 'POINT
-                  NULL'.
+                  Optional WKT ending point from input parameter
+                  *sample_points* for the solver. The default behavior for the
+                  endpoint is to use time to determine the destination point.
+                  The default value is 'POINT NULL'.
 
         Returns:
             A dict with the following entries--
 
             result (bool)
-                Successful solution.
+                Indicates a successful solution.
 
             match_score (float)
-                Mean square error.
+                The mean square error calculation representing the map matching
+                score. Values closer to zero are better.
 
             info (dict of str to str)
                 Additional information.
@@ -17073,23 +17074,16 @@ class GPUdb(object):
 
 
     # begin query_graph
-    def query_graph( self, graph_name = None, queries = None, edge_to_node = True,
-                     edge_or_node_int_ids = None, edge_or_node_string_ids =
-                     None, edge_or_node_wkt_ids = None, adjacency_table = '',
-                     options = {} ):
+    def query_graph( self, graph_name = None, queries = None, restrictions = [],
+                     adjacency_table = '', options = {} ):
         """Employs a topological query on a network graph generated a-priori by
         :meth:`.create_graph` and returns a list of adjacent edge(s) or
         node(s), also known as an adjacency list, depending on what's been
         provided to the endpoint; providing edges will return nodes and
-        providing nodes will return edges. There are two ways to provide
-        edge(s) or node(s) to be queried: using column names and `query
-        identifiers
+        providing nodes will return edges. The edge(s) or node(s) to be queried
+        are specified using column names and `query identifiers
         <../../../graph_solver/network_graph_solver.html#query-identifiers>`_
-        with the input parameter *queries* with or using a list of specific IDs
-        with one of the input parameter *edge_or_node_int_ids*, input parameter
-        *edge_or_node_string_ids*, and input parameter *edge_or_node_wkt_ids*
-        arrays and input parameter *edge_to_node* to determine if the IDs are
-        edges or nodes.
+        with the input parameter *queries*.
 
         To determine the node(s) or edge(s) adjacent to a value from a given
         column, provide a list of column names aliased as a particular query
@@ -17097,40 +17091,7 @@ class GPUdb(object):
         with column values from any table as long as the type is supported by
         the given identifier. See `Query Identifiers
         <../../../graph_solver/network_graph_solver.html#query-identifiers>`_
-        for more information. I
-
-        To query for nodes that are adjacent to a given set of edges, set input
-        parameter *edge_to_node* to *true* and provide values to the input
-        parameter *edge_or_node_int_ids*, input parameter
-        *edge_or_node_string_ids*, and input parameter *edge_or_node_wkt_ids*
-        arrays; it is assumed the values in the arrays are edges and the
-        corresponding adjacency list array in the response will be populated
-        with nodes.
-
-        To query for edges that are adjacent to a given set of nodes, set input
-        parameter *edge_to_node* to *false* and provide values to the input
-        parameter *edge_or_node_int_ids*, input parameter
-        *edge_or_node_string_ids*, and input parameter *edge_or_node_wkt_ids*
-        arrays; it is assumed the values in arrays are nodes and the given
-        node(s) will be queried for adjacent edges and the corresponding
-        adjacency list array in the response will be populated with edges.
-
-        To query for adjacencies relative to a given column and a given set of
-        edges/nodes, the input parameter *queries* and input parameter
-        *edge_or_node_int_ids* / input parameter *edge_or_node_string_ids* /
-        input parameter *edge_or_node_wkt_ids* parameters can be used in
-        conjuction with each other. If both input parameter *queries* and one
-        of the arrays are populated, values from input parameter *queries* will
-        be prioritized over values in the array and all values parsed from the
-        input parameter *queries* array will be appended to the corresponding
-        arrays (depending on the type). If using both input parameter *queries*
-        and the edge_or_node arrays, the types must match, e.g., if input
-        parameter *queries* utilizes the 'QUERY_NODE_ID' identifier, only the
-        input parameter *edge_or_node_int_ids* array should be used. Note that
-        using input parameter *queries* will override input parameter
-        *edge_to_node*, so if input parameter *queries* contains a node-based
-        query identifier, e.g., 'table.column AS QUERY_NODE_ID', it is assumed
-        that the input parameter *edge_or_node_int_ids* will contain node IDs.
+        for more information.
 
         To return the adjacency list in the response, leave input parameter
         *adjacency_table* empty. To return the adjacency list in a table and
@@ -17154,39 +17115,23 @@ class GPUdb(object):
                 <../../../graph_solver/network_graph_solver.html#query-identifiers>`_,
                 e.g., 'table.column AS QUERY_NODE_ID' or 'table.column AS
                 QUERY_EDGE_WKTLINE'. Multiple columns can be used as long as
-                the same identifier is used for all columns. Passing in a query
-                identifier will override the input parameter *edge_to_node*
-                parameter.    The user can provide a single element (which will
-                be automatically promoted to a list internally) or a list.
+                the same identifier is used for all columns.    The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
 
-            edge_to_node (bool)
-                If set to *true*, the given edge(s) will be queried for
-                adjacent nodes. If set to *false*, the given node(s) will be
-                queried for adjacent edges.
-                Allowed values are:
-
-                * true
-                * false
-
-                The default value is True.
-
-            edge_or_node_int_ids (list of longs)
-                The unique list of edge or node integer identifiers that will
-                be queried for adjacencies.    The user can provide a single
-                element (which will be automatically promoted to a list
-                internally) or a list.
-
-            edge_or_node_string_ids (list of str)
-                The unique list of edge or node string identifiers that will be
-                queried for adjacencies.    The user can provide a single
-                element (which will be automatically promoted to a list
-                internally) or a list.
-
-            edge_or_node_wkt_ids (list of str)
-                The unique list of edge or node WKTPOINT or WKTLINE string
-                identifiers that will be queried for adjacencies.    The user
-                can provide a single element (which will be automatically
-                promoted to a list internally) or a list.
+            restrictions (list of str)
+                Additional restrictions to apply to the nodes/edges of an
+                existing graph. Restrictions must be specified using
+                `identifiers
+                <../../../graph_solver/network_graph_solver.html#identifiers>`_;
+                identifiers are grouped as `combinations
+                <../../../graph_solver/network_graph_solver.html#id-combos>`_.
+                Identifiers can be used with existing column names, e.g.,
+                'table.column AS RESTRICTIONS_EDGE_ID', or expressions, e.g.,
+                'column/2 AS RESTRICTIONS_VALUECOMPARED'.  The default value is
+                an empty list ( [] ).  The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
 
             adjacency_table (str)
                 Name of the table to store the resulting adjacencies. If left
@@ -17199,21 +17144,19 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
-                * **number_of_rings** --
+                * **rings** --
                   Sets the number of rings of edges around the node to query
                   for adjacency, with '1' being the edges directly attached to
-                  the queried nodes. For example, if *number_of_rings* is set
-                  to '2', the edge(s) directly attached to the queried nodes
-                  will be returned; in addition, the edge(s) attached to the
-                  node(s) attached to the initial ring of edge(s) surrounding
-                  the queried node(s) will be returned. This setting is ignored
-                  if input parameter *edge_to_node* is set to *true*. This
-                  setting cannot be less than '1'.  The default value is '1'.
+                  the queried nodes. For example, if *rings* is set to '2', the
+                  edge(s) directly attached to the queried nodes will be
+                  returned; in addition, the edge(s) attached to the node(s)
+                  attached to the initial ring of edge(s) surrounding the
+                  queried node(s) will be returned. This setting cannot be less
+                  than '1'.  The default value is '1'.
 
-                * **include_all_edges** --
+                * **force_undirected** --
                   This parameter is only applicable if the queried graph is
-                  directed and input parameter *edge_to_node* is set to
-                  *false*. If set to *true*, all inbound edges and outbound
+                  directed. If set to *true*, all inbound edges and outbound
                   edges relative to the node will be returned. If set to
                   *false*, only outbound edges relative to the node will be
                   returned.
@@ -17223,6 +17166,34 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                * **blocked_nodes** --
+                  When false, allow a restricted node to be part of a valid
+                  traversal but not a target. Otherwise, queries are blocked by
+                  restricted nodes.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **limit** --
+                  When specified, limits the number of query results. Note that
+                  if the *target_nodes_table* is requested (non-empty), this
+                  will limit the size of the corresponding table.  The default
+                  value is an empty dict ( {} ).
+
+                * **target_nodes_table** --
+                  If non-empty, returns a table containing the list of the
+                  final nodes reached during the traversal. Only valid if
+                  blocked_nodes is false.  The default value is ''.
+
+                * **restriction_threshold_value** --
+                  Value-based restriction comparison. Any node or edge with a
+                  RESTRICTIONS_VALUECOMPARED value greater than the
+                  *restriction_threshold_value* will not be included in the
+                  solution.
 
                 * **export_query_results** --
                   Returns query results in the response if set to *true*.
@@ -17256,31 +17227,29 @@ class GPUdb(object):
 
             adjacency_list_int_array (list of longs)
                 The adjacency entity integer ID: either edge IDs per node
-                requested (if input parameter *edge_to_node* is set to *false*)
-                or two node IDs per edge requested (if input parameter
-                *edge_to_node* is set to *true*).
+                requested (if using QUERY_EDGE_ID or QUERY_NODE1_ID and
+                QUERY_NODE2_ID in the input) or two node IDs per edge requested
+                (if using QUERY_NODE_ID in the input).
 
             adjacency_list_string_array (list of str)
                 The adjacency entity string ID: either edge IDs per node
-                requested (if input parameter *edge_to_node* is set to *false*)
-                or two node IDs per edge requested (if input parameter
-                *edge_to_node* is set to *true*).
+                requested (if using QUERY_EDGE_NAME or QUERY_NODE1_NAME and
+                QUERY_NODE2_NAME in the input) or two node IDs per edge
+                requested (if using QUERY_NODE_NAME in the input).
 
             adjacency_list_wkt_array (list of str)
                 The adjacency entity WKTPOINT or WKTLINE ID: either edge IDs
-                per node requested (if input parameter *edge_to_node* is set to
-                *false*) or two node IDs per edge requested (if input parameter
-                *edge_to_node* is set to *true*).
+                per node requested (if using QUERY_EDGE_WKTLINE or
+                QUERY_NODE1_WKTPOINT and QUERY_NODE2_WKTPOINT in the input) or
+                two node IDs per edge requested (if using QUERY_NODE_WKTPOINT
+                in the input).
 
             info (dict of str to str)
                 Additional information.
         """
         assert isinstance( graph_name, (basestring)), "query_graph(): Argument 'graph_name' must be (one) of type(s) '(basestring)'; given %s" % type( graph_name ).__name__
         queries = queries if isinstance( queries, list ) else ( [] if (queries is None) else [ queries ] )
-        assert isinstance( edge_to_node, (bool)), "query_graph(): Argument 'edge_to_node' must be (one) of type(s) '(bool)'; given %s" % type( edge_to_node ).__name__
-        edge_or_node_int_ids = edge_or_node_int_ids if isinstance( edge_or_node_int_ids, list ) else ( [] if (edge_or_node_int_ids is None) else [ edge_or_node_int_ids ] )
-        edge_or_node_string_ids = edge_or_node_string_ids if isinstance( edge_or_node_string_ids, list ) else ( [] if (edge_or_node_string_ids is None) else [ edge_or_node_string_ids ] )
-        edge_or_node_wkt_ids = edge_or_node_wkt_ids if isinstance( edge_or_node_wkt_ids, list ) else ( [] if (edge_or_node_wkt_ids is None) else [ edge_or_node_wkt_ids ] )
+        restrictions = restrictions if isinstance( restrictions, list ) else ( [] if (restrictions is None) else [ restrictions ] )
         assert isinstance( adjacency_table, (basestring)), "query_graph(): Argument 'adjacency_table' must be (one) of type(s) '(basestring)'; given %s" % type( adjacency_table ).__name__
         assert isinstance( options, (dict)), "query_graph(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -17289,10 +17258,7 @@ class GPUdb(object):
         obj = {}
         obj['graph_name'] = graph_name
         obj['queries'] = queries
-        obj['edge_to_node'] = edge_to_node
-        obj['edge_or_node_int_ids'] = edge_or_node_int_ids
-        obj['edge_or_node_string_ids'] = edge_or_node_string_ids
-        obj['edge_or_node_wkt_ids'] = edge_or_node_wkt_ids
+        obj['restrictions'] = restrictions
         obj['adjacency_table'] = adjacency_table
         obj['options'] = self.__sanitize_dicts( options )
 
@@ -18645,6 +18611,11 @@ class GPUdb(object):
                   *restriction_threshold_value* will not be included in the
                   solution.
 
+                * **uniform_weights** --
+                  When speficied, assigns the given value to all the edges in
+                  the graph. Note that weights specified in @{weights_on_edges}
+                  override this value.
+
         Returns:
             A dict with the following entries--
 
@@ -19176,6 +19147,16 @@ class GPUdb(object):
 
                   The default value is 'none'.
 
+                * **min_max_scaled** --
+                  If this options is set to "false", this endpoint expects
+                  request's min/max values are not yet scaled. They will be
+                  scaled according to scale_type_x or scale_type_y for
+                  response. If this options is set to "true", this endpoint
+                  expects request's min/max values are already scaled according
+                  to scale_type_x/scale_type_y. Response's min/max values will
+                  be equal to request's min/max values.  The default value is
+                  'false'.
+
                 * **jitter_x** --
                   Amplitude of horizontal jitter applied to non-numeric x
                   column values.  The default value is '0.0'.
@@ -19653,7 +19634,7 @@ class GPUdb(object):
 
 # ---------------------------------------------------------------------------
 # Import GPUdbIngestor; try from an installed package first, if not, try local
-if sys.version_info.major >= 3: # checking the major component
+if sys.version_info[0] >= 3: # checking the major component
     try:
         from gpudb.gpudb import GPUdbIngestor, RecordRetriever
     except:
@@ -21884,11 +21865,13 @@ class GPUdbTable( object ):
         <../../../concepts/tables.html#table>`_; column/aggregation expressions
         will need to be aliased.  If the source table's `shard key
         <../../../concepts/tables.html#shard-keys>`_ is used as the grouping
-        column(s), the result table will be sharded, in all other cases it will
-        be replicated.  Sorting will properly function only if the result table
-        is replicated or if there is only one processing node and should not be
-        relied upon in other cases.  Not available when any of the values of
-        input parameter *column_names* is an unrestricted-length string.
+        column(s) and all result records are selected (input parameter *offset*
+        is 0 and input parameter *limit* is -9999), the result table will be
+        sharded, in all other cases it will be replicated.  Sorting will
+        properly function only if the result table is replicated or if there is
+        only one processing node and should not be relied upon in other cases.
+        Not available when any of the values of input parameter *column_names*
+        is an unrestricted-length string.
 
         Parameters:
 
@@ -22066,15 +22049,6 @@ class GPUdbTable( object ):
                 * **cube** --
                   This option is used to specify the multidimensional
                   aggregates.
-
-                * **throw_error_on_refresh** --
-                  <DEVELOPER>
-
-                * **sleep_on_refresh** --
-                  <DEVELOPER>
-
-                * **refresh_type** --
-                  <DEVELOPER>
 
             force_primitive_return_types (bool)
                 If `True`, then `OrderedDict` objects will be returned, where
@@ -23249,8 +23223,8 @@ class GPUdbTable( object ):
                   it.
 
                 * **add_partition** --
-                  Adds a partition (for range-partitioned tables only)
-                  specified in input parameter *value*.  See `range
+                  Adds a partition (for range-partitioned or list-partitioned
+                  tables) specified in input parameter *value*.  See `range
                   partitioning example
                   <../../../concepts/tables.html#partitioning-by-range-example>`_
                   for example format.
@@ -23258,11 +23232,12 @@ class GPUdbTable( object ):
                 * **remove_partition** --
                   Removes the partition specified in input parameter *value*
                   and relocates all its data to the default partition (for
-                  range-partitioned tables only).
+                  range-partitioned or list-partition tables).
 
                 * **delete_partition** --
                   Deletes the partition specified in input parameter *value*
-                  and its data (for range-partitioned tables only).
+                  and its data (for range-partitioned or list-partitioned
+                  tables).
 
                 * **set_global_access_mode** --
                   Sets the global access mode (i.e. locking) for the table
@@ -23811,27 +23786,11 @@ class GPUdbTable( object ):
         `Projection Limitations and Cautions
         <../../../concepts/projections.html#limitations-and-cautions>`_.
 
-        `Window functions <../../../concepts/window.html>`_ are available
-        through this endpoint as well as :meth:`.get_records_by_column`.
+        `Window functions <../../../concepts/window.html>`_, which can perform
+        operations like moving averages, are available through this endpoint as
+        well as :meth:`.get_records_by_column`.
 
-        Notes:
-
-        A moving average can be calculated on a given column using the
-        following syntax in the input parameter *column_names* parameter:
-
-        'moving_average(column_name,num_points_before,num_points_after) as
-        new_column_name'
-
-        For each record in the moving_average function's 'column_name'
-        parameter, it computes the average over the previous
-        'num_points_before' records and the subsequent 'num_points_after'
-        records.
-
-        Note that moving average relies on *order_by*, and *order_by* requires
-        that all the data being ordered resides on the same processing node, so
-        it won't make sense to use *order_by* without moving average.
-
-        Also, a projection can be created with a different `shard key
+        A projection can be created with a different `shard key
         <../../../concepts/tables.html#shard-keys>`_ than the source table.  By
         specifying *shard_key*, the projection will be sharded according to the
         specified columns, regardless of how the source table is sharded.  The
