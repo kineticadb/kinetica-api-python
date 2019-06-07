@@ -5726,6 +5726,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/visualize/isochrone"
+        REQ_SCHEMA_STR = """{"name":"visualize_isochrone_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"weights_on_edges","type":{"type":"array","items":"string"}},{"name":"source_node","type":"string"},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"max_solution_radius","type":"double"},{"name":"num_levels","type":"int"},{"name":"generate_image","type":"boolean"},{"name":"projection","type":"string"},{"name":"image_width","type":"int"},{"name":"image_height","type":"int"},{"name":"style_options","type":{"type":"map","values":"string"}},{"name":"solve_options","type":{"type":"map","values":"string"}},{"name":"contour_options","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_isochrone_response","fields":[{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"},{"name":"info","type":{"type":"map","values":"string"}},{"name":"solve_info","type":{"type":"map","values":"string"}},{"name":"contour_info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("weights_on_edges", "array", [("string")]), ("source_node", "string"), ("restrictions", "array", [("string")]), ("max_solution_radius", "double"), ("num_levels", "int"), ("generate_image", "boolean"), ("projection", "string"), ("image_width", "int"), ("image_height", "int"), ("style_options", "map", [("string")]), ("solve_options", "map", [("string")]), ("contour_options", "map", [("string")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("width", "int"), ("height", "int"), ("bg_color", "long"), ("image_data", "bytes"), ("info", "map", [("string")]), ("solve_info", "map", [("string")]), ("contour_info", "map", [("string")])] )
+        ENDPOINT = "/visualize/isochrone"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/visualize/video"
         REQ_SCHEMA_STR = """{"type":"record","name":"visualize_video_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"time_intervals","type":{"type":"array","items":{"type":"array","items":"double"}}},{"name":"video_style","type":"string"},{"name":"session_key","type":"string"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_video_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"num_frames","type":"int"},{"name":"session_key","type":"string"},{"name":"data","type":{"type":"array","items":"bytes"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -5878,6 +5889,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["visualize_image_contour"] = "/visualize/image/contour"
         self.gpudb_func_to_endpoint_map["visualize_image_heatmap"] = "/visualize/image/heatmap"
         self.gpudb_func_to_endpoint_map["visualize_image_labels"] = "/visualize/image/labels"
+        self.gpudb_func_to_endpoint_map["visualize_isochrone"] = "/visualize/isochrone"
         self.gpudb_func_to_endpoint_map["visualize_video"] = "/visualize/video"
         self.gpudb_func_to_endpoint_map["visualize_video_heatmap"] = "/visualize/video/heatmap"
     # end load_gpudb_func_to_endpoint_map
@@ -9165,7 +9177,7 @@ class GPUdb(object):
 
                 * **communicator_test** --
                   Invoke the communicator test and report timing results. Value
-                  string is is a comma separated list of <key>=<value>
+                  string is is a semicolon separated list of <key>=<value>
                   expressions.  Expressions are: num_transactions=<num> where
                   num is the number of request reply transactions to invoke per
                   test; message_size=<bytes> where bytes is the size of the
@@ -9285,8 +9297,11 @@ class GPUdb(object):
         <../../../concepts/tables.html#foreign-key>`_
         on a particular column.
 
-        Manage a `range-partitioned
-        <../../../concepts/tables.html#partitioning>`_
+        Manage a
+        `range-partitioned
+        <../../../concepts/tables.html#partitioning-by-range>`_ or a
+        `manual list-partitioned
+        <../../../concepts/tables.html#partitioning-by-list-manual>`_
         table's partitions.
 
         Set (or reset) the `tier strategy
@@ -9342,7 +9357,10 @@ class GPUdb(object):
                   does not have indexing turned on, an error will be returned.
 
                 * **move_to_collection** --
-                  Moves a table into a collection input parameter *value*.
+                  Moves a table or view into a collection named input parameter
+                  *value*.  If the collection provided is non-existent, the
+                  collection will be automatically created. If input parameter
+                  *value* is empty, then the table or view will be top-level.
 
                 * **protected** --
                   Sets whether the given input parameter *table_name* should be
@@ -9402,21 +9420,29 @@ class GPUdb(object):
                   it.
 
                 * **add_partition** --
-                  Adds a partition (for range-partitioned or list-partitioned
-                  tables) specified in input parameter *value*.  See `range
-                  partitioning example
-                  <../../../concepts/tables.html#partitioning-by-range-example>`_
-                  for example format.
+                  Adds the partition specified in input parameter *value*, to
+                  either a `range-partitioned
+                  <../../../concepts/tables.html#partitioning-by-range>`_ or
+                  `manual list-partitioned
+                  <../../../concepts/tables.html#partitioning-by-list-manual>`_
+                  table.
 
                 * **remove_partition** --
                   Removes the partition specified in input parameter *value*
-                  and relocates all its data to the default partition (for
-                  range-partitioned or list-partition tables).
+                  (and relocates all of its data to the default partition) from
+                  either a `range-partitioned
+                  <../../../concepts/tables.html#partitioning-by-range>`_ or
+                  `manual list-partitioned
+                  <../../../concepts/tables.html#partitioning-by-list-manual>`_
+                  table.
 
                 * **delete_partition** --
                   Deletes the partition specified in input parameter *value*
-                  and its data (for range-partitioned or list-partitioned
-                  tables).
+                  (and all of its data) from either a `range-partitioned
+                  <../../../concepts/tables.html#partitioning-by-range>`_ or
+                  `manual list-partitioned
+                  <../../../concepts/tables.html#partitioning-by-list-manual>`_
+                  table.
 
                 * **set_global_access_mode** --
                   Sets the global access mode (i.e. locking) for the table
@@ -10278,10 +10304,13 @@ class GPUdb(object):
                 identifiers are grouped as `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
                 Identifiers can be used with existing column names, e.g.,
-                'table.column AS NODE_ID', or expressions, e.g.,
-                'ST_MAKEPOINT(column1, column2) AS NODE_WKTPOINT'.    The user
-                can provide a single element (which will be automatically
-                promoted to a list internally) or a list.
+                'table.column AS NODE_ID', expressions, e.g.,
+                'ST_MAKEPOINT(column1, column2) AS NODE_WKTPOINT', or raw
+                values, e.g., '{9, 10, 11} AS NODE_ID'. If using raw values in
+                an identifier combination, the number of values specified must
+                match across the combination.    The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
 
             edges (list of str)
                 Edges represent the required fundamental topological unit of a
@@ -10291,10 +10320,13 @@ class GPUdb(object):
                 identifiers are grouped as `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
                 Identifiers can be used with existing column names, e.g.,
-                'table.column AS EDGE_ID', or expressions, e.g.,
-                'SUBSTR(column, 1, 6) AS EDGE_NODE1_NAME'.    The user can
-                provide a single element (which will be automatically promoted
-                to a list internally) or a list.
+                'table.column AS EDGE_ID', expressions, e.g., 'SUBSTR(column,
+                1, 6) AS EDGE_NODE1_NAME', or raw values, e.g., "{'family',
+                'coworker'} AS EDGE_LABEL". If using raw values in an
+                identifier combination, the number of values specified must
+                match across the combination.    The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
 
             weights (list of str)
                 Weights represent a method of informing the graph solver of the
@@ -10304,10 +10336,13 @@ class GPUdb(object):
                 identifiers are grouped as `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
                 Identifiers can be used with existing column names, e.g.,
-                'table.column AS WEIGHTS_EDGE_ID', or expressions, e.g.,
-                'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED'.    The user can
-                provide a single element (which will be automatically promoted
-                to a list internally) or a list.
+                'table.column AS WEIGHTS_EDGE_ID', expressions, e.g.,
+                'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED', or raw values,
+                e.g., '{4, 15} AS WEIGHTS_VALUESPECIFIED'. If using raw values
+                in an identifier combination, the number of values specified
+                must match across the combination.    The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
 
             restrictions (list of str)
                 Restrictions represent a method of informing the graph solver
@@ -10317,8 +10352,11 @@ class GPUdb(object):
                 identifiers are grouped as `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
                 Identifiers can be used with existing column names, e.g.,
-                'table.column AS RESTRICTIONS_EDGE_ID', or expressions, e.g.,
-                'column/2 AS RESTRICTIONS_VALUECOMPARED'.    The user can
+                'table.column AS RESTRICTIONS_EDGE_ID', expressions, e.g.,
+                'column/2 AS RESTRICTIONS_VALUECOMPARED', or raw values, e.g.,
+                '{0, 0, 0, 1} AS RESTRICTIONS_ONOFFCOMPARED'. If using raw
+                values in an identifier combination, the number of values
+                specified must match across the combination.    The user can
                 provide a single element (which will be automatically promoted
                 to a list internally) or a list.
 
@@ -11003,7 +11041,7 @@ class GPUdb(object):
                   * true
                   * false
 
-                  The default value is 'false'.
+                  The default value is 'true'.
 
                 * **view_id** --
                   view this projection is part of.  The default value is ''.
@@ -11294,9 +11332,8 @@ class GPUdb(object):
                     <../../../concepts/tables.html#partitioning-by-interval>`_.
 
                   * **LIST** --
-                    Allows specifying a list of VALUES for a partition, or
-                    optionally to create an AUTOMATIC partition for each unique
-                    value
+                    Use `list partitioning
+                    <../../../concepts/tables.html#partitioning-by-list>`_.
 
                 * **partition_keys** --
                   Comma-separated list of partition keys, which are the columns
@@ -11306,16 +11343,19 @@ class GPUdb(object):
                 * **partition_definitions** --
                   Comma-separated list of partition definitions, whose format
                   depends on the choice of *partition_type*.  See `range
-                  partitioning example
-                  <../../../concepts/tables.html#partitioning-by-range-example>`_
-                  or `interval partitioning example
-                  <../../../concepts/tables.html#partitioning-by-interval-example>`_
-                  for example formats.
+                  partitioning
+                  <../../../concepts/tables.html#partitioning-by-range>`_,
+                  `interval partitioning
+                  <../../../concepts/tables.html#partitioning-by-interval>`_,
+                  or `list partitioning
+                  <../../../concepts/tables.html#partitioning-by-list>`_ for
+                  example formats.
 
                 * **is_automatic_partition** --
                   If true, a new partition will be created for values which
                   don't fall into an existing partition.  Currently only
-                  supported for LIST partitions.
+                  supported for `list partitions
+                  <../../../concepts/tables.html#partitioning-by-list>`_.
                   Allowed values are:
 
                   * true
@@ -16559,10 +16599,10 @@ class GPUdb(object):
         data for the symbol, and any additional optional parameter (e.g.
         color). To have a symbol used for rendering create a table with a
         string column named 'SYMBOLCODE' (along with 'x' or 'y' for example).
-        Then when the table is rendered (via `WMS <../../rest/wms_rest.html>`_)
-        if the 'dosymbology' parameter is 'true' then the value of the
-        'SYMBOLCODE' column is used to pick the symbol displayed for each
-        point.
+        Then when the table is rendered (via `WMS
+        <../../../api/rest/wms_rest.html>`_) if the 'dosymbology' parameter is
+        'true' then the value of the 'SYMBOLCODE' column is used to pick the
+        symbol displayed for each point.
 
         Parameters:
 
@@ -16807,10 +16847,12 @@ class GPUdb(object):
                 <../../../graph_solver/network_graph_solver.html#match-identifiers>`_;
                 identifiers are grouped as `combinations
                 <../../../graph_solver/network_graph_solver.html#match-combinations>`_.
-                Identifiers are used with existing column names, e.g.,
-                'table.column AS SAMPLE_WKTPOINT'.    The user can provide a
-                single element (which will be automatically promoted to a list
-                internally) or a list.
+                Identifiers can be used with: existing column names, e.g.,
+                'table.column AS SAMPLE_X'; expressions, e.g.,
+                'ST_MAKEPOINT(table.x, table.y) AS SAMPLE_WKTPOINT'; or raw
+                values, e.g., '{1, 2, 10} AS SAMPLE_TRIPID'.    The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
 
             solve_method (str)
                 The type of solver to use for graph matching.
@@ -17080,16 +17122,12 @@ class GPUdb(object):
         :meth:`.create_graph` and returns a list of adjacent edge(s) or
         node(s), also known as an adjacency list, depending on what's been
         provided to the endpoint; providing edges will return nodes and
-        providing nodes will return edges. The edge(s) or node(s) to be queried
-        are specified using column names and `query identifiers
-        <../../../graph_solver/network_graph_solver.html#query-identifiers>`_
-        with the input parameter *queries*.
+        providing nodes will return edges.
 
         To determine the node(s) or edge(s) adjacent to a value from a given
-        column, provide a list of column names aliased as a particular query
-        identifier to input parameter *queries*. This field can be populated
-        with column values from any table as long as the type is supported by
-        the given identifier. See `Query Identifiers
+        column, provide a list of values to input parameter *queries*. This
+        field can be populated with column values from any table as long as the
+        type is supported by the given identifier. See `Query Identifiers
         <../../../graph_solver/network_graph_solver.html#query-identifiers>`_
         for more information.
 
@@ -17112,12 +17150,16 @@ class GPUdb(object):
 
             queries (list of str)
                 Nodes or edges to be queried specified using `query identifiers
-                <../../../graph_solver/network_graph_solver.html#query-identifiers>`_,
-                e.g., 'table.column AS QUERY_NODE_ID' or 'table.column AS
-                QUERY_EDGE_WKTLINE'. Multiple columns can be used as long as
-                the same identifier is used for all columns.    The user can
-                provide a single element (which will be automatically promoted
-                to a list internally) or a list.
+                <../../../graph_solver/network_graph_solver.html#query-identifiers>`_.
+                Identifiers can be used with existing column names, e.g.,
+                'table.column AS QUERY_NODE_ID', raw values, e.g., '{0, 2} AS
+                QUERY_NODE_ID', or expressions, e.g., 'ST_MAKEPOINT(table.x,
+                table.y) AS QUERY_NODE_WKTPOINT'. Multiple values can be
+                provided as long as the same identifier is used for all values.
+                If using raw values in an identifier combination, the number of
+                values specified must match across the combination.    The user
+                can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
 
             restrictions (list of str)
                 Additional restrictions to apply to the nodes/edges of an
@@ -17127,17 +17169,26 @@ class GPUdb(object):
                 identifiers are grouped as `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
                 Identifiers can be used with existing column names, e.g.,
-                'table.column AS RESTRICTIONS_EDGE_ID', or expressions, e.g.,
-                'column/2 AS RESTRICTIONS_VALUECOMPARED'.  The default value is
-                an empty list ( [] ).  The user can provide a single element
+                'table.column AS RESTRICTIONS_EDGE_ID', expressions, e.g.,
+                'column/2 AS RESTRICTIONS_VALUECOMPARED', or raw values, e.g.,
+                '{0, 0, 0, 1} AS RESTRICTIONS_ONOFFCOMPARED'. If using raw
+                values in an identifier combination, the number of values
+                specified must match across the combination.  The default value
+                is an empty list ( [] ).  The user can provide a single element
                 (which will be automatically promoted to a list internally) or
                 a list.
 
             adjacency_table (str)
                 Name of the table to store the resulting adjacencies. If left
                 blank, the query results are instead returned in the response
-                even if *export_query_results* is set to *false*.  The default
-                value is ''.
+                even if *export_query_results* is set to *false*. If the
+                'QUERY_TARGET_NODE_LABEL' `query identifier
+                <../../../graph_solver/network_graph_solver.html#query-identifiers>`_
+                is used in input parameter *queries*, then two additional
+                columns will be available: 'PATH_ID' and 'RING_ID'. See
+                            `Using Labels
+                <../../../graph_solver/network_graph_solver.html#using-labels>`_
+                for more information.  The default value is ''.
 
             options (dict of str to str)
                 Additional parameters.  The default value is an empty dict ( {}
@@ -17145,21 +17196,22 @@ class GPUdb(object):
                 Allowed keys are:
 
                 * **rings** --
-                  Sets the number of rings of edges around the node to query
-                  for adjacency, with '1' being the edges directly attached to
-                  the queried nodes. For example, if *rings* is set to '2', the
-                  edge(s) directly attached to the queried nodes will be
+                  Only applicable when querying nodes. Sets the number of rings
+                  around the node to query for adjacency, with '1' being the
+                  edges directly attached to the queried node. Also known as
+                  number of hops. For example, if *rings* is set to '2', the
+                  edge(s) directly attached to the queried node(s) will be
                   returned; in addition, the edge(s) attached to the node(s)
                   attached to the initial ring of edge(s) surrounding the
                   queried node(s) will be returned. This setting cannot be less
                   than '1'.  The default value is '1'.
 
                 * **force_undirected** --
-                  This parameter is only applicable if the queried graph is
-                  directed. If set to *true*, all inbound edges and outbound
-                  edges relative to the node will be returned. If set to
-                  *false*, only outbound edges relative to the node will be
-                  returned.
+                  This parameter is only applicable if the queried graph input
+                  parameter *graph_name* is directed and when querying nodes.
+                  If set to *true*, all inbound edges and outbound edges
+                  relative to the node will be returned. If set to *false*,
+                  only outbound edges relative to the node will be returned.
                   Allowed values are:
 
                   * true
@@ -17167,27 +17219,19 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-                * **blocked_nodes** --
-                  When false, allow a restricted node to be part of a valid
-                  traversal but not a target. Otherwise, queries are blocked by
-                  restricted nodes.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
                 * **limit** --
                   When specified, limits the number of query results. Note that
-                  if the *target_nodes_table* is requested (non-empty), this
-                  will limit the size of the corresponding table.  The default
-                  value is an empty dict ( {} ).
+                  if the *target_nodes_table* is provided, the size of the
+                  corresponding table will be limited by the *limit* value.
+                  The default value is an empty dict ( {} ).
 
                 * **target_nodes_table** --
-                  If non-empty, returns a table containing the list of the
-                  final nodes reached during the traversal. Only valid if
-                  blocked_nodes is false.  The default value is ''.
+                  Name of the table to store the list of the final nodes
+                  reached during the traversal. If the
+                  'QUERY_TARGET_NODE_LABEL' `query identifier
+                  <../../../graph_solver/network_graph_solver.html#query-identifiers>`_
+                  is NOT used in input parameter *queries*, the table will not
+                  be created.  The default value is ''.
 
                 * **restriction_threshold_value** --
                   Value-based restriction comparison. Any node or edge with a
@@ -17196,13 +17240,19 @@ class GPUdb(object):
                   solution.
 
                 * **export_query_results** --
-                  Returns query results in the response if set to *true*.
+                  Returns query results in the response. If set to *true*, the
+                  output parameter *adjacency_list_int_array* (if the query was
+                  based on IDs), @{adjacency_list_string_array} (if the query
+                  was based on names), or @{output_adjacency_list_wkt_array}
+                  (if the query was based on WKTs) will be populated with the
+                  results. If set to *false*, none of the arrays will be
+                  populated.
                   Allowed values are:
 
                   * true
                   * false
 
-                  The default value is 'true'.
+                  The default value is 'false'.
 
                 * **enable_graph_draw** --
                   If set to *true*, adds a WKT-type column named
@@ -18436,14 +18486,17 @@ class GPUdb(object):
                 identifiers are grouped as `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
                 Identifiers can be used with existing column names, e.g.,
-                'table.column AS WEIGHTS_EDGE_ID', or expressions, e.g.,
-                'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED'. Any provided
+                'table.column AS WEIGHTS_EDGE_ID', expressions, e.g.,
+                'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED', or raw values,
+                e.g., '{4, 15, 2} AS WEIGHTS_VALUESPECIFIED'. Any provided
                 weights will be added (in the case of 'WEIGHTS_VALUESPECIFIED')
                 to or multiplied with (in the case of
-                'WEIGHTS_FACTORSPECIFIED') the existing weight(s).  The default
-                value is an empty list ( [] ).  The user can provide a single
-                element (which will be automatically promoted to a list
-                internally) or a list.
+                'WEIGHTS_FACTORSPECIFIED') the existing weight(s). If using raw
+                values in an identifier combination, the number of values
+                specified must match across the combination.  The default value
+                is an empty list ( [] ).  The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
 
             restrictions (list of str)
                 Additional restrictions to apply to the nodes/edges of an
@@ -18453,8 +18506,11 @@ class GPUdb(object):
                 identifiers are grouped as `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
                 Identifiers can be used with existing column names, e.g.,
-                'table.column AS RESTRICTIONS_EDGE_ID', or expressions, e.g.,
-                'column/2 AS RESTRICTIONS_VALUECOMPARED'. If
+                'table.column AS RESTRICTIONS_EDGE_ID', expressions, e.g.,
+                'column/2 AS RESTRICTIONS_VALUECOMPARED', or raw values, e.g.,
+                '{0, 0, 0, 1} AS RESTRICTIONS_ONOFFCOMPARED'. If using raw
+                values in an identifier combination, the number of values
+                specified must match across the combination. If
                 *remove_previous_restrictions* is set to *true*, any provided
                 restrictions will replace the existing restrictions. If
                 *remove_previous_restrictions* is set to *false*, any provided
@@ -18475,7 +18531,13 @@ class GPUdb(object):
 
                 * **PAGE_RANK** --
                   Solves for the probability of each destination node being
-                  visited based on the links of the graph topology.
+                  visited based on the links of the graph topology. Weights are
+                  not required to use this solver.
+
+                * **PROBABILITY_RANK** --
+                  Solves for the transitional probability (Hidden Markov) for
+                  each node based on the weights (probability assigned over
+                  given edges).
 
                 * **CENTRALITY** --
                   Solves for the degree of a node to depict how many pairs of
@@ -18575,6 +18637,14 @@ class GPUdb(object):
                   If set to '0.0', the setting is ignored.  The default value
                   is '0.0'.
 
+                * **min_solution_radius** --
+                  For *SHORTEST_PATH* and *INVERSE_SHORTEST_PATH* solvers only.
+                  Applicable only when *max_solution_radius* is set. Sets the
+                  minimum solution cost radius, which ignores the input
+                  parameter *destination_node_ids* list and instead outputs the
+                  nodes within the radius sorted by ascending cost. If set to
+                  '0.0', the setting is ignored.  The default value is '0.0'.
+
                 * **max_solution_targets** --
                   For *SHORTEST_PATH* and *INVERSE_SHORTEST_PATH* solvers only.
                   Sets the maximum number of solution targets, which ignores
@@ -18612,9 +18682,9 @@ class GPUdb(object):
                   solution.
 
                 * **uniform_weights** --
-                  When speficied, assigns the given value to all the edges in
-                  the graph. Note that weights specified in @{weights_on_edges}
-                  override this value.
+                  When specified, assigns the given value to all the edges in
+                  the graph. Note that weights provided in input parameter
+                  *weights_on_edges* will override this value.
 
         Returns:
             A dict with the following entries--
@@ -19510,6 +19580,54 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end visualize_image_labels
+
+
+    # begin visualize_isochrone
+    def visualize_isochrone( self, graph_name = None, weights_on_edges = [],
+                             source_node = None, restrictions = [],
+                             max_solution_radius = '-1.0', num_levels = '1',
+                             generate_image = True, projection = 'PLATE_CARREE',
+                             image_width = 512, image_height = -1, style_options
+                             = None, solve_options = {}, contour_options = {},
+                             options = {} ):
+
+        assert isinstance( graph_name, (basestring)), "visualize_isochrone(): Argument 'graph_name' must be (one) of type(s) '(basestring)'; given %s" % type( graph_name ).__name__
+        weights_on_edges = weights_on_edges if isinstance( weights_on_edges, list ) else ( [] if (weights_on_edges is None) else [ weights_on_edges ] )
+        assert isinstance( source_node, (basestring)), "visualize_isochrone(): Argument 'source_node' must be (one) of type(s) '(basestring)'; given %s" % type( source_node ).__name__
+        restrictions = restrictions if isinstance( restrictions, list ) else ( [] if (restrictions is None) else [ restrictions ] )
+        assert isinstance( max_solution_radius, (int, long, float)), "visualize_isochrone(): Argument 'max_solution_radius' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_solution_radius ).__name__
+        assert isinstance( num_levels, (int, long, float)), "visualize_isochrone(): Argument 'num_levels' must be (one) of type(s) '(int, long, float)'; given %s" % type( num_levels ).__name__
+        assert isinstance( generate_image, (bool)), "visualize_isochrone(): Argument 'generate_image' must be (one) of type(s) '(bool)'; given %s" % type( generate_image ).__name__
+        assert isinstance( projection, (basestring)), "visualize_isochrone(): Argument 'projection' must be (one) of type(s) '(basestring)'; given %s" % type( projection ).__name__
+        assert isinstance( image_width, (int, long, float)), "visualize_isochrone(): Argument 'image_width' must be (one) of type(s) '(int, long, float)'; given %s" % type( image_width ).__name__
+        assert isinstance( image_height, (int, long, float)), "visualize_isochrone(): Argument 'image_height' must be (one) of type(s) '(int, long, float)'; given %s" % type( image_height ).__name__
+        assert isinstance( style_options, (dict)), "visualize_isochrone(): Argument 'style_options' must be (one) of type(s) '(dict)'; given %s" % type( style_options ).__name__
+        assert isinstance( solve_options, (dict)), "visualize_isochrone(): Argument 'solve_options' must be (one) of type(s) '(dict)'; given %s" % type( solve_options ).__name__
+        assert isinstance( contour_options, (dict)), "visualize_isochrone(): Argument 'contour_options' must be (one) of type(s) '(dict)'; given %s" % type( contour_options ).__name__
+        assert isinstance( options, (dict)), "visualize_isochrone(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/visualize/isochrone" )
+
+        obj = {}
+        obj['graph_name'] = graph_name
+        obj['weights_on_edges'] = weights_on_edges
+        obj['source_node'] = source_node
+        obj['restrictions'] = restrictions
+        obj['max_solution_radius'] = max_solution_radius
+        obj['num_levels'] = num_levels
+        obj['generate_image'] = generate_image
+        obj['projection'] = projection
+        obj['image_width'] = image_width
+        obj['image_height'] = image_height
+        obj['style_options'] = self.__sanitize_dicts( style_options )
+        obj['solve_options'] = self.__sanitize_dicts( solve_options )
+        obj['contour_options'] = self.__sanitize_dicts( contour_options )
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/visualize/isochrone' )
+
+        return AttrDict( response )
+    # end visualize_isochrone
 
 
     # begin visualize_video
@@ -23110,8 +23228,11 @@ class GPUdbTable( object ):
         <../../../concepts/tables.html#foreign-key>`_
         on a particular column.
 
-        Manage a `range-partitioned
-        <../../../concepts/tables.html#partitioning>`_
+        Manage a
+        `range-partitioned
+        <../../../concepts/tables.html#partitioning-by-range>`_ or a
+        `manual list-partitioned
+        <../../../concepts/tables.html#partitioning-by-list-manual>`_
         table's partitions.
 
         Set (or reset) the `tier strategy
@@ -23163,7 +23284,10 @@ class GPUdbTable( object ):
                   does not have indexing turned on, an error will be returned.
 
                 * **move_to_collection** --
-                  Moves a table into a collection input parameter *value*.
+                  Moves a table or view into a collection named input parameter
+                  *value*.  If the collection provided is non-existent, the
+                  collection will be automatically created. If input parameter
+                  *value* is empty, then the table or view will be top-level.
 
                 * **protected** --
                   Sets whether the given input parameter *table_name* should be
@@ -23223,21 +23347,29 @@ class GPUdbTable( object ):
                   it.
 
                 * **add_partition** --
-                  Adds a partition (for range-partitioned or list-partitioned
-                  tables) specified in input parameter *value*.  See `range
-                  partitioning example
-                  <../../../concepts/tables.html#partitioning-by-range-example>`_
-                  for example format.
+                  Adds the partition specified in input parameter *value*, to
+                  either a `range-partitioned
+                  <../../../concepts/tables.html#partitioning-by-range>`_ or
+                  `manual list-partitioned
+                  <../../../concepts/tables.html#partitioning-by-list-manual>`_
+                  table.
 
                 * **remove_partition** --
                   Removes the partition specified in input parameter *value*
-                  and relocates all its data to the default partition (for
-                  range-partitioned or list-partition tables).
+                  (and relocates all of its data to the default partition) from
+                  either a `range-partitioned
+                  <../../../concepts/tables.html#partitioning-by-range>`_ or
+                  `manual list-partitioned
+                  <../../../concepts/tables.html#partitioning-by-list-manual>`_
+                  table.
 
                 * **delete_partition** --
                   Deletes the partition specified in input parameter *value*
-                  and its data (for range-partitioned or list-partitioned
-                  tables).
+                  (and all of its data) from either a `range-partitioned
+                  <../../../concepts/tables.html#partitioning-by-range>`_ or
+                  `manual list-partitioned
+                  <../../../concepts/tables.html#partitioning-by-list-manual>`_
+                  table.
 
                 * **set_global_access_mode** --
                   Sets the global access mode (i.e. locking) for the table
@@ -23895,7 +24027,7 @@ class GPUdbTable( object ):
                   * true
                   * false
 
-                  The default value is 'false'.
+                  The default value is 'true'.
 
                 * **view_id** --
                   view this projection is part of.  The default value is ''.

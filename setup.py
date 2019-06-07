@@ -90,6 +90,5 @@ setup(
     url = 'http://www.kinetica.com',
     download_url = 'https://github.com/kineticadb/kinetica-api-python/archive/v7.0.3.0.tar.gz',
     install_requires = [ "future" ],
-    ext_modules = [ c_avro_module ],
-    classifiers = [ "Development Status :: 4 - Beta" ]
+    ext_modules = [ c_avro_module ]
 )
