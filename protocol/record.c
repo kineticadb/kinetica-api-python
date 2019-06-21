@@ -2868,8 +2868,8 @@ static GetColumnFunc get_column[CDT_MAX] =
     get_string_column,     /* CDT_CHAR64 */
     get_string_column,     /* CDT_CHAR128 */
     get_string_column,     /* CDT_CHAR256 */
-    get_date_column,       /* CDT_DATE */
-    get_datetime_column,   /* CDT_DATETIME */
+    get_string_column,     /* CDT_DATE (originally get_date_column) */
+    get_string_column,     /* CDT_DATETIME (originally get_datetime_column) */
     get_double_column,     /* CDT_DOUBLE */
     get_float_column,      /* CDT_FLOAT */
     get_int_column,        /* CDT_INT */
@@ -2877,8 +2877,8 @@ static GetColumnFunc get_column[CDT_MAX] =
     get_int_column,        /* CDT_INT16 */
     get_long_column,       /* CDT_LONG */
     get_string_column,     /* CDT_STRING */
-    get_time_column,       /* CDT_TIME */
-    get_timestamp_column   /* CDT_TIMESTAMP */
+    get_string_column,     /* CDT_TIME (originally get_time_column) */
+    get_long_column        /* CDT_TIMESTAMP (originally get_timestamp_column) */
 };
 
 /*----------------------------------------------------------------------------*/
@@ -3383,8 +3383,8 @@ static SetColumnFunc set_column[CDT_MAX] =
     set_char64_column,   /* CDT_CHAR64 */
     set_char128_column,  /* CDT_CHAR128 */
     set_char256_column,  /* CDT_CHAR256 */
-    set_date_column,     /* CDT_DATE */
-    set_datetime_column, /* CDT_DATETIME */
+    set_string_column,   /* CDT_DATE (originally set_date_column) */
+    set_string_column,   /* CDT_DATETIME (originally set_datetime_column) */
     set_double_column,   /* CDT_DOUBLE */
     set_float_column,    /* CDT_FLOAT */
     set_int_column,      /* CDT_INT */
@@ -3392,8 +3392,8 @@ static SetColumnFunc set_column[CDT_MAX] =
     set_int16_column,    /* CDT_INT16 */
     set_long_column,     /* CDT_LONG */
     set_string_column,   /* CDT_STRING */
-    set_time_column,     /* CDT_TIME */
-    set_timestamp_column /* CDT_TIMESTAMP */
+    set_string_column,   /* CDT_TIME (originally set_time_column) */
+    set_long_column      /* CDT_TIMESTAMP (originally set_timestamp_column) */
 };
 
 /*----------------------------------------------------------------------------*/
@@ -3919,8 +3919,8 @@ static ReadColumnFunc read_column[CDT_MAX] =
     read_char64_column,   /* CDT_CHAR64 */
     read_char128_column,  /* CDT_CHAR128 */
     read_char256_column,  /* CDT_CHAR256 */
-    read_date_column,     /* CDT_DATE */
-    read_datetime_column, /* CDT_DATETIME */
+    read_bytes_column,    /* CDT_DATE (originally read_date_column) */
+    read_bytes_column,    /* CDT_DATETIME (originally read_datetime_column) */
     read_double_column,   /* CDT_DOUBLE */
     read_float_column,    /* CDT_FLOAT */
     read_int_column,      /* CDT_INT */
@@ -3928,8 +3928,8 @@ static ReadColumnFunc read_column[CDT_MAX] =
     read_int16_column,    /* CDT_INT16 */
     read_long_column,     /* CDT_LONG */
     read_bytes_column,    /* CDT_STRING */
-    read_time_column,     /* CDT_TIME */
-    read_timestamp_column /* CDT_TIMESTAMP */
+    read_bytes_column,    /* CDT_TIME (originally read_time_column) */
+    read_long_column      /* CDT_TIMESTAMP (originally read_timestamp_column) */
 };
 
 /* Internal function to read an Avro-encoded record into an empty Record
@@ -4070,8 +4070,8 @@ static SizeColumnFunc size_column[CDT_MAX] =
     size_bytes_column,    /* CDT_CHAR64 */
     size_bytes_column,    /* CDT_CHAR128 */
     size_bytes_column,    /* CDT_CHAR256 */
-    size_date_column,     /* CDT_DATE */
-    size_datetime_column, /* CDT_DATETIME */
+    size_bytes_column,    /* CDT_DATE (originally size_date_column) */
+    size_bytes_column,    /* CDT_DATETIME (originally size_datetime_column) */
     size_double_column,   /* CDT_DOUBLE */
     size_float_column,    /* CDT_FLOAT */
     size_int_column,      /* CDT_INT */
@@ -4079,8 +4079,8 @@ static SizeColumnFunc size_column[CDT_MAX] =
     size_int_column,      /* CDT_INT16 */
     size_long_column,     /* CDT_LONG */
     size_bytes_column,    /* CDT_STRING */
-    size_time_column,     /* CDT_TIME */
-    size_timestamp_column /* CDT_TIMESTAMP */
+    size_bytes_column,    /* CDT_TIME (originally size_time_column) */
+    size_long_column      /* CDT_TIMESTAMP (originally size_timestamp_column) */
 };
 
 /* Internal function to compute the size in bytes of the Avro-encoded binary
@@ -4274,8 +4274,8 @@ static WriteColumnFunc write_column[CDT_MAX] =
     write_bytes_column,      /* CDT_CHAR64 */
     write_bytes_column,      /* CDT_CHAR128 */
     write_bytes_column,      /* CDT_CHAR256 */
-    write_date_column,       /* CDT_DATE */
-    write_datetime_column,   /* CDT_DATETIME */
+    write_bytes_column,      /* CDT_DATE (originally write_date_column)*/
+    write_bytes_column,      /* CDT_DATETIME (originally write_datetime_column) */
     write_double_column,     /* CDT_DOUBLE */
     write_float_column,      /* CDT_FLOAT */
     write_int_column,        /* CDT_INT */
@@ -4283,8 +4283,8 @@ static WriteColumnFunc write_column[CDT_MAX] =
     write_int_column,        /* CDT_INT16 */
     write_long_column,       /* CDT_LONG */
     write_bytes_column,      /* CDT_STRING */
-    write_time_column,       /* CDT_TIME */
-    write_timestamp_column   /* CDT_TIMESTAMP */
+    write_bytes_column,      /* CDT_TIME (originally write_time_column) */
+    write_long_column        /* CDT_TIMESTAMP (originally write_timestamp_column) */
 };
 
 /* Internal function to write a Record object into a buffer in Avro-encoded

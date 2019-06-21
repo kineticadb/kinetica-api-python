@@ -1,6 +1,14 @@
 # GPUdb Python API Changelog
 
-## Version 7.0.1
+## Version 7.0
+
+### Version 7.0.4.0 - 2019-06-21
+
+#### Changed
+-   Lifted restrictions on columns with property date, time, datetime, or
+    timestamp such that no validation occurs by the client.  This allows
+    the `init_with_now` property to be applied to such columns.
+
 
 ### Version 7.0.1.1 - 2019-03-31
 -   Changed GPUdbTable constructor behavior--it no longer calls /show/table
@@ -15,9 +23,6 @@
     retrieval
 
 
-
-## Version 7.0.0
-
 ### Version 7.0.0.2 - 2019-02-26
 -   Added some logging support
 
@@ -30,7 +35,7 @@
 -   Added support for cluster reconfiguration to the multi-head I/O operations
 
 
-## Version 6.2.0
+## Version 6.2
 
 ### Version 6.2.0.11 - 2019-03-22
 -   Changed GPUdbTable constructor behavior--it no longer calls /show/table

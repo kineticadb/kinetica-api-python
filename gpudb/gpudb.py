@@ -621,75 +621,79 @@ class _Util(object):
                     if (col_data_type == "string"):
                         if (sys.version_info[0] == 2): # checking the major component
                             col_value = _Util.ensure_str( col_value )
-                    # Handle datetime
-                    elif (col_data_type == "datetime"):
-                        # Conversion needed if it is NOT already a datetime struct
-                        if not isinstance( col_value, datetime.datetime ):
-                            # Better be a string if not a datetime object
-                            if not isinstance( col_value, basestring ):
-                                raise GPUdbException( "'datetime' type column value must be a datetime "
-                                                      "object or a string, given {}".format( str( type( col_value ) ) ) )
-
-                            col_value = col_value.strip()
-                        
-                            if _Util.re_datetime_full.match( col_value ):
-                                # Full datetime with time (including milliseconds)
-                                col_value = datetime.datetime.strptime( col_value, "%Y-%m-%d %H:%M:%S.%f" )
-                            elif _Util.re_datetime_noMS.match( col_value ):
-                                # Date and time, but no milliseconds
-                                col_value = datetime.datetime.strptime( col_value, "%Y-%m-%d %H:%M:%S" )
-                            elif _Util.re_date_only.match( col_value ):
-                                # Date only (no time)
-                                col_value = datetime.datetime.strptime( col_value, "%Y-%m-%d" )
-                            else:
-                                raise GPUdbException( "Could not convert value to datetime pattern ('YYYY-MM-DD [HH:MM:SS[.mmm]]'); "
-                                                      "given '{}'".format( col_value ) )
-                            # end if
-                        # end if
-                    elif (col_data_type == "date"): # Handle date
-                        # Conversion needed if it is NOT already a date struct
-                        if not isinstance( col_value, datetime.date ):
-                            # Better be a string if not a date object
-                            if not isinstance( col_value, basestring ):
-                                raise GPUdbException( "'date' type column value must be a datetime.date "
-                                                      "object or a string, given {}".format( str( type( col_value ) ) ) )
-
-                            col_value = col_value.strip()
-
-                            # Check that it matches the date pattern
-                            if _Util.re_date_only.match( col_value ):
-                                col_value = datetime.datetime.strptime( col_value, "%Y-%m-%d" ).date()
-                            else:
-                                raise GPUdbException( "Could not convert value to date pattern ('YYYY-MM-DD'); "
-                                                      "given '{}'".format( col_value ) )
-                            # end if
-                        # end if
-                    elif (col_data_type == "time"): # Handle time
-                        # Conversion needed if it is NOT already a time struct
-                        if not isinstance( col_value, datetime.time ):
-                            # Better be a string if not a time object
-                            if not isinstance( col_value, basestring ):
-                                raise GPUdbException( "'time' type column value must be a datetime.time "
-                                                      "object or a string, given {}".format( str( type( col_value ) ) ) )
-
-                            col_value = col_value.strip()
-
-                            # Check that it matches the allowed time patterns
-                            if _Util.re_time_only_ms.match( col_value ):
-                                # Time with milliseconds
-                                col_value = datetime.datetime.strptime( col_value, "%H:%M:%S.%f" ).time()
-                            elif _Util.re_time_only_noMS.match( col_value ):
-                                # Time without milliseconds
-                                col_value = datetime.datetime.strptime( col_value, "%H:%M:%S" ).time()
-                            else:
-                                raise GPUdbException( "Could not convert value to date pattern ('HH:MM:SS[.mmm]'); "
-                                                      "given '{}'".format( col_value ) )
-                            # end if
-                        # end if
                     elif (col_data_type == "decimal"): # Handle decimal
                         raise GPUdbException("TODO: *********type 'decimal' not supported yet*********")
                     elif (col_data_type == "ipv4"): # Handle IPv4
                         raise GPUdbException("TODO: *********type 'ipv4' not supported yet*********")
+
+                    # NO NEED TO CHECK DATE & TIME FORMATS DUE TO "init_with_now";
+                    # but keeping it around in case the C-module code changes again.
+                    # # Handle datetime
+                    # elif (col_data_type == "datetime"):
+                    #     # Conversion needed if it is NOT already a datetime struct
+                    #     if not isinstance( col_value, datetime.datetime ):
+                    #         # Better be a string if not a datetime object
+                    #         if not isinstance( col_value, basestring ):
+                    #             raise GPUdbException( "'datetime' type column value must be a datetime "
+                    #                                   "object or a string, given {}".format( str( type( col_value ) ) ) )
+
+                    #         col_value = col_value.strip()
+                        
+                    #         if _Util.re_datetime_full.match( col_value ):
+                    #             # Full datetime with time (including milliseconds)
+                    #             col_value = datetime.datetime.strptime( col_value, "%Y-%m-%d %H:%M:%S.%f" )
+                    #         elif _Util.re_datetime_noMS.match( col_value ):
+                    #             # Date and time, but no milliseconds
+                    #             col_value = datetime.datetime.strptime( col_value, "%Y-%m-%d %H:%M:%S" )
+                    #         elif _Util.re_date_only.match( col_value ):
+                    #             # Date only (no time)
+                    #             col_value = datetime.datetime.strptime( col_value, "%Y-%m-%d" )
+                    #         else:
+                    #             raise GPUdbException( "Could not convert value to datetime pattern ('YYYY-MM-DD [HH:MM:SS[.mmm]]'); "
+                    #                                   "given '{}'".format( col_value ) )
+                    #         # end if
+                    #     # end if
+                    # elif (col_data_type == "date"): # Handle date
+                    #     # Conversion needed if it is NOT already a date struct
+                    #     if not isinstance( col_value, datetime.date ):
+                    #         print ("Got date; type is {}; value is '{}'".format( str(type(col_value)), col_value ) ) # debug~~~~~~
+                    #         # Better be a string if not a date object
+                    #         if not isinstance( col_value, basestring ):
+                    #             raise GPUdbException( "'date' type column value must be a datetime.date "
+                    #                                   "object or a string, given {}".format( str( type( col_value ) ) ) )
+
+                    #         col_value = col_value.strip()
+
+                    #         # Check that it matches the date pattern
+                    #         if _Util.re_date_only.match( col_value ):
+                    #             col_value = datetime.datetime.strptime( col_value, "%Y-%m-%d" ).date()
+                    #         else:
+                    #             raise GPUdbException( "Could not convert value to date pattern ('YYYY-MM-DD'); "
+                    #                                   "given '{}'".format( col_value ) )
+                    #         # end if
+                    #     # end if
+                    # elif (col_data_type == "time"): # Handle time
+                    #     # Conversion needed if it is NOT already a time struct
+                    #     if not isinstance( col_value, datetime.time ):
+                    #         # Better be a string if not a time object
+                    #         if not isinstance( col_value, basestring ):
+                    #             raise GPUdbException( "'time' type column value must be a datetime.time "
+                    #                                   "object or a string, given {}".format( str( type( col_value ) ) ) )
+
+                    #         col_value = col_value.strip()
+
+                    #         # Check that it matches the allowed time patterns
+                    #         if _Util.re_time_only_ms.match( col_value ):
+                    #             # Time with milliseconds
+                    #             col_value = datetime.datetime.strptime( col_value, "%H:%M:%S.%f" ).time()
+                    #         elif _Util.re_time_only_noMS.match( col_value ):
+                    #             # Time without milliseconds
+                    #             col_value = datetime.datetime.strptime( col_value, "%H:%M:%S" ).time()
+                    #         else:
+                    #             raise GPUdbException( "Could not convert value to time pattern ('HH:MM:SS[.mmm]'); "
+                    #                                   "given '{}'".format( col_value ) )
+                    #         # end if
+                    #     # end if
                     # end handling special data type conversions
                 
                     record[ col_name ] = col_value
@@ -857,14 +861,18 @@ class _Util(object):
                 # Get column data type
                 col_data_type = column.data_type
 
-                # Handle datetime
-                if (col_data_type == "datetime"):
-                    col_value = _Util.strftime( col_value, "%Y-%m-%d %H:%M:%S.%f" )[ : -3 ]
-                elif (col_data_type == "date"): # Handle date
-                    col_value = _Util.strftime( col_value, "%Y-%m-%d" )
-                elif (col_data_type == "time"): # Handle time
-                    col_value = col_value.strftime( "%H:%M:%S.%f" )[ : -3 ]
-                elif (col_data_type == "decimal"): # Handle decimal
+                # For now, all datetime formats are just simple strings; so need
+                # to do the following checks anymore; but keeping it around in case
+                # the C-module code changes again.
+                # if (col_data_type == "datetime"):
+                #     col_value = _Util.strftime( col_value, "%Y-%m-%d %H:%M:%S.%f" )[ : -3 ]
+                # elif (col_data_type == "date"): # Handle date
+                #     col_value = _Util.strftime( col_value, "%Y-%m-%d" )
+                # elif (col_data_type == "time"): # Handle time
+                #     col_value = col_value.strftime( "%H:%M:%S.%f" )[ : -3 ]
+
+                # Handle decimal and IPv4
+                if (col_data_type == "decimal"): # Handle decimal
                     raise GPUdbException("TODO: *********type 'decimal' not supported yet*********")
                 elif (col_data_type == "ipv4"): # Handle IPv4
                     raise GPUdbException("TODO: *********type 'ipv4' not supported yet*********")
@@ -1131,8 +1139,8 @@ class GPUdbColumnProperty(object):
 
 
     INIT_WITH_NOW = "init_with_now"
-    """str: For columns with attributes of date, time, datetime or timestamp, at
-    insert time, replace empty strings and invalid timestamps with NOW()
+    """str: For 'date', 'time', 'datetime', or 'timestamp' column types, replace
+    empty strings and invalid timestamps with 'NOW()' upon insert.
     """
 
 # end class GPUdbColumnProperty
@@ -2931,7 +2939,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.3.0"
+    api_version   = "7.0.4.0"
 
     # Constants
     END_OF_SET = -9999
@@ -5727,9 +5735,9 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/visualize/isochrone"
-        REQ_SCHEMA_STR = """{"name":"visualize_isochrone_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"weights_on_edges","type":{"type":"array","items":"string"}},{"name":"source_node","type":"string"},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"max_solution_radius","type":"double"},{"name":"num_levels","type":"int"},{"name":"generate_image","type":"boolean"},{"name":"projection","type":"string"},{"name":"image_width","type":"int"},{"name":"image_height","type":"int"},{"name":"style_options","type":{"type":"map","values":"string"}},{"name":"solve_options","type":{"type":"map","values":"string"}},{"name":"contour_options","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"name":"visualize_isochrone_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"source_node","type":"string"},{"name":"max_solution_radius","type":"double"},{"name":"weights_on_edges","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"num_levels","type":"int"},{"name":"generate_image","type":"boolean"},{"name":"levels_table","type":"string"},{"name":"style_options","type":{"type":"map","values":"string"}},{"name":"solve_options","type":{"type":"map","values":"string"}},{"name":"contour_options","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_isochrone_response","fields":[{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"},{"name":"info","type":{"type":"map","values":"string"}},{"name":"solve_info","type":{"type":"map","values":"string"}},{"name":"contour_info","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("weights_on_edges", "array", [("string")]), ("source_node", "string"), ("restrictions", "array", [("string")]), ("max_solution_radius", "double"), ("num_levels", "int"), ("generate_image", "boolean"), ("projection", "string"), ("image_width", "int"), ("image_height", "int"), ("style_options", "map", [("string")]), ("solve_options", "map", [("string")]), ("contour_options", "map", [("string")]), ("options", "map", [("string")])] )
+        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("source_node", "string"), ("max_solution_radius", "double"), ("weights_on_edges", "array", [("string")]), ("restrictions", "array", [("string")]), ("num_levels", "int"), ("generate_image", "boolean"), ("levels_table", "string"), ("style_options", "map", [("string")]), ("solve_options", "map", [("string")]), ("contour_options", "map", [("string")]), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("width", "int"), ("height", "int"), ("bg_color", "long"), ("image_data", "bytes"), ("info", "map", [("string")]), ("solve_info", "map", [("string")]), ("contour_info", "map", [("string")])] )
         ENDPOINT = "/visualize/isochrone"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -6668,6 +6676,15 @@ class GPUdb(object):
                 Optional parameters.  The default value is an empty dict ( {}
                 ).
                 Allowed keys are:
+
+                * **verify_nulls** --
+                  When enabled, verifies that null values are set to zero.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **concurrent_safe** --
                   When enabled, allows this endpoint to be run safely with
@@ -8988,10 +9005,12 @@ class GPUdb(object):
                   for this group.
 
             ranking (str)
-                If the resource group ranking has to be updated, this indicates
+                If the resource group ranking is to be updated, this indicates
                 the relative ranking among existing resource groups where this
-                resource group will be moved. Left bank if not changing the
-                ranking.
+                resource group will be moved; left blank if not changing the
+                ranking.  When using *before* or *after*, specify which
+                resource group this one will be inserted before or after in
+                input parameter *adjoining_resource_group*.
                 Allowed values are:
 
                 *
@@ -9003,9 +9022,10 @@ class GPUdb(object):
                 The default value is ''.
 
             adjoining_resource_group (str)
-                If the ranking is 'before' or 'after', this field indicates the
-                resource group before or after which the current group will be
-                placed otherwise left blank.  The default value is ''.
+                If input parameter *ranking* is *before* or *after*, this field
+                indicates the resource group before or after which the current
+                group will be placed; otherwise, left blank.  The default value
+                is ''.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -11104,7 +11124,10 @@ class GPUdb(object):
 
             ranking (str)
                 Indicates the relative ranking among existing resource groups
-                where this new resource group will be placed.
+                where this new resource group will be placed.  When using
+                *before* or *after*, specify which resource group this one will
+                be inserted before or after in input parameter
+                *adjoining_resource_group*.
                 Allowed values are:
 
                 * first
@@ -11113,9 +11136,10 @@ class GPUdb(object):
                 * after
 
             adjoining_resource_group (str)
-                Name of the resource group relative to which this group will be
-                placed. Must be specified when ranking is before or after.  The
-                default value is ''.
+                If input parameter *ranking* is *before* or *after*, this field
+                indicates the resource group before or after which the current
+                group will be placed; otherwise, left blank.  The default value
+                is ''.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -11424,16 +11448,18 @@ class GPUdb(object):
 
     # begin create_table_monitor
     def create_table_monitor( self, table_name = None, options = {} ):
-        """Creates a monitor that watches for new records inserted into a
-        particular table (identified by input parameter *table_name*) and
-        forwards copies to subscribers via ZMQ. After this call completes,
-        subscribe to the returned output parameter *topic_id* on the ZMQ table
-        monitor port (default 9002). Each time an insert operation on the table
-        completes, a multipart message is published for that topic; the first
-        part contains only the topic ID, and each subsequent part contains one
-        binary-encoded Avro object that was inserted. The monitor will continue
-        to run (regardless of whether or not there are any subscribers) until
-        deactivated with :meth:`.clear_table_monitor`.
+        """Creates a monitor that watches for table modification events such as
+        insert, update or delete on a particular table (identified by input
+        parameter *table_name*) and forwards event notifications to subscribers
+        via ZMQ. After this call completes, subscribe to the returned output
+        parameter *topic_id* on the ZMQ table monitor port (default 9002). Each
+        time a modification operation on the table completes, a multipart
+        message is published for that topic; the first part contains only the
+        topic ID, and each subsequent part contains one binary-encoded Avro
+        object that corresponds to the event and can be decoded using output
+        parameter *type_schema*. The monitor will continue to run (regardless
+        of whether or not there are any subscribers) until deactivated with
+        :meth:`.clear_table_monitor`.
 
         Parameters:
 
@@ -11443,6 +11469,9 @@ class GPUdb(object):
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
                 ).
+                Allowed keys are:
+
+                * event
 
         Returns:
             A dict with the following entries--
@@ -11862,9 +11891,9 @@ class GPUdb(object):
                   memory.
 
                 * **init_with_now** --
-                  For columns with attributes of date, time, datetime or
-                  timestamp, at insert time, replace empty strings and invalid
-                  timestamps with NOW()
+                  For 'date', 'time', 'datetime', or 'timestamp' column types,
+                  replace empty strings and invalid timestamps with 'NOW()'
+                  upon insert.
 
                 The default value is an empty dict ( {} ).
 
@@ -16874,6 +16903,11 @@ class GPUdb(object):
                   time and/or distance between points to influence one or more
                   shortest paths across the sample points.
 
+                * **match_od_pairs** --
+                  Matches input parameter *sample_points* to find the most
+                  probable path between origin and destination pairs with cost
+                  constraints
+
                 The default value is 'markov_chain'.
 
             solution_table (str)
@@ -19583,24 +19617,375 @@ class GPUdb(object):
 
 
     # begin visualize_isochrone
-    def visualize_isochrone( self, graph_name = None, weights_on_edges = [],
-                             source_node = None, restrictions = [],
-                             max_solution_radius = '-1.0', num_levels = '1',
-                             generate_image = True, projection = 'PLATE_CARREE',
-                             image_width = 512, image_height = -1, style_options
-                             = None, solve_options = {}, contour_options = {},
-                             options = {} ):
+    def visualize_isochrone( self, graph_name = None, source_node = None,
+                             max_solution_radius = '-1.0', weights_on_edges =
+                             [], restrictions = [], num_levels = '1',
+                             generate_image = True, levels_table = '',
+                             style_options = None, solve_options = {},
+                             contour_options = {}, options = {} ):
+        """Given a geomerty graph, draw isolines for travel results, which are
+        curves of equal cost. The latter is typically time or distance assigned
+        as the weights of the underlying graph.
+        .
 
+        Parameters:
+
+            graph_name (str)
+                Name of the graph on which the isochrone is to be computed.
+
+            source_node (str)
+                Starting vertex on the graph from/to which we solve.
+
+            max_solution_radius (float)
+                Extent of the search around the source node. -1.0 is
+                unrestricted.  The default value is -1.0.
+
+            weights_on_edges (list of str)
+                Additional weights to apply to the edges of an existing graph.
+                Weights must be specified using `identifiers
+                <../../../graph_solver/network_graph_solver.html#identifiers>`_;
+                identifiers are grouped as `combinations
+                <../../../graph_solver/network_graph_solver.html#id-combos>`_.
+                Identifiers can be used with existing column names, e.g.,
+                'table.column AS WEIGHTS_EDGE_ID', or expressions, e.g.,
+                'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED'. Any provided
+                weights will be added (in the case of 'WEIGHTS_VALUESPECIFIED')
+                to or multiplied with (in the case of
+                'WEIGHTS_FACTORSPECIFIED') the existing weight(s).  The default
+                value is an empty list ( [] ).  The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
+
+            restrictions (list of str)
+                Additional restrictions to apply to the nodes/edges of an
+                existing graph. Restrictions must be specified using
+                `identifiers
+                <../../../graph_solver/network_graph_solver.html#identifiers>`_;
+                identifiers are grouped as `combinations
+                <../../../graph_solver/network_graph_solver.html#id-combos>`_.
+                Identifiers can be used with existing column names, e.g.,
+                'table.column AS RESTRICTIONS_EDGE_ID', or expressions, e.g.,
+                'column/2 AS RESTRICTIONS_VALUECOMPARED'. If
+                *remove_previous_restrictions* is set to *true*, any provided
+                restrictions will replace the existing restrictions. If
+                *remove_previous_restrictions* is set to *false*, any provided
+                weights will be added (in the case of
+                'RESTRICTIONS_VALUECOMPARED') to or replaced (in the case of
+                'RESTRICTIONS_ONOFFCOMPARED').  The default value is an empty
+                list ( [] ).  The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
+
+            num_levels (int)
+                Number of equally separated isochrone to compute.  The default
+                value is 1.
+
+            generate_image (bool)
+                If true, return a PNG of the isochrone in the response.  The
+                default value is True.
+
+            levels_table (str)
+                Name of the table to output the isochrone, containing levels
+                and their corresponding WKT geomerty. If no name is given, the
+                table is not generated.  The default value is ''.
+
+            style_options (dict of str to str)
+                Various style related options of the isochrone image.
+                Allowed keys are:
+
+                * **line_size** --
+                  The width of the contour lines in pixel.  The default value
+                  is '3'.
+
+                * **color** --
+                  Color of generated curves. All color values must be in the
+                  format RRGGBB or AARRGGBB (to specify the alpha value). If
+                  alpha is specified and flooded contours are enabled, it will
+                  be used for as the transparency of the latter.  The default
+                  value is 'FF696969'.
+
+                * **bg_color** --
+                  Background color of the generated image. All color values
+                  must be in the format RRGGBB or AARRGGBB (to specify the
+                  alpha value).  The default value is '00000000'.
+
+                * **text_color** --
+                  Color for the labels when enabled. All color values must be
+                  in the format RRGGBB or AARRGGBB (to specify the alpha
+                  value).  The default value is 'FF000000'.
+
+                * **colormap** --
+                  Colormap for contours or fill-in regions when enabled. All
+                  color values must be in the format RRGGBB or AARRGGBB (to
+                  specify the alpha value).
+                  Allowed values are:
+
+                  * jet
+                  * accent
+                  * afmhot
+                  * autumn
+                  * binary
+                  * blues
+                  * bone
+                  * brbg
+                  * brg
+                  * bugn
+                  * bupu
+                  * bwr
+                  * cmrmap
+                  * cool
+                  * coolwarm
+                  * copper
+                  * cubehelix
+                  * dark2
+                  * flag
+                  * gist_earth
+                  * gist_gray
+                  * gist_heat
+                  * gist_ncar
+                  * gist_rainbow
+                  * gist_stern
+                  * gist_yarg
+                  * gnbu
+                  * gnuplot2
+                  * gnuplot
+                  * gray
+                  * greens
+                  * greys
+                  * hot
+                  * hsv
+                  * inferno
+                  * magma
+                  * nipy_spectral
+                  * ocean
+                  * oranges
+                  * orrd
+                  * paired
+                  * pastel1
+                  * pastel2
+                  * pink
+                  * piyg
+                  * plasma
+                  * prgn
+                  * prism
+                  * pubu
+                  * pubugn
+                  * puor
+                  * purd
+                  * purples
+                  * rainbow
+                  * rdbu
+                  * rdgy
+                  * rdpu
+                  * rdylbu
+                  * rdylgn
+                  * reds
+                  * seismic
+                  * set1
+                  * set2
+                  * set3
+                  * spectral
+                  * spring
+                  * summer
+                  * terrain
+                  * viridis
+                  * winter
+                  * wistia
+                  * ylgn
+                  * ylgnbu
+                  * ylorbr
+                  * ylorrd
+
+                  The default value is 'jet'.
+
+            solve_options (dict of str to str)
+                Solver specific parameters.  The default value is an empty dict
+                ( {} ).
+                Allowed keys are:
+
+                * **remove_previous_restrictions** --
+                  Ignore the restrictions applied to the graph during the
+                  creation stage and only use the restrictions specified in
+                  this request if set to *true*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **restriction_threshold_value** --
+                  Value-based restriction comparison. Any node or edge with a
+                  RESTRICTIONS_VALUECOMPARED value greater than the
+                  *restriction_threshold_value* will not be included in the
+                  solution.
+
+                * **uniform_weights** --
+                  When speficied, assigns the given value to all the edges in
+                  the graph. Note that weights specified in @{weights_on_edges}
+                  override this value.
+
+            contour_options (dict of str to str)
+                Solver specific parameters.  The default value is an empty dict
+                ( {} ).
+                Allowed keys are:
+
+                * **projection** --
+                  Spatial Reference System (i.e. EPSG Code).
+                  Allowed values are:
+
+                  * 3857
+                  * 102100
+                  * 900913
+                  * EPSG:4326
+                  * PLATE_CARREE
+                  * EPSG:900913
+                  * EPSG:102100
+                  * EPSG:3857
+                  * WEB_MERCATOR
+
+                  The default value is 'PLATE_CARREE'.
+
+                * **width** --
+                  Height of the generated image if applicable.  The default
+                  value is '512'.
+
+                * **height** --
+                  Height of the generated image if applicable. If not given, a
+                  default of aspect_ratio*width is used.  The default value is
+                  '-1'.
+
+                * **search_radius** --
+                  When interpolating the graph solution to generate the
+                  isochrone, neighborhood of influence of sample data (in
+                  percent of the image/grid).  The default value is '20'.
+
+                * **grid_size** --
+                  When interpolating the graph solution to generate the
+                  isochrone, number of subdivisions alongs the x axis when
+                  building the grid (the y is computed using the aspect ratio
+                  of the output image).  The default value is '100'.
+
+                * **color_isolines** --
+                  Color each isoline according to the colormap; otherwise, use
+                  the foreground color.  The default value is 'true'.
+
+                * **add_labels** --
+                  Labels the isolines in the image.  The default value is
+                  'false'.
+
+                * **labels_font_size** --
+                  Font size to be unsed when adding labels, in pixels.  The
+                  default value is '12'.
+
+                * **labels_font_family** --
+                  Font name to be unsed when adding labels.  The default value
+                  is 'arial'.
+
+                * **labels_search_window** --
+                  When placing labels on isolines, a search window is used to
+                  rate the local quality of each isoline. Smooth, continuous,
+                  long stretches with relatively flat angles are favored. The
+                  given number multiplied by the font size to get the final
+                  window size to use.  The default value is '4'.
+
+                * **labels_intralevel_separation** --
+                  When labels are enabled, labels are separated to avoid
+                  overlap: This specifies the distance certain distance (in
+                  multiples of the font size) to use when separating labels of
+                  different values.  The default value is '4'.
+
+                * **labels_interlevel_separation** --
+                  When labels are enabled, more than one label can placed on
+                  the same isoline: This specifies the distance certain
+                  distance (in percent of the total window size) to use when
+                  separating labels of the same value.  The default value is
+                  '20'.
+
+                * **labels_max_angle** --
+                  Maximum angle from the vertical to use when adding labels, in
+                  degrees.  The default value is '60'.
+
+            options (dict of str to str)
+                Additional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **solve_table** --
+                  Name of the table of the intermediate solve results,
+                  conatining the position and cost for each vertex in the
+                  graph. If no name is given, a temporary table is created and
+                  deleted one the solve is done.  The default value is ''.
+
+                * **is_replicated** --
+                  Replicate the solution table if true.  The default value is
+                  'true'.
+
+                * **data_min_x** --
+                  Lower bound for the x values. If not given, it will be
+                  computed from the bounds of the input data.
+
+                * **data_max_x** --
+                  Upper bound for the x values. If not given, it will be
+                  computed from the bounds of the input data.
+
+                * **data_min_y** --
+                  Lower bound for the y values. If not given, it will be
+                  computed from the bounds of the input data.
+
+                * **data_max_y** --
+                  Upper bound for the y values. If not given, it will be
+                  computed from the bounds of the input data.
+
+                * **concavity_level** --
+                  Factor to qualify the concavity of the isocrhone curves, 0
+                  for completely convex, 1 to maximize concavity.  The default
+                  value is '0.5'.
+
+                * **solve_direction** --
+                  Specify whether we are going to the source node, or starting
+                  from it.
+                  Allowed values are:
+
+                  * **from_source** --
+                    Shortest path to get to the source (inverse Dijkstra)
+
+                  * **to_source** --
+                    Shortest path to source (Dijkstra)
+
+                  The default value is 'from_source'.
+
+        Returns:
+            A dict with the following entries--
+
+            width (int)
+                Width of the image as provided in *width*.
+
+            height (int)
+                Height of the image as provided in *height*.
+
+            bg_color (long)
+                Background color of the image as provided in *bg_color*.
+
+            image_data (str)
+                Generated contour image data.
+
+            info (dict of str to str)
+                Additional information.
+
+            solve_info (dict of str to str)
+                Additional information.
+
+            contour_info (dict of str to str)
+                Additional information.
+        """
         assert isinstance( graph_name, (basestring)), "visualize_isochrone(): Argument 'graph_name' must be (one) of type(s) '(basestring)'; given %s" % type( graph_name ).__name__
-        weights_on_edges = weights_on_edges if isinstance( weights_on_edges, list ) else ( [] if (weights_on_edges is None) else [ weights_on_edges ] )
         assert isinstance( source_node, (basestring)), "visualize_isochrone(): Argument 'source_node' must be (one) of type(s) '(basestring)'; given %s" % type( source_node ).__name__
-        restrictions = restrictions if isinstance( restrictions, list ) else ( [] if (restrictions is None) else [ restrictions ] )
         assert isinstance( max_solution_radius, (int, long, float)), "visualize_isochrone(): Argument 'max_solution_radius' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_solution_radius ).__name__
+        weights_on_edges = weights_on_edges if isinstance( weights_on_edges, list ) else ( [] if (weights_on_edges is None) else [ weights_on_edges ] )
+        restrictions = restrictions if isinstance( restrictions, list ) else ( [] if (restrictions is None) else [ restrictions ] )
         assert isinstance( num_levels, (int, long, float)), "visualize_isochrone(): Argument 'num_levels' must be (one) of type(s) '(int, long, float)'; given %s" % type( num_levels ).__name__
         assert isinstance( generate_image, (bool)), "visualize_isochrone(): Argument 'generate_image' must be (one) of type(s) '(bool)'; given %s" % type( generate_image ).__name__
-        assert isinstance( projection, (basestring)), "visualize_isochrone(): Argument 'projection' must be (one) of type(s) '(basestring)'; given %s" % type( projection ).__name__
-        assert isinstance( image_width, (int, long, float)), "visualize_isochrone(): Argument 'image_width' must be (one) of type(s) '(int, long, float)'; given %s" % type( image_width ).__name__
-        assert isinstance( image_height, (int, long, float)), "visualize_isochrone(): Argument 'image_height' must be (one) of type(s) '(int, long, float)'; given %s" % type( image_height ).__name__
+        assert isinstance( levels_table, (basestring)), "visualize_isochrone(): Argument 'levels_table' must be (one) of type(s) '(basestring)'; given %s" % type( levels_table ).__name__
         assert isinstance( style_options, (dict)), "visualize_isochrone(): Argument 'style_options' must be (one) of type(s) '(dict)'; given %s" % type( style_options ).__name__
         assert isinstance( solve_options, (dict)), "visualize_isochrone(): Argument 'solve_options' must be (one) of type(s) '(dict)'; given %s" % type( solve_options ).__name__
         assert isinstance( contour_options, (dict)), "visualize_isochrone(): Argument 'contour_options' must be (one) of type(s) '(dict)'; given %s" % type( contour_options ).__name__
@@ -19610,15 +19995,13 @@ class GPUdb(object):
 
         obj = {}
         obj['graph_name'] = graph_name
-        obj['weights_on_edges'] = weights_on_edges
         obj['source_node'] = source_node
-        obj['restrictions'] = restrictions
         obj['max_solution_radius'] = max_solution_radius
+        obj['weights_on_edges'] = weights_on_edges
+        obj['restrictions'] = restrictions
         obj['num_levels'] = num_levels
         obj['generate_image'] = generate_image
-        obj['projection'] = projection
-        obj['image_width'] = image_width
-        obj['image_height'] = image_height
+        obj['levels_table'] = levels_table
         obj['style_options'] = self.__sanitize_dicts( style_options )
         obj['solve_options'] = self.__sanitize_dicts( solve_options )
         obj['contour_options'] = self.__sanitize_dicts( contour_options )
@@ -24056,22 +24439,27 @@ class GPUdbTable( object ):
 
 
     def create_table_monitor( self, options = {} ):
-        """Creates a monitor that watches for new records inserted into a
-        particular table (identified by input parameter *table_name*) and
-        forwards copies to subscribers via ZMQ. After this call completes,
-        subscribe to the returned output parameter *topic_id* on the ZMQ table
-        monitor port (default 9002). Each time an insert operation on the table
-        completes, a multipart message is published for that topic; the first
-        part contains only the topic ID, and each subsequent part contains one
-        binary-encoded Avro object that was inserted. The monitor will continue
-        to run (regardless of whether or not there are any subscribers) until
-        deactivated with :meth:`.clear_table_monitor`.
+        """Creates a monitor that watches for table modification events such as
+        insert, update or delete on a particular table (identified by input
+        parameter *table_name*) and forwards event notifications to subscribers
+        via ZMQ. After this call completes, subscribe to the returned output
+        parameter *topic_id* on the ZMQ table monitor port (default 9002). Each
+        time a modification operation on the table completes, a multipart
+        message is published for that topic; the first part contains only the
+        topic ID, and each subsequent part contains one binary-encoded Avro
+        object that corresponds to the event and can be decoded using output
+        parameter *type_schema*. The monitor will continue to run (regardless
+        of whether or not there are any subscribers) until deactivated with
+        :meth:`.clear_table_monitor`.
 
         Parameters:
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
                 ).
+                Allowed keys are:
+
+                * event
 
         Returns:
             The response from the server which is a dict containing the
