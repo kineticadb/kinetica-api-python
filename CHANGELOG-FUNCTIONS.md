@@ -1,8 +1,17 @@
-GPUdb Schemas Changelog
-=======================
+# Kinetica REST API Changelog
 
-Version 6.2.0 - 2018-02-11
---------------------------
+## Version 6.2
+
+### Version 6.2.0.38 - 2019-06-05
+
+#### Added
+
+#### Changed
+
+#### Removed
+
+
+### Version 6.2.0.0 - 2018-02-11
 
 -   New endpoints to submit ssynchronously running jobs and retrieve the results of the job
     - /create/job
@@ -11,8 +20,7 @@ Version 6.2.0 - 2018-02-11
 -   /create/proc has new option 'max_concurrency_per_node'
 -   /
 
-Version 6.1.0 - 2018-01-08
---------------------------
+## Version 6.1.0 - 2018-01-08
 
 -   /create/type has new column property: wkt
 -   Endpoints no longer support operations on geometry columns
@@ -27,9 +35,8 @@ Version 6.1.0 - 2018-01-08
     -   /filter/byradius/geometry
 -   /filter/bygeometry now supports column names other than "WKT"
 
-	
-Version 6.0.0 - 2017-01-24
---------------------------
+
+## Version 6.0.0 - 2017-01-24
 
 -   /alter/table has new actions:
     -   add_column
@@ -65,8 +72,7 @@ Version 6.0.0 - 2017-01-24
     -   /has/proc
 
 
-Version 5.4.0 - 2016-11-30
---------------------------
+## Version 5.4.0 - 2016-11-30
 
 -   New endpoint: /create/projection for selecting a subset of columns
     (including derived columns) from a table into a new result table, including
@@ -81,8 +87,7 @@ Version 5.4.0 - 2016-11-30
     -   /show/proc/status
 
 
-Version 5.2.0 - 2016-09-21
---------------------------
+## Version 5.2.0 - 2016-09-21
 
 -   /get/records now shows if there are more records to get.
 -   /alter/table/properties merged into /alter/table, removed properties.
@@ -111,14 +116,12 @@ Version 5.2.0 - 2016-09-21
 -   New /create/union endpoint.
 
 
-Version 5.1.0 - 2016-05-06
---------------------------
+## Version 5.1.0 - 2016-05-06
 
 -   /aggregate/groupby now supports 'having clause.
 -   /execute/proc added for running nodejs procedures.
 
 
-Version 4.2.0 - 2016-04-11
---------------------------
+## Version 4.2.0 - 2016-04-11
 
 -   Refactor schemas and integrate documentation into JSON schemas

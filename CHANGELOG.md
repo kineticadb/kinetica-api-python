@@ -1,8 +1,30 @@
 # GPUdb Python API Changelog
 
 
-## Version 6.2.0 - 2018-05-09
+## Version 6.2
 
+### Version 6.2.0.12 - 2019-06-21
+
+#### Changed
+-   Lifted restrictions on columns with property date, time, datetime, or
+    timestamp such that no validation occurs by the client.  This allows
+    the `init_with_now` property to be applied to such columns.
+
+
+### Version 6.2.0.11 - 2019-03-22
+-   Changed GPUdbTable constructor behavior--it no longer calls /show/table
+    with `get_sizes = true` since that can be a relatively costly query.
+    __len__() now calls /show/table as needed, even for read-only tables.
+
+
+### Version 6.2.0.10 - 2018-09-16
+-   Added support for host manager endpoints
+-   Added support for replicated tables to multi-head ingestion via GPUdbTable
+    and GPUdbIngestor
+-   Added head-node only usage support to GPUdbWorkerList
+
+
+### Version 6.2.0.0 - 2018-05-09
 -   New RecordRetriever class to support multi-head record lookup by
     shard key in gpudb_multihead_io.py (file previously named gpudb_ingestor.py)
 -   Renamed gpudb_ingestor.py to gpudb_multihead_io.py
@@ -14,11 +36,6 @@
     GeoJSON object from a table.
 
 
-### Version 6.2.0.10 - 2018-09-16
--   Added support for host manager endpoints
--   Added support for replicated tables to multi-head ingestion via GPUdbTable
-    and GPUdbIngestor
--   Added head-node only usage support to GPUdbWorkerList
 
 
 ## Version 6.1.0 - 2017-10-05

@@ -13,7 +13,7 @@ from __future__ import print_function
 
 import sys
 
-if sys.version_info.major >= 3:
+if sys.version_info[0] >= 3:
     from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, GPUdbException
 else:
     from gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, GPUdbException
@@ -56,14 +56,14 @@ if sys.version_info >= (2, 7):
 else:
     import ordereddict as collections # a separate package
 
-if sys.version_info.major >= 3:
+if sys.version_info[0] >= 3:
     from urllib.parse import urlparse
 else:
     from urlparse import urlparse
 
 
 # Handle basestring in python3
-if sys.version_info.major >= 3:
+if sys.version_info[0] >= 3:
     long = int
     basestring = str
     class unicode:
@@ -493,7 +493,7 @@ class _RecordKey:
     # Note: Choosing to have two different definitions even though the difference
     #       is only in one line to avoid excessive python version check per func
     #       call.
-    if sys.version_info.major >= 3: # python 3
+    if sys.version_info[0] >= 3: # python 3
 
         def add_charN( self, val, N ):
             """Add a charN string to the buffer (can be null)--N bytes.
@@ -740,7 +740,7 @@ class _RecordKey:
     # Note: Choosing to have two different definitions even though the difference
     #       is only in one line to avoid excessive python version check per func
     #       call.
-    if sys.version_info.major >= 3:
+    if sys.version_info[0] >= 3:
         def add_string( self, val ):
             """Add the hash value of the given string to the buffer (can be
             null)--eight bytes.
@@ -1086,7 +1086,7 @@ class _RecordKey:
     # Note: Choosing to have two different definitions even though the difference
     #       is only in one line to avoid excessive python version check per func
     #       call.
-    if sys.version_info.major >= 3: # python 3
+    if sys.version_info[0] >= 3: # python 3
         def add_timestamp( self, val ):
             """Add a long timestamp to the buffer (can be null)--eight bytes.
 
@@ -1404,7 +1404,7 @@ class _RecordKey:
     # Note: Choosing to have two different definitions even though the difference
     #       is only in one line to avoid excessive python version check per func
     #       call.
-    if sys.version_info.major >= 3: # python 3
+    if sys.version_info[0] >= 3: # python 3
         def compute_hashes( self ):
             """Compute the Murmur hash of the key.
             """
