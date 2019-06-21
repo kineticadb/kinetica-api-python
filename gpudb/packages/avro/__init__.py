@@ -2,7 +2,7 @@
 
 import sys
 
-if sys.version_info.major == 2:
+if sys.version_info[0] == 2:
     from .avro_py2 import schema
     from .avro_py2 import io
     from .avro_py2 import protocol
