@@ -2939,7 +2939,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.4.0"
+    api_version   = "7.0.5.0"
 
     # Constants
     END_OF_SET = -9999
@@ -8980,8 +8980,8 @@ class GPUdb(object):
     # begin alter_resource_group
     def alter_resource_group( self, name = None, tier_attributes = {}, ranking = '',
                               adjoining_resource_group = '', options = {} ):
-        """Alters properties of exisiting resource group to facilitate resource
-        management.
+        """Alters the properties of an exisiting resource group to facilitate
+        resource management.
 
         Parameters:
 
@@ -9007,7 +9007,7 @@ class GPUdb(object):
             ranking (str)
                 If the resource group ranking is to be updated, this indicates
                 the relative ranking among existing resource groups where this
-                resource group will be moved; left blank if not changing the
+                resource group will be moved; leave blank if not changing the
                 ranking.  When using *before* or *after*, specify which
                 resource group this one will be inserted before or after in
                 input parameter *adjoining_resource_group*.
@@ -9024,8 +9024,8 @@ class GPUdb(object):
             adjoining_resource_group (str)
                 If input parameter *ranking* is *before* or *after*, this field
                 indicates the resource group before or after which the current
-                group will be placed; otherwise, left blank.  The default value
-                is ''.
+                group will be placed; otherwise, leave blank.  The default
+                value is ''.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -11138,8 +11138,8 @@ class GPUdb(object):
             adjoining_resource_group (str)
                 If input parameter *ranking* is *before* or *after*, this field
                 indicates the resource group before or after which the current
-                group will be placed; otherwise, left blank.  The default value
-                is ''.
+                group will be placed; otherwise, leave blank.  The default
+                value is ''.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -17303,6 +17303,16 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **and_labels** --
+                  If set to *true*, the result of the query has entities that
+                  satisfy all of the target labels, instead of any.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
         Returns:
             A dict with the following entries--
 
@@ -18548,7 +18558,7 @@ class GPUdb(object):
                 *remove_previous_restrictions* is set to *true*, any provided
                 restrictions will replace the existing restrictions. If
                 *remove_previous_restrictions* is set to *false*, any provided
-                weights will be added (in the case of
+                restrictions will be added (in the case of
                 'RESTRICTIONS_VALUECOMPARED') to or replaced (in the case of
                 'RESTRICTIONS_ONOFFCOMPARED').  The default value is an empty
                 list ( [] ).  The user can provide a single element (which will
@@ -19623,9 +19633,12 @@ class GPUdb(object):
                              generate_image = True, levels_table = '',
                              style_options = None, solve_options = {},
                              contour_options = {}, options = {} ):
-        """Given a geomerty graph, draw isolines for travel results, which are
-        curves of equal cost. The latter is typically time or distance assigned
-        as the weights of the underlying graph.
+        """Generate an image containing isolines for travel results using an
+        existing graph. Isolines represent curves of equal cost, with cost
+        typically referring to the time or distance assigned as the weights of
+        the underlying graph. See `Network Graph Solvers
+        <../../../graph_solver/network_graph_solver.html>`_ for more
+        information on graphs.
         .
 
         Parameters:
@@ -19634,11 +19647,13 @@ class GPUdb(object):
                 Name of the graph on which the isochrone is to be computed.
 
             source_node (str)
-                Starting vertex on the graph from/to which we solve.
+                Starting vertex on the underlying graph from/to which the
+                isochrones are created.
 
             max_solution_radius (float)
-                Extent of the search around the source node. -1.0 is
-                unrestricted.  The default value is -1.0.
+                Extent of the search radius around input parameter
+                *source_node*. Set to '-1.0' for unrestricted search radius.
+                The default value is -1.0.
 
             weights_on_edges (list of str)
                 Additional weights to apply to the edges of an existing graph.
@@ -19669,52 +19684,59 @@ class GPUdb(object):
                 *remove_previous_restrictions* is set to *true*, any provided
                 restrictions will replace the existing restrictions. If
                 *remove_previous_restrictions* is set to *false*, any provided
-                weights will be added (in the case of
+                restrictions will be added (in the case of
                 'RESTRICTIONS_VALUECOMPARED') to or replaced (in the case of
                 'RESTRICTIONS_ONOFFCOMPARED').  The default value is an empty
                 list ( [] ).  The user can provide a single element (which will
                 be automatically promoted to a list internally) or a list.
 
             num_levels (int)
-                Number of equally separated isochrone to compute.  The default
+                Number of equally-separated isochrones to compute.  The default
                 value is 1.
 
             generate_image (bool)
-                If true, return a PNG of the isochrone in the response.  The
-                default value is True.
+                If set to *true*, generates a PNG image of the isochrones in
+                the response.
+                Allowed values are:
+
+                * true
+                * false
+
+                The default value is True.
 
             levels_table (str)
-                Name of the table to output the isochrone, containing levels
-                and their corresponding WKT geomerty. If no name is given, the
-                table is not generated.  The default value is ''.
+                Name of the table to output the isochrones, containing levels
+                and their corresponding WKT geometry. If no value is provided,
+                the table is not generated.  The default value is ''.
 
             style_options (dict of str to str)
                 Various style related options of the isochrone image.
                 Allowed keys are:
 
                 * **line_size** --
-                  The width of the contour lines in pixel.  The default value
+                  The width of the contour lines in pixels.  The default value
                   is '3'.
 
                 * **color** --
-                  Color of generated curves. All color values must be in the
+                  Color of generated isolines. All color values must be in the
                   format RRGGBB or AARRGGBB (to specify the alpha value). If
                   alpha is specified and flooded contours are enabled, it will
                   be used for as the transparency of the latter.  The default
                   value is 'FF696969'.
 
                 * **bg_color** --
-                  Background color of the generated image. All color values
+                  When input parameter *generate_image* is set to *true*,
+                  background color of the generated image. All color values
                   must be in the format RRGGBB or AARRGGBB (to specify the
                   alpha value).  The default value is '00000000'.
 
                 * **text_color** --
-                  Color for the labels when enabled. All color values must be
-                  in the format RRGGBB or AARRGGBB (to specify the alpha
-                  value).  The default value is 'FF000000'.
+                  When *add_labels* is set to *true*, color for the labels. All
+                  color values must be in the format RRGGBB or AARRGGBB (to
+                  specify the alpha value).  The default value is 'FF000000'.
 
                 * **colormap** --
-                  Colormap for contours or fill-in regions when enabled. All
+                  Colormap for contours or fill-in regions when applicable. All
                   color values must be in the format RRGGBB or AARRGGBB (to
                   specify the alpha value).
                   Allowed values are:
@@ -19815,14 +19837,14 @@ class GPUdb(object):
 
                 * **restriction_threshold_value** --
                   Value-based restriction comparison. Any node or edge with a
-                  RESTRICTIONS_VALUECOMPARED value greater than the
+                  'RESTRICTIONS_VALUECOMPARED' value greater than the
                   *restriction_threshold_value* will not be included in the
                   solution.
 
                 * **uniform_weights** --
-                  When speficied, assigns the given value to all the edges in
-                  the graph. Note that weights specified in @{weights_on_edges}
-                  override this value.
+                  When specified, assigns the given value to all the edges in
+                  the graph. Note that weights provided in input parameter
+                  *weights_on_edges* will override this value.
 
             contour_options (dict of str to str)
                 Solver specific parameters.  The default value is an empty dict
@@ -19846,13 +19868,14 @@ class GPUdb(object):
                   The default value is 'PLATE_CARREE'.
 
                 * **width** --
-                  Height of the generated image if applicable.  The default
-                  value is '512'.
+                  When input parameter *generate_image* is set to *true*, width
+                  of the generated image.  The default value is '512'.
 
                 * **height** --
-                  Height of the generated image if applicable. If not given, a
-                  default of aspect_ratio*width is used.  The default value is
-                  '-1'.
+                  When input parameter *generate_image* is set to *true*,
+                  height of the generated image. If the default value is used,
+                  the *height* is set to the value resulting from multiplying
+                  the aspect ratio by the *width*.  The default value is '-1'.
 
                 * **search_radius** --
                   When interpolating the graph solution to generate the
@@ -19861,49 +19884,61 @@ class GPUdb(object):
 
                 * **grid_size** --
                   When interpolating the graph solution to generate the
-                  isochrone, number of subdivisions alongs the x axis when
+                  isochrone, number of subdivisions along the x axis when
                   building the grid (the y is computed using the aspect ratio
                   of the output image).  The default value is '100'.
 
                 * **color_isolines** --
                   Color each isoline according to the colormap; otherwise, use
-                  the foreground color.  The default value is 'true'.
+                  the foreground color.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
                 * **add_labels** --
-                  Labels the isolines in the image.  The default value is
-                  'false'.
+                  If set to *true*, add labels to the isolines.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **labels_font_size** --
-                  Font size to be unsed when adding labels, in pixels.  The
-                  default value is '12'.
+                  When *add_labels* is set to *true*, size of the font (in
+                  pixels) to use for labels.  The default value is '12'.
 
                 * **labels_font_family** --
-                  Font name to be unsed when adding labels.  The default value
-                  is 'arial'.
+                  When *add_labels* is set to *true*, font name to be used when
+                  adding labels.  The default value is 'arial'.
 
                 * **labels_search_window** --
-                  When placing labels on isolines, a search window is used to
-                  rate the local quality of each isoline. Smooth, continuous,
-                  long stretches with relatively flat angles are favored. The
-                  given number multiplied by the font size to get the final
-                  window size to use.  The default value is '4'.
+                  When *add_labels* is set to *true*, a search window is used
+                  to rate the local quality of each isoline. Smooth,
+                  continuous, long stretches with relatively flat angles are
+                  favored. The provided value is multiplied by the
+                  *labels_font_size* to calculate the final window size.  The
+                  default value is '4'.
 
                 * **labels_intralevel_separation** --
-                  When labels are enabled, labels are separated to avoid
-                  overlap: This specifies the distance certain distance (in
-                  multiples of the font size) to use when separating labels of
-                  different values.  The default value is '4'.
+                  When *add_labels* is set to *true*, this value determines the
+                  distance (in multiples of the *labels_font_size*) to use when
+                  separating labels of different values.  The default value is
+                  '4'.
 
                 * **labels_interlevel_separation** --
-                  When labels are enabled, more than one label can placed on
-                  the same isoline: This specifies the distance certain
+                  When *add_labels* is set to *true*, this value determines the
                   distance (in percent of the total window size) to use when
                   separating labels of the same value.  The default value is
                   '20'.
 
                 * **labels_max_angle** --
-                  Maximum angle from the vertical to use when adding labels, in
-                  degrees.  The default value is '60'.
+                  When *add_labels* is set to *true*, maximum angle (in
+                  degrees) from the vertical to use when adding labels.  The
+                  default value is '60'.
 
             options (dict of str to str)
                 Additional parameters.  The default value is an empty dict ( {}
@@ -19911,35 +19946,56 @@ class GPUdb(object):
                 Allowed keys are:
 
                 * **solve_table** --
-                  Name of the table of the intermediate solve results,
-                  conatining the position and cost for each vertex in the
-                  graph. If no name is given, a temporary table is created and
-                  deleted one the solve is done.  The default value is ''.
+                  Name of the table to host intermediate solve results
+                  containing the position and cost for each vertex in the
+                  graph. If the default value is used, a temporary table is
+                  created and deleted once the solution is calculated.  The
+                  default value is ''.
 
                 * **is_replicated** --
-                  Replicate the solution table if true.  The default value is
-                  'true'.
+                  If set to *true*, replicate the *solve_table*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
                 * **data_min_x** --
-                  Lower bound for the x values. If not given, it will be
+                  Lower bound for the x values. If not provided, it will be
                   computed from the bounds of the input data.
 
                 * **data_max_x** --
-                  Upper bound for the x values. If not given, it will be
+                  Upper bound for the x values. If not provided, it will be
                   computed from the bounds of the input data.
 
                 * **data_min_y** --
-                  Lower bound for the y values. If not given, it will be
+                  Lower bound for the y values. If not provided, it will be
                   computed from the bounds of the input data.
 
                 * **data_max_y** --
-                  Upper bound for the y values. If not given, it will be
+                  Upper bound for the y values. If not provided, it will be
                   computed from the bounds of the input data.
 
                 * **concavity_level** --
-                  Factor to qualify the concavity of the isocrhone curves, 0
-                  for completely convex, 1 to maximize concavity.  The default
-                  value is '0.5'.
+                  Factor to qualify the concavity of the isochrone curves. The
+                  lower the value, the more convex (with '0' being completely
+                  convex and '1' being the most concave).  The default value is
+                  '0.5'.
+
+                * **use_priority_queue_solvers** --
+                  sets the solver methods explicitly if true.
+                  Allowed values are:
+
+                  * **true** --
+                    uses the solvers scheduled for 'shortest_path' and
+                    'inverse_shortest_path' based on solve_direction
+
+                  * **false** --
+                    uses the solvers 'priority_queue' and
+                    'inverse_priority_queue' based on solve_direction
+
+                  The default value is 'false'.
 
                 * **solve_direction** --
                   Specify whether we are going to the source node, or starting

@@ -3,11 +3,15 @@
 
 ## Version 7.0
 
-### Version 7.0.5.0 - YYYY-MM-DD
+### Version 7.0.5.0 - 2019-06-25
 
 #### Added
+-   Added an option to /visualize/isochrone for solving using the priority_queue 
+    option both for direct and inverse senses.
+    This accelerates solve times for small to medium underlying graphs
 
 #### Changed
+-   Aligned /visualize/isochrone options to be inline with the contour and solve ones
 
 #### Removed
 

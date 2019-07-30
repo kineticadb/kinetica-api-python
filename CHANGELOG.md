@@ -2,6 +2,15 @@
 
 ## Version 7.0
 
+### Version 7.0.5.0 - 2019-06-26
+
+#### Added
+-   Minor documentation and some options for some endpoints
+
+#### Changed
+-   Parameters for /visualize/isoschrone
+
+
 ### Version 7.0.4.0 - 2019-06-21
 
 #### Changed
