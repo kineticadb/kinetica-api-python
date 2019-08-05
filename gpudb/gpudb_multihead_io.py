@@ -2730,9 +2730,6 @@ class RecordRetriever:
             record_type (GPUdbRecordType)
                 The type for the records which will be retrieved; must match
                 the type of the given table.
-            options (dict of str to str)
-                Any insertion options to be passed onto the GPUdb server.  Optional
-                parameter.
             workers (GPUdbWorkerList)
                 Optional parameter.  A list of GPUdb worker rank addresses.
             is_table_replicated (bool)
@@ -2967,7 +2964,7 @@ class RecordRetriever:
 
 
 
-    def get_records_by_key( self, key_values, expression = "" ):
+    def get_records_by_key( self, key_values, expression = "", options = None ):
         """Fetches the record(s) from the appropriate worker rank directly
         (or, if multi-head record retrieval is not set up, then from the
         head node) that map to the given shard key.
@@ -2984,9 +2981,20 @@ class RecordRetriever:
                 Optional parameter.  If given, it is passed to /get/records as
                 a filter expression.
 
+            options (dict of str to str or None)
+                Any /get/records options to be passed onto the GPUdb server.  Optional
+                parameter.
+
         Returns:
             The decoded records.
         """
+        # Validate input parameter 'options'
+        if not isinstance( options, (dict, type(None)) ):
+            raise GPUdbException( "Parameter 'options' must be a"
+                                  "dicitonary, if given; given %s"
+                                  % str( type( options ) ) )
+
+
         # If there is no shard key AND the column names aren't given, we can't do this
         if ( (not self.shard_key_builder)
              and (not isinstance( key_values, dict )) ):
@@ -3008,7 +3016,8 @@ class RecordRetriever:
         # end if
 
         # Set up the options
-        options = {}
+        if (options is None):
+            options = {}
         options["expression"] = expression
         options["fast_index_lookup"] = "true"
 

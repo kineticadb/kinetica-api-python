@@ -2,6 +2,13 @@
 
 ## Version 7.0
 
+### Version 7.0.6.0 - 2019-07-27
+
+#### Added
+-   Support for passing /get/records options to RecordRetriever.get_records_by_key()
+    and GPUdbTable.get_records_by_key()
+
+
 ### Version 7.0.5.0 - 2019-06-26
 
 #### Added

@@ -2939,7 +2939,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.5.0"
+    api_version   = "7.0.6.0"
 
     # Constants
     END_OF_SET = -9999
@@ -4473,9 +4473,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/admin/show/jobs"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_show_jobs_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_show_jobs_response","fields":[{"name":"job_id","type":{"type":"array","items":"long"}},{"name":"status","type":{"type":"array","items":"string"}},{"name":"endpoint_name","type":{"type":"array","items":"string"}},{"name":"time_received","type":{"type":"array","items":"long"}},{"name":"auth_id","type":{"type":"array","items":"string"}},{"name":"user_data","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_show_jobs_response","fields":[{"name":"job_id","type":{"type":"array","items":"long"}},{"name":"status","type":{"type":"array","items":"string"}},{"name":"endpoint_name","type":{"type":"array","items":"string"}},{"name":"time_received","type":{"type":"array","items":"long"}},{"name":"auth_id","type":{"type":"array","items":"string"}},{"name":"source_ip","type":{"type":"array","items":"string"}},{"name":"user_data","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("job_id", "array", [("long")]), ("status", "array", [("string")]), ("endpoint_name", "array", [("string")]), ("time_received", "array", [("long")]), ("auth_id", "array", [("string")]), ("user_data", "array", [("string")]), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("job_id", "array", [("long")]), ("status", "array", [("string")]), ("endpoint_name", "array", [("string")]), ("time_received", "array", [("long")]), ("auth_id", "array", [("string")]), ("source_ip", "array", [("string")]), ("user_data", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/show/jobs"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -5279,6 +5279,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/grant/permission/proc"
+        REQ_SCHEMA_STR = """{"type":"record","name":"grant_permission_proc_request","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"proc_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"grant_permission_proc_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"proc_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("proc_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("proc_name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/grant/permission/proc"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/grant/permission/system"
         REQ_SCHEMA_STR = """{"type":"record","name":"grant_permission_system_request","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"grant_permission_system_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -5436,11 +5447,22 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/query/graph"
-        REQ_SCHEMA_STR = """{"name":"query_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"queries","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"adjacency_table","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"name":"query_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"queries","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"adjacency_table","type":"string"},{"name":"rings","type":"int"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"name":"query_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"adjacency_list_int_array","type":{"type":"array","items":"long"}},{"name":"adjacency_list_string_array","type":{"type":"array","items":"string"}},{"name":"adjacency_list_wkt_array","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("queries", "array", [("string")]), ("restrictions", "array", [("string")]), ("adjacency_table", "string"), ("options", "map", [("string")])] )
+        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("queries", "array", [("string")]), ("restrictions", "array", [("string")]), ("adjacency_table", "string"), ("rings", "int"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("adjacency_list_int_array", "array", [("long")]), ("adjacency_list_string_array", "array", [("string")]), ("adjacency_list_wkt_array", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/query/graph"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/revoke/permission/proc"
+        REQ_SCHEMA_STR = """{"type":"record","name":"revoke_permission_proc_request","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"proc_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"revoke_permission_proc_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"proc_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("proc_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("proc_name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/revoke/permission/proc"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -5474,6 +5496,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("role", "string"), ("member", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("role", "string"), ("member", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/revoke/role"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/show/graph"
+        REQ_SCHEMA_STR = """{"name":"show_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"name":"show_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"graph_names","type":{"type":"array","items":"string"}},{"name":"directed","type":{"type":"array","items":"boolean"}},{"name":"num_nodes","type":{"type":"array","items":"long"}},{"name":"num_edges","type":{"type":"array","items":"long"}},{"name":"is_persisted","type":{"type":"array","items":"boolean"}},{"name":"is_sync_db","type":{"type":"array","items":"boolean"}},{"name":"has_insert_table_monitor","type":{"type":"array","items":"boolean"}},{"name":"original_request","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("graph_names", "array", [("string")]), ("directed", "array", [("boolean")]), ("num_nodes", "array", [("long")]), ("num_edges", "array", [("long")]), ("is_persisted", "array", [("boolean")]), ("is_sync_db", "array", [("boolean")]), ("has_insert_table_monitor", "array", [("boolean")]), ("original_request", "array", [("string")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/show/graph"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -5856,6 +5889,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["get_records_by_series"] = "/get/records/byseries"
         self.gpudb_func_to_endpoint_map["get_records_from_collection"] = "/get/records/fromcollection"
         self.gpudb_func_to_endpoint_map["get_vectortile"] = "/get/vectortile"
+        self.gpudb_func_to_endpoint_map["grant_permission_proc"] = "/grant/permission/proc"
         self.gpudb_func_to_endpoint_map["grant_permission_system"] = "/grant/permission/system"
         self.gpudb_func_to_endpoint_map["grant_permission_table"] = "/grant/permission/table"
         self.gpudb_func_to_endpoint_map["grant_role"] = "/grant/role"
@@ -5871,9 +5905,11 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["match_graph"] = "/match/graph"
         self.gpudb_func_to_endpoint_map["merge_records"] = "/merge/records"
         self.gpudb_func_to_endpoint_map["query_graph"] = "/query/graph"
+        self.gpudb_func_to_endpoint_map["revoke_permission_proc"] = "/revoke/permission/proc"
         self.gpudb_func_to_endpoint_map["revoke_permission_system"] = "/revoke/permission/system"
         self.gpudb_func_to_endpoint_map["revoke_permission_table"] = "/revoke/permission/table"
         self.gpudb_func_to_endpoint_map["revoke_role"] = "/revoke/role"
+        self.gpudb_func_to_endpoint_map["show_graph"] = "/show/graph"
         self.gpudb_func_to_endpoint_map["show_proc"] = "/show/proc"
         self.gpudb_func_to_endpoint_map["show_proc_status"] = "/show/proc/status"
         self.gpudb_func_to_endpoint_map["show_resource_statistics"] = "/show/resource/statistics"
@@ -6163,6 +6199,14 @@ class GPUdb(object):
                   always balanced in accordance with their primary key or shard
                   key. Cannot be used simultaneously with *table_whitelist*.
 
+                * **aggressiveness** --
+                  Influences how much data to send per rebalance round.  A
+                  higher aggressiveness setting will complete the rebalance
+                  faster.  A lower aggressiveness setting will take longer, but
+                  allow for better interleaving between the rebalance and other
+                  queries. Allowed values are 1 through 10.  The default value
+                  is '1'.
+
         Returns:
             A dict with the following entries--
 
@@ -6230,6 +6274,14 @@ class GPUdb(object):
                   * false
 
                   The default value is 'true'.
+
+                * **aggressiveness** --
+                  Influences how much data to send per rebalance round, during
+                  the rebalance portion of removing ranks.  A higher
+                  aggressiveness setting will complete the rebalance faster.  A
+                  lower aggressiveness setting will take longer, but allow for
+                  better interleaving between the rebalance and other queries.
+                  Allowed values are 1 through 10.  The default value is '1'.
 
         Returns:
             A dict with the following entries--
@@ -6542,7 +6594,16 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
-                * show_details
+                * **show_async_jobs** --
+                  If *true*, then the completed async jobs are also included in
+                  the response. By default, once the async jobs are completed
+                  they are no longer included in the jobs list.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -6560,6 +6621,9 @@ class GPUdb(object):
 
 
             auth_id (list of str)
+
+
+            source_ip (list of str)
 
 
             user_data (list of str)
@@ -10013,12 +10077,9 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **truncate_strings** --
-                  If set to {true}@{, it allows to append unbounded string to
-                  charN string. If 'truncate_strings' is 'true', the desination
-                  column is charN datatype, and the source column is unnbounded
-                  string, it will truncate the source string to length of N
-                  first, and then append the truncated string to the
-                  destination charN column. The default value is false.
+                  If set to {true}@{, it allows appending longer strings to
+                  smaller charN string columns by truncating the longer string
+                  to fit.  The default value is false.
                   Allowed values are:
 
                   * true
@@ -15918,6 +15979,67 @@ class GPUdb(object):
     # end get_vectortile
 
 
+    # begin grant_permission_proc
+    def grant_permission_proc( self, name = None, permission = None, proc_name =
+                               None, options = {} ):
+        """Grants a proc-level permission to a user or role.
+
+        Parameters:
+
+            name (str)
+                Name of the user or role to which the permission will be
+                granted. Must be an existing user or role.
+
+            permission (str)
+                Permission to grant to the user or role.
+                Allowed values are:
+
+                * **proc_execute** --
+                  Execute access to the proc.
+
+            proc_name (str)
+                Name of the proc to which the permission grants access. Must be
+                an existing proc, or an empty string to grant access to all
+                procs.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+
+            permission (str)
+                Value of input parameter *permission*.
+
+            proc_name (str)
+                Value of input parameter *proc_name*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( name, (basestring)), "grant_permission_proc(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( permission, (basestring)), "grant_permission_proc(): Argument 'permission' must be (one) of type(s) '(basestring)'; given %s" % type( permission ).__name__
+        assert isinstance( proc_name, (basestring)), "grant_permission_proc(): Argument 'proc_name' must be (one) of type(s) '(basestring)'; given %s" % type( proc_name ).__name__
+        assert isinstance( options, (dict)), "grant_permission_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/grant/permission/proc" )
+
+        obj = {}
+        obj['name'] = name
+        obj['permission'] = permission
+        obj['proc_name'] = proc_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/grant/permission/proc' )
+
+        return AttrDict( response )
+    # end grant_permission_proc
+
+
     # begin grant_permission_system
     def grant_permission_system( self, name = None, permission = None, options = {}
                                  ):
@@ -16305,6 +16427,17 @@ class GPUdb(object):
                 * **return_record_ids** --
                   If *true* then return the internal record id along for each
                   inserted record.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **truncate_strings** --
+                  If set to {true}@{, any strings which are too long for their
+                  charN string fields will be truncated to fit.  The default
+                  value is false.
                   Allowed values are:
 
                   * true
@@ -17151,7 +17284,7 @@ class GPUdb(object):
 
     # begin query_graph
     def query_graph( self, graph_name = None, queries = None, restrictions = [],
-                     adjacency_table = '', options = {} ):
+                     adjacency_table = '', rings = '1', options = {} ):
         """Employs a topological query on a network graph generated a-priori by
         :meth:`.create_graph` and returns a list of adjacent edge(s) or
         node(s), also known as an adjacency list, depending on what's been
@@ -17224,21 +17357,22 @@ class GPUdb(object):
                 <../../../graph_solver/network_graph_solver.html#using-labels>`_
                 for more information.  The default value is ''.
 
+            rings (int)
+                Only applicable when querying nodes. Sets the number of rings
+                around the node to query for adjacency, with '1' being the
+                edges directly attached to the queried node. Also known as
+                number of hops. For example, if it is set to '2', the edge(s)
+                directly attached to the queried node(s) will be returned; in
+                addition, the edge(s) attached to the node(s) attached to the
+                initial ring of edge(s) surrounding the queried node(s) will be
+                returned. This setting can be '0' in which case if the node
+                type id label, it'll then query for all that has the same
+                property.  The default value is 1.
+
             options (dict of str to str)
                 Additional parameters.  The default value is an empty dict ( {}
                 ).
                 Allowed keys are:
-
-                * **rings** --
-                  Only applicable when querying nodes. Sets the number of rings
-                  around the node to query for adjacency, with '1' being the
-                  edges directly attached to the queried node. Also known as
-                  number of hops. For example, if *rings* is set to '2', the
-                  edge(s) directly attached to the queried node(s) will be
-                  returned; in addition, the edge(s) attached to the node(s)
-                  attached to the initial ring of edge(s) surrounding the
-                  queried node(s) will be returned. This setting cannot be less
-                  than '1'.  The default value is '1'.
 
                 * **force_undirected** --
                   This parameter is only applicable if the queried graph input
@@ -17261,11 +17395,9 @@ class GPUdb(object):
 
                 * **target_nodes_table** --
                   Name of the table to store the list of the final nodes
-                  reached during the traversal. If the
-                  'QUERY_TARGET_NODE_LABEL' `query identifier
-                  <../../../graph_solver/network_graph_solver.html#query-identifiers>`_
-                  is NOT used in input parameter *queries*, the table will not
-                  be created.  The default value is ''.
+                  reached during the traversal. If this value is not given
+                  it'll default to adjacemcy_table+'_nodes'.  The default value
+                  is ''.
 
                 * **restriction_threshold_value** --
                   Value-based restriction comparison. Any node or edge with a
@@ -17345,6 +17477,7 @@ class GPUdb(object):
         queries = queries if isinstance( queries, list ) else ( [] if (queries is None) else [ queries ] )
         restrictions = restrictions if isinstance( restrictions, list ) else ( [] if (restrictions is None) else [ restrictions ] )
         assert isinstance( adjacency_table, (basestring)), "query_graph(): Argument 'adjacency_table' must be (one) of type(s) '(basestring)'; given %s" % type( adjacency_table ).__name__
+        assert isinstance( rings, (int, long, float)), "query_graph(): Argument 'rings' must be (one) of type(s) '(int, long, float)'; given %s" % type( rings ).__name__
         assert isinstance( options, (dict)), "query_graph(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/query/graph" )
@@ -17354,12 +17487,74 @@ class GPUdb(object):
         obj['queries'] = queries
         obj['restrictions'] = restrictions
         obj['adjacency_table'] = adjacency_table
+        obj['rings'] = rings
         obj['options'] = self.__sanitize_dicts( options )
 
         response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/query/graph' )
 
         return AttrDict( response )
     # end query_graph
+
+
+    # begin revoke_permission_proc
+    def revoke_permission_proc( self, name = None, permission = None, proc_name =
+                                None, options = {} ):
+        """Revokes a proc-level permission from a user or role.
+
+        Parameters:
+
+            name (str)
+                Name of the user or role from which the permission will be
+                revoked. Must be an existing user or role.
+
+            permission (str)
+                Permission to revoke from the user or role.
+                Allowed values are:
+
+                * **proc_execute** --
+                  Execute access to the proc.
+
+            proc_name (str)
+                Name of the proc to which the permission grants access. Must be
+                an existing proc, or an empty string if the permission grants
+                access to all procs.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+
+            permission (str)
+                Value of input parameter *permission*.
+
+            proc_name (str)
+                Value of input parameter *proc_name*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( name, (basestring)), "revoke_permission_proc(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( permission, (basestring)), "revoke_permission_proc(): Argument 'permission' must be (one) of type(s) '(basestring)'; given %s" % type( permission ).__name__
+        assert isinstance( proc_name, (basestring)), "revoke_permission_proc(): Argument 'proc_name' must be (one) of type(s) '(basestring)'; given %s" % type( proc_name ).__name__
+        assert isinstance( options, (dict)), "revoke_permission_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/revoke/permission/proc" )
+
+        obj = {}
+        obj['name'] = name
+        obj['permission'] = permission
+        obj['proc_name'] = proc_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/revoke/permission/proc' )
+
+        return AttrDict( response )
+    # end revoke_permission_proc
 
 
     # begin revoke_permission_system
@@ -17536,6 +17731,87 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end revoke_role
+
+
+    # begin show_graph
+    def show_graph( self, graph_name = '', options = {} ):
+        """Shows information and characteristics of graphs that exist on the graph
+        server, depending on the options specified.
+
+        Parameters:
+
+            graph_name (str)
+                Name of the graph on which to retrieve information. If empty,
+                information about all graphs is returned.  The default value is
+                ''.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **show_original_request** --
+                  If set to *true*, the request that was originally used.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+        Returns:
+            A dict with the following entries--
+
+            result (bool)
+                Indicates a successf. This call will fails of the graph
+                specified in the request does not exist.
+
+            graph_names (list of str)
+                Name(s) of the graph(s).
+
+            directed (list of bools)
+                Whether or not the edges of the graph have directions
+                (bi-directional edges can still exist in directed graphs.
+
+            num_nodes (list of longs)
+                Total number of nodes in the graph.
+
+            num_edges (list of longs)
+                Total number of edges in the graph.
+
+            is_persisted (list of bools)
+                Shows whether or not the graph is persisted (saved and loaded
+                on launch).
+
+            is_sync_db (list of bools)
+                Shows whether or not the graph is linked to the original tables
+                that created it, and will potentially be re-created instead
+                loaded from persist on launch.
+
+            has_insert_table_monitor (list of bools)
+                Shows whether or not the graph has an insert table monitor
+                attached to it.
+
+            original_request (list of str)
+                The orignal client request used to create the graph (before any
+                expression evaluation or separator processing).
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( graph_name, (basestring)), "show_graph(): Argument 'graph_name' must be (one) of type(s) '(basestring)'; given %s" % type( graph_name ).__name__
+        assert isinstance( options, (dict)), "show_graph(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/show/graph" )
+
+        obj = {}
+        obj['graph_name'] = graph_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/show/graph' )
+
+        return AttrDict( response )
+    # end show_graph
 
 
     # begin show_proc
@@ -21329,7 +21605,7 @@ class GPUdbTable( object ):
 
 
 
-    def get_records_by_key( self, key_values, expression = "" ):
+    def get_records_by_key( self, key_values, expression = "", options = None ):
         """Fetches the record(s) from the appropriate worker rank directly
         (or, if multi-head record retrieval is not set up, then from the
         head node) that map to the given shard key.
@@ -21346,6 +21622,10 @@ class GPUdbTable( object ):
                 Optional parameter.  If given, it is passed to /get/records as
                 a filter expression.
 
+            options (dict of str to str or None)
+                Any /get/records options to be passed onto the GPUdb server.  Optional
+                parameter.
+
         Returns:
             The decoded records.
         """
@@ -21353,7 +21633,7 @@ class GPUdbTable( object ):
             raise GPUdbException( "Record retrieval by sharding/primary keys "
                                   "is not set up for this table." )
         
-        return self._multihead_retriever.get_records_by_key( key_values, expression )
+        return self._multihead_retriever.get_records_by_key( key_values, expression, options )
     # end get_records_by_key
 
 
@@ -24173,12 +24453,9 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **truncate_strings** --
-                  If set to {true}@{, it allows to append unbounded string to
-                  charN string. If 'truncate_strings' is 'true', the desination
-                  column is charN datatype, and the source column is unnbounded
-                  string, it will truncate the source string to length of N
-                  first, and then append the truncated string to the
-                  destination charN column. The default value is false.
+                  If set to {true}@{, it allows appending longer strings to
+                  smaller charN string columns by truncating the longer string
+                  to fit.  The default value is false.
                   Allowed values are:
 
                   * true
@@ -25737,69 +26014,6 @@ class GPUdbTable( object ):
 
         return response
     # end lock_table
-
-
-    def revoke_permission_table( self, permission = None, table_name = None,
-                                 options = {} ):
-        """Revokes a table-level permission from a user or role.
-
-        Parameters:
-
-            permission (str)
-                Permission to revoke from the user or role.
-                Allowed values are:
-
-                * **table_admin** --
-                  Full read/write and administrative access to the table.
-
-                * **table_insert** --
-                  Insert access to the table.
-
-                * **table_update** --
-                  Update access to the table.
-
-                * **table_delete** --
-                  Delete access to the table.
-
-                * **table_read** --
-                  Read access to the table.
-
-            table_name (str)
-                Name of the table to which the permission grants access. Must
-                be an existing table, collection, or view.
-
-            options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
-
-        Returns:
-            The response from the server which is a dict containing the
-            following entries--
-
-            name (str)
-                Value of input parameter *name*.
-
-            permission (str)
-                Value of input parameter *permission*.
-
-            table_name (str)
-                Value of input parameter *table_name*.
-
-            info (dict of str to str)
-                Additional information.
-
-        Raises:
-
-            GPUdbException -- 
-                Upon an error from the server.
-        """
-        response = self.db.revoke_permission_table( self.name, permission,
-                                                    table_name, options )
-        if not _Util.is_ok( response ):
-            raise GPUdbException( _Util.get_error_msg( response ) )
-
-        return response
-    # end revoke_permission_table
 
 
     def show_table( self, options = {} ):

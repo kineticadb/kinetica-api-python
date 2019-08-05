@@ -3,6 +3,29 @@
 
 ## Version 7.0
 
+### Version 7.0.6.0 - 2019-07-11
+
+#### Added 
+- Added the new parameter "rings" to the query/graph endpoint
+- Added new rebalance "aggressiveness" option to /admin/rebalance and /admin/remove/ranks
+
+#### Removed
+- Removed the "rings" parameter from the options list of query/graph endpoint
+
+
+#### Added
+-   New endpoints to support proc (UDF) execute permissions
+    -   /grant/permission/proc
+    -   /revoke/permission/proc
+-   /show/graph That shows basic properties of one or all graphs on the graph server
+-   /admin/show/jobs no longer shows the completed async jobs by default. Use the
+    option "show_async_jobs" to include the completed jobs.
+
+#### Changed
+
+#### Removed
+
+
 ### Version 7.0.5.0 - 2019-06-25
 
 #### Added
