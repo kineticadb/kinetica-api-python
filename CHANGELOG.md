@@ -2,6 +2,17 @@
 
 ## Version 7.0
 
+### Version 7.0.6.1 - 2019-08-14
+
+#### Changed
+-   Added support for high availability failover when the system is limited
+    (in addition to connection problems).  ***Compatible with Kinetica Server
+    version 7.0.6.2 and later only.***
+
+#### Server Version Compatibilty
+-   Kinetica 7.0.6.2 and later
+
+
 ### Version 7.0.6.0 - 2019-07-27
 
 #### Added

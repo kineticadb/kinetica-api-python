@@ -145,7 +145,8 @@ class C:
     _ha_ring_head_nodes = "conf.ha_ring_head_nodes"
 
     # Special error messages coming from the database
-    _KINETICA_EXITING   = "Kinetica is exiting"
+    _DB_EXITING_ERROR_MESSAGE        = "Kinetica is exiting"
+    _DB_SYSTEM_LIMITED_ERROR_MESSAGE = "system-limited-fatal";
     _CONNECTION_REFUSED = "Connection refused"
     _CONNECTION_RESET   = "Connection reset"
 
@@ -2939,7 +2940,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.6.0"
+    api_version   = "7.0.6.1"
 
     # Constants
     END_OF_SET = -9999
@@ -3571,7 +3572,8 @@ class GPUdb(object):
 
         # If Kinetica is exiting, we need special handling for HA failover
         if ( (out['status_info']['status'] == 'ERROR')
-             and ( (C._KINETICA_EXITING in out['status_info']['message'])
+             and ( (C._DB_EXITING_ERROR_MESSAGE in out['status_info']['message'])
+                   or (C._DB_SYSTEM_LIMITED_ERROR_MESSAGE in out['status_info']['message'])
                    or (C._CONNECTION_REFUSED in out['status_info']['message'])
                    or (C._CONNECTION_RESET in out['status_info']['message']) ) ):
             raise GPUdbExitException( out['status_info']['message'] )
@@ -8005,9 +8007,9 @@ class GPUdb(object):
         can be used for numeric valued binning-columns, a min, max and interval
         are specified. The number of bins, nbins, is the integer upper bound of
         (max-min)/interval. Values that fall in the range
-        [min+n\*interval,min+(n+1)\*interval) are placed in the nth bin where n
-        ranges from 0..nbin-2. The final bin is [min+(nbin-1)\*interval,max].
-        In the second method, input parameter *options* bin_values specifies a
+        [min+n*interval,min+(n+1)*interval) are placed in the nth bin where n
+        ranges from 0..nbin-2. The final bin is [min+(nbin-1)*interval,max]. In
+        the second method, input parameter *options* bin_values specifies a
         list of binning column values. Binning-columns whose value matches the
         nth member of the bin_values list are placed in the nth bin. When a
         list is provided the binning-column must be of type string or int.
@@ -8047,8 +8049,8 @@ class GPUdb(object):
 
             interval (float)
                 The interval of a bin. Set members fall into bin i if the
-                binning-column falls in the range [start+interval``*``i,
-                start+interval``*``(i+1)).
+                binning-column falls in the range [start+interval*i,
+                start+interval*(i+1)).
 
             options (dict of str to str)
                 Map of optional parameters:.  The default value is an empty
@@ -17396,7 +17398,7 @@ class GPUdb(object):
                 * **target_nodes_table** --
                   Name of the table to store the list of the final nodes
                   reached during the traversal. If this value is not given
-                  it'll default to adjacemcy_table+'_nodes'.  The default value
+                  it'll default to adjacency_table+'_nodes'.  The default value
                   is ''.
 
                 * **restriction_threshold_value** --
@@ -17408,11 +17410,11 @@ class GPUdb(object):
                 * **export_query_results** --
                   Returns query results in the response. If set to *true*, the
                   output parameter *adjacency_list_int_array* (if the query was
-                  based on IDs), @{adjacency_list_string_array} (if the query
-                  was based on names), or @{output_adjacency_list_wkt_array}
-                  (if the query was based on WKTs) will be populated with the
-                  results. If set to *false*, none of the arrays will be
-                  populated.
+                  based on IDs), output parameter *adjacency_list_string_array*
+                  (if the query was based on names), or output parameter
+                  *adjacency_list_wkt_array* (if the query was based on WKTs)
+                  will be populated with the results. If set to *false*, none
+                  of the arrays will be populated.
                   Allowed values are:
 
                   * true
@@ -23391,9 +23393,9 @@ class GPUdbTable( object ):
         can be used for numeric valued binning-columns, a min, max and interval
         are specified. The number of bins, nbins, is the integer upper bound of
         (max-min)/interval. Values that fall in the range
-        [min+n\*interval,min+(n+1)\*interval) are placed in the nth bin where n
-        ranges from 0..nbin-2. The final bin is [min+(nbin-1)\*interval,max].
-        In the second method, input parameter *options* bin_values specifies a
+        [min+n*interval,min+(n+1)*interval) are placed in the nth bin where n
+        ranges from 0..nbin-2. The final bin is [min+(nbin-1)*interval,max]. In
+        the second method, input parameter *options* bin_values specifies a
         list of binning column values. Binning-columns whose value matches the
         nth member of the bin_values list are placed in the nth bin. When a
         list is provided the binning-column must be of type string or int.
@@ -23429,8 +23431,8 @@ class GPUdbTable( object ):
 
             interval (float)
                 The interval of a bin. Set members fall into bin i if the
-                binning-column falls in the range [start+interval``*``i,
-                start+interval``*``(i+1)).
+                binning-column falls in the range [start+interval*i,
+                start+interval*(i+1)).
 
             options (dict of str to str)
                 Map of optional parameters:.  The default value is an empty
