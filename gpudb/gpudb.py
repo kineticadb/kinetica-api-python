@@ -110,6 +110,8 @@ class C:
     _join         = "JOIN"
     _result_table = "RESULT_TABLE"
     _total_full_size = "total_full_size"
+    _additional_info = "additional_info"
+    _collection_name = "collection_names"
 
     # /show/system/properties response
     _property_map = "property_map"
@@ -1742,7 +1744,7 @@ class GPUdbRecord( object ):
         num_records = len( dynamic_json_data["column_1"] )
 
         # Create all the records
-        for i in range(0, num_records):
+        for i in list( range(0, num_records) ):
             record = collections.OrderedDict()
 
             # Create a single record
@@ -1904,7 +1906,7 @@ class GPUdbRecord( object ):
             # Check that the order of the columns is ok
             # (we can only check string vs. numeric types, really;
             # we can also check for nulls)
-            for i in range(0, num_columns):
+            for i in list( range(0, num_columns) ):
                 column_name = self._record_type.columns[ i ].name
                 # The given value for this column
                 column_val = column_values[ i ]
@@ -1928,7 +1930,7 @@ class GPUdbRecord( object ):
 
             # We will disregard the order in which the column values were listed
             # in column_values (this should help the user somewhat)
-            for i in range(0, num_columns):
+            for i in list( range(0, num_columns) ):
                 column_name = self._record_type.columns[ i ].name
                 column_val  = column_values[ column_name ]
 
@@ -2550,7 +2552,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "6.2.0.12"
+    api_version   = "6.2.0.13"
 
     # constants
     END_OF_SET = -9999
@@ -6380,9 +6382,9 @@ class GPUdb(object):
         can be used for numeric valued binning-columns, a min, max and interval
         are specified. The number of bins, nbins, is the integer upper bound of
         (max-min)/interval. Values that fall in the range
-        [min+n\*interval,min+(n+1)\*interval) are placed in the nth bin where n
-        ranges from 0..nbin-2. The final bin is [min+(nbin-1)\*interval,max].
-        In the second method, input parameter *options* bin_values specifies a
+        [min+n*interval,min+(n+1)*interval) are placed in the nth bin where n
+        ranges from 0..nbin-2. The final bin is [min+(nbin-1)*interval,max]. In
+        the second method, input parameter *options* bin_values specifies a
         list of binning column values. Binning-columns whose value matches the
         nth member of the bin_values list are placed in the nth bin. When a
         list is provided the binning-column must be of type string or int.
@@ -6422,8 +6424,8 @@ class GPUdb(object):
 
             interval (float)
                 The interval of a bin. Set members fall into bin i if the
-                binning-column falls in the range [start+interval``*``i,
-                start+interval``*``(i+1)).
+                binning-column falls in the range [start+interval*i,
+                start+interval*(i+1)).
 
             options (dict of str to str)
                 Map of optional parameters:.  The default value is an empty
@@ -15709,11 +15711,12 @@ class GPUdbTable( object ):
             self._temporary_view_names.update( temporary_view_names )
 
         # Some default values (assuming it is not a read-only table)
-        self._count         = None
-        self._is_read_only  = False
-        self._is_collection = False
-        self._type_id       = None
-        self._is_replicated = self.options._is_replicated
+        self._count           = None
+        self._is_read_only    = False
+        self._is_collection   = False
+        self._collection_name = self.options._collection_name
+        self._type_id         = None
+        self._is_replicated   = self.options._is_replicated
 
         # The table is known to be read only
         if read_only_table_count is not None: # Integer value 0 accepted
@@ -15743,8 +15746,14 @@ class GPUdbTable( object ):
         self.name = name if name else GPUdbTable.random_name()
 
         try:
+            # Does a table with the same name exist already?
+            has_table_rsp = self.db.has_table( self.name )
+            if not _Util.is_ok( has_table_rsp ): # problem creating the table
+                raise GPUdbException( "Problem checking existence of the table: " + _Util.get_error_msg( has_table_rsp ) )
+            table_exists = has_table_rsp["table_exists"]
+            
             # Do different things based on whether the table already exists
-            if self.db.has_table( self.name )["table_exists"]:
+            if table_exists:
                 # Check that the given type agrees with the existing table's type, if any given
                 show_table_rsp = self.db.show_table( self.name,
                                                      options = {"show_children": "false"} )
@@ -15757,6 +15766,11 @@ class GPUdbTable( object ):
                     self._is_collection = True
                 else: # need to save the type ID for regular tables
                     self._type_id = show_table_rsp["type_ids"][0]
+                    # Also save the name of any collection this table is a part of
+                    if ( (C._collection_name in show_table_rsp[ C._additional_info ][0] )
+                         and show_table_rsp[ C._additional_info ][0][ C._collection_name ] ):
+                        self._collection_name = show_table_rsp[ C._additional_info ][0][ C._collection_name ]
+                # end if else
 
                 if not self._is_collection: # not a collection
                     gtable_type = GPUdbRecordType( None, "", show_table_rsp["type_schemas"][0],
@@ -16057,6 +16071,24 @@ class GPUdbTable( object ):
         """
         return self.__len__()
     # end count
+
+    
+    @property
+    def is_collection( self ):
+        """Returns True if the table is a collection; False otherwise."""
+        return self._is_collection
+    # end is_collection
+
+    
+    @property
+    def collection_name( self ):
+        """Returns the name of the collection this table is a member of; None if
+        this table does not belong to any collection.
+        """
+        return self._collection_name
+    # end collection_name
+    
+
     def is_replicated( self ):
         """Returns True if the table is replicated."""
         return self._is_replicated
@@ -18419,9 +18451,9 @@ class GPUdbTable( object ):
         can be used for numeric valued binning-columns, a min, max and interval
         are specified. The number of bins, nbins, is the integer upper bound of
         (max-min)/interval. Values that fall in the range
-        [min+n\*interval,min+(n+1)\*interval) are placed in the nth bin where n
-        ranges from 0..nbin-2. The final bin is [min+(nbin-1)\*interval,max].
-        In the second method, input parameter *options* bin_values specifies a
+        [min+n*interval,min+(n+1)*interval) are placed in the nth bin where n
+        ranges from 0..nbin-2. The final bin is [min+(nbin-1)*interval,max]. In
+        the second method, input parameter *options* bin_values specifies a
         list of binning column values. Binning-columns whose value matches the
         nth member of the bin_values list are placed in the nth bin. When a
         list is provided the binning-column must be of type string or int.
@@ -18457,8 +18489,8 @@ class GPUdbTable( object ):
 
             interval (float)
                 The interval of a bin. Set members fall into bin i if the
-                binning-column falls in the range [start+interval``*``i,
-                start+interval``*``(i+1)).
+                binning-column falls in the range [start+interval*i,
+                start+interval*(i+1)).
 
             options (dict of str to str)
                 Map of optional parameters:.  The default value is an empty

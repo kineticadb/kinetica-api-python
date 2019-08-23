@@ -3,6 +3,18 @@
 
 ## Version 6.2
 
+### Version 6.2.0.13 - 2019-08-23
+
+#### Added
+-   The following properties to GPUdbTable regarding whether the table itself is a
+    collection or belongs to a collection:
+    -   GPUdbTable.is_collection
+    -   GPUdbTable.collection_name
+
+#### Fixed
+-   Some Python3 compatibility related issues
+
+
 ### Version 6.2.0.12 - 2019-06-21
 
 #### Changed

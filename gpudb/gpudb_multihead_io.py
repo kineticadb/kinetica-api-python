@@ -209,7 +209,7 @@ class GPUdbWorkerList:
             self.worker_URLs_per_rank = system_properties[ C._worker_URLs ].split( ";" )
 
             # Process the URLs per worker rank (ignoring rank-0)
-            for i in range(1, len(self.worker_URLs_per_rank)):
+            for i in list( range(1, len(self.worker_URLs_per_rank)) ):
                 urls_per_rank = self.worker_URLs_per_rank[ i ]
                 url_addresses_for_this_rank = urls_per_rank.split( "," )
                 found = False
@@ -266,7 +266,7 @@ class GPUdbWorkerList:
             protocol = "https://" if (gpudb.connection == "HTTPS") else "http://"
 
             # Process the IP addresses per worker rank (ignoring rank-0)
-            for i in range(1, len(self.worker_IPs_per_rank)):
+            for i in list( range(1, len(self.worker_IPs_per_rank)) ):
                 ips_per_rank = self.worker_IPs_per_rank[ i ]
                 ip_addresses_for_this_rank = ips_per_rank.split( "," )
                 found = False
@@ -506,7 +506,7 @@ class _RecordKey:
 
             # Handle nulls
             if val is None:
-                for i in range( 0, N ):
+                for i in list( range( 0, N ) ):
                     self._buffer_value += struct.pack( "=b", 0 )
                 return
             # end if
@@ -518,7 +518,7 @@ class _RecordKey:
                 byte_count = N
 
             # First, pad with any zeroes "at the end"
-            for i in range(N, byte_count, -1):
+            for i in list( range(N, byte_count, -1) ):
                 self._buffer_value += struct.pack( "=b", 0 )
 
             
@@ -542,7 +542,7 @@ class _RecordKey:
 
             # Handle nulls
             if val is None:
-                for i in range( 0, N ):
+                for i in list( range( 0, N ) ):
                     self._buffer_value += struct.pack( "=b", 0 )
                 return
             # end if
@@ -558,7 +558,7 @@ class _RecordKey:
                 byte_count = N
 
             # First, pad with any zeroes "at the end"
-            for i in range(N, byte_count, -1):
+            for i in list( range(N, byte_count, -1) ):
                 self._buffer_value += struct.pack( "=b", 0 )
 
 
@@ -1520,7 +1520,7 @@ class _RecordKeyBuilder:
         self._key_types = []
 
         # Go over all columns and see which ones are primary or shard keys
-        for i in range(0, len( record_type.columns )):
+        for i in list( range(0, len( record_type.columns )) ):
             column_name = self._record_column_names[ i ]
             column_type = record_type.columns[ i ].column_type
             column_properties = self._column_properties[ column_name ] \
@@ -1733,7 +1733,7 @@ class _RecordKeyBuilder:
         record_key = _RecordKey( self._key_buffer_size )
 
         # Add each routing column's value to the key
-        for i in range( 0, len( self.routing_key_indices ) ):
+        for i in list( range( 0, len( self.routing_key_indices ) ) ):
             # Extract the value for the relevant routing column
             value = key_values[ i ]
 
@@ -1805,7 +1805,7 @@ class _RecordKeyBuilder:
                                                         d = key_value ) ) )
 
         # Add the remaining columns' values, if any
-        for i in range( 1, len( self.routing_key_indices ) ) :
+        for i in list( range( 1, len( self.routing_key_indices ) ) ):
         # for i, key_idx in enumerate( self.routing_key_indices[1 : ] ):
             # Extract the value for the relevant routing column
             key_value = key_values[ i ]
