@@ -11,14 +11,21 @@
 
 from __future__ import print_function
 
+
 import sys
 
-if sys.version_info[0] >= 3:
-    from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, GPUdbException
+# We'll need to do python 2 vs. 3 things in many places
+IS_PYTHON_3 = (sys.version_info[0] >= 3) # checking the major component
+IS_PYTHON_27_OR_ABOVE = sys.version_info >= (2, 7)
+
+
+if IS_PYTHON_3:
+    from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, GPUdbException, GPUdbConnectionException
 else:
-    from gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, GPUdbException, GPUdbConnectionException
+    from gpudb       import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, GPUdbException, GPUdbConnectionException
 
 from avro import schema, datafile, io
+import builtins
 import datetime
 import json
 import logging
@@ -55,19 +62,19 @@ except:
 
 
 # Python version dependent imports
-if sys.version_info >= (2, 7):
+if IS_PYTHON_27_OR_ABOVE:
     import collections
 else:
     import ordereddict as collections # a separate package
 
-if sys.version_info[0] >= 3:
+if IS_PYTHON_3:
     from urllib.parse import urlparse
 else:
     from urlparse import urlparse
 
 
 # Handle basestring in python3
-if sys.version_info[0] >= 3:
+if IS_PYTHON_3:
     long = int
     basestring = str
     class unicode:
@@ -231,7 +238,7 @@ class GPUdbWorkerList:
             self.worker_URLs_per_rank = system_properties[ C._worker_URLs ].split( ";" )
 
             # Process the URLs per worker rank (ignoring rank-0)
-            for i in range(1, len(self.worker_URLs_per_rank)):
+            for i in list( range(1, len(self.worker_URLs_per_rank)) ):
                 urls_per_rank = self.worker_URLs_per_rank[ i ]
 
                 # Check if this rank has been removed
@@ -295,7 +302,7 @@ class GPUdbWorkerList:
             protocol = "https://" if (gpudb.connection == "HTTPS") else "http://"
 
             # Process the IP addresses per worker rank (ignoring rank-0)
-            for i in range(1, len(self.worker_IPs_per_rank)):
+            for i in list( range(1, len(self.worker_IPs_per_rank)) ):
                 ips_per_rank = self.worker_IPs_per_rank[ i ]
 
                 # Check if this rank has been removed
@@ -413,6 +420,7 @@ class _ColumnTypeSize:
     STRING    =   8
     TIME      =   4
     TIMESTAMP =   8
+    ULONG     =   8
 
     # A dict mapping column types to its size in bytes
     column_type_sizes = collections.OrderedDict()
@@ -438,6 +446,7 @@ class _ColumnTypeSize:
     column_type_sizes[ "float"    ] =   4
     column_type_sizes[ "long"     ] =   8
     column_type_sizes[ "string"   ] =   8
+    column_type_sizes[ "ulong"    ] =   8
 # end class _ColumnTypeSize
 
 
@@ -534,7 +543,7 @@ class _RecordKey:
     # Note: Choosing to have two different definitions even though the difference
     #       is only in one line to avoid excessive python version check per func
     #       call.
-    if sys.version_info[0] >= 3: # python 3
+    if IS_PYTHON_3:
 
         def add_charN( self, val, N ):
             """Add a charN string to the buffer (can be null)--N bytes.
@@ -547,7 +556,7 @@ class _RecordKey:
 
             # Handle nulls
             if val is None:
-                for i in range( 0, N ):
+                for i in list( range( 0, N ) ):
                     self._buffer_value += struct.pack( "=b", 0 )
                 return
             # end if
@@ -559,7 +568,7 @@ class _RecordKey:
                 byte_count = N
 
             # First, pad with any zeroes "at the end"
-            for i in range(N, byte_count, -1):
+            for i in list( range(N, byte_count, -1) ):
                 self._buffer_value += struct.pack( "=b", 0 )
 
             
@@ -583,7 +592,7 @@ class _RecordKey:
 
             # Handle nulls
             if val is None:
-                for i in range( 0, N ):
+                for i in list( range( 0, N ) ):
                     self._buffer_value += struct.pack( "=b", 0 )
                 return
             # end if
@@ -599,7 +608,7 @@ class _RecordKey:
                 byte_count = N
 
             # First, pad with any zeroes "at the end"
-            for i in range(N, byte_count, -1):
+            for i in list( range(N, byte_count, -1) ):
                 self._buffer_value += struct.pack( "=b", 0 )
 
 
@@ -781,7 +790,7 @@ class _RecordKey:
     # Note: Choosing to have two different definitions even though the difference
     #       is only in one line to avoid excessive python version check per func
     #       call.
-    if sys.version_info[0] >= 3:
+    if IS_PYTHON_3:
         def add_string( self, val ):
             """Add the hash value of the given string to the buffer (can be
             null)--eight bytes.
@@ -1127,7 +1136,7 @@ class _RecordKey:
     # Note: Choosing to have two different definitions even though the difference
     #       is only in one line to avoid excessive python version check per func
     #       call.
-    if sys.version_info[0] >= 3: # python 3
+    if IS_PYTHON_3:
         def add_timestamp( self, val ):
             """Add a long timestamp to the buffer (can be null)--eight bytes.
 
@@ -1441,11 +1450,67 @@ class _RecordKey:
     # end defining python version specific add_timestamp()
 
 
+    @staticmethod
+    def is_unsigned_long( value ):
+        """Check if the given value is an unsigned long.  If parsable as
+        as unsigned long, return the value; else, return False.  Note
+        that it returns different types of things based on the parsing.
+        """
+        # Length of the maximum unsigned long value
+        max_len = 20
+
+        str_len = len( value )
+        if ( (str_len == 0) or (str_len > max_len) ):
+            return False
+
+        # Parse the value as a long
+        try:
+            ulong_value = builtins.int( value )
+        except ValueError as e:
+            return False
+
+        # Make sure it's within the 64-bit unsigned long range
+        if ( (ulong_value < 0) or (ulong_value > 18446744073709551615) ):
+            return False
+
+        return ulong_value
+    # end is_unsigned_long
+
+    
+    def add_ulong( self, val ):
+        """Add an unsigned long to the buffer (can be null)--eight bytes.
+        Given value is a string; need to parse.  If not a valid unsigned
+        long value, thrown an exception.
+
+        @throws GPUdbException if the value cannot be parsed as unsigned long
+        """
+        # Longs are eight bytes long
+        self.__will_buffer_overflow( _ColumnTypeSize.ULONG )
+
+        # Handle nulls
+        if val is None:
+            self._buffer_value += struct.pack( "=q", 0 )
+            return
+        # end if
+
+        ulong_value = _RecordKey.is_unsigned_long( val )
+        # Make sure that zero does not get falsely evaluated
+        if ( isinstance(ulong_value, bool) and (ulong_value == False) ):
+            raise GPUdbException( "Value '{}' could not be parsed as an unsigned"
+                                  " long!".format( val ) )
+
+        # Add the eight bytes of the unsigned long
+        self._buffer_value += struct.pack( "=Q", ulong_value )
+    # end add_ulong
+
+
+    
+
     # We need different versions of the following 2 functions for python 2.x vs. 3.x
     # Note: Choosing to have two different definitions even though the difference
     #       is only in one line to avoid excessive python version check per func
     #       call.
-    if sys.version_info[0] >= 3: # python 3
+    if IS_PYTHON_3:
         def compute_hashes( self ):
             """Compute the Murmur hash of the key.
             """
@@ -1526,6 +1591,7 @@ class _RecordKeyBuilder:
     _column_type_add_functions[ "ipv4"      ] = _RecordKey.add_ipv4
     _column_type_add_functions[ "time"      ] = _RecordKey.add_time
     _column_type_add_functions[ "timestamp" ] = _RecordKey.add_timestamp
+    _column_type_add_functions[ "ulong"     ] = _RecordKey.add_ulong
 
 
     # A dict for string types
@@ -1561,7 +1627,7 @@ class _RecordKeyBuilder:
         self._key_types = []
 
         # Go over all columns and see which ones are primary or shard keys
-        for i in range(0, len( record_type.columns )):
+        for i in list( range(0, len( record_type.columns )) ):
             column_name = self._record_column_names[ i ]
             column_type = record_type.columns[ i ].column_type
             column_properties = self._column_properties[ column_name ] \
@@ -1774,7 +1840,7 @@ class _RecordKeyBuilder:
         record_key = _RecordKey( self._key_buffer_size )
 
         # Add each routing column's value to the key
-        for i in range( 0, len( self.routing_key_indices ) ):
+        for i in list( range( 0, len( self.routing_key_indices ) ) ):
             # Extract the value for the relevant routing column
             value = key_values[ i ]
 
@@ -1833,38 +1899,36 @@ class _RecordKeyBuilder:
                                       "'key_values'" % missing_key)
         # end if
 
-
-        # Add the first column's value (use function 'is_null()' if the value is a null,
-        # otherwise just an equivalency, with double quotes for string types)
-        key_value = key_values[ 0 ]
-        col_type  = self._key_types[ 0 ]
-        col_name  = self.key_columns_names[ 0 ]
-        expression = ("is_null({n})".format( n = col_name) if (key_value == None)
-                      else ( '({n} = "{d}")'.format( n = col_name,
-                                                     d = key_value ) if (col_type in self._string_types)
-                             else '({n} = {d})'.format( n = col_name,
-                                                        d = key_value ) ) )
-
-        # Add the remaining columns' values, if any
-        for i in range( 1, len( self.routing_key_indices ) ) :
-        # for i, key_idx in enumerate( self.routing_key_indices[1 : ] ):
+        # Generate the expression predicates per column
+        predicates = []
+        for i in list( range( 0, len( self.routing_key_indices ) ) ):
             # Extract the value for the relevant routing column
             key_value = key_values[ i ]
             col_type = self._key_types[ i ]
             col_name = self.key_columns_names[ i ]
 
+            # Handle unsigned longs specially (only when it's not a null)
+            if ( (col_type == "ulong") and (key_value is not None) ):
+                ulong_value = _RecordKey.is_unsigned_long( key_value )
+                # Make sure that zero does not get falsely evaluated
+                if ( isinstance(ulong_value, bool) and (ulong_value == False) ):
+                    raise GPUdbException( "Value '{}' could not be parsed as an unsigned"
+                                          " long!".format( key_value ) )
+            # end if
+            
             # Add the column's value (use function 'is_null()' if the value is a null,
             # otherwise just an equivalency, with double quotes for string types)
-            exp = ("is_null({n})".format( n = col_name) if (key_value == None)
-                   else ( '({n} = "{d}")'.format( n = col_name,
-                                                  d = key_value ) if (col_type in self._string_types)
-                          else '({n} = {d})'.format( n = col_name,
-                                                     d = key_value ) ) )
-
-            # Need an " and " in the expression
-            expression = (expression + " and " + exp)
+            predicate = ("is_null({n})".format( n = col_name) if (key_value == None)
+                         else ( '({n} = "{d}")'.format( n = col_name,
+                                                        d = key_value ) if (col_type in self._string_types)
+                                else '({n} = {d})'.format( n = col_name,
+                                                           d = key_value ) ) )
+            predicates.append( predicate )
         # end loop
 
+        # Put them together to form the overall expression
+        expression = " and ".join( predicates )
+        
         return expression
     # end build_expression_with_key_values_only
 

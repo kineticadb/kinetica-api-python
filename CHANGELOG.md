@@ -2,6 +2,25 @@
 
 ## Version 7.0
 
+### Version 7.0.7.0 - 2019-08-29
+
+#### Added
+-   Support for new column property 'ulong' to multi-head I/O.  ***Compatible
+    with Kinetica Server version 7.0.7.0 and later only.***
+-   The following properties to GPUdbTable regarding whether the table itself is a
+    collection or belongs to a collection:
+    -   GPUdbTable.is_collection
+    -   GPUdbTable.collection_name
+-   GPUdb class constructor parameter `skip_ssl_cert_verification` which disables
+    verifying the SSL certificate for the Kinetica server for HTTPS connections.
+
+#### Fixed
+-   Some Python3 compatibility related issues
+
+#### Server Version Compatibilty
+-   Kinetica 7.0.7.0 and later
+
+
 ### Version 7.0.6.1 - 2019-08-14
 
 #### Changed

@@ -28,6 +28,7 @@ import json
 import logging
 import random
 import re
+import ssl
 import time
 import traceback
 import uuid
@@ -35,8 +36,11 @@ import uuid
 from collections import Iterator
 from decimal import Decimal
 
+# We'll need to do python 2 vs. 3 things in many places
+IS_PYTHON_3 = (sys.version_info[0] >= 3) # checking the major component
+IS_PYTHON_27_OR_ABOVE = sys.version_info >= (2, 7)
 
-if sys.version_info[0] >= 3: # checking the major component
+if IS_PYTHON_3:
     long = int
     basestring = str
     class unicode:
@@ -73,14 +77,14 @@ from protocol import Schema
 from avro import schema, datafile, io
 
 
-if sys.version_info >= (2, 7):
+if IS_PYTHON_27_OR_ABOVE:
     import collections
 else:
     import ordereddict as collections # a separate package
 
 
 # Override some python3 avro things
-if sys.version_info[0] >= 3:
+if IS_PYTHON_3:
     schema.parse = schema.Parse
     schema.RecordSchema.fields_dict = schema.RecordSchema.field_map
 
@@ -137,6 +141,8 @@ class C:
     _join         = "JOIN"
     _result_table = "RESULT_TABLE"
     _total_full_size = "total_full_size"
+    _additional_info = "additional_info"
+    _collection_name = "collection_names"
 
     # /show/system/properties response
     _property_map       = "property_map"
@@ -163,17 +169,32 @@ class C:
 # ---------------------------------------------------------------------------
 class GPUdbException( Exception ):
 
-    def __init__( self, value ):
-        self.value = value
-        if isinstance(value, (basestring, unicode)):
-            # We got a message only
-            self.message = value
-            self.traceback_msg = ""
-        elif isinstance(value, Exception):
-            # Preserve the message and also the stack trace
-            self.message = value.message
-            self.traceback_msg = "".join( traceback.format_exception( sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2] ) )
-    # end __init__
+    # We need to handle the given exception differenlty for different pythons
+    if IS_PYTHON_3:
+        def __init__( self, value ):
+            self.value = value
+            if isinstance(value, (basestring, unicode)):
+                # We got a message only
+                self.message = value
+                self.traceback_msg = ""
+            elif isinstance(value, Exception):
+                # Preserve the message and also the stack trace
+                self.message = value.args[0]
+                self.traceback_msg = "".join( traceback.format_exception( sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2] ) )
+        # end __init__
+    else:
+        def __init__( self, value ):
+            self.value = value
+            if isinstance(value, (basestring, unicode)):
+                # We got a message only
+                self.message = value
+                self.traceback_msg = ""
+            elif isinstance(value, Exception):
+                # Preserve the message and also the stack trace
+                self.message = value.message
+                self.traceback_msg = "".join( traceback.format_exception( sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2] ) )
+        # end __init__
+    # end if
 
     def __str__( self ):
         return repr( self.value )
@@ -401,18 +422,11 @@ class _Util(object):
                  or isinstance( arg, collections.OrderedDict ) )
     # end is_list_or_dict
 
-    if sys.version_info[0] >= 3: # checking the major component
+    if IS_PYTHON_3:
         # Declaring the python 3 version of this static method
         @staticmethod
         def str_to_bytes(value):
-            if sys.version_info[0] <= 2: # checking the major component
-                data = bytes()
-                for c in value:
-                    data += chr(ord(c))
-                return data
-            else:
-                # The python 3 output
-                return bytes( ord(b) for b in value )
+            return bytes( ord(b) for b in value )
         # end str_to_bytes
     else:
         # Declaring the python 2 version of this static method
@@ -451,7 +465,7 @@ class _Util(object):
     def ensure_str(value):
         if isinstance(value, basestring):
             if ( ( not isinstance(value, unicode) )
-                 and (sys.version_info[0] == 2) ): # Python 2
+                 and (not IS_PYTHON_3) ): # Python 2
                 return unicode( value, 'utf-8' )
             # Python 3
             return value
@@ -620,12 +634,14 @@ class _Util(object):
 
                     # Handle unicode
                     if (col_data_type == "string"):
-                        if (sys.version_info[0] == 2): # checking the major component
+                        if (not IS_PYTHON_3):
                             col_value = _Util.ensure_str( col_value )
                     elif (col_data_type == "decimal"): # Handle decimal
                         raise GPUdbException("TODO: *********type 'decimal' not supported yet*********")
                     elif (col_data_type == "ipv4"): # Handle IPv4
                         raise GPUdbException("TODO: *********type 'ipv4' not supported yet*********")
+                    elif (col_data_type == "bytes"):
+                        col_value = _Util.ensure_bytes( col_value )
 
                     # NO NEED TO CHECK DATE & TIME FORMATS DUE TO "init_with_now";
                     # but keeping it around in case the C-module code changes again.
@@ -657,7 +673,6 @@ class _Util(object):
                     # elif (col_data_type == "date"): # Handle date
                     #     # Conversion needed if it is NOT already a date struct
                     #     if not isinstance( col_value, datetime.date ):
-                    #         print ("Got date; type is {}; value is '{}'".format( str(type(col_value)), col_value ) ) # debug~~~~~~
                     #         # Better be a string if not a date object
                     #         if not isinstance( col_value, basestring ):
                     #             raise GPUdbException( "'date' type column value must be a datetime.date "
@@ -973,6 +988,14 @@ class GPUdbColumnProperty(object):
     timestamp and will be provided in milliseconds since the Unix epoch:
     00:00:00 Jan 1 1970.  Dates represented by a timestamp must fall between
     the year 1000 and the year 2900.
+    """
+
+
+    ULONG = "ulong"
+    """str: Valid only for 'string' columns.  It represents an unsigned long
+    integer data type. The string can only be interpreted as an unsigned long
+    data type with minimum value of zero, and maximum value of
+    18446744073709551615.
     """
 
 
@@ -1861,7 +1884,7 @@ class GPUdbRecord( object ):
         num_records = len( dynamic_json_data["column_1"] )
 
         # Create all the records
-        for i in range(0, num_records):
+        for i in list( range(0, num_records) ):
             record = collections.OrderedDict()
 
             # Create a single record
@@ -1875,7 +1898,7 @@ class GPUdbRecord( object ):
 
                 record[ col_name ] = col_val
             # end inner loop
-            
+
             # Add this record to the list
             decoded_records.append( record )
         # end loop
@@ -2025,7 +2048,7 @@ class GPUdbRecord( object ):
             # Check that the order of the columns is ok
             # (we can only check string vs. numeric types, really;
             # we can also check for nulls)
-            for i in range(0, num_columns):
+            for i in list( range(0, num_columns) ):
                 column_name = self._record_type.columns[ i ].name
                 # The given value for this column
                 column_val = column_values[ i ]
@@ -2049,7 +2072,7 @@ class GPUdbRecord( object ):
 
             # We will disregard the order in which the column values were listed
             # in column_values (this should help the user somewhat)
-            for i in range(0, num_columns):
+            for i in list( range(0, num_columns) ):
                 column_name = self._record_type.columns[ i ].name
                 column_val  = column_values[ column_name ]
 
@@ -2243,6 +2266,7 @@ class GPUdb(object):
                   username = "", password = "", timeout = None,
                   no_init_db_contact = False,
                   primary_host = None,
+                  skip_ssl_cert_verification = False,
                   **kwargs ):
         """
         Construct a new GPUdb client instance.
@@ -2301,6 +2325,13 @@ class GPUdb(object):
                 'http[s]://X.X.X.X:PORT[/httpd-name]'.  If this is not given,
                 then all available clusters will be treated with equal probability
                 of use.
+            skip_ssl_cert_verification (bool)
+                Applies to https connections only; will be ignored for http
+                connections.  If True, for https connections, will skip the
+                verification of the SSL certificate sent by the server.  Be
+                careful about using this flag; please ensure that you fully
+                understand the repurcussions of skipping this verification step.
+                Default is False.
         """
         # Call the internal function to initialize the object
         self.__construct( host = host, port = port,
@@ -2310,6 +2341,7 @@ class GPUdb(object):
                           timeout = timeout,
                           no_init_db_contact = no_init_db_contact,
                           primary_host = primary_host,
+                          skip_ssl_cert_verification = skip_ssl_cert_verification,
                           **kwargs )
     # end __init__
 
@@ -2320,6 +2352,7 @@ class GPUdb(object):
                      username = "", password = "", timeout = None,
                      no_init_db_contact = False,
                      primary_host = None,
+                     skip_ssl_cert_verification = False,
                      **kwargs ):
         """
         Construct a new GPUdb client instance.
@@ -2378,6 +2411,14 @@ class GPUdb(object):
                 'http[s]://X.X.X.X:PORT[/httpd-name]'.  If this is not given,
                 then all available clusters will be treated with equal probability
                 of use.
+
+            skip_ssl_cert_verification (bool)
+                Applies to https connections only; will be ignored for http
+                connections.  If True, for https connections, will skip the
+                verification of the SSL certificate sent by the server.  Be
+                careful about using this flag; please ensure that you fully
+                understand the repurcussions of skipping this verification step.
+                Default is False.
         """
         # Logging
         self.log = GPUDB_LOGGER
@@ -2393,16 +2434,23 @@ class GPUdb(object):
             self.__log_warn('SNAPPY encoding specified but python-snappy is not installed; reverting to BINARY')
             encoding = 'BINARY'
 
+        # Verify that the parameter value is a bool
+        if not isinstance(skip_ssl_cert_verification, bool):
+            raise GPUdbException( "Parameter 'skip_ssl_cert_verification' must be a boolean, given '{}'"
+                                  "".format( str( type( skip_ssl_cert_verification ) ) ) )
+
+
         self.encoding     = encoding
         self.username     = username
         self.password     = password
         self.timeout      = timeout
         self.primary_host = primary_host
+        self.skip_ssl_cert_verification = skip_ssl_cert_verification
 
         # Set up the credentials to be used per POST
         self.auth = None
         if len(self.username) != 0:
-            if sys.version_info[0] >= 3: # Python 3.x
+            if IS_PYTHON_3:
                 # base64 encode the username and password
                 self.auth = ('%s:%s' % (self.username, self.password) )
                 self.auth = _Util.str_to_bytes( self.auth )
@@ -2665,7 +2713,7 @@ class GPUdb(object):
         self._num_conn_tokens = len( self._conn_tokens )
         if not self.primary_host:
             # No primary host given, so just randomly shuffle without worries
-            self._conn_token_indices = range(0, self._num_conn_tokens)
+            self._conn_token_indices = list( range(0, self._num_conn_tokens) )
             random.shuffle( self._conn_token_indices )
         else: # Need to treat the primary host specially
             # Ensure that the first one is the primary host
@@ -2676,7 +2724,7 @@ class GPUdb(object):
             # end if
 
             # Shuffle from the 2nd element onward
-            non_primary_host_indices = range(1, self._num_conn_tokens)
+            non_primary_host_indices = list( range(1, self._num_conn_tokens) )
             random.shuffle( non_primary_host_indices )
             
             # Put them back together
@@ -2940,7 +2988,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.6.1"
+    api_version   = "7.0.7.0"
 
     # Constants
     END_OF_SET = -9999
@@ -3075,7 +3123,10 @@ class GPUdb(object):
         try:
             sys_properties = self.show_system_properties().property_map
         except (GPUdbException, GPUdbConnectionException) as ex:
-            raise GPUdbException( ex.message )
+            if IS_PYTHON_3:
+                raise GPUdbException( ex )
+            else:
+                raise GPUdbException( ex.message )
 
         if "conf.hm_http_port" not in sys_properties:
             raise GPUdbException( 'Error: "conf.hm_http_port" not found '
@@ -3172,9 +3223,15 @@ class GPUdb(object):
                                                port = port,
                                                timeout = self.timeout)
             elif (connection_type == 'HTTPS'):
-                conn = httplib.HTTPSConnection( host = host,
-                                                port = port,
-                                                timeout = self.timeout)
+                if self.skip_ssl_cert_verification:
+                    conn = httplib.HTTPSConnection( host = host,
+                                                    port = port,
+                                                    timeout = self.timeout,
+                                                    context = ssl._create_unverified_context() )
+                else:
+                    conn = httplib.HTTPSConnection( host = host,
+                                                    port = port,
+                                                    timeout = self.timeout)
         except Exception as e:
             raise GPUdbConnectionException("Error connecting to '{}' on port {} due to: {}"
                                            "".format(host, port, str(e)) )
@@ -3389,7 +3446,10 @@ class GPUdb(object):
                 try:
                     sys_properties = self.show_system_properties().property_map
                 except (GPUdbException, GPUdbConnectionException) as ex:
-                    raise GPUdbException( ex.message )
+                    if IS_PYTHON_3:
+                        raise GPUdbException( ex )
+                    else:
+                        raise GPUdbException( ex.message )
 
                 if "conf.hm_http_port" not in sys_properties:
                     raise GPUdbException( 'Error: "conf.hm_http_port" not found '
@@ -4633,6 +4693,17 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "RSP_SCHEMA_CEXT" : RSP_SCHEMA_CEXT,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/alter/graph"
+        REQ_SCHEMA_STR = """{"name":"alter_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"action","type":"string"},{"name":"action_arg","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"name":"alter_graph_response","type":"record","fields":[{"name":"action","type":"string"},{"name":"action_arg","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("action", "string"), ("action_arg", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("action", "string"), ("action_arg", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/alter/graph"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/alter/resourcegroup"
         REQ_SCHEMA_STR = """{"type":"record","name":"alter_resource_group_request","fields":[{"name":"name","type":"string"},{"name":"tier_attributes","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"ranking","type":"string"},{"name":"adjoining_resource_group","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"alter_resource_group_response","fields":[{"name":"name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -5514,6 +5585,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/show/graph/grammar"
+        REQ_SCHEMA_STR = """{"name":"show_graph_grammar_request","type":"record","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"name":"show_graph_grammar_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"components_json","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("components_json", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/show/graph/grammar"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/show/proc"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_proc_request","fields":[{"name":"proc_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"show_proc_response","fields":[{"name":"proc_names","type":{"type":"array","items":"string"}},{"name":"execution_modes","type":{"type":"array","items":"string"}},{"name":"files","type":{"type":"array","items":{"type":"map","values":"bytes"}}},{"name":"commands","type":{"type":"array","items":"string"}},{"name":"args","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -5833,6 +5915,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["aggregate_statistics_by_range"] = "/aggregate/statistics/byrange"
         self.gpudb_func_to_endpoint_map["aggregate_unique"] = "/aggregate/unique"
         self.gpudb_func_to_endpoint_map["aggregate_unpivot"] = "/aggregate/unpivot"
+        self.gpudb_func_to_endpoint_map["alter_graph"] = "/alter/graph"
         self.gpudb_func_to_endpoint_map["alter_resource_group"] = "/alter/resourcegroup"
         self.gpudb_func_to_endpoint_map["alter_role"] = "/alter/role"
         self.gpudb_func_to_endpoint_map["alter_system_properties"] = "/alter/system/properties"
@@ -5912,6 +5995,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["revoke_permission_table"] = "/revoke/permission/table"
         self.gpudb_func_to_endpoint_map["revoke_role"] = "/revoke/role"
         self.gpudb_func_to_endpoint_map["show_graph"] = "/show/graph"
+        self.gpudb_func_to_endpoint_map["show_graph_grammar"] = "/show/graph/grammar"
         self.gpudb_func_to_endpoint_map["show_proc"] = "/show/proc"
         self.gpudb_func_to_endpoint_map["show_proc_status"] = "/show/proc/status"
         self.gpudb_func_to_endpoint_map["show_resource_statistics"] = "/show/resource/statistics"
@@ -11824,6 +11908,12 @@ class GPUdb(object):
                   by a timestamp must fall between the year 1000 and the year
                   2900.
 
+                * **ulong** --
+                  Valid only for 'string' columns.  It represents an unsigned
+                  long integer data type. The string can only be interpreted as
+                  an unsigned long data type with minimum value of zero, and
+                  maximum value of 18446744073709551615.
+
                 * **decimal** --
                   Valid only for 'string' columns.  It represents a SQL type
                   NUMERIC(19, 4) data type.  There can be up to 15 digits
@@ -12272,7 +12362,11 @@ class GPUdb(object):
                 Value of input parameter *name*.
 
             info (dict of str to str)
-                Additional information.
+                Additional information.  The default value is an empty dict (
+                {} ).
+                Allowed keys are:
+
+
         """
         assert isinstance( name, (basestring)), "create_user_internal(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
         assert isinstance( password, (basestring)), "create_user_internal(): Argument 'password' must be (one) of type(s) '(basestring)'; given %s" % type( password ).__name__
@@ -12661,6 +12755,11 @@ class GPUdb(object):
                   the file system below the KiFS mount point.) Each name
                   specified must the name of an existing KiFS directory.  The
                   default value is ''.
+
+                * **run_tag** --
+                  A string that, if not empty, can be used in subsequent calls
+                  to :meth:`.show_proc_status` or :meth:`.kill_proc` to
+                  identify the proc instance.  The default value is ''.
 
         Returns:
             A dict with the following entries--
@@ -16060,6 +16159,10 @@ class GPUdb(object):
                 * **system_admin** --
                   Full access to all data and system functions.
 
+                * **system_user_admin** --
+                  Access to administer users and roles that do not have
+                  system_admin permission.
+
                 * **system_write** --
                   Read and write access to all tables.
 
@@ -16846,6 +16949,11 @@ class GPUdb(object):
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
                 ).
+                Allowed keys are:
+
+                * **run_tag** --
+                  Kill only proc instances where a matching run tag was
+                  provided to :meth:`.execute_proc`.  The default value is ''.
 
         Returns:
             A dict with the following entries--
@@ -17043,6 +17151,11 @@ class GPUdb(object):
                   probable path between origin and destination pairs with cost
                   constraints
 
+                * **match_supply_demand** --
+                  Matches input parameter *sample_points* to optimize
+                  scheduling multiple supplies (trucks) with varying sizes to
+                  varying demand sites with varying capacities per depot
+
                 The default value is 'markov_chain'.
 
             solution_table (str)
@@ -17124,6 +17237,21 @@ class GPUdb(object):
                   *sample_points* for the solver. The default behavior for the
                   endpoint is to use time to determine the destination point.
                   The default value is 'POINT NULL'.
+
+                * **partial_loading** --
+                  For the *match_supply_demand* solver only. When false
+                  (non-default), trucks do not off-load at the demand (store)
+                  side if the remainder is less than the store's need.
+                  Allowed values are:
+
+                  * **true** --
+                    Partial off loading at multiple store (demand) locations
+
+                  * **false** --
+                    No partial off loading allowed if supply is less than the
+                    store's demand.
+
+                  The default value is 'true'.
 
         Returns:
             A dict with the following entries--
@@ -17398,7 +17526,7 @@ class GPUdb(object):
                 * **target_nodes_table** --
                   Name of the table to store the list of the final nodes
                   reached during the traversal. If this value is not given
-                  it'll default to adjacency_table+'_nodes'.  The default value
+                  it'll default to adjacemcy_table+'_nodes'.  The default value
                   is ''.
 
                 * **restriction_threshold_value** --
@@ -17410,11 +17538,11 @@ class GPUdb(object):
                 * **export_query_results** --
                   Returns query results in the response. If set to *true*, the
                   output parameter *adjacency_list_int_array* (if the query was
-                  based on IDs), output parameter *adjacency_list_string_array*
-                  (if the query was based on names), or output parameter
-                  *adjacency_list_wkt_array* (if the query was based on WKTs)
-                  will be populated with the results. If set to *false*, none
-                  of the arrays will be populated.
+                  based on IDs), @{adjacency_list_string_array} (if the query
+                  was based on names), or @{output_adjacency_list_wkt_array}
+                  (if the query was based on WKTs) will be populated with the
+                  results. If set to *false*, none of the arrays will be
+                  populated.
                   Allowed values are:
 
                   * true
@@ -17576,6 +17704,10 @@ class GPUdb(object):
 
                 * **system_admin** --
                   Full access to all data and system functions.
+
+                * **system_user_admin** --
+                  Access to administer users and roles that do not have
+                  system_admin permission.
 
                 * **system_write** --
                   Read and write access to all tables.
@@ -17816,6 +17948,22 @@ class GPUdb(object):
     # end show_graph
 
 
+    # begin show_graph_grammar
+    def show_graph_grammar( self, options = {} ):
+
+        assert isinstance( options, (dict)), "show_graph_grammar(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/show/graph/grammar" )
+
+        obj = {}
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/show/graph/grammar' )
+
+        return AttrDict( response )
+    # end show_graph_grammar
+
+
     # begin show_proc
     def show_proc( self, proc_name = '', options = {} ):
         """Shows information about a proc.
@@ -17921,6 +18069,10 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                * **run_tag** --
+                  Limit statuses to proc instances where a matching run tag was
+                  provided to :meth:`.execute_proc`.  The default value is ''.
 
         Returns:
             A dict with the following entries--
@@ -20469,7 +20621,7 @@ class GPUdb(object):
 
 # ---------------------------------------------------------------------------
 # Import GPUdbIngestor; try from an installed package first, if not, try local
-if sys.version_info[0] >= 3: # checking the major component
+if IS_PYTHON_3:
     try:
         from gpudb.gpudb import GPUdbIngestor, RecordRetriever
     except:
@@ -20664,11 +20816,12 @@ class GPUdbTable( object ):
             self._temporary_view_names.update( temporary_view_names )
 
         # Some default values (assuming it is not a read-only table)
-        self._count         = None
-        self._is_read_only  = False
-        self._is_collection = False
-        self._type_id       = None
-        self._is_replicated = self.options._is_replicated
+        self._count           = None
+        self._is_read_only    = False
+        self._is_collection   = False
+        self._collection_name = self.options._collection_name
+        self._type_id         = None
+        self._is_replicated   = self.options._is_replicated
 
         # The table is known to be read only
         if read_only_table_count is not None: # Integer value 0 accepted
@@ -20698,8 +20851,14 @@ class GPUdbTable( object ):
         self.name = name if name else GPUdbTable.random_name()
 
         try:
+            # Does a table with the same name exist already?
+            has_table_rsp = self.db.has_table( self.name )
+            if not _Util.is_ok( has_table_rsp ): # problem creating the table
+                raise GPUdbException( "Problem checking existence of the table: " + _Util.get_error_msg( has_table_rsp ) )
+            table_exists = has_table_rsp["table_exists"]
+            
             # Do different things based on whether the table already exists
-            if self.db.has_table( self.name )["table_exists"]:
+            if table_exists:
                 # Check that the given type agrees with the existing table's type, if any given
                 show_table_rsp = self.db.show_table( self.name,
                                                      options = {"show_children": "false"} )
@@ -20712,6 +20871,11 @@ class GPUdbTable( object ):
                     self._is_collection = True
                 else: # need to save the type ID for regular tables
                     self._type_id = show_table_rsp["type_ids"][0]
+                    # Also save the name of any collection this table is a part of
+                    if ( (C._collection_name in show_table_rsp[ C._additional_info ][0] )
+                         and show_table_rsp[ C._additional_info ][0][ C._collection_name ] ):
+                        self._collection_name = show_table_rsp[ C._additional_info ][0][ C._collection_name ]
+                # end if else
 
                 if not self._is_collection: # not a collection
                     gtable_type = GPUdbRecordType( None, "", show_table_rsp["type_schemas"][0],
@@ -20758,8 +20922,12 @@ class GPUdbTable( object ):
                     raise GPUdbException( _Util.get_error_msg( rsp_obj ) )
             # end if-else
         except GPUdbException as e:
-            raise GPUdbException( "Error creating GPUdbTable: '{}'"
-                                  "".format( e.message ) )
+            if IS_PYTHON_3:
+                raise GPUdbException( "Error creating GPUdbTable: '{}'"
+                                      "".format( e ) )
+            else:
+                raise GPUdbException( "Error creating GPUdbTable: '{}'"
+                                      "".format( e.message ) )
         except Exception as e: # all other exceptions
             raise GPUdbException( "Error creating GPUdbTable; {}: '{}'"
                                   "".format( e.__doc__, str(e) ) )
@@ -21049,6 +21217,24 @@ class GPUdbTable( object ):
         """
         return self.__len__()
     # end count
+
+    
+    @property
+    def is_collection( self ):
+        """Returns True if the table is a collection; False otherwise."""
+        return self._is_collection
+    # end is_collection
+
+    
+    @property
+    def collection_name( self ):
+        """Returns the name of the collection this table is a member of; None if
+        this table does not belong to any collection.
+        """
+        return self._collection_name
+    # end collection_name
+    
+
     def is_replicated( self ):
         """Returns True if the table is replicated."""
         return self._is_replicated
