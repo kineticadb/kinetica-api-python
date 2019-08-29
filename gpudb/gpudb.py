@@ -27,6 +27,7 @@ import datetime
 import json
 import random
 import re
+import ssl
 import time
 import traceback
 import uuid
@@ -34,8 +35,11 @@ import uuid
 from collections import Iterator
 from decimal import Decimal
 
+# We'll need to do python 2 vs. 3 things in many places
+IS_PYTHON_3 = (sys.version_info[0] >= 3) # checking the major component
+IS_PYTHON_27_OR_ABOVE = sys.version_info >= (2, 7)
 
-if sys.version_info[0] >= 3: # checking the major component
+if IS_PYTHON_3:
     long = int
     basestring = str
     class unicode:
@@ -72,14 +76,14 @@ from protocol import Schema
 from avro import schema, datafile, io
 
 
-if sys.version_info >= (2, 7):
+if IS_PYTHON_27_OR_ABOVE:
     import collections
 else:
     import ordereddict as collections # a separate package
 
 
 # Override some python3 avro things
-if sys.version_info[0] >= 3:
+if IS_PYTHON_3:
     schema.parse = schema.Parse
     schema.RecordSchema.fields_dict = schema.RecordSchema.field_map
 
@@ -126,17 +130,32 @@ class C:
 # ---------------------------------------------------------------------------
 class GPUdbException( Exception ):
 
-    def __init__( self, value ):
-        self.value = value
-        if isinstance(value, (basestring, unicode)):
-            # We got a message only
-            self.message = value
-            self.traceback_msg = ""
-        elif isinstance(value, Exception):
-            # Preserve the message and also the stack trace
-            self.message = value.message
-            self.traceback_msg = "".join( traceback.format_exception( sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2] ) )
-    # end __init__
+    # We need to handle the given exception differenlty for different pythons
+    if IS_PYTHON_3:
+        def __init__( self, value ):
+            self.value = value
+            if isinstance(value, (basestring, unicode)):
+                # We got a message only
+                self.message = value
+                self.traceback_msg = ""
+            elif isinstance(value, Exception):
+                # Preserve the message and also the stack trace
+                self.message = value.args[0]
+                self.traceback_msg = "".join( traceback.format_exception( sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2] ) )
+        # end __init__
+    else:
+        def __init__( self, value ):
+            self.value = value
+            if isinstance(value, (basestring, unicode)):
+                # We got a message only
+                self.message = value
+                self.traceback_msg = ""
+            elif isinstance(value, Exception):
+                # Preserve the message and also the stack trace
+                self.message = value.message
+                self.traceback_msg = "".join( traceback.format_exception( sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2] ) )
+        # end __init__
+    # end if
 
     def __str__( self ):
         return repr( self.value )
@@ -284,18 +303,11 @@ class _Util(object):
                  or isinstance( arg, collections.OrderedDict ) )
     # end is_list_or_dict
 
-    if sys.version_info[0] >= 3: # checking the major component
+    if IS_PYTHON_3:
         # Declaring the python 3 version of this static method
         @staticmethod
         def str_to_bytes(value):
-            if sys.version_info[0] <= 2: # checking the major component
-                data = bytes()
-                for c in value:
-                    data += chr(ord(c))
-                return data
-            else:
-                # The python 3 output
-                return bytes( ord(b) for b in value )
+            return bytes( ord(b) for b in value )
         # end str_to_bytes
     else:
         # Declaring the python 2 version of this static method
@@ -334,7 +346,7 @@ class _Util(object):
     def ensure_str(value):
         if isinstance(value, basestring):
             if ( ( not isinstance(value, unicode) )
-                 and (sys.version_info[0] == 2) ): # Python 2
+                 and (not IS_PYTHON_3) ): # Python 2
                 return unicode( value, 'utf-8' )
             # Python 3
             return value
@@ -503,12 +515,14 @@ class _Util(object):
 
                     # Handle unicode
                     if (col_data_type == "string"):
-                        if (sys.version_info[0] == 2): # checking the major component
+                        if (not IS_PYTHON_3):
                             col_value = _Util.ensure_str( col_value )
                     elif (col_data_type == "decimal"): # Handle decimal
                         raise GPUdbException("TODO: *********type 'decimal' not supported yet*********")
                     elif (col_data_type == "ipv4"): # Handle IPv4
                         raise GPUdbException("TODO: *********type 'ipv4' not supported yet*********")
+                    elif (col_data_type == "bytes"):
+                        col_value = _Util.ensure_bytes( col_value )
 
                     # NO NEED TO CHECK DATE & TIME FORMATS DUE TO "init_with_now";
                     # but keeping it around in case the C-module code changes again.
@@ -1758,7 +1772,7 @@ class GPUdbRecord( object ):
 
                 record[ col_name ] = col_val
             # end inner loop
-            
+
             # Add this record to the list
             decoded_records.append( record )
         # end loop
@@ -2122,6 +2136,7 @@ class GPUdb(object):
                   encoding = "BINARY", connection = 'HTTP',
                   username = "", password = "", timeout = None,
                   no_init_db_contact = False,
+                  skip_ssl_cert_verification = False,
                   **kwargs ):
         """
         Construct a new GPUdb client instance.
@@ -2169,6 +2184,14 @@ class GPUdb(object):
                 If True, the constructor won't communicate with the database
                 server (e.g. for checking version compatibility).  Default
                 is False.
+
+            skip_ssl_cert_verification (bool)
+                Applies to https connections only; will be ignored for http
+                connections.  If True, for https connections, will skip the
+                verification of the SSL certificate sent by the server.  Be
+                careful about using this flag; please ensure that you fully
+                understand the repurcussions of skipping this verification step.
+                Default is False.
         """
         # Call the internal function to initialize the object
         self.__construct( host = host, port = port,
@@ -2177,16 +2200,18 @@ class GPUdb(object):
                           username = username, password = password,
                           timeout = timeout,
                           no_init_db_contact = no_init_db_contact,
+                          skip_ssl_cert_verification = skip_ssl_cert_verification,
                           **kwargs )
     # end __init__
 
 
     def __construct( self, host = "127.0.0.1", port = "9191",
                      host_manager_port = "9300",
-                       encoding = "BINARY", connection = 'HTTP',
-                       username = "", password = "", timeout = None,
-                       no_init_db_contact = False,
-                       **kwargs ):
+                     encoding = "BINARY", connection = 'HTTP',
+                     username = "", password = "", timeout = None,
+                     no_init_db_contact = False,
+                     skip_ssl_cert_verification = False,
+                     **kwargs ):
         """
         Construct a new GPUdb client instance.
 
@@ -2233,6 +2258,14 @@ class GPUdb(object):
                 If True, the constructor won't communicate with the database
                 server (e.g. for checking version compatibility).  Default
                 is False.
+
+            skip_ssl_cert_verification (bool)
+                Applies to https connections only; will be ignored for http
+                connections.  If True, for https connections, will skip the
+                verification of the SSL certificate sent by the server.  Be
+                careful about using this flag; please ensure that you fully
+                understand the repurcussions of skipping this verification step.
+                Default is False.
         """
         if type(host) is list:
             if not type(port) is list:
@@ -2260,6 +2293,12 @@ class GPUdb(object):
             print('SNAPPY encoding specified but python-snappy is not installed; reverting to BINARY')
             encoding = 'BINARY'
 
+        # Verify that the parameter value is a bool
+        if not isinstance(skip_ssl_cert_verification, bool):
+            raise GPUdbException( "Parameter 'skip_ssl_cert_verification' must be a boolean, given '{}'"
+                                  "".format( str( type( skip_ssl_cert_verification ) ) ) )
+
+
         self._conn_tokens = tuple(_ConnectionToken(h, p, hmp, c) \
                                   for h, p, hmp, c in zip(host, port, host_manager_port, connection))
         self.current_host_index = random.randint(0, len(self._conn_tokens))
@@ -2268,11 +2307,12 @@ class GPUdb(object):
         self.username   = username
         self.password   = password
         self.timeout    = timeout
+        self.skip_ssl_cert_verification = skip_ssl_cert_verification
 
         # Set up the credentials to be used per POST
         self.auth = None
         if len(self.username) != 0:
-            if sys.version_info[0] >= 3: # Python 3.x
+            if IS_PYTHON_3:
                 # base64 encode the username and password
                 self.auth = ('%s:%s' % (self.username, self.password) )
                 self.auth = _Util.str_to_bytes( self.auth )
@@ -2552,7 +2592,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "6.2.0.13"
+    api_version   = "6.2.0.14"
 
     # constants
     END_OF_SET = -9999
@@ -2665,9 +2705,15 @@ class GPUdb(object):
                                                port = port,
                                                timeout = self.timeout)
             elif (connection_type == 'HTTPS'):
-                conn = httplib.HTTPSConnection( host = host,
-                                                port = port,
-                                                timeout = self.timeout)
+                if self.skip_ssl_cert_verification:
+                    conn = httplib.HTTPSConnection( host = host,
+                                                    port = port,
+                                                    timeout = self.timeout,
+                                                    context = ssl._create_unverified_context() )
+                else:
+                    conn = httplib.HTTPSConnection( host = host,
+                                                    port = port,
+                                                    timeout = self.timeout)
         except Exception as e:
             raise GPUdbConnectionException("Error connecting to '{}' on port {} due to: {}"
                                            "".format(host, port, str(e)) )
@@ -2802,7 +2848,10 @@ class GPUdb(object):
                 try:
                     sys_properties = self.show_system_properties().property_map
                 except (GPUdbException, GPUdbConnectionException) as ex:
-                    raise GPUdbException( ex.message )
+                    if IS_PYTHON_3:
+                        raise GPUdbException( ex )
+                    else:
+                        raise GPUdbException( ex.message )
 
                 if "conf.hm_http_port" not in sys_properties:
                     raise GPUdbException( 'Error: "conf.hm_http_port" not found '
@@ -15519,7 +15568,7 @@ class GPUdb(object):
 
 # ---------------------------------------------------------------------------
 # Import GPUdbIngestor; try from an installed package first, if not, try local
-if sys.version_info[0] >= 3: # checking the major component
+if IS_PYTHON_3:
     try:
         from gpudb.gpudb import GPUdbIngestor, RecordRetriever
     except:
@@ -15817,8 +15866,12 @@ class GPUdbTable( object ):
                     raise GPUdbException( _Util.get_error_msg( rsp_obj ) )
             # end if-else
         except GPUdbException as e:
-            raise GPUdbException( "Error creating GPUdbTable: '{}'"
-                                  "".format( e.message ) )
+            if IS_PYTHON_3:
+                raise GPUdbException( "Error creating GPUdbTable: '{}'"
+                                      "".format( e ) )
+            else:
+                raise GPUdbException( "Error creating GPUdbTable: '{}'"
+                                      "".format( e.message ) )
         except Exception as e: # all other exceptions
             raise GPUdbException( "Error creating GPUdbTable; {}: '{}'"
                                   "".format( e.__doc__, str(e) ) )

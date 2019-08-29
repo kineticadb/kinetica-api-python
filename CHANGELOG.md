@@ -3,6 +3,13 @@
 
 ## Version 6.2
 
+### Version 6.2.0.14 - 2019-08-29
+
+#### Added
+-   GPUdb class constructor parameter `skip_ssl_cert_verification` which disables
+    verifying the SSL certificate for the Kinetica server for HTTPS connections.
+
+
 ### Version 6.2.0.13 - 2019-08-23
 
 #### Added
