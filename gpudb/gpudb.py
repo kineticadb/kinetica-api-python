@@ -2988,7 +2988,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.7.0"
+    api_version   = "7.0.8.0"
 
     # Constants
     END_OF_SET = -9999
@@ -5808,9 +5808,9 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/visualize/image/classbreak"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"cb_attr","type":"string"},{"name":"cb_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointcolor_attr","type":"string"},{"name":"cb_pointcolor_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointsize_attr","type":"string"},{"name":"cb_pointsize_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointshape_attr","type":"string"},{"name":"cb_pointshape_vals","type":{"type":"array","items":"string"}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"cb_attr","type":"string"},{"name":"cb_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointcolor_attr","type":"string"},{"name":"cb_pointcolor_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointsize_attr","type":"string"},{"name":"cb_pointsize_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointshape_attr","type":"string"},{"name":"cb_pointshape_vals","type":{"type":"array","items":"string"}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}},{"name":"cb_transparency_vec","type":{"type":"array","items":"int"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("world_table_names", "array", [("string")]), ("x_column_name", "string"), ("y_column_name", "string"), ("geometry_column_name", "string"), ("track_ids", "array", [("array", [("string")])]), ("cb_attr", "string"), ("cb_vals", "array", [("string")]), ("cb_pointcolor_attr", "string"), ("cb_pointcolor_vals", "array", [("string")]), ("cb_pointsize_attr", "string"), ("cb_pointsize_vals", "array", [("string")]), ("cb_pointshape_attr", "string"), ("cb_pointshape_vals", "array", [("string")]), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("projection", "string"), ("bg_color", "long"), ("style_options", "map", [("array", [("string")])]), ("options", "map", [("string")])] )
+        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("world_table_names", "array", [("string")]), ("x_column_name", "string"), ("y_column_name", "string"), ("geometry_column_name", "string"), ("track_ids", "array", [("array", [("string")])]), ("cb_attr", "string"), ("cb_vals", "array", [("string")]), ("cb_pointcolor_attr", "string"), ("cb_pointcolor_vals", "array", [("string")]), ("cb_pointsize_attr", "string"), ("cb_pointsize_vals", "array", [("string")]), ("cb_pointshape_attr", "string"), ("cb_pointshape_vals", "array", [("string")]), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("projection", "string"), ("bg_color", "long"), ("style_options", "map", [("array", [("string")])]), ("options", "map", [("string")]), ("cb_transparency_vec", "array", [("int")])] )
         RSP_SCHEMA = Schema( "record", [("width", "double"), ("height", "double"), ("bg_color", "long"), ("image_data", "bytes"), ("info", "map", [("string")])] )
         ENDPOINT = "/visualize/image/classbreak"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -9330,6 +9330,14 @@ class GPUdb(object):
                   Sets the chunk size of all new sets to the specified integer
                   value.
 
+                * **evict_columns** --
+                  Attempts to evict columns from memory to the persistent
+                  store.  Value string is a semicolon separated list of
+                  entries, each entry being a table name optionally followed by
+                  a comma and a comma separated list of column names to attempt
+                  to evict.  An empty value string will attempt to evict all
+                  tables and columns.
+
                 * **execution_mode** --
                   Sets the execution_mode for kernel executions to the
                   specified string value. Possible values are host, device,
@@ -10163,9 +10171,9 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **truncate_strings** --
-                  If set to {true}@{, it allows appending longer strings to
-                  smaller charN string columns by truncating the longer string
-                  to fit.  The default value is false.
+                  If set to *true*, it allows inserting longer strings into
+                  smaller charN string columns by truncating the longer strings
+                  to fit.
                   Allowed values are:
 
                   * true
@@ -10610,9 +10618,12 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **sync_db** --
-                  If set to *true*, the graph will be updated if its source
-                  table(s) is updated. If set to *false*, the graph will not be
-                  updated if the source table(s) is updated.
+                  If set to *true* and *save_persist* is set to *true*, the
+                  graph will be fully reconstructed upon a database restart and
+                  be updated to align with any source table(s) updates made
+                  since the creation of the graph. If dynamic graph updates
+                  upon table inserts are desired, use *add_table_monitor*
+                  instead.
                   Allowed values are:
 
                   * true
@@ -10622,8 +10633,12 @@ class GPUdb(object):
 
                 * **add_table_monitor** --
                   Adds a table monitor to every table used in the creation of
-                  the graph. For more details on table monitors, see
-                  :meth:`.create_table_monitor`.
+                  the graph; this table monitor will trigger the graph to
+                  update dynamically upon inserts to the source table(s). Note
+                  that upon database restart, if *save_persist* is also set to
+                  *true*, the graph will be fully reconstructed and the table
+                  monitors will be reattached. For more details on table
+                  monitors, see :meth:`.create_table_monitor`.
                   Allowed values are:
 
                   * true
@@ -16540,9 +16555,8 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **truncate_strings** --
-                  If set to {true}@{, any strings which are too long for their
-                  charN string fields will be truncated to fit.  The default
-                  value is false.
+                  If set to *true*, any strings which are too long for their
+                  target charN string columns will be truncated to fit.
                   Allowed values are:
 
                   * true
@@ -16941,10 +16955,11 @@ class GPUdb(object):
         Parameters:
 
             run_id (str)
-                The run ID of the running proc instance. If the run ID is not
-                found or the proc instance has already completed, this does
-                nothing. If not specified, all running proc instances will be
-                killed.  The default value is ''.
+                The run ID of a running proc instance. If a proc with a
+                matching run ID is not found or the proc instance has already
+                completed, no procs will be killed. If not specified, all
+                running proc instances will be killed.  The default value is
+                ''.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -16952,8 +16967,12 @@ class GPUdb(object):
                 Allowed keys are:
 
                 * **run_tag** --
-                  Kill only proc instances where a matching run tag was
-                  provided to :meth:`.execute_proc`.  The default value is ''.
+                  If input parameter *run_id* is specified, kill the proc
+                  instance that has a matching run ID and a matching run tag
+                  that was provided to :meth:`.execute_proc`. If input
+                  parameter *run_id* is not specified, kill the proc
+                  instance(s) where a matching run tag was provided to
+                  :meth:`.execute_proc`.  The default value is ''.
 
         Returns:
             A dict with the following entries--
@@ -17488,16 +17507,17 @@ class GPUdb(object):
                 for more information.  The default value is ''.
 
             rings (int)
-                Only applicable when querying nodes. Sets the number of rings
-                around the node to query for adjacency, with '1' being the
-                edges directly attached to the queried node. Also known as
-                number of hops. For example, if it is set to '2', the edge(s)
-                directly attached to the queried node(s) will be returned; in
-                addition, the edge(s) attached to the node(s) attached to the
-                initial ring of edge(s) surrounding the queried node(s) will be
-                returned. This setting can be '0' in which case if the node
-                type id label, it'll then query for all that has the same
-                property.  The default value is 1.
+                Sets the number of rings around the node to query for
+                adjacency, with '1' being the edges directly attached to the
+                queried node. Also known as number of hops. For example, if it
+                is set to '2', the edge(s) directly attached to the queried
+                node(s) will be returned; in addition, the edge(s) attached to
+                the node(s) attached to the initial ring of edge(s) surrounding
+                the queried node(s) will be returned. If the value is set to
+                '0', any nodes that meet the criteria in input parameter
+                *queries* and input parameter *restrictions* will be returned.
+                This parameter is only applicable when querying nodes.  The
+                default value is 1.
 
             options (dict of str to str)
                 Additional parameters.  The default value is an empty dict ( {}
@@ -17505,11 +17525,11 @@ class GPUdb(object):
                 Allowed keys are:
 
                 * **force_undirected** --
-                  This parameter is only applicable if the queried graph input
-                  parameter *graph_name* is directed and when querying nodes.
                   If set to *true*, all inbound edges and outbound edges
                   relative to the node will be returned. If set to *false*,
                   only outbound edges relative to the node will be returned.
+                  This parameter is only applicable if the queried graph input
+                  parameter *graph_name* is directed and when querying nodes.
                   Allowed values are:
 
                   * true
@@ -17525,9 +17545,10 @@ class GPUdb(object):
 
                 * **target_nodes_table** --
                   Name of the table to store the list of the final nodes
-                  reached during the traversal. If this value is not given
-                  it'll default to adjacemcy_table+'_nodes'.  The default value
-                  is ''.
+                  reached during the traversal. If this value is left as the
+                  default, the table name will default to the input parameter
+                  *adjacency_table* value plus a '_nodes' suffix, e.g.,
+                  '<adjacency_table_name>_nodes'.  The default value is ''.
 
                 * **restriction_threshold_value** --
                   Value-based restriction comparison. Any node or edge with a
@@ -17538,11 +17559,11 @@ class GPUdb(object):
                 * **export_query_results** --
                   Returns query results in the response. If set to *true*, the
                   output parameter *adjacency_list_int_array* (if the query was
-                  based on IDs), @{adjacency_list_string_array} (if the query
-                  was based on names), or @{output_adjacency_list_wkt_array}
-                  (if the query was based on WKTs) will be populated with the
-                  results. If set to *false*, none of the arrays will be
-                  populated.
+                  based on IDs), output parameter *adjacency_list_string_array*
+                  (if the query was based on names), or output parameter
+                  *adjacency_list_wkt_array* (if the query was based on WKTs)
+                  will be populated with the results. If set to *false*, none
+                  of the arrays will be populated.
                   Allowed values are:
 
                   * true
@@ -17870,14 +17891,14 @@ class GPUdb(object):
     # begin show_graph
     def show_graph( self, graph_name = '', options = {} ):
         """Shows information and characteristics of graphs that exist on the graph
-        server, depending on the options specified.
+        server.
 
         Parameters:
 
             graph_name (str)
-                Name of the graph on which to retrieve information. If empty,
-                information about all graphs is returned.  The default value is
-                ''.
+                Name of the graph on which to retrieve information. If left as
+                the default value, information about all graphs is returned.
+                The default value is ''.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -17885,7 +17906,8 @@ class GPUdb(object):
                 Allowed keys are:
 
                 * **show_original_request** --
-                  If set to *true*, the request that was originally used.
+                  If set to *true*, the request that was originally used to
+                  create the graph is also returned as JSON.
                   Allowed values are:
 
                   * true
@@ -18048,10 +18070,10 @@ class GPUdb(object):
         Parameters:
 
             run_id (str)
-                The run ID of a specific running or completed proc instance for
-                which the status will be returned. If the run ID is not found,
-                nothing will be returned. If not specified, the statuses of all
-                running and completed proc instances will be returned.  The
+                The run ID of a specific proc instance for which the status
+                will be returned. If a proc with a matching run ID is not
+                found, the response will be empty. If not specified, the
+                statuses of all executed proc instances will be returned.  The
                 default value is ''.
 
             options (dict of str to str)
@@ -18071,8 +18093,12 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **run_tag** --
-                  Limit statuses to proc instances where a matching run tag was
-                  provided to :meth:`.execute_proc`.  The default value is ''.
+                  If input parameter *run_id* is specified, return the status
+                  for a proc instance that has a matching run ID and a matching
+                  run tag that was provided to :meth:`.execute_proc`. If input
+                  parameter *run_id* is not specified, return statuses for all
+                  proc instances where a matching run tag was provided to
+                  :meth:`.execute_proc`.  The default value is ''.
 
         Returns:
             A dict with the following entries--
@@ -19334,6 +19360,17 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **truncate_strings** --
+                  If set to {true}@{, any strings which are too long for their
+                  charN string fields will be truncated to fit.  The default
+                  value is false.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **use_expressions_in_new_values_maps** --
                   When set to *true*, all new values in input parameter
                   *new_values_maps* are considered as expression values. When
@@ -19826,7 +19863,8 @@ class GPUdb(object):
                                     max_x = None, min_y = None, max_y = None,
                                     width = None, height = None, projection =
                                     'PLATE_CARREE', bg_color = None,
-                                    style_options = None, options = {} ):
+                                    style_options = None, options = {},
+                                    cb_transparency_vec = None ):
 
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
         world_table_names = world_table_names if isinstance( world_table_names, list ) else ( [] if (world_table_names is None) else [ world_table_names ] )
@@ -19852,6 +19890,7 @@ class GPUdb(object):
         assert isinstance( bg_color, (int, long, float)), "visualize_image_classbreak(): Argument 'bg_color' must be (one) of type(s) '(int, long, float)'; given %s" % type( bg_color ).__name__
         assert isinstance( style_options, (dict)), "visualize_image_classbreak(): Argument 'style_options' must be (one) of type(s) '(dict)'; given %s" % type( style_options ).__name__
         assert isinstance( options, (dict)), "visualize_image_classbreak(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+        cb_transparency_vec = cb_transparency_vec if isinstance( cb_transparency_vec, list ) else ( [] if (cb_transparency_vec is None) else [ cb_transparency_vec ] )
 
         (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/visualize/image/classbreak" )
 
@@ -19880,6 +19919,7 @@ class GPUdb(object):
         obj['bg_color'] = bg_color
         obj['style_options'] = self.__sanitize_dicts( style_options )
         obj['options'] = self.__sanitize_dicts( options )
+        obj['cb_transparency_vec'] = cb_transparency_vec
 
         response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/visualize/image/classbreak' )
 
@@ -24641,9 +24681,9 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **truncate_strings** --
-                  If set to {true}@{, it allows appending longer strings to
-                  smaller charN string columns by truncating the longer string
-                  to fit.  The default value is false.
+                  If set to *true*, it allows inserting longer strings into
+                  smaller charN string columns by truncating the longer strings
+                  to fit.
                   Allowed values are:
 
                   * true
@@ -26490,6 +26530,17 @@ class GPUdbTable( object ):
                 * **update_partition** --
                   Force qualifying records to be deleted and reinserted so
                   their partition membership will be reevaluated.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **truncate_strings** --
+                  If set to {true}@{, any strings which are too long for their
+                  charN string fields will be truncated to fit.  The default
+                  value is false.
                   Allowed values are:
 
                   * true
