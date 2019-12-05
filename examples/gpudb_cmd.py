@@ -35,7 +35,7 @@ def gpudb_cmd( argv ):
     # Add arguments to the parser
     parser = argparse.ArgumentParser()
     parser.add_argument( '-g', '--gpudb', nargs = '?', default = "127.0.0.1:9191",
-                         help = "IP address and port of GPUdb in the format: IP_ADDRESS:PORT (default 127.0.0.1:9191)" )
+                         help = "IP address and port of GPUdb in the format: http[s]://IP_ADDRESS:PORT (default http://127.0.0.1:9191)" )
     parser.add_argument( '--username', nargs = '?', default = "",
                          help = "Username used when connecting to GPUdb." )
     parser.add_argument( '--password', nargs = '?', default = "",
@@ -73,12 +73,14 @@ def gpudb_cmd( argv ):
 
     # --------------------------------------
     # Set up GPUdb
-    GPUdb_IP, GPUdb_Port = args.gpudb.split( ":" )
+    GPUdb_HOST = args.gpudb
+    # GPUdb_IP, GPUdb_Port = args.gpudb.split( ":" )
     password = args.password
     if args.ask_password:
         password = getpass.getpass("GPUdb password:")
     encoding = 'JSON' if args.json_encoding else 'BINARY'
-    gpudb = GPUdb( encoding = encoding, host = GPUdb_IP, port = GPUdb_Port, username = args.username, password = password )
+    gpudb = GPUdb( encoding = encoding, host = GPUdb_HOST, username = args.username, password = password )
+    # gpudb = GPUdb( encoding = encoding, host = GPUdb_IP, port = GPUdb_Port, username = args.username, password = password )
 
     # Get a list of all endpoint names
     query_names = sorted( gpudb.gpudb_schemas.keys() )
@@ -118,7 +120,7 @@ def gpudb_cmd( argv ):
 
     # Parse the request JSON to get the parameters
     request_schema = gpudb.gpudb_schemas[ query_name ][ "REQ_SCHEMA" ]
-    request_json =  request_schema.to_json()["fields"]
+    request_json =  json.loads( request_json )["fields"]
 
     # Create a dictionary of (param name, param type) pairs based on the JSON
     param_name_type = {}
@@ -183,7 +185,7 @@ def gpudb_cmd( argv ):
 
     # Obtain the request and response schemas for the given query
     (req_schema, resp_schema) = gpudb._GPUdb__get_schemas( query_name )
-    endpoint = gpudb._GPUdb__get_endpoint( query_name )
+    endpoint = query_name
 
     # --------------------------------------
     if args.print_query :
@@ -194,7 +196,7 @@ def gpudb_cmd( argv ):
 
     # --------------------------------------
     # Perform the GPUDB query
-    response = gpudb._GPUdb__post_then_get( req_schema, resp_schema, param_vals, endpoint )
+    response = gpudb._GPUdb__post_then_get_cext( req_schema, resp_schema, param_vals, endpoint )
 
     print_dict( response, args.format )
     # --------------------------------------

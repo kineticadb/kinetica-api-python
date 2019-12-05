@@ -2,6 +2,13 @@
 
 ## Version 7.0
 
+### Version 7.0.9.0 - 2019-09-24
+
+#### Added
+-   Support for high-availability failover when the database is in the
+    offline mode.
+
+
 ### Version 7.0.7.0 - 2019-08-29
 
 #### Added

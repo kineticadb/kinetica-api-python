@@ -152,9 +152,10 @@ class C:
 
     # Special error messages coming from the database
     _DB_EXITING_ERROR_MESSAGE        = "Kinetica is exiting"
-    _DB_SYSTEM_LIMITED_ERROR_MESSAGE = "system-limited-fatal";
-    _CONNECTION_REFUSED = "Connection refused"
-    _CONNECTION_RESET   = "Connection reset"
+    _DB_OFFLINE_ERROR_MESSAGE        = "Kinetica is offline"
+    _DB_SYSTEM_LIMITED_ERROR_MESSAGE = "system-limited-fatal"
+    _DB_CONNECTION_REFUSED           = "Connection refused"
+    _DB_CONNECTION_RESET             = "Connection reset"
 
     # Some pre-fixes used in creating error messages
     _FAILED_CONNECTION_HAS_HA = "Connection failed; all clusters in the HA ring have been tried! Error encountered: "
@@ -262,7 +263,7 @@ class GPUdbDecodingException( GPUdbException ):
 
 
 # ---------------------------------------------------------------------------
-# GPUdbExitException - Exception for when Kinetica is exiting
+# GPUdbExitException - Exception for when Kinetica is quitting
 # ---------------------------------------------------------------------------
 class GPUdbExitException( GPUdbException ):
 
@@ -2988,7 +2989,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.8.0"
+    api_version   = "7.0.10.0"
 
     # Constants
     END_OF_SET = -9999
@@ -3630,13 +3631,15 @@ class GPUdb(object):
         if (response_time is not None):
             out['status_info']['response_time'] = float(response_time)
 
-        # If Kinetica is exiting, we need special handling for HA failover
-        if ( (out['status_info']['status'] == 'ERROR')
-             and ( (C._DB_EXITING_ERROR_MESSAGE in out['status_info']['message'])
-                   or (C._DB_SYSTEM_LIMITED_ERROR_MESSAGE in out['status_info']['message'])
-                   or (C._CONNECTION_REFUSED in out['status_info']['message'])
-                   or (C._CONNECTION_RESET in out['status_info']['message']) ) ):
-            raise GPUdbExitException( out['status_info']['message'] )
+        # Special handling for HA failover scenarios
+        if (out['status_info']['status'] == 'ERROR'):
+            error_msg = out['status_info']['message']
+            if ( (C._DB_CONNECTION_REFUSED in error_msg)
+                 or (C._DB_CONNECTION_RESET in error_msg)
+                 or (C._DB_EXITING_ERROR_MESSAGE in error_msg)
+                 or (C._DB_OFFLINE_ERROR_MESSAGE in error_msg)
+                 or (C._DB_SYSTEM_LIMITED_ERROR_MESSAGE in error_msg) ):
+                raise GPUdbExitException( error_msg )
         # end if
             
         return out
@@ -3769,7 +3772,7 @@ class GPUdb(object):
                 # Else, return just the decoded response
                 return decoded_response
             except GPUdbExitException as ex:
-                # Kinetica is exiting; try other clusters, if any
+                # An HA failover trigger happened; try other clusters, if any
                 exhausted_all_conn_tokens = self.__update_connection_token_index( initial_index )
                 error_msg = str( ex )
             except GPUdbConnectionException as ex:
@@ -3865,7 +3868,7 @@ class GPUdb(object):
                 
                 return decoded_response
             except GPUdbExitException as ex:
-                # Kinetica is exiting; try other clusters, if any
+                # An HA failover trigger happened; try other clusters, if any
                 exhausted_all_conn_tokens = self.__update_connection_token_index( initial_index )
                 error_msg = str( ex )
             except GPUdbConnectionException as ex:
@@ -4749,7 +4752,7 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/alter/table/columns"
-        REQ_SCHEMA_STR = """{"type":"record","name":"alter_table_columns_request","fields":[{"name":"table_name","type":"string"},{"name":"column_alterations","type":{"type":"array","items":{"type":"map","values":"string"},"default":{}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"alter_table_columns_request","fields":[{"name":"table_name","type":"string"},{"name":"column_alterations","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"alter_table_columns_response","fields":[{"name":"table_name","type":"string"},{"name":"type_id","type":"string"},{"name":"type_definition","type":"string"},{"name":"properties","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"label","type":"string"},{"name":"column_alterations","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("column_alterations", "array", [("map", [("string")])]), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("type_id", "string"), ("type_definition", "string"), ("properties", "map", [("array", [("string")])]), ("label", "string"), ("column_alterations", "array", [("map", [("string")])]), ("info", "map", [("string")])] )
@@ -5651,6 +5654,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/show/sql/proc"
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_sql_proc_request","fields":[{"name":"procedure_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_sql_proc_response","fields":[{"name":"procedure_names","type":{"type":"array","items":"string"}},{"name":"procedure_definitions","type":{"type":"array","items":"string"}},{"name":"additional_info","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("procedure_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("procedure_names", "array", [("string")]), ("procedure_definitions", "array", [("string")]), ("additional_info", "array", [("map", [("string")])]), ("info", "map", [("string")])] )
+        ENDPOINT = "/show/sql/proc"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/show/statistics"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_statistics_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"show_statistics_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"stastistics_map","type":{"type":"array","items":{"type":"array","items":{"type":"map","values":"string"}}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -5751,9 +5765,9 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/solve/graph"
-        REQ_SCHEMA_STR = """{"name":"solve_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"weights_on_edges","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"solver_type","type":"string"},{"name":"source_node_id","type":"long"},{"name":"destination_node_ids","type":{"type":"array","items":"long"}},{"name":"node_type","type":"string"},{"name":"source_node","type":"string"},{"name":"destination_nodes","type":{"type":"array","items":"string"}},{"name":"solution_table","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"name":"solve_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"weights_on_edges","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"solver_type","type":"string"},{"name":"source_nodes","type":{"type":"array","items":"string"}},{"name":"destination_nodes","type":{"type":"array","items":"string"}},{"name":"solution_table","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"name":"solve_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"result_per_destination_node","type":{"type":"array","items":"float"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("weights_on_edges", "array", [("string")]), ("restrictions", "array", [("string")]), ("solver_type", "string"), ("source_node_id", "long"), ("destination_node_ids", "array", [("long")]), ("node_type", "string"), ("source_node", "string"), ("destination_nodes", "array", [("string")]), ("solution_table", "string"), ("options", "map", [("string")])] )
+        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("weights_on_edges", "array", [("string")]), ("restrictions", "array", [("string")]), ("solver_type", "string"), ("source_nodes", "array", [("string")]), ("destination_nodes", "array", [("string")]), ("solution_table", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("result_per_destination_node", "array", [("float")]), ("info", "map", [("string")])] )
         ENDPOINT = "/solve/graph"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -6001,6 +6015,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["show_resource_statistics"] = "/show/resource/statistics"
         self.gpudb_func_to_endpoint_map["show_resource_groups"] = "/show/resourcegroups"
         self.gpudb_func_to_endpoint_map["show_security"] = "/show/security"
+        self.gpudb_func_to_endpoint_map["show_sql_proc"] = "/show/sql/proc"
         self.gpudb_func_to_endpoint_map["show_statistics"] = "/show/statistics"
         self.gpudb_func_to_endpoint_map["show_system_properties"] = "/show/system/properties"
         self.gpudb_func_to_endpoint_map["show_system_status"] = "/show/system/status"
@@ -6947,10 +6962,10 @@ class GPUdb(object):
 
     # begin aggregate_group_by
     def aggregate_group_by( self, table_name = None, column_names = None, offset =
-                            None, limit = 1000, encoding = 'binary', options =
-                            {} ):
+                            0, limit = -9999, encoding = 'binary', options = {}
+                            ):
         """Calculates unique combinations (groups) of values for the given columns
-        in a given table/view/collection and computes aggregates on each unique
+        in a given table or view and computes aggregates on each unique
         combination. This is somewhat analogous to an SQL-style SELECT...GROUP
         BY.
 
@@ -7017,8 +7032,8 @@ class GPUdb(object):
         Parameters:
 
             table_name (str)
-                Name of the table on which the operation will be performed.
-                Must be an existing table/view/collection.
+                Name of an existing table or view on which the operation will
+                be performed.
 
             column_names (list of str)
                 List of one or more column names, expressions, and aggregate
@@ -7028,14 +7043,20 @@ class GPUdb(object):
             offset (long)
                 A positive integer indicating the number of initial results to
                 skip (this can be useful for paging through the results).  The
-                minimum allowed value is 0. The maximum allowed value is
-                MAX_INT.
+                default value is 0.The minimum allowed value is 0. The maximum
+                allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned Or END_OF_SET (-9999) to indicate that the max
-                number of results should be returned.  The default value is
-                1000.
+                be returned, or END_OF_SET (-9999) to indicate that the max
+                number of results should be returned.  The number of records
+                returned will never exceed the server's own limit, defined by
+                the `max_get_records_size
+                <../../../config/index.html#general>`_ parameter in the server
+                configuration.  Use output parameter *has_more_records* to see
+                if more records exist in the result to be fetched, and input
+                parameter *offset* & input parameter *limit* to request
+                subsequent pages of results.  The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records.
@@ -7059,8 +7080,6 @@ class GPUdb(object):
                   in *result_table*. If the collection provided is
                   non-existent, the collection will be automatically created.
                   If empty, then the table will be a top-level table.
-                  Additionally this option is invalid if input parameter
-                  *table_name* is a collection.
 
                 * **expression** --
                   Filter expression to apply to the table prior to computing
@@ -7139,7 +7158,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **result_table_generate_pk** --
-                  If 'true' then set a primary key for the result table. Must
+                  If *true* then set a primary key for the result table. Must
                   be used in combination with the *result_table* option.
                   Allowed values are:
 
@@ -7153,8 +7172,9 @@ class GPUdb(object):
                   specified in *result_table*.
 
                 * **chunk_size** --
-                  Indicates the chunk size to be used for the result table.
-                  Must be used in combination with the *result_table* option.
+                  Indicates the number of records per chunk to be used for the
+                  result table. Must be used in combination with the
+                  *result_table* option.
 
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
@@ -7162,7 +7182,8 @@ class GPUdb(object):
                   *result_table* option.
 
                 * **view_id** --
-                  view this result table is part of.  The default value is ''.
+                  ID of view of which the result table will be a member.  The
+                  default value is ''.
 
                 * **materialize_on_gpu** --
                   If *true* then the columns of the groupby result table will
@@ -7257,12 +7278,12 @@ class GPUdb(object):
 
     # begin aggregate_group_by_and_decode
     def aggregate_group_by_and_decode( self, table_name = None, column_names = None,
-                                       offset = None, limit = 1000, encoding =
+                                       offset = 0, limit = -9999, encoding =
                                        'binary', options = {}, record_type =
                                        None, force_primitive_return_types =
                                        True, get_column_major = True ):
         """Calculates unique combinations (groups) of values for the given columns
-        in a given table/view/collection and computes aggregates on each unique
+        in a given table or view and computes aggregates on each unique
         combination. This is somewhat analogous to an SQL-style SELECT...GROUP
         BY.
 
@@ -7329,8 +7350,8 @@ class GPUdb(object):
         Parameters:
 
             table_name (str)
-                Name of the table on which the operation will be performed.
-                Must be an existing table/view/collection.
+                Name of an existing table or view on which the operation will
+                be performed.
 
             column_names (list of str)
                 List of one or more column names, expressions, and aggregate
@@ -7340,14 +7361,20 @@ class GPUdb(object):
             offset (long)
                 A positive integer indicating the number of initial results to
                 skip (this can be useful for paging through the results).  The
-                minimum allowed value is 0. The maximum allowed value is
-                MAX_INT.
+                default value is 0.The minimum allowed value is 0. The maximum
+                allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned Or END_OF_SET (-9999) to indicate that the max
-                number of results should be returned.  The default value is
-                1000.
+                be returned, or END_OF_SET (-9999) to indicate that the max
+                number of results should be returned.  The number of records
+                returned will never exceed the server's own limit, defined by
+                the `max_get_records_size
+                <../../../config/index.html#general>`_ parameter in the server
+                configuration.  Use output parameter *has_more_records* to see
+                if more records exist in the result to be fetched, and input
+                parameter *offset* & input parameter *limit* to request
+                subsequent pages of results.  The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records.
@@ -7371,8 +7398,6 @@ class GPUdb(object):
                   in *result_table*. If the collection provided is
                   non-existent, the collection will be automatically created.
                   If empty, then the table will be a top-level table.
-                  Additionally this option is invalid if input parameter
-                  *table_name* is a collection.
 
                 * **expression** --
                   Filter expression to apply to the table prior to computing
@@ -7451,7 +7476,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **result_table_generate_pk** --
-                  If 'true' then set a primary key for the result table. Must
+                  If *true* then set a primary key for the result table. Must
                   be used in combination with the *result_table* option.
                   Allowed values are:
 
@@ -7465,8 +7490,9 @@ class GPUdb(object):
                   specified in *result_table*.
 
                 * **chunk_size** --
-                  Indicates the chunk size to be used for the result table.
-                  Must be used in combination with the *result_table* option.
+                  Indicates the number of records per chunk to be used for the
+                  result table. Must be used in combination with the
+                  *result_table* option.
 
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
@@ -7474,7 +7500,8 @@ class GPUdb(object):
                   *result_table* option.
 
                 * **view_id** --
-                  view this result table is part of.  The default value is ''.
+                  ID of view of which the result table will be a member.  The
+                  default value is ''.
 
                 * **materialize_on_gpu** --
                   If *true* then the columns of the groupby result table will
@@ -8199,15 +8226,14 @@ class GPUdb(object):
 
 
     # begin aggregate_unique
-    def aggregate_unique( self, table_name = None, column_name = None, offset =
-                          None, limit = 10000, encoding = 'binary', options = {}
-                          ):
+    def aggregate_unique( self, table_name = None, column_name = None, offset = 0,
+                          limit = -9999, encoding = 'binary', options = {} ):
         """Returns all the unique values from a particular column (specified by
-        input parameter *column_name*) of a particular table or collection
-        (specified by input parameter *table_name*). If input parameter
-        *column_name* is a numeric column the values will be in output
-        parameter *binary_encoded_response*. Otherwise if input parameter
-        *column_name* is a string column the values will be in output parameter
+        input parameter *column_name*) of a particular table or view (specified
+        by input parameter *table_name*). If input parameter *column_name* is a
+        numeric column the values will be in output parameter
+        *binary_encoded_response*. Otherwise if input parameter *column_name*
+        is a string column the values will be in output parameter
         *json_encoded_response*.  The results can be paged via the input
         parameter *offset* and input parameter *limit* parameters.
 
@@ -8233,15 +8259,15 @@ class GPUdb(object):
         parameter *column_name*, the result table will be sharded, in all other
         cases it will be replicated.  Sorting will properly function only if
         the result table is replicated or if there is only one processing node
-        and should not be relied upon in other cases.  Not available if input
-        parameter *table_name* is a collection or when the value of input
-        parameter *column_name* is an unrestricted-length string.
+        and should not be relied upon in other cases.  Not available if the
+        value of input parameter *column_name* is an unrestricted-length
+        string.
 
         Parameters:
 
             table_name (str)
-                Name of an existing table/collection on which the operation
-                will be performed.
+                Name of an existing table or view on which the operation will
+                be performed.
 
             column_name (str)
                 Name of the column or an expression containing one or more
@@ -8250,14 +8276,20 @@ class GPUdb(object):
             offset (long)
                 A positive integer indicating the number of initial results to
                 skip (this can be useful for paging through the results).  The
-                minimum allowed value is 0. The maximum allowed value is
-                MAX_INT.
+                default value is 0.The minimum allowed value is 0. The maximum
+                allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
                 be returned. Or END_OF_SET (-9999) to indicate that the max
-                number of results should be returned.  The default value is
-                10000.
+                number of results should be returned.  The number of records
+                returned will never exceed the server's own limit, defined by
+                the `max_get_records_size
+                <../../../config/index.html#general>`_ parameter in the server
+                configuration.  Use output parameter *has_more_records* to see
+                if more records exist in the result to be fetched, and input
+                parameter *offset* & input parameter *limit* to request
+                subsequent pages of results.  The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records.
@@ -8281,8 +8313,6 @@ class GPUdb(object):
                   in *result_table*. If the collection provided is
                   non-existent, the collection will be automatically created.
                   If empty, then the table will be a top-level table.
-                  Additionally this option is invalid if input parameter
-                  *table_name* is a collection.
 
                 * **expression** --
                   Optional filter expression to apply to the table.
@@ -8300,8 +8330,7 @@ class GPUdb(object):
                   The name of the table used to store the results. If present,
                   no results are returned in the response. Has the same naming
                   restrictions as `tables <../../../concepts/tables.html>`_.
-                  Not available if input parameter *table_name* is a collection
-                  or when input parameter *column_name* is an
+                  Not available if input parameter *column_name* is an
                   unrestricted-length string.
 
                 * **result_table_persist** --
@@ -8329,7 +8358,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **result_table_generate_pk** --
-                  If 'true' then set a primary key for the result table. Must
+                  If *true* then set a primary key for the result table. Must
                   be used in combination with the *result_table* option.
                   Allowed values are:
 
@@ -8343,11 +8372,13 @@ class GPUdb(object):
                   specified in *result_table*.
 
                 * **chunk_size** --
-                  Indicates the chunk size to be used for the result table.
-                  Must be used in combination with the *result_table* option.
+                  Indicates the number of records per chunk to be used for the
+                  result table. Must be used in combination with the
+                  *result_table* option.
 
                 * **view_id** --
-                  view this result table is part of.  The default value is ''.
+                  ID of view of which the result table will be a member.  The
+                  default value is ''.
 
         Returns:
             A dict with the following entries--
@@ -8410,16 +8441,16 @@ class GPUdb(object):
 
     # begin aggregate_unique_and_decode
     def aggregate_unique_and_decode( self, table_name = None, column_name = None,
-                                     offset = None, limit = 10000, encoding =
+                                     offset = 0, limit = -9999, encoding =
                                      'binary', options = {}, record_type = None,
                                      force_primitive_return_types = True,
                                      get_column_major = True ):
         """Returns all the unique values from a particular column (specified by
-        input parameter *column_name*) of a particular table or collection
-        (specified by input parameter *table_name*). If input parameter
-        *column_name* is a numeric column the values will be in output
-        parameter *binary_encoded_response*. Otherwise if input parameter
-        *column_name* is a string column the values will be in output parameter
+        input parameter *column_name*) of a particular table or view (specified
+        by input parameter *table_name*). If input parameter *column_name* is a
+        numeric column the values will be in output parameter
+        *binary_encoded_response*. Otherwise if input parameter *column_name*
+        is a string column the values will be in output parameter
         *json_encoded_response*.  The results can be paged via the input
         parameter *offset* and input parameter *limit* parameters.
 
@@ -8445,15 +8476,15 @@ class GPUdb(object):
         parameter *column_name*, the result table will be sharded, in all other
         cases it will be replicated.  Sorting will properly function only if
         the result table is replicated or if there is only one processing node
-        and should not be relied upon in other cases.  Not available if input
-        parameter *table_name* is a collection or when the value of input
-        parameter *column_name* is an unrestricted-length string.
+        and should not be relied upon in other cases.  Not available if the
+        value of input parameter *column_name* is an unrestricted-length
+        string.
 
         Parameters:
 
             table_name (str)
-                Name of an existing table/collection on which the operation
-                will be performed.
+                Name of an existing table or view on which the operation will
+                be performed.
 
             column_name (str)
                 Name of the column or an expression containing one or more
@@ -8462,14 +8493,20 @@ class GPUdb(object):
             offset (long)
                 A positive integer indicating the number of initial results to
                 skip (this can be useful for paging through the results).  The
-                minimum allowed value is 0. The maximum allowed value is
-                MAX_INT.
+                default value is 0.The minimum allowed value is 0. The maximum
+                allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
                 be returned. Or END_OF_SET (-9999) to indicate that the max
-                number of results should be returned.  The default value is
-                10000.
+                number of results should be returned.  The number of records
+                returned will never exceed the server's own limit, defined by
+                the `max_get_records_size
+                <../../../config/index.html#general>`_ parameter in the server
+                configuration.  Use output parameter *has_more_records* to see
+                if more records exist in the result to be fetched, and input
+                parameter *offset* & input parameter *limit* to request
+                subsequent pages of results.  The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records.
@@ -8493,8 +8530,6 @@ class GPUdb(object):
                   in *result_table*. If the collection provided is
                   non-existent, the collection will be automatically created.
                   If empty, then the table will be a top-level table.
-                  Additionally this option is invalid if input parameter
-                  *table_name* is a collection.
 
                 * **expression** --
                   Optional filter expression to apply to the table.
@@ -8512,8 +8547,7 @@ class GPUdb(object):
                   The name of the table used to store the results. If present,
                   no results are returned in the response. Has the same naming
                   restrictions as `tables <../../../concepts/tables.html>`_.
-                  Not available if input parameter *table_name* is a collection
-                  or when input parameter *column_name* is an
+                  Not available if input parameter *column_name* is an
                   unrestricted-length string.
 
                 * **result_table_persist** --
@@ -8541,7 +8575,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **result_table_generate_pk** --
-                  If 'true' then set a primary key for the result table. Must
+                  If *true* then set a primary key for the result table. Must
                   be used in combination with the *result_table* option.
                   Allowed values are:
 
@@ -8555,11 +8589,13 @@ class GPUdb(object):
                   specified in *result_table*.
 
                 * **chunk_size** --
-                  Indicates the chunk size to be used for the result table.
-                  Must be used in combination with the *result_table* option.
+                  Indicates the number of records per chunk to be used for the
+                  result table. Must be used in combination with the
+                  *result_table* option.
 
                 * **view_id** --
-                  view this result table is part of.  The default value is ''.
+                  ID of view of which the result table will be a member.  The
+                  default value is ''.
 
             record_type (:class:`RecordType` or None)
                 The record type expected in the results, or None to
@@ -8767,8 +8803,9 @@ class GPUdb(object):
                   name.  The default value is ''.
 
                 * **chunk_size** --
-                  Indicates the chunk size to be used for the result table.
-                  Must be used in combination with the *result_table* option.
+                  Indicates the number of records per chunk to be used for the
+                  result table. Must be used in combination with the
+                  *result_table* option.
 
                 * **limit** --
                   The number of records to keep.  The default value is ''.
@@ -8975,8 +9012,9 @@ class GPUdb(object):
                   name.  The default value is ''.
 
                 * **chunk_size** --
-                  Indicates the chunk size to be used for the result table.
-                  Must be used in combination with the *result_table* option.
+                  Indicates the number of records per chunk to be used for the
+                  result table. Must be used in combination with the
+                  *result_table* option.
 
                 * **limit** --
                   The number of records to keep.  The default value is ''.
@@ -9327,8 +9365,8 @@ class GPUdb(object):
                   load.
 
                 * **chunk_size** --
-                  Sets the chunk size of all new sets to the specified integer
-                  value.
+                  Sets the number of records per chunk to be used for all new
+                  tables.
 
                 * **evict_columns** --
                   Attempts to evict columns from memory to the persistent
@@ -9355,11 +9393,11 @@ class GPUdb(object):
 
                 * **communicator_test** --
                   Invoke the communicator test and report timing results. Value
-                  string is is a semicolon separated list of <key>=<value>
-                  expressions.  Expressions are: num_transactions=<num> where
+                  string is is a semicolon separated list of [key]=[value]
+                  expressions.  Expressions are: num_transactions=[num] where
                   num is the number of request reply transactions to invoke per
-                  test; message_size=<bytes> where bytes is the size of the
-                  messages to send in bytes; check_values=<enabled> where if
+                  test; message_size=[bytes] where bytes is the size in bytes
+                  of the messages to send; check_values=[enabled] where if
                   enabled is true the value of the messages received are
                   verified.
 
@@ -9378,12 +9416,12 @@ class GPUdb(object):
 
                 * **network_speed** --
                   Invoke the network speed test and report timing results.
-                  Value string is a semicolon-separated list of <key>=<value>
-                  expressions.  Valid expressions are: seconds=<time> where
-                  time is the time in seconds to run the test; data_size=<size>
-                  where size is the size in bytes of the block to be
-                  transferred; threads=<number of threads>;
-                  to_ranks=<space-separated list of ranks> where the list of
+                  Value string is a semicolon-separated list of [key]=[value]
+                  expressions.  Valid expressions are: seconds=[time] where
+                  time is the time in seconds to run the test;
+                  data_size=[bytes] where bytes is the size in bytes of the
+                  block to be transferred; threads=[number of threads];
+                  to_ranks=[space-separated list of ranks] where the list of
                   ranks is the ranks that rank 0 will send data to and get data
                   from. If to_ranks is unspecified then all worker ranks are
                   used.
@@ -9410,13 +9448,13 @@ class GPUdb(object):
                 * **audit_data** --
                   Enable or disable auditing of request data.
 
-                * **chunk_cache_enabled** --
-                  Enable chunk level query caching. Flushes the chunk cache
-                  when value is false
+                * **shadow_agg_size** --
+                  Size of the shadow aggregate chunk cache in bytes.  The
+                  default value is '10000000'.
 
-                * **chunk_cache_size** --
-                  Size of the chunk cache in bytes.  The default value is
-                  '10000000'.
+                * **shadow_filter_size** --
+                  Size of the shdow filter chunk cache in bytes.  The default
+                  value is '10000000'.
 
                 * **synchronous_compression** --
                   compress vector on set_compression (instead of waiting for
@@ -9768,6 +9806,18 @@ class GPUdb(object):
                   <../../../rm/usage.html#tier-strategies>`_ for examples.
                   This option will be ignored if input parameter *value* is
                   also specified.
+
+                * **index_type** --
+                  Type of index to create.
+                  Allowed values are:
+
+                  * **column** --
+                    Standard column index.
+
+                  * **chunk_skip** --
+                    Chunk skip index.
+
+                  The default value is 'column'.
 
         Returns:
             A dict with the following entries--
@@ -10453,9 +10503,14 @@ class GPUdb(object):
                       edges = None, weights = None, restrictions = None, options
                       = {} ):
         """Creates a new graph network using given nodes, edges, weights, and
-        restrictions. See `Network Graph Solvers
-        <../../../graph_solver/network_graph_solver.html>`_ for more
-        information.
+        restrictions.
+
+        IMPORTANT: It's highly recommended that you review the `Network Graphs
+        & Solvers <../../../graph_solver/network_graph_solver.html>`_ concepts
+        documentation, the `Graph REST Tutorial
+        <../../../graph_solver/examples/graph_rest_guide.html>`_, and/or some
+        `graph examples <../../../graph_solver/examples.html>`_ before using
+        this endpoint.
 
         Parameters:
 
@@ -10463,8 +10518,11 @@ class GPUdb(object):
                 Name of the graph resource to generate.
 
             directed_graph (bool)
-                If set to *true*, the graph will be directed (0 to 1, 1 to 2,
-                etc.). If set to *false*, the graph will not be directed.
+                If set to *true*, the graph will be directed. If set to
+                *false*, the graph will not be directed. Consult `Directed
+                Graphs
+                <../../../graph_solver/network_graph_solver.html#directed-graphs>`_
+                for more details.
                 Allowed values are:
 
                 * true
@@ -10573,6 +10631,17 @@ class GPUdb(object):
                   If set to *true* and the graph (using input parameter
                   *graph_name*) already exists, the graph is deleted and
                   recreated.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **modify** --
+                  If set to *true* and *true* and if the graph (using input
+                  parameter *graph_name*) already exists, the graph is updated
+                  with these components.
                   Allowed values are:
 
                   * true
@@ -10849,8 +10918,8 @@ class GPUdb(object):
                   equi-join stencils.  The default value is 'false'.
 
                 * **chunk_size** --
-                  Maximum size of a joined-chunk for this table. Defaults to
-                  the gpudb.conf file chunk size
+                  Maximum number of records per joined-chunk for this table.
+                  Defaults to the gpudb.conf file chunk size
 
         Returns:
             A dict with the following entries--
@@ -11116,11 +11185,22 @@ class GPUdb(object):
         specified columns, regardless of how the source table is sharded.  The
         source table can even be unsharded or replicated.
 
+        If input parameter *table_name* is empty, selection is performed
+        against a single-row virtual table.  This can be useful in executing
+        temporal (`NOW()
+        <../../../concepts/expressions.html#date-time-functions>`_), identity
+        (`USER()
+        <../../../concepts/expressions.html#user-security-functions>`_), or
+        constant-based functions (`GEODIST(-77.11, 38.88, -71.06, 42.36)
+        <../../../concepts/expressions.html#scalar-functions>`_).
+
         Parameters:
 
             table_name (str)
                 Name of the existing table on which the projection is to be
-                applied.
+                applied.  An empty table name creates a projection from a
+                single-row virtual table, where columns specified should be
+                constants or constant expressions.
 
             projection_name (str)
                 Name of the projection to be created. Has the same naming
@@ -11182,11 +11262,12 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **chunk_size** --
-                  Indicates the chunk size to be used for this table.
+                  Indicates the number of records per chunk to be used for this
+                  projection.
 
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
-                  the output table.  The columns specified must be present in
+                  the projection.  The columns specified must be present in
                   input parameter *column_names*.  If any alias is given for
                   any column name, the alias must be used, rather than the
                   original column name.
@@ -11217,7 +11298,7 @@ class GPUdb(object):
 
                 * **preserve_dict_encoding** --
                   If *true*, then columns that were dict encoded in the source
-                  table will be dict encoded in the projection table.
+                  table will be dict encoded in the projection.
                   Allowed values are:
 
                   * true
@@ -11225,8 +11306,19 @@ class GPUdb(object):
 
                   The default value is 'true'.
 
+                * **retain_partitions** --
+                  Determines whether the created projection will retain the
+                  partitioning scheme from the source table.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **view_id** --
-                  view this projection is part of.  The default value is ''.
+                  ID of view of which this projection is a member.  The default
+                  value is ''.
 
         Returns:
             A dict with the following entries--
@@ -11521,6 +11613,10 @@ class GPUdb(object):
                     Use `list partitioning
                     <../../../concepts/tables.html#partitioning-by-list>`_.
 
+                  * **HASH** --
+                    Use `hash partitioning
+                    <../../../concepts/tables.html#partitioning-by-hash>`_.
+
                 * **partition_keys** --
                   Comma-separated list of partition keys, which are the columns
                   or column expressions by which records will be assigned to
@@ -11533,8 +11629,10 @@ class GPUdb(object):
                   <../../../concepts/tables.html#partitioning-by-range>`_,
                   `interval partitioning
                   <../../../concepts/tables.html#partitioning-by-interval>`_,
-                  or `list partitioning
-                  <../../../concepts/tables.html#partitioning-by-list>`_ for
+                  `list partitioning
+                  <../../../concepts/tables.html#partitioning-by-list>`_, or
+                  `hash partitioning
+                  <../../../concepts/tables.html#partitioning-by-hash>`_ for
                   example formats.
 
                 * **is_automatic_partition** --
@@ -11554,7 +11652,8 @@ class GPUdb(object):
                   the table specified in input parameter *table_name*.
 
                 * **chunk_size** --
-                  Indicates the chunk size to be used for this table.
+                  Indicates the number of records per chunk to be used for this
+                  table.
 
                 * **is_result_table** --
                   For a table, indicates whether the table is an in-memory
@@ -12236,7 +12335,8 @@ class GPUdb(object):
                   The default value is 'union_all'.
 
                 * **chunk_size** --
-                  Indicates the chunk size to be used for this table.
+                  Indicates the number of records per chunk to be used for this
+                  output table.
 
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
@@ -12244,15 +12344,15 @@ class GPUdb(object):
                   input parameter *output_column_names*.
 
                 * **ttl** --
-                  Sets the `TTL <../../../concepts/ttl.html>`_ of the table
-                  specified in input parameter *table_name*.
+                  Sets the `TTL <../../../concepts/ttl.html>`_ of the output
+                  table specified in input parameter *table_name*.
 
                 * **persist** --
-                  If *true*, then the table specified in input parameter
+                  If *true*, then the output table specified in input parameter
                   *table_name* will be persisted and will not expire unless a
-                  *ttl* is specified.   If *false*, then the table will be an
-                  in-memory table and will expire unless a *ttl* is specified
-                  otherwise.
+                  *ttl* is specified.   If *false*, then the output table will
+                  be an in-memory table and will expire unless a *ttl* is
+                  specified otherwise.
                   Allowed values are:
 
                   * true
@@ -12261,11 +12361,11 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **view_id** --
-                  view the output table will be a part of.  The default value
-                  is ''.
+                  ID of view of which this output table is a member.  The
+                  default value is ''.
 
                 * **force_replicated** --
-                  If *true*, then the table specified in input parameter
+                  If *true*, then the output table specified in input parameter
                   *table_name* will be replicated even if the source tables are
                   not.
                   Allowed values are:
@@ -12813,7 +12913,7 @@ class GPUdb(object):
 
 
     # begin execute_sql
-    def execute_sql( self, statement = None, offset = None, limit = None, encoding =
+    def execute_sql( self, statement = None, offset = 0, limit = -9999, encoding =
                      'binary', request_schema_str = '', data = [], options = {}
                      ):
         """SQL Request
@@ -12826,14 +12926,20 @@ class GPUdb(object):
             offset (long)
                 A positive integer indicating the number of initial results to
                 skip (this can be useful for paging through the results).  The
-                minimum allowed value is 0. The maximum allowed value is
-                MAX_INT.
+                default value is 0.The minimum allowed value is 0. The maximum
+                allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned (if not provided the default is 10000), or
-                END_OF_SET (-9999) to indicate that the maximum number of
-                results allowed by the server should be returned.
+                be returned, or END_OF_SET (-9999) to indicate that the maximum
+                number of results allowed by the server should be returned.
+                The number of records returned will never exceed the server's
+                own limit, defined by the `max_get_records_size
+                <../../../config/index.html#general>`_ parameter in the server
+                configuration.  Use output parameter *has_more_records* to see
+                if more records exist in the result to be fetched, and input
+                parameter *offset* & input parameter *limit* to request
+                subsequent pages of results.  The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records; either 'binary' or
@@ -13091,7 +13197,7 @@ class GPUdb(object):
 
 
     # begin execute_sql_and_decode
-    def execute_sql_and_decode( self, statement = None, offset = None, limit = None,
+    def execute_sql_and_decode( self, statement = None, offset = 0, limit = -9999,
                                 encoding = 'binary', request_schema_str = '',
                                 data = [], options = {}, record_type = None,
                                 force_primitive_return_types = True,
@@ -13106,14 +13212,20 @@ class GPUdb(object):
             offset (long)
                 A positive integer indicating the number of initial results to
                 skip (this can be useful for paging through the results).  The
-                minimum allowed value is 0. The maximum allowed value is
-                MAX_INT.
+                default value is 0.The minimum allowed value is 0. The maximum
+                allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned (if not provided the default is 10000), or
-                END_OF_SET (-9999) to indicate that the maximum number of
-                results allowed by the server should be returned.
+                be returned, or END_OF_SET (-9999) to indicate that the maximum
+                number of results allowed by the server should be returned.
+                The number of records returned will never exceed the server's
+                own limit, defined by the `max_get_records_size
+                <../../../config/index.html#general>`_ parameter in the server
+                configuration.  Use output parameter *has_more_records* to see
+                if more records exist in the result to be fetched, and input
+                parameter *offset* & input parameter *limit* to request
+                subsequent pages of results.  The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records; either 'binary' or
@@ -14852,7 +14964,7 @@ class GPUdb(object):
 
 
     # begin get_records
-    def get_records( self, table_name = None, offset = 0, limit = 10000, encoding =
+    def get_records( self, table_name = None, offset = 0, limit = -9999, encoding =
                      'binary', options = {}, get_record_type = True ):
         """Retrieves records from a given table, optionally filtered by an
         expression and/or sorted by a column. This operation can be performed
@@ -14882,8 +14994,14 @@ class GPUdb(object):
             limit (long)
                 A positive integer indicating the maximum number of results to
                 be returned. Or END_OF_SET (-9999) to indicate that the max
-                number of results should be returned.  The default value is
-                10000.
+                number of results should be returned.  The number of records
+                returned will never exceed the server's own limit, defined by
+                the `max_get_records_size
+                <../../../config/index.html#general>`_ parameter in the server
+                configuration.  Use output parameter *has_more_records* to see
+                if more records exist in the result to be fetched, and input
+                parameter *offset* & input parameter *limit* to request
+                subsequent pages of results.  The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records.
@@ -15004,7 +15122,7 @@ class GPUdb(object):
 
 
     # begin get_records_and_decode
-    def get_records_and_decode( self, table_name = None, offset = 0, limit = 10000,
+    def get_records_and_decode( self, table_name = None, offset = 0, limit = -9999,
                                 encoding = 'binary', options = {}, record_type =
                                 None, force_primitive_return_types = True ):
         """Retrieves records from a given table, optionally filtered by an
@@ -15035,8 +15153,14 @@ class GPUdb(object):
             limit (long)
                 A positive integer indicating the maximum number of results to
                 be returned. Or END_OF_SET (-9999) to indicate that the max
-                number of results should be returned.  The default value is
-                10000.
+                number of results should be returned.  The number of records
+                returned will never exceed the server's own limit, defined by
+                the `max_get_records_size
+                <../../../config/index.html#general>`_ parameter in the server
+                configuration.  Use output parameter *has_more_records* to see
+                if more records exist in the result to be fetched, and input
+                parameter *offset* & input parameter *limit* to request
+                subsequent pages of results.  The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records.
@@ -15178,8 +15302,8 @@ class GPUdb(object):
 
     # begin get_records_by_column
     def get_records_by_column( self, table_name = None, column_names = None, offset
-                               = None, limit = None, encoding = 'binary',
-                               options = {} ):
+                               = 0, limit = -9999, encoding = 'binary', options
+                               = {} ):
         """For a given table, retrieves the values from the requested column(s).
         Maps of column name to the array of values as well as the column data
         type are returned. This endpoint supports pagination with the input
@@ -15195,6 +15319,15 @@ class GPUdb(object):
         differ between calls based on the type of the update, e.g., the
         contiguity across pages cannot be relied upon.
 
+        If input parameter *table_name* is empty, selection is performed
+        against a single-row virtual table.  This can be useful in executing
+        temporal (`NOW()
+        <../../../concepts/expressions.html#date-time-functions>`_), identity
+        (`USER()
+        <../../../concepts/expressions.html#user-security-functions>`_), or
+        constant-based functions (`GEODIST(-77.11, 38.88, -71.06, 42.36)
+        <../../../concepts/expressions.html#scalar-functions>`_).
+
         The response is returned as a dynamic schema. For details see: `dynamic
         schemas documentation <../../../api/index.html#dynamic-schemas>`_.
 
@@ -15202,7 +15335,9 @@ class GPUdb(object):
 
             table_name (str)
                 Name of the table on which this operation will be performed.
-                The table cannot be a parent set.
+                An empty table name retrieves one record from a single-row
+                virtual table, where columns specified should be constants or
+                constant expressions.  The table cannot be a parent set.
 
             column_names (list of str)
                 The list of column values to retrieve.    The user can provide
@@ -15212,14 +15347,20 @@ class GPUdb(object):
             offset (long)
                 A positive integer indicating the number of initial results to
                 skip (this can be useful for paging through the results).  The
-                minimum allowed value is 0. The maximum allowed value is
-                MAX_INT.
+                default value is 0.The minimum allowed value is 0. The maximum
+                allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned (if not provided the default is 10000), or
-                END_OF_SET (-9999) to indicate that the maximum number of
-                results allowed by the server should be returned.
+                be returned, or END_OF_SET (-9999) to indicate that the maximum
+                number of results allowed by the server should be returned.
+                The number of records returned will never exceed the server's
+                own limit, defined by the `max_get_records_size
+                <../../../config/index.html#general>`_ parameter in the server
+                configuration.  Use output parameter *has_more_records* to see
+                if more records exist in the result to be fetched, and input
+                parameter *offset* & input parameter *limit* to request
+                subsequent pages of results.  The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records; either 'binary' or
@@ -15334,7 +15475,7 @@ class GPUdb(object):
 
     # begin get_records_by_column_and_decode
     def get_records_by_column_and_decode( self, table_name = None, column_names =
-                                          None, offset = None, limit = None,
+                                          None, offset = 0, limit = -9999,
                                           encoding = 'binary', options = {},
                                           record_type = None,
                                           force_primitive_return_types = True,
@@ -15354,6 +15495,15 @@ class GPUdb(object):
         differ between calls based on the type of the update, e.g., the
         contiguity across pages cannot be relied upon.
 
+        If input parameter *table_name* is empty, selection is performed
+        against a single-row virtual table.  This can be useful in executing
+        temporal (`NOW()
+        <../../../concepts/expressions.html#date-time-functions>`_), identity
+        (`USER()
+        <../../../concepts/expressions.html#user-security-functions>`_), or
+        constant-based functions (`GEODIST(-77.11, 38.88, -71.06, 42.36)
+        <../../../concepts/expressions.html#scalar-functions>`_).
+
         The response is returned as a dynamic schema. For details see: `dynamic
         schemas documentation <../../../api/index.html#dynamic-schemas>`_.
 
@@ -15361,7 +15511,9 @@ class GPUdb(object):
 
             table_name (str)
                 Name of the table on which this operation will be performed.
-                The table cannot be a parent set.
+                An empty table name retrieves one record from a single-row
+                virtual table, where columns specified should be constants or
+                constant expressions.  The table cannot be a parent set.
 
             column_names (list of str)
                 The list of column values to retrieve.    The user can provide
@@ -15371,14 +15523,20 @@ class GPUdb(object):
             offset (long)
                 A positive integer indicating the number of initial results to
                 skip (this can be useful for paging through the results).  The
-                minimum allowed value is 0. The maximum allowed value is
-                MAX_INT.
+                default value is 0.The minimum allowed value is 0. The maximum
+                allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned (if not provided the default is 10000), or
-                END_OF_SET (-9999) to indicate that the maximum number of
-                results allowed by the server should be returned.
+                be returned, or END_OF_SET (-9999) to indicate that the maximum
+                number of results allowed by the server should be returned.
+                The number of records returned will never exceed the server's
+                own limit, defined by the `max_get_records_size
+                <../../../config/index.html#general>`_ parameter in the server
+                configuration.  Use output parameter *has_more_records* to see
+                if more records exist in the result to be fetched, and input
+                parameter *offset* & input parameter *limit* to request
+                subsequent pages of results.  The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records; either 'binary' or
@@ -15808,7 +15966,7 @@ class GPUdb(object):
 
     # begin get_records_from_collection
     def get_records_from_collection( self, table_name = None, offset = 0, limit =
-                                     10000, encoding = 'binary', options = {} ):
+                                     -9999, encoding = 'binary', options = {} ):
         """Retrieves records from a collection. The operation can optionally
         return the record IDs which can be used in certain queries such as
         :meth:`.delete_records`.
@@ -15834,8 +15992,13 @@ class GPUdb(object):
             limit (long)
                 A positive integer indicating the maximum number of results to
                 be returned, or END_OF_SET (-9999) to indicate that the max
-                number of results should be returned.  The default value is
-                10000.
+                number of results should be returned.  The number of records
+                returned will never exceed the server's own limit, defined by
+                the `max_get_records_size
+                <../../../config/index.html#general>`_ parameter in the server
+                configuration.  Use input parameter *offset* & input parameter
+                *limit* to request subsequent pages of results.  The default
+                value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records; either 'binary' or
@@ -15925,7 +16088,7 @@ class GPUdb(object):
 
     # begin get_records_from_collection_and_decode
     def get_records_from_collection_and_decode( self, table_name = None, offset = 0,
-                                                limit = 10000, encoding =
+                                                limit = -9999, encoding =
                                                 'binary', options = {},
                                                 force_primitive_return_types =
                                                 True ):
@@ -15954,8 +16117,13 @@ class GPUdb(object):
             limit (long)
                 A positive integer indicating the maximum number of results to
                 be returned, or END_OF_SET (-9999) to indicate that the max
-                number of results should be returned.  The default value is
-                10000.
+                number of results should be returned.  The number of records
+                returned will never exceed the server's own limit, defined by
+                the `max_get_records_size
+                <../../../config/index.html#general>`_ parameter in the server
+                configuration.  Use input parameter *offset* & input parameter
+                *limit* to request subsequent pages of results.  The default
+                value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records; either 'binary' or
@@ -16564,6 +16732,42 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **return_individual_errors** --
+                  If set to *true*, success will always be returned, and any
+                  errors found will be included in the info map.  The
+                  "bad_record_indices" entry is a comma-separated list of bad
+                  records (0-based).  And if so, there will also be an
+                  "error_N" entry for each record with an error, where N is the
+                  index (0-based).
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **allow_partial_batch** --
+                  If set to *true*, all correct records will be inserted and
+                  incorrect records will be rejected and reported.  Otherwise,
+                  the entire batch will be rejected if any records are
+                  incorrect.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **dry_run** --
+                  If set to *true*, no data will be saved and any errors will
+                  be returned.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
             record_type (RecordType)
                 A :class:`RecordType` object using which the the binary data
                 will be encoded.  If None, then it is assumed that the data is
@@ -16585,6 +16789,14 @@ class GPUdb(object):
 
             info (dict of str to str)
                 Additional information.
+                Allowed keys are:
+
+                * **bad_record_indices** --
+                  If return_individual_errors option is specified or implied,
+                  returns a comma-separated list of invalid indices (0-based)
+
+                * **error_N** --
+                  Error message for record at index N (0-based)
         """
         assert isinstance( table_name, (basestring)), "insert_records(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         data = data if isinstance( data, list ) else ( [] if (data is None) else [ data ] )
@@ -17122,9 +17334,15 @@ class GPUdb(object):
                      'markov_chain', solution_table = '', options = {} ):
         """Matches a directed route implied by a given set of latitude/longitude
         points to an existing underlying road network graph using a given
-        solution type. See `Network Graph Solvers
-        <../../../graph_solver/network_graph_solver.html>`_ for more
-        information.
+        solution type.
+
+        IMPORTANT: It's highly recommended that you review the `Network Graphs
+        & Solvers <../../../graph_solver/network_graph_solver.html>`_ concepts
+        documentation, the `Graph REST Tutorial
+        <../../../graph_solver/examples/graph_rest_guide.html>`_, and/or some
+        `/match/graph examples
+        <../../../graph_solver/examples.html#match-graph>`_ before using this
+        endpoint.
 
         Parameters:
 
@@ -17174,6 +17392,10 @@ class GPUdb(object):
                   Matches input parameter *sample_points* to optimize
                   scheduling multiple supplies (trucks) with varying sizes to
                   varying demand sites with varying capacities per depot
+
+                * **match_batch_solves** --
+                  Matches input parameter *sample_points* source and
+                  destination pairs for the shortest path solves in batch mode
 
                 The default value is 'markov_chain'.
 
@@ -17271,6 +17493,12 @@ class GPUdb(object):
                     store's demand.
 
                   The default value is 'true'.
+
+                * **max_combinations** --
+                  For the *match_supply_demand* solver only. This is the cutoff
+                  for the number of generated combinations for sequencing the
+                  demand locations - can increase this upto 2M.  The default
+                  value is '10000'.
 
         Returns:
             A dict with the following entries--
@@ -17397,8 +17625,8 @@ class GPUdb(object):
                   The default value is 'true'.
 
                 * **chunk_size** --
-                  Indicates the chunk size to be used for the merged table
-                  specified in input parameter *table_name*.
+                  Indicates the number of records per chunk to be used for the
+                  merged table specified in input parameter *table_name*.
 
                 * **view_id** --
                   view this result table is part of.  The default value is ''.
@@ -17433,7 +17661,7 @@ class GPUdb(object):
 
     # begin query_graph
     def query_graph( self, graph_name = None, queries = None, restrictions = [],
-                     adjacency_table = '', rings = '1', options = {} ):
+                     adjacency_table = '', rings = 1, options = {} ):
         """Employs a topological query on a network graph generated a-priori by
         :meth:`.create_graph` and returns a list of adjacent edge(s) or
         node(s), also known as an adjacency list, depending on what's been
@@ -17455,9 +17683,13 @@ class GPUdb(object):
         input parameter *adjacency_table* and set *export_query_results* to
         *true*.
 
-        See `Network Graph Solver
-        <../../../graph_solver/network_graph_solver.html>`_ for more
-        information.
+        IMPORTANT: It's highly recommended that you review the `Network Graphs
+        & Solvers <../../../graph_solver/network_graph_solver.html>`_ concepts
+        documentation, the `Graph REST Tutorial
+        <../../../graph_solver/examples/graph_rest_guide.html>`_, and/or some
+        `/query/graph examples
+        <../../../graph_solver/examples.html#query-graph>`_ before using this
+        endpoint.
 
         Parameters:
 
@@ -17530,6 +17762,9 @@ class GPUdb(object):
                   only outbound edges relative to the node will be returned.
                   This parameter is only applicable if the queried graph input
                   parameter *graph_name* is directed and when querying nodes.
+                  Consult `Directed Graphs
+                  <../../../graph_solver/network_graph_solver.html#directed-graphs>`_
+                  for more details.
                   Allowed values are:
 
                   * true
@@ -17927,7 +18162,10 @@ class GPUdb(object):
 
             directed (list of bools)
                 Whether or not the edges of the graph have directions
-                (bi-directional edges can still exist in directed graphs.
+                (bi-directional edges can still exist in directed graphs).
+                Consult `Directed Graphs
+                <../../../graph_solver/network_graph_solver.html#directed-graphs>`_
+                for more details.
 
             num_nodes (list of longs)
                 Total number of nodes in the graph.
@@ -18345,6 +18583,66 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end show_security
+
+
+    # begin show_sql_proc
+    def show_sql_proc( self, procedure_name = '', options = {} ):
+        """Procedures
+
+        Parameters:
+
+            procedure_name (str)
+                Name of the procedure for which to retrieve the information. If
+                blank, then information about all procedures is returned.  The
+                default value is ''.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **no_error_if_not_exists** --
+                  If *false* will return an error if the provided  does not
+                  exist. If *true* then it will return an empty result.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            procedure_names (list of str)
+                Value of .
+
+            procedure_definitions (list of str)
+                procedures
+
+            additional_info (list of dicts of str to str)
+                Additional information about the respective tables in
+                @{procedure_names}.
+                Allowed values are:
+
+                * @INNER_STRUCTURE
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( procedure_name, (basestring)), "show_sql_proc(): Argument 'procedure_name' must be (one) of type(s) '(basestring)'; given %s" % type( procedure_name ).__name__
+        assert isinstance( options, (dict)), "show_sql_proc(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/show/sql/proc" )
+
+        obj = {}
+        obj['procedure_name'] = procedure_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/show/sql/proc' )
+
+        return AttrDict( response )
+    # end show_sql_proc
 
 
     # begin show_statistics
@@ -18964,15 +19262,20 @@ class GPUdb(object):
 
     # begin solve_graph
     def solve_graph( self, graph_name = None, weights_on_edges = [], restrictions =
-                     [], solver_type = 'SHORTEST_PATH', source_node_id = None,
-                     destination_node_ids = [], node_type = 'NODE_ID',
-                     source_node = '', destination_nodes = [], solution_table =
-                     'graph_solutions', options = {} ):
+                     [], solver_type = 'SHORTEST_PATH', source_nodes = [],
+                     destination_nodes = [], solution_table = 'graph_solutions',
+                     options = {} ):
         """Solves an existing graph for a type of problem (e.g., shortest path,
         page rank, travelling salesman, etc.) using source nodes, destination
-        nodes, and additional, optional weights and restrictions. See `Network
-        Graph Solvers <../../../graph_solver/network_graph_solver.html>`_ for
-        more information.
+        nodes, and additional, optional weights and restrictions.
+
+        IMPORTANT: It's highly recommended that you review the `Network Graphs
+        & Solvers <../../../graph_solver/network_graph_solver.html>`_ concepts
+        documentation, the `Graph REST Tutorial
+        <../../../graph_solver/examples/graph_rest_guide.html>`_, and/or some
+        `/solve/graph examples
+        <../../../graph_solver/examples.html#solve-graph>`_ before using this
+        endpoint.
 
         Parameters:
 
@@ -19058,67 +19361,29 @@ class GPUdb(object):
 
                 * **BACKHAUL_ROUTING** --
                   Solves for optimal routes that connect remote asset nodes to
-                  the fixed (backbone) asset nodes. When *BACKHAUL_ROUTING* is
-                  invoked, the input parameter *destination_nodes* or input
-                  parameter *destination_node_ids* array is used for both fixed
-                  and remote asset nodes and the input parameter
-                  *source_node_id* represents the number of fixed asset nodes
-                  contained in input parameter *destination_nodes* / input
-                  parameter *destination_node_ids*.
+                  the fixed (backbone) asset nodes.
+
+                * **ALLPATHS** --
+                  Solves for paths that would give costs between max and min
+                  solution radia - Make sure to limit by the
+                  'max_solution_targets' option. Min cost shoudl be >=
+                  shortest_path cost.
 
                 The default value is 'SHORTEST_PATH'.
 
-            source_node_id (long)
-                If input parameter *node_type* is *NODE_ID*, the node ID
-                (integer) of the source (starting point) for the graph
-                solution. If the input parameter *solver_type* is set to
-                *BACKHAUL_ROUTING*, this number represents the number of fixed
-                asset nodes contained in input parameter *destination_nodes*,
-                e.g., if input parameter *source_node_id* is set to 24, the
-                first 24 nodes listed in input parameter *destination_nodes* /
-                input parameter *destination_node_ids* are the fixed asset
-                nodes and the rest of the nodes in the array are remote assets.
-
-            destination_node_ids (list of longs)
-                List of destination node indices, or indices for pageranks. If
-                the input parameter *solver_type* is set to *BACKHAUL_ROUTING*,
-                it is the list of all fixed and remote asset nodes.  The
-                default value is an empty list ( [] ).  The user can provide a
-                single element (which will be automatically promoted to a list
-                internally) or a list.
-
-            node_type (str)
-                Source and destination node identifier type.
-                Allowed values are:
-
-                * **NODE_ID** --
-                  The graph's nodes were identified as integers, e.g., 1234.
-
-                * **NODE_WKTPOINT** --
-                  The graph's nodes were identified as geospatial coordinates,
-                  e.g., 'POINT(1.0 2.0)'.
-
-                * **NODE_NAME** --
-                  The graph's nodes were identified as strings, e.g.,
-                  'Arlington'.
-
-                The default value is 'NODE_ID'.
-
-            source_node (str)
-                If input parameter *node_type* is *NODE_WKTPOINT* or
-                *NODE_NAME*, the node (string) of the source (starting point)
-                for the graph solution.  The default value is ''.
+            source_nodes (list of str)
+                It can be one of the nodal identifiers - e.g: 'NODE_WKTPOINT'
+                for source nodes. For *BACKHAUL_ROUTING*, this list depicts the
+                fixed assets.  The default value is an empty list ( [] ).  The
+                user can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
 
             destination_nodes (list of str)
-                If input parameter *node_type* is *NODE_WKTPOINT* or
-                *NODE_NAME*, the list of destination node or page rank indices
-                (strings) for the graph solution. If the input parameter
-                *solver_type* is set to *BACKHAUL_ROUTING*, it is the list of
-                all fixed and remote asset nodes. The string type should be
-                consistent with the input parameter *node_type* parameter.  The
-                default value is an empty list ( [] ).  The user can provide a
-                single element (which will be automatically promoted to a list
-                internally) or a list.
+                It can be one of the nodal identifiers - e.g: 'NODE_WKTPOINT'
+                for destination (target) nodes. For *BACKHAUL_ROUTING*, this
+                list depicts the remote assets.  The default value is an empty
+                list ( [] ).  The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
 
             solution_table (str)
                 Name of the table to store the solution.  The default value is
@@ -19132,23 +19397,23 @@ class GPUdb(object):
                 * **max_solution_radius** --
                   For *SHORTEST_PATH* and *INVERSE_SHORTEST_PATH* solvers only.
                   Sets the maximum solution cost radius, which ignores the
-                  input parameter *destination_node_ids* list and instead
-                  outputs the nodes within the radius sorted by ascending cost.
-                  If set to '0.0', the setting is ignored.  The default value
-                  is '0.0'.
+                  input parameter *destination_nodes* list and instead outputs
+                  the nodes within the radius sorted by ascending cost. If set
+                  to '0.0', the setting is ignored.  The default value is
+                  '0.0'.
 
                 * **min_solution_radius** --
                   For *SHORTEST_PATH* and *INVERSE_SHORTEST_PATH* solvers only.
                   Applicable only when *max_solution_radius* is set. Sets the
                   minimum solution cost radius, which ignores the input
-                  parameter *destination_node_ids* list and instead outputs the
+                  parameter *destination_nodes* list and instead outputs the
                   nodes within the radius sorted by ascending cost. If set to
                   '0.0', the setting is ignored.  The default value is '0.0'.
 
                 * **max_solution_targets** --
                   For *SHORTEST_PATH* and *INVERSE_SHORTEST_PATH* solvers only.
                   Sets the maximum number of solution targets, which ignores
-                  the input parameter *destination_node_ids* list and instead
+                  the input parameter *destination_nodes* list and instead
                   outputs no more than n number of nodes sorted by ascending
                   cost where n is equal to the setting value. If set to 0, the
                   setting is ignored.  The default value is '0'.
@@ -19204,10 +19469,7 @@ class GPUdb(object):
         weights_on_edges = weights_on_edges if isinstance( weights_on_edges, list ) else ( [] if (weights_on_edges is None) else [ weights_on_edges ] )
         restrictions = restrictions if isinstance( restrictions, list ) else ( [] if (restrictions is None) else [ restrictions ] )
         assert isinstance( solver_type, (basestring)), "solve_graph(): Argument 'solver_type' must be (one) of type(s) '(basestring)'; given %s" % type( solver_type ).__name__
-        assert isinstance( source_node_id, (int, long, float)), "solve_graph(): Argument 'source_node_id' must be (one) of type(s) '(int, long, float)'; given %s" % type( source_node_id ).__name__
-        destination_node_ids = destination_node_ids if isinstance( destination_node_ids, list ) else ( [] if (destination_node_ids is None) else [ destination_node_ids ] )
-        assert isinstance( node_type, (basestring)), "solve_graph(): Argument 'node_type' must be (one) of type(s) '(basestring)'; given %s" % type( node_type ).__name__
-        assert isinstance( source_node, (basestring)), "solve_graph(): Argument 'source_node' must be (one) of type(s) '(basestring)'; given %s" % type( source_node ).__name__
+        source_nodes = source_nodes if isinstance( source_nodes, list ) else ( [] if (source_nodes is None) else [ source_nodes ] )
         destination_nodes = destination_nodes if isinstance( destination_nodes, list ) else ( [] if (destination_nodes is None) else [ destination_nodes ] )
         assert isinstance( solution_table, (basestring)), "solve_graph(): Argument 'solution_table' must be (one) of type(s) '(basestring)'; given %s" % type( solution_table ).__name__
         assert isinstance( options, (dict)), "solve_graph(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -19219,10 +19481,7 @@ class GPUdb(object):
         obj['weights_on_edges'] = weights_on_edges
         obj['restrictions'] = restrictions
         obj['solver_type'] = solver_type
-        obj['source_node_id'] = source_node_id
-        obj['destination_node_ids'] = destination_node_ids
-        obj['node_type'] = node_type
-        obj['source_node'] = source_node
+        obj['source_nodes'] = source_nodes
         obj['destination_nodes'] = destination_nodes
         obj['solution_table'] = solution_table
         obj['options'] = self.__sanitize_dicts( options )
@@ -19361,9 +19620,8 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **truncate_strings** --
-                  If set to {true}@{, any strings which are too long for their
-                  charN string fields will be truncated to fit.  The default
-                  value is false.
+                  If set to *true*, any strings which are too long for their
+                  charN string fields will be truncated to fit.
                   Allowed values are:
 
                   * true
@@ -20106,7 +20364,7 @@ class GPUdb(object):
         """Generate an image containing isolines for travel results using an
         existing graph. Isolines represent curves of equal cost, with cost
         typically referring to the time or distance assigned as the weights of
-        the underlying graph. See `Network Graph Solvers
+        the underlying graph. See `Network Graphs & Solvers
         <../../../graph_solver/network_graph_solver.html>`_ for more
         information on graphs.
         .
@@ -22467,8 +22725,8 @@ class GPUdbTable( object ):
                   equi-join stencils.  The default value is 'false'.
 
                 * **chunk_size** --
-                  Maximum size of a joined-chunk for this table. Defaults to
-                  the gpudb.conf file chunk size
+                  Maximum number of records per joined-chunk for this table.
+                  Defaults to the gpudb.conf file chunk size
 
         Returns:
             A read-only GPUdbTable object.
@@ -22621,7 +22879,8 @@ class GPUdbTable( object ):
                   The default value is 'union_all'.
 
                 * **chunk_size** --
-                  Indicates the chunk size to be used for this table.
+                  Indicates the number of records per chunk to be used for this
+                  output table.
 
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
@@ -22629,15 +22888,15 @@ class GPUdbTable( object ):
                   input parameter *output_column_names*.
 
                 * **ttl** --
-                  Sets the `TTL <../../../concepts/ttl.html>`_ of the table
-                  specified in input parameter *table_name*.
+                  Sets the `TTL <../../../concepts/ttl.html>`_ of the output
+                  table specified in input parameter *table_name*.
 
                 * **persist** --
-                  If *true*, then the table specified in input parameter
+                  If *true*, then the output table specified in input parameter
                   *table_name* will be persisted and will not expire unless a
-                  *ttl* is specified.   If *false*, then the table will be an
-                  in-memory table and will expire unless a *ttl* is specified
-                  otherwise.
+                  *ttl* is specified.   If *false*, then the output table will
+                  be an in-memory table and will expire unless a *ttl* is
+                  specified otherwise.
                   Allowed values are:
 
                   * true
@@ -22646,11 +22905,11 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **view_id** --
-                  view the output table will be a part of.  The default value
-                  is ''.
+                  ID of view of which this output table is a member.  The
+                  default value is ''.
 
                 * **force_replicated** --
-                  If *true*, then the table specified in input parameter
+                  If *true*, then the output table specified in input parameter
                   *table_name* will be replicated even if the source tables are
                   not.
                   Allowed values are:
@@ -22780,8 +23039,8 @@ class GPUdbTable( object ):
                   The default value is 'true'.
 
                 * **chunk_size** --
-                  Indicates the chunk size to be used for the merged table
-                  specified in input parameter *table_name*.
+                  Indicates the number of records per chunk to be used for the
+                  merged table specified in input parameter *table_name*.
 
                 * **view_id** --
                   view this result table is part of.  The default value is ''.
@@ -22869,12 +23128,12 @@ class GPUdbTable( object ):
     # end aggregate_convex_hull
 
 
-    def aggregate_group_by( self, column_names = None, offset = None, limit =
-                            1000, encoding = 'binary', options = {},
+    def aggregate_group_by( self, column_names = None, offset = 0, limit =
+                            -9999, encoding = 'binary', options = {},
                             force_primitive_return_types = True,
                             get_column_major = True ):
         """Calculates unique combinations (groups) of values for the given columns
-        in a given table/view/collection and computes aggregates on each unique
+        in a given table or view and computes aggregates on each unique
         combination. This is somewhat analogous to an SQL-style SELECT...GROUP
         BY.
 
@@ -22947,14 +23206,20 @@ class GPUdbTable( object ):
             offset (long)
                 A positive integer indicating the number of initial results to
                 skip (this can be useful for paging through the results).  The
-                minimum allowed value is 0. The maximum allowed value is
-                MAX_INT.
+                default value is 0.The minimum allowed value is 0. The maximum
+                allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned Or END_OF_SET (-9999) to indicate that the max
-                number of results should be returned.  The default value is
-                1000.
+                be returned, or END_OF_SET (-9999) to indicate that the max
+                number of results should be returned.  The number of records
+                returned will never exceed the server's own limit, defined by
+                the `max_get_records_size
+                <../../../config/index.html#general>`_ parameter in the server
+                configuration.  Use output parameter *has_more_records* to see
+                if more records exist in the result to be fetched, and input
+                parameter *offset* & input parameter *limit* to request
+                subsequent pages of results.  The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records.
@@ -22978,8 +23243,6 @@ class GPUdbTable( object ):
                   in *result_table*. If the collection provided is
                   non-existent, the collection will be automatically created.
                   If empty, then the table will be a top-level table.
-                  Additionally this option is invalid if input parameter
-                  *table_name* is a collection.
 
                 * **expression** --
                   Filter expression to apply to the table prior to computing
@@ -23058,7 +23321,7 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **result_table_generate_pk** --
-                  If 'true' then set a primary key for the result table. Must
+                  If *true* then set a primary key for the result table. Must
                   be used in combination with the *result_table* option.
                   Allowed values are:
 
@@ -23072,8 +23335,9 @@ class GPUdbTable( object ):
                   specified in *result_table*.
 
                 * **chunk_size** --
-                  Indicates the chunk size to be used for the result table.
-                  Must be used in combination with the *result_table* option.
+                  Indicates the number of records per chunk to be used for the
+                  result table. Must be used in combination with the
+                  *result_table* option.
 
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
@@ -23081,7 +23345,8 @@ class GPUdbTable( object ):
                   *result_table* option.
 
                 * **view_id** --
-                  view this result table is part of.  The default value is ''.
+                  ID of view of which the result table will be a member.  The
+                  default value is ''.
 
                 * **materialize_on_gpu** --
                   If *true* then the columns of the groupby result table will
@@ -23712,16 +23977,16 @@ class GPUdbTable( object ):
     # end aggregate_statistics_by_range
 
 
-    def aggregate_unique( self, column_name = None, offset = None, limit =
-                          10000, encoding = 'binary', options = {},
+    def aggregate_unique( self, column_name = None, offset = 0, limit = -9999,
+                          encoding = 'binary', options = {},
                           force_primitive_return_types = True, get_column_major
                           = True ):
         """Returns all the unique values from a particular column (specified by
-        input parameter *column_name*) of a particular table or collection
-        (specified by input parameter *table_name*). If input parameter
-        *column_name* is a numeric column the values will be in output
-        parameter *binary_encoded_response*. Otherwise if input parameter
-        *column_name* is a string column the values will be in output parameter
+        input parameter *column_name*) of a particular table or view (specified
+        by input parameter *table_name*). If input parameter *column_name* is a
+        numeric column the values will be in output parameter
+        *binary_encoded_response*. Otherwise if input parameter *column_name*
+        is a string column the values will be in output parameter
         *json_encoded_response*.  The results can be paged via the input
         parameter *offset* and input parameter *limit* parameters.
 
@@ -23747,9 +24012,9 @@ class GPUdbTable( object ):
         parameter *column_name*, the result table will be sharded, in all other
         cases it will be replicated.  Sorting will properly function only if
         the result table is replicated or if there is only one processing node
-        and should not be relied upon in other cases.  Not available if input
-        parameter *table_name* is a collection or when the value of input
-        parameter *column_name* is an unrestricted-length string.
+        and should not be relied upon in other cases.  Not available if the
+        value of input parameter *column_name* is an unrestricted-length
+        string.
 
         Parameters:
 
@@ -23760,14 +24025,20 @@ class GPUdbTable( object ):
             offset (long)
                 A positive integer indicating the number of initial results to
                 skip (this can be useful for paging through the results).  The
-                minimum allowed value is 0. The maximum allowed value is
-                MAX_INT.
+                default value is 0.The minimum allowed value is 0. The maximum
+                allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
                 be returned. Or END_OF_SET (-9999) to indicate that the max
-                number of results should be returned.  The default value is
-                10000.
+                number of results should be returned.  The number of records
+                returned will never exceed the server's own limit, defined by
+                the `max_get_records_size
+                <../../../config/index.html#general>`_ parameter in the server
+                configuration.  Use output parameter *has_more_records* to see
+                if more records exist in the result to be fetched, and input
+                parameter *offset* & input parameter *limit* to request
+                subsequent pages of results.  The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records.
@@ -23791,8 +24062,6 @@ class GPUdbTable( object ):
                   in *result_table*. If the collection provided is
                   non-existent, the collection will be automatically created.
                   If empty, then the table will be a top-level table.
-                  Additionally this option is invalid if input parameter
-                  *table_name* is a collection.
 
                 * **expression** --
                   Optional filter expression to apply to the table.
@@ -23810,8 +24079,7 @@ class GPUdbTable( object ):
                   The name of the table used to store the results. If present,
                   no results are returned in the response. Has the same naming
                   restrictions as `tables <../../../concepts/tables.html>`_.
-                  Not available if input parameter *table_name* is a collection
-                  or when input parameter *column_name* is an
+                  Not available if input parameter *column_name* is an
                   unrestricted-length string.
 
                 * **result_table_persist** --
@@ -23839,7 +24107,7 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **result_table_generate_pk** --
-                  If 'true' then set a primary key for the result table. Must
+                  If *true* then set a primary key for the result table. Must
                   be used in combination with the *result_table* option.
                   Allowed values are:
 
@@ -23853,11 +24121,13 @@ class GPUdbTable( object ):
                   specified in *result_table*.
 
                 * **chunk_size** --
-                  Indicates the chunk size to be used for the result table.
-                  Must be used in combination with the *result_table* option.
+                  Indicates the number of records per chunk to be used for the
+                  result table. Must be used in combination with the
+                  *result_table* option.
 
                 * **view_id** --
-                  view this result table is part of.  The default value is ''.
+                  ID of view of which the result table will be a member.  The
+                  default value is ''.
 
             force_primitive_return_types (bool)
                 If `True`, then `OrderedDict` objects will be returned, where
@@ -24029,8 +24299,9 @@ class GPUdbTable( object ):
                   name.  The default value is ''.
 
                 * **chunk_size** --
-                  Indicates the chunk size to be used for the result table.
-                  Must be used in combination with the *result_table* option.
+                  Indicates the number of records per chunk to be used for the
+                  result table. Must be used in combination with the
+                  *result_table* option.
 
                 * **limit** --
                   The number of records to keep.  The default value is ''.
@@ -24465,6 +24736,18 @@ class GPUdbTable( object ):
                   This option will be ignored if input parameter *value* is
                   also specified.
 
+                * **index_type** --
+                  Type of index to create.
+                  Allowed values are:
+
+                  * **column** --
+                    Standard column index.
+
+                  * **chunk_skip** --
+                    Chunk skip index.
+
+                  The default value is 'column'.
+
         Returns:
             The response from the server which is a dict containing the
             following entries--
@@ -24872,6 +25155,15 @@ class GPUdbTable( object ):
         specified columns, regardless of how the source table is sharded.  The
         source table can even be unsharded or replicated.
 
+        If input parameter *table_name* is empty, selection is performed
+        against a single-row virtual table.  This can be useful in executing
+        temporal (`NOW()
+        <../../../concepts/expressions.html#date-time-functions>`_), identity
+        (`USER()
+        <../../../concepts/expressions.html#user-security-functions>`_), or
+        constant-based functions (`GEODIST(-77.11, 38.88, -71.06, 42.36)
+        <../../../concepts/expressions.html#scalar-functions>`_).
+
         Parameters:
 
             column_names (list of str)
@@ -24930,11 +25222,12 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **chunk_size** --
-                  Indicates the chunk size to be used for this table.
+                  Indicates the number of records per chunk to be used for this
+                  projection.
 
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
-                  the output table.  The columns specified must be present in
+                  the projection.  The columns specified must be present in
                   input parameter *column_names*.  If any alias is given for
                   any column name, the alias must be used, rather than the
                   original column name.
@@ -24965,7 +25258,7 @@ class GPUdbTable( object ):
 
                 * **preserve_dict_encoding** --
                   If *true*, then columns that were dict encoded in the source
-                  table will be dict encoded in the projection table.
+                  table will be dict encoded in the projection.
                   Allowed values are:
 
                   * true
@@ -24973,8 +25266,19 @@ class GPUdbTable( object ):
 
                   The default value is 'true'.
 
+                * **retain_partitions** --
+                  Determines whether the created projection will retain the
+                  partitioning scheme from the source table.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **view_id** --
-                  view this projection is part of.  The default value is ''.
+                  ID of view of which this projection is a member.  The default
+                  value is ''.
 
             projection_name (str)
                 Name of the projection to be created. Has the same naming
@@ -26538,9 +26842,8 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **truncate_strings** --
-                  If set to {true}@{, any strings which are too long for their
-                  charN string fields will be truncated to fit.  The default
-                  value is false.
+                  If set to *true*, any strings which are too long for their
+                  charN string fields will be truncated to fit.
                   Allowed values are:
 
                   * true
