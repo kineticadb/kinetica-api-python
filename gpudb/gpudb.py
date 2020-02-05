@@ -21,6 +21,7 @@ try:
     import httplib
 except:
     import http.client as httplib
+
 import base64
 import os, sys
 import datetime
@@ -75,6 +76,7 @@ from protocol import Record
 from protocol import Schema
 
 from avro import schema, datafile, io
+import enum34 as enum
 
 
 if IS_PYTHON_27_OR_ABOVE:
@@ -160,6 +162,12 @@ class C:
     # Some pre-fixes used in creating error messages
     _FAILED_CONNECTION_HAS_HA = "Connection failed; all clusters in the HA ring have been tried! Error encountered: "
     _FAILED_CONNECTION_NO_HA  = "Connection failed (no HA available); Error encountered: "
+
+    # Internally used headers
+    _HEADER_ACCEPT        = "Accept";
+    _HEADER_AUTHORIZATION = "Authorization";
+    _HEADER_CONTENT_TYPE  = "Content-type";
+    _HEADER_HA_SYNC_MODE  = "ha_sync_mode";
     
 # end class C
 
@@ -2260,6 +2268,26 @@ class GPUdbRecord( object ):
 
 class GPUdb(object):
 
+   
+    class HASynchronicityMode( enum.Enum ):
+        """Inner enumeration class to represent the high-availability
+        synchronicity override mode that is applied to each eandpoint call.
+        Available enumerations are:
+        * DEFAULT  --  No override; defer to the HA process for synchronizing
+                       endpoints (which has different logic for different
+                       endpoints).  This is the default mode.
+        * SYNCHRONOUS  -- Synchronize all endpoint calls
+        * ASYNCHRONOUS -- Do NOT synchronize any endpoint call
+        """
+        # No override; defer to the HA process for synchronizing
+        # endpoints (which has different logic for different endpoints)
+        DEFAULT      = "none"
+        # Synchronize all endpoint calls
+        SYNCHRONOUS  = "sync"
+        # Do NOT synchronize any endpoint call
+        ASYNCHRONOUS = "async"
+    # end inner class HASynchronicityMode
+    
     
     def __init__( self, host = "127.0.0.1", port = "9191",
                   host_manager_port = "9300",
@@ -2468,6 +2496,9 @@ class GPUdb(object):
                                                "JSON": "json",
         }
 
+        # Set the synchronicity override mode to be default
+        self._ha_sync_mode = GPUdb.HASynchronicityMode.DEFAULT
+        
         # Load all gpudb schemas
         self.__load_logger_schemas()
         self.load_gpudb_schemas()
@@ -2909,6 +2940,21 @@ class GPUdb(object):
     def encoding(self):
         return self.encoding
 
+    @property
+    def ha_sync_mode(self):
+        return self._ha_sync_mode
+
+    @ha_sync_mode.setter
+    def ha_sync_mode(self, value ):
+        if not isinstance( value, GPUdb.HASynchronicityMode ):
+            raise GPUdbException( "HA sync mode must be of type '{}', given {}!"
+                                  "".format( str( GPUdb.HASynchronicityMode ),
+                                             str( type( value ) ) ) )
+        # end error checking
+
+        self._ha_sync_mode = value
+    # end setter
+
 
     def save_known_type(self, type_id, _type ):
         self._known_types[ type_id ] = _type
@@ -2989,7 +3035,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.10.0"
+    api_version   = "7.0.11.0"
 
     # Constants
     END_OF_SET = -9999
@@ -3170,22 +3216,25 @@ class GPUdb(object):
         """
 
         if self.encoding == 'BINARY':
-            headers = {"Content-type": "application/octet-stream",
-                       "Accept": "application/octet-stream"}
+            headers = { C._HEADER_CONTENT_TYPE: "application/octet-stream",
+                        C._HEADER_ACCEPT: "application/octet-stream"}
         elif self.encoding == 'JSON':
-            headers = {"Content-type": "application/json",
-                       "Accept": "application/json"}
+            headers = { C._HEADER_CONTENT_TYPE: "application/json",
+                        C._HEADER_ACCEPT: "application/json"}
         elif self.encoding == 'SNAPPY':
-            headers = {"Content-type": "application/x-snappy",
-                       "Accept": "application/x-snappy"}
+            headers = { C._HEADER_CONTENT_TYPE: "application/x-snappy",
+                        C._HEADER_ACCEPT: "application/x-snappy"}
             body_data = snappy.compress(body_data)
 
         # Set the authentication header, if needed
         if self.auth:
-            headers["Authorization"] = self.auth
+            headers[ C._HEADER_AUTHORIZATION ] = self.auth
+
+        # Add the synchronicity override mode header
+        headers[ C._HEADER_HA_SYNC_MODE ] = self.ha_sync_mode.value
 
         return (headers, body_data)
-    # end __create_header
+    # end __create_header_and_process_body_data
    
  
     def __post_and_get( self,
@@ -4861,6 +4910,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/create/externaltable"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_external_table_request","fields":[{"name":"table_name","type":"string"},{"name":"filepaths","type":{"type":"array","items":"string"}},{"name":"create_table_options","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_external_table_response","fields":[{"name":"table_name","type":"string"},{"name":"type_id","type":"string"},{"name":"count_inserted","type":"long"},{"name":"count_skipped","type":"long"},{"name":"count_updated","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("filepaths", "array", [("string")]), ("create_table_options", "map", [("string")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("type_id", "string"), ("count_inserted", "long"), ("count_skipped", "long"), ("count_updated", "long"), ("info", "map", [("string")])] )
+        ENDPOINT = "/create/externaltable"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/create/graph"
         REQ_SCHEMA_STR = """{"name":"create_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"directed_graph","type":"boolean"},{"name":"nodes","type":{"type":"array","items":"string"}},{"name":"edges","type":{"type":"array","items":"string"}},{"name":"weights","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"name":"create_graph_response","type":"record","fields":[{"name":"num_nodes","type":"long"},{"name":"num_edges","type":"long"},{"name":"edges_ids","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -5445,6 +5505,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA_CEXT" : REQ_SCHEMA_CEXT,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/insert/records/fromfiles"
+        REQ_SCHEMA_STR = """{"type":"record","name":"insert_records_from_files_request","fields":[{"name":"table_name","type":"string"},{"name":"filepaths","type":{"type":"array","items":"string"}},{"name":"create_table_options","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"insert_records_from_files_response","fields":[{"name":"table_name","type":"string"},{"name":"type_id","type":"string"},{"name":"count_inserted","type":"long"},{"name":"count_skipped","type":"long"},{"name":"count_updated","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("filepaths", "array", [("string")]), ("create_table_options", "map", [("string")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("type_id", "string"), ("count_inserted", "long"), ("count_skipped", "long"), ("count_updated", "long"), ("info", "map", [("string")])] )
+        ENDPOINT = "/insert/records/fromfiles"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/insert/records/random"
         REQ_SCHEMA_STR = """{"type":"record","name":"insert_records_random_request","fields":[{"name":"table_name","type":"string"},{"name":"count","type":"long"},{"name":"options","type":{"type":"map","values":{"type":"map","values":"double"}}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"insert_records_random_response","fields":[{"name":"table_name","type":"string"},{"name":"count","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -5517,6 +5588,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("source_table_names", "array", [("string")]), ("field_maps", "array", [("map", [("string")])]), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/merge/records"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/modify/graph"
+        REQ_SCHEMA_STR = """{"name":"modify_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"nodes","type":{"type":"array","items":"string"}},{"name":"edges","type":{"type":"array","items":"string"}},{"name":"weights","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"name":"modify_graph_response","type":"record","fields":[{"name":"num_nodes","type":"long"},{"name":"num_edges","type":"long"},{"name":"edges_ids","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("nodes", "array", [("string")]), ("edges", "array", [("string")]), ("weights", "array", [("string")]), ("restrictions", "array", [("string")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("num_nodes", "long"), ("num_edges", "long"), ("edges_ids", "array", [("long")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/modify/graph"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -5944,6 +6026,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["clear_table_monitor"] = "/clear/tablemonitor"
         self.gpudb_func_to_endpoint_map["clear_trigger"] = "/clear/trigger"
         self.gpudb_func_to_endpoint_map["collect_statistics"] = "/collect/statistics"
+        self.gpudb_func_to_endpoint_map["create_external_table"] = "/create/externaltable"
         self.gpudb_func_to_endpoint_map["create_graph"] = "/create/graph"
         self.gpudb_func_to_endpoint_map["create_job"] = "/create/job"
         self.gpudb_func_to_endpoint_map["create_join_table"] = "/create/jointable"
@@ -5996,6 +6079,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["has_table"] = "/has/table"
         self.gpudb_func_to_endpoint_map["has_type"] = "/has/type"
         self.gpudb_func_to_endpoint_map["insert_records"] = "/insert/records"
+        self.gpudb_func_to_endpoint_map["insert_records_from_files"] = "/insert/records/fromfiles"
         self.gpudb_func_to_endpoint_map["insert_records_random"] = "/insert/records/random"
         self.gpudb_func_to_endpoint_map["insert_symbol"] = "/insert/symbol"
         self.gpudb_func_to_endpoint_map["kill_proc"] = "/kill/proc"
@@ -6003,6 +6087,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["lock_table"] = "/lock/table"
         self.gpudb_func_to_endpoint_map["match_graph"] = "/match/graph"
         self.gpudb_func_to_endpoint_map["merge_records"] = "/merge/records"
+        self.gpudb_func_to_endpoint_map["modify_graph"] = "/modify/graph"
         self.gpudb_func_to_endpoint_map["query_graph"] = "/query/graph"
         self.gpudb_func_to_endpoint_map["revoke_permission_proc"] = "/revoke/permission/proc"
         self.gpudb_func_to_endpoint_map["revoke_permission_system"] = "/revoke/permission/system"
@@ -6307,6 +6392,15 @@ class GPUdb(object):
                   allow for better interleaving between the rebalance and other
                   queries. Allowed values are 1 through 10.  The default value
                   is '1'.
+
+                * **compact_after_rebalance** --
+                  Perform compaction of deleted records once the rebalance
+                  completes, to reclaim memory and disk space. Default is true.
+                  The default value is 'true'.
+
+                * **compact_only** --
+                  Only perform compaction, do not rebalance. Default is false.
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -7186,9 +7280,13 @@ class GPUdb(object):
                   default value is ''.
 
                 * **materialize_on_gpu** --
-                  If *true* then the columns of the groupby result table will
-                  be cached on the GPU. Must be used in combination with the
-                  *result_table* option.
+                  No longer used.  See `Resource Management Concepts
+                  <../../../rm/concepts.html>`_ for information about how
+                  resources are managed, `Tier Strategy Concepts
+                  <../../../rm/concepts.html>`_ for how resources are targeted
+                  for VRAM, and `Tier Strategy Usage
+                  <../../../rm/usage.html#tier-strategies>`_ for how to specify
+                  a table's priority in VRAM.
                   Allowed values are:
 
                   * true
@@ -7504,9 +7602,13 @@ class GPUdb(object):
                   default value is ''.
 
                 * **materialize_on_gpu** --
-                  If *true* then the columns of the groupby result table will
-                  be cached on the GPU. Must be used in combination with the
-                  *result_table* option.
+                  No longer used.  See `Resource Management Concepts
+                  <../../../rm/concepts.html>`_ for information about how
+                  resources are managed, `Tier Strategy Concepts
+                  <../../../rm/concepts.html>`_ for how resources are targeted
+                  for VRAM, and `Tier Strategy Usage
+                  <../../../rm/usage.html#tier-strategies>`_ for how to specify
+                  a table's priority in VRAM.
                   Allowed values are:
 
                   * true
@@ -8818,7 +8920,13 @@ class GPUdb(object):
                   view this result table is part of.  The default value is ''.
 
                 * **materialize_on_gpu** --
-                  If *true* then the output columns will be cached on the GPU.
+                  No longer used.  See `Resource Management Concepts
+                  <../../../rm/concepts.html>`_ for information about how
+                  resources are managed, `Tier Strategy Concepts
+                  <../../../rm/concepts.html>`_ for how resources are targeted
+                  for VRAM, and `Tier Strategy Usage
+                  <../../../rm/usage.html#tier-strategies>`_ for how to specify
+                  a table's priority in VRAM.
                   Allowed values are:
 
                   * true
@@ -9027,7 +9135,13 @@ class GPUdb(object):
                   view this result table is part of.  The default value is ''.
 
                 * **materialize_on_gpu** --
-                  If *true* then the output columns will be cached on the GPU.
+                  No longer used.  See `Resource Management Concepts
+                  <../../../rm/concepts.html>`_ for information about how
+                  resources are managed, `Tier Strategy Concepts
+                  <../../../rm/concepts.html>`_ for how resources are targeted
+                  for VRAM, and `Tier Strategy Usage
+                  <../../../rm/usage.html#tier-strategies>`_ for how to specify
+                  a table's priority in VRAM.
                   Allowed values are:
 
                   * true
@@ -9382,6 +9496,10 @@ class GPUdb(object):
                   default (engine decides) or an integer value that indicates
                   max chunk size to exec on host
 
+                * **external_files_directory** --
+                  Sets the root directory path where external table data files
+                  are accessed from.  Path must exist on the head node
+
                 * **flush_to_disk** --
                   Flushes any changes to any tables to the persistent store.
                   These changes include updates to the vector store, object
@@ -9459,6 +9577,14 @@ class GPUdb(object):
                 * **synchronous_compression** --
                   compress vector on set_compression (instead of waiting for
                   background thread).  The default value is 'false'.
+
+                * **enable_overlapped_equi_join** --
+                  Enable overlapped-equi-join filter.  The default value is
+                  'true'.
+
+                * **enable_compound_equi_join** --
+                  Enable compound-equi-join filter plan type.  The default
+                  value is 'false'.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -9561,16 +9687,22 @@ class GPUdb(object):
                   No longer supported; action will be ignored.
 
                 * **create_index** --
-                  Creates an `index
-                  <../../../concepts/indexes.html#column-index>`_ on the column
-                  name specified in input parameter *value*. If this column is
-                  already indexed, an error will be returned.
+                  Creates either a `column (attribute) index
+                  <../../../concepts/indexes.html#column-index>`_ or `chunk
+                  skip index
+                  <../../../concepts/indexes.html#chunk-skip-index>`_,
+                  depending on the specified *index_type*, on the column name
+                  specified in input parameter *value*. If this column already
+                  has the specified index, an error will be returned.
 
                 * **delete_index** --
-                  Deletes an existing `index
-                  <../../../concepts/indexes.html#column-index>`_ on the column
-                  name specified in input parameter *value*. If this column
-                  does not have indexing turned on, an error will be returned.
+                  Deletes either a `column (attribute) index
+                  <../../../concepts/indexes.html#column-index>`_ or `chunk
+                  skip index
+                  <../../../concepts/indexes.html#chunk-skip-index>`_,
+                  depending on the specified *index_type*, on the column name
+                  specified in input parameter *value*. If this column does not
+                  have the specified index, an error will be returned.
 
                 * **move_to_collection** --
                   Moves a table or view into a collection named input parameter
@@ -9808,14 +9940,18 @@ class GPUdb(object):
                   also specified.
 
                 * **index_type** --
-                  Type of index to create.
+                  Type of index to create, when input parameter *action* is
+                  *create_index*, or to delete, when input parameter *action*
+                  is *delete_index*.
                   Allowed values are:
 
                   * **column** --
-                    Standard column index.
+                    Create or delete a `column (attribute) index
+                    <../../../concepts/indexes.html#column-index>`_.
 
                   * **chunk_skip** --
-                    Chunk skip index.
+                    Create or delete a `chunk skip index
+                    <../../../concepts/indexes.html#chunk-skip-index>`_.
 
                   The default value is 'column'.
 
@@ -10498,6 +10634,29 @@ class GPUdb(object):
     # end collect_statistics
 
 
+    # begin create_external_table
+    def create_external_table( self, table_name = None, filepaths = None,
+                               create_table_options = {}, options = {} ):
+
+        assert isinstance( table_name, (basestring)), "create_external_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        filepaths = filepaths if isinstance( filepaths, list ) else ( [] if (filepaths is None) else [ filepaths ] )
+        assert isinstance( create_table_options, (dict)), "create_external_table(): Argument 'create_table_options' must be (one) of type(s) '(dict)'; given %s" % type( create_table_options ).__name__
+        assert isinstance( options, (dict)), "create_external_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/create/externaltable" )
+
+        obj = {}
+        obj['table_name'] = table_name
+        obj['filepaths'] = filepaths
+        obj['create_table_options'] = self.__sanitize_dicts( create_table_options )
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/create/externaltable' )
+
+        return AttrDict( response )
+    # end create_external_table
+
+
     # begin create_graph
     def create_graph( self, graph_name = None, directed_graph = True, nodes = None,
                       edges = None, weights = None, restrictions = None, options
@@ -10639,9 +10798,9 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **modify** --
-                  If set to *true* and *true* and if the graph (using input
-                  parameter *graph_name*) already exists, the graph is updated
-                  with these components.
+                  If set to *true*, *recreate* is set to *true*, and the graph
+                  (specified using input parameter *graph_name*) already
+                  exists, the graph is updated with the given components.
                   Allowed values are:
 
                   * true
@@ -10716,11 +10875,22 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **graph_table** --
-                  If the *graph_table* name is NOT left blank, the created
-                  graph is also created as a table with the given name and
-                  following identifier columns: 'EDGE_ID', 'EDGE_NODE1_ID',
-                  'EDGE_NODE2_ID'. If left blank, no table is created.  The
-                  default value is ''.
+                  If specified, the created graph is also created as a table
+                  with the given name and following identifier columns:
+                  'EDGE_ID', 'EDGE_NODE1_ID', 'EDGE_NODE2_ID'. If left blank,
+                  no table is created.  The default value is ''.
+
+                * **remove_label_only** --
+                  When RESTRICTIONS on labeled entities requested, if set to
+                  true this will NOT delete the entity but only the label
+                  associated with the entity. Otherwise (default), it'll delete
+                  the label AND the entity.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -11252,8 +11422,13 @@ class GPUdb(object):
                   than the original column name.  The default value is ''.
 
                 * **materialize_on_gpu** --
-                  If *true* then the columns of the projection will be cached
-                  on the GPU.
+                  No longer used.  See `Resource Management Concepts
+                  <../../../rm/concepts.html>`_ for information about how
+                  resources are managed, `Tier Strategy Concepts
+                  <../../../rm/concepts.html>`_ for how resources are targeted
+                  for VRAM, and `Tier Strategy Usage
+                  <../../../rm/usage.html#tier-strategies>`_ for how to specify
+                  a table's priority in VRAM.
                   Allowed values are:
 
                   * true
@@ -12279,8 +12454,13 @@ class GPUdb(object):
                   a top-level table.  The default value is ''.
 
                 * **materialize_on_gpu** --
-                  If *true*, then the columns of the output table will be
-                  cached on the GPU.
+                  No longer used.  See `Resource Management Concepts
+                  <../../../rm/concepts.html>`_ for information about how
+                  resources are managed, `Tier Strategy Concepts
+                  <../../../rm/concepts.html>`_ for how resources are targeted
+                  for VRAM, and `Tier Strategy Usage
+                  <../../../rm/usage.html#tier-strategies>`_ for how to specify
+                  a table's priority in VRAM.
                   Allowed values are:
 
                   * true
@@ -16426,6 +16606,11 @@ class GPUdb(object):
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
                 ).
+                Allowed keys are:
+
+                * **columns** --
+                  Apply security to these columns, comma-separated.  The
+                  default value is ''.
 
         Returns:
             A dict with the following entries--
@@ -16841,6 +17026,302 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end insert_records
+
+
+    # begin insert_records_from_files
+    def insert_records_from_files( self, table_name = None, filepaths = None,
+                                   create_table_options = {}, options = {} ):
+        """
+        Parameters:
+
+            table_name (str)
+
+
+            filepaths (list of str)
+                (can have wildcards) -- array of strings (can be relative
+                paths)    The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+
+            create_table_options (dict of str to str)
+                see options in create_table_request.  The default value is an
+                empty dict ( {} ).
+                Allowed keys are:
+
+                * **type_id** --
+                  Optional: ID of a currently registered type.  The default
+                  value is ''.
+
+                * **no_error_if_exists** --
+                  If *true*, prevents an error from occurring if the table
+                  already exists and is of the given type.  If a table with the
+                  same ID but a different type exists, it is still an error.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **collection_name** --
+                  Name of a collection which is to contain the newly created
+                  table. If the collection provided is non-existent, the
+                  collection will be automatically created. If empty, then the
+                  newly created table will be a top-level table.
+
+                * **is_collection** --
+                  Indicates whether the new table to be created will be a
+                  collection.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **disallow_homogeneous_tables** --
+                  No longer supported; value will be ignored.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **is_replicated** --
+                  For a table, affects the `distribution scheme
+                  <../../../concepts/tables.html#distribution>`_ for the
+                  table's data.  If true and the given type has no explicit
+                  `shard key <../../../concepts/tables.html#shard-key>`_
+                  defined, the table will be `replicated
+                  <../../../concepts/tables.html#replication>`_.  If false, the
+                  table will be `sharded
+                  <../../../concepts/tables.html#sharding>`_ according to the
+                  shard key specified in the given
+                  @{create_table_options.type_id}, or `randomly sharded
+                  <../../../concepts/tables.html#random-sharding>`_, if no
+                  shard key is specified.  Note that a type containing a shard
+                  key cannot be used to create a replicated table.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **foreign_keys** --
+                  Semicolon-separated list of `foreign keys
+                  <../../../concepts/tables.html#foreign-keys>`_, of the format
+                  '(source_column_name [, ...]) references
+                  target_table_name(primary_key_column_name [, ...]) [as
+                  foreign_key_name]'.
+
+                * **foreign_shard_key** --
+                  Foreign shard key of the format 'source_column references
+                  shard_by_column from target_table(primary_key_column)'.
+
+                * **partition_type** --
+                  `Partitioning <../../../concepts/tables.html#partitioning>`_
+                  scheme to use.
+                  Allowed values are:
+
+                  * **RANGE** --
+                    Use `range partitioning
+                    <../../../concepts/tables.html#partitioning-by-range>`_.
+
+                  * **INTERVAL** --
+                    Use `interval partitioning
+                    <../../../concepts/tables.html#partitioning-by-interval>`_.
+
+                  * **LIST** --
+                    Use `list partitioning
+                    <../../../concepts/tables.html#partitioning-by-list>`_.
+
+                  * **HASH** --
+                    Use `hash partitioning
+                    <../../../concepts/tables.html#partitioning-by-hash>`_.
+
+                * **partition_keys** --
+                  Comma-separated list of partition keys, which are the columns
+                  or column expressions by which records will be assigned to
+                  partitions defined by *partition_definitions*.
+
+                * **partition_definitions** --
+                  Comma-separated list of partition definitions, whose format
+                  depends on the choice of *partition_type*.  See `range
+                  partitioning
+                  <../../../concepts/tables.html#partitioning-by-range>`_,
+                  `interval partitioning
+                  <../../../concepts/tables.html#partitioning-by-interval>`_,
+                  `list partitioning
+                  <../../../concepts/tables.html#partitioning-by-list>`_, or
+                  `hash partitioning
+                  <../../../concepts/tables.html#partitioning-by-hash>`_ for
+                  example formats.
+
+                * **is_automatic_partition** --
+                  If true, a new partition will be created for values which
+                  don't fall into an existing partition.  Currently only
+                  supported for `list partitions
+                  <../../../concepts/tables.html#partitioning-by-list>`_.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **ttl** --
+                  For a table, sets the `TTL <../../../concepts/ttl.html>`_ of
+                  the table specified in input parameter *table_name*.
+
+                * **chunk_size** --
+                  Indicates the number of records per chunk to be used for this
+                  table.
+
+                * **is_result_table** --
+                  For a table, indicates whether the table is an in-memory
+                  table. A result table cannot contain store_only, text_search,
+                  or string columns (charN columns are acceptable), and it will
+                  not be retained if the server is restarted.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **strategy_definition** --
+                  The `tier strategy
+                  <../../../rm/concepts.html#tier-strategies>`_ for the table
+                  and its columns. See `tier strategy usage
+                  <../../../rm/concepts.html#tier-strategies>`_ for format and
+                  `tier strategy examples
+                  <../../../rm/usage.html#tier-strategies>`_ for examples.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **loading_mode** --
+                  specifies how to divide up data loading among nodes.
+                  Allowed values are:
+
+                  * **head** --
+                    head node loads all data
+
+                  * **distributed_shared** --
+                    worker nodes load all data, all nodes can see all files and
+                    loading is divided up internally
+
+                  * **distributed_local** --
+                    each worker node loads the files that it sees
+
+                  The default value is 'head'.
+
+                * **batch_size** --
+                  number of records per batch when loading from file
+
+                * **column_formats** --
+                  json map of colname to map of format to value
+
+                * **default_column_formats** --
+                  json map of format to value
+
+                * **dry_run** --
+                  Walk through the files and determine number of valid records.
+                  Does not load data. Applies the error handling mode to
+                  determine valid behavior.
+                  Allowed values are:
+
+                  * **false** --
+                    no dry run
+
+                  * **true** --
+                    do a dry run
+
+                  The default value is 'false'.
+
+                * **text_delimiter** --
+                  Delimiter for csv fields and header row. Must be a single
+                  character.  The default value is ','.
+
+                * **text_header_property_delimiter** --
+                  Delimiter for column properties in csv header row.  The
+                  default value is '|'.
+
+                * **columns_to_load** --
+                  Optionally used to specify a subset of columns to load,
+                  instead of loading all columns in the file.
+                  The columns to use are delimited by a comma. Column numbers
+                  can be specified discretely or as a range e.g. '1 .. 4'
+                  refers to the first through fourth columns.
+                  For example, a value of '5,3,1..2' will create a table with
+                  the first column in the table being the fifth column in the
+                  file, followed by third column in the file, then the first
+                  column, and lastly the second column.
+                  Additionally, if the file(s) have a header, names matching
+                  the file header names may be provided instead of numbers.
+                  Ranges are not supported.
+                  For example, a value of 'C, B, A' will create a three column
+                  table with column C, followed by column B, followed by column
+                  A.
+
+                * **text_comment_string** --
+                  ignore all lines starting with the comment value.  The
+                  default value is '#'.
+
+                * **text_null_string** --
+                  value to treat as null.  The default value is ''.
+
+                * **text_quote_character** --
+                  quote character, defaults to a double-quote i.e. ".Set an
+                  empty string to not have a quote character. Must be a single
+                  character.  The default value is '"'.
+
+                * **text_escape_character** --
+                  escape character, defaults to no escaping. Must be a single
+                  character
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                Value of input parameter *table_name*.
+
+            type_id (str)
+
+
+            count_inserted (long)
+                number of records inserted
+
+            count_skipped (long)
+                number of records skipped, when running in a non-abort error
+                handling mode
+
+            count_updated (long)
+                number of records updated.  The default value is -1.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( table_name, (basestring)), "insert_records_from_files(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        filepaths = filepaths if isinstance( filepaths, list ) else ( [] if (filepaths is None) else [ filepaths ] )
+        assert isinstance( create_table_options, (dict)), "insert_records_from_files(): Argument 'create_table_options' must be (one) of type(s) '(dict)'; given %s" % type( create_table_options ).__name__
+        assert isinstance( options, (dict)), "insert_records_from_files(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/insert/records/fromfiles" )
+
+        obj = {}
+        obj['table_name'] = table_name
+        obj['filepaths'] = filepaths
+        obj['create_table_options'] = self.__sanitize_dicts( create_table_options )
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/insert/records/fromfiles' )
+
+        return AttrDict( response )
+    # end insert_records_from_files
 
 
     # begin insert_records_random
@@ -17659,6 +18140,228 @@ class GPUdb(object):
     # end merge_records
 
 
+    # begin modify_graph
+    def modify_graph( self, graph_name = None, nodes = None, edges = None, weights =
+                      None, restrictions = None, options = {} ):
+        """Update an existing graph network using given nodes, edges, weights,
+        restrictions, and options.
+
+        IMPORTANT: It's highly recommended that you review the `Network Graphs
+        & Solvers <../../../graph_solver/network_graph_solver.html>`_ concepts
+        documentation, the `Graph REST Tutorial
+        <../../../graph_solver/examples/graph_rest_guide.html>`_, and/or some
+        `graph examples <../../../graph_solver/examples.html>`_ before using
+        this endpoint.
+
+        Parameters:
+
+            graph_name (str)
+                Name of the graph resource to modify.
+
+            nodes (list of str)
+                Nodes with which to update existing input parameter *nodes* in
+                graph specified by input parameter *graph_name*. Review `Nodes
+                <../../../graph_solver/network_graph_solver.html#nodes>`_ for
+                more information. Nodes must be specified using `identifiers
+                <../../../graph_solver/network_graph_solver.html#identifiers>`_;
+                identifiers are grouped as `combinations
+                <../../../graph_solver/network_graph_solver.html#id-combos>`_.
+                Identifiers can be used with existing column names, e.g.,
+                'table.column AS NODE_ID', expressions, e.g.,
+                'ST_MAKEPOINT(column1, column2) AS NODE_WKTPOINT', or raw
+                values, e.g., '{9, 10, 11} AS NODE_ID'. If using raw values in
+                an identifier combination, the number of values specified must
+                match across the combination. Identifier combination(s) do not
+                have to match the method used to create the graph, e.g., if
+                column names were specified to create the graph, expressions or
+                raw values could also be used to modify the graph.    The user
+                can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
+
+            edges (list of str)
+                Edges with which to update existing input parameter *edges* in
+                graph specified by input parameter *graph_name*. Review `Edges
+                <../../../graph_solver/network_graph_solver.html#edges>`_ for
+                more information. Edges must be specified using `identifiers
+                <../../../graph_solver/network_graph_solver.html#identifiers>`_;
+                identifiers are grouped as `combinations
+                <../../../graph_solver/network_graph_solver.html#id-combos>`_.
+                Identifiers can be used with existing column names, e.g.,
+                'table.column AS EDGE_ID', expressions, e.g., 'SUBSTR(column,
+                1, 6) AS EDGE_NODE1_NAME', or raw values, e.g., "{'family',
+                'coworker'} AS EDGE_LABEL". If using raw values in an
+                identifier combination, the number of values specified must
+                match across the combination. Identifier combination(s) do not
+                have to match the method used to create the graph, e.g., if
+                column names were specified to create the graph, expressions or
+                raw values could also be used to modify the graph.    The user
+                can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
+
+            weights (list of str)
+                Weights with which to update existing input parameter *weights*
+                in graph specified by input parameter *graph_name*. Review
+                `Weights
+                <../../../graph_solver/network_graph_solver.html#graph-weights>`_
+                for more information. Weights must be specified using
+                `identifiers
+                <../../../graph_solver/network_graph_solver.html#identifiers>`_;
+                identifiers are grouped as `combinations
+                <../../../graph_solver/network_graph_solver.html#id-combos>`_.
+                Identifiers can be used with existing column names, e.g.,
+                'table.column AS WEIGHTS_EDGE_ID', expressions, e.g.,
+                'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED', or raw values,
+                e.g., '{4, 15} AS WEIGHTS_VALUESPECIFIED'. If using raw values
+                in an identifier combination, the number of values specified
+                must match across the combination. Identifier combination(s) do
+                not have to match the method used to create the graph, e.g., if
+                column names were specified to create the graph, expressions or
+                raw values could also be used to modify the graph.    The user
+                can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
+
+            restrictions (list of str)
+                Restrictions with which to update existing input parameter
+                *restrictions* in graph specified by input parameter
+                *graph_name*. Review `Restrictions
+                <../../../graph_solver/network_graph_solver.html#graph-restrictions>`_
+                for more information. Restrictions must be specified using
+                `identifiers
+                <../../../graph_solver/network_graph_solver.html#identifiers>`_;
+                identifiers are grouped as `combinations
+                <../../../graph_solver/network_graph_solver.html#id-combos>`_.
+                Identifiers can be used with existing column names, e.g.,
+                'table.column AS RESTRICTIONS_EDGE_ID', expressions, e.g.,
+                'column/2 AS RESTRICTIONS_VALUECOMPARED', or raw values, e.g.,
+                '{0, 0, 0, 1} AS RESTRICTIONS_ONOFFCOMPARED'. If using raw
+                values in an identifier combination, the number of values
+                specified must match across the combination. Identifier
+                combination(s) do not have to match the method used to create
+                the graph, e.g., if column names were specified to create the
+                graph, expressions or raw values could also be used to modify
+                the graph.    The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **restriction_threshold_value** --
+                  Value-based restriction comparison. Any node or edge with a
+                  RESTRICTIONS_VALUECOMPARED value greater than the
+                  *restriction_threshold_value* will not be included in the
+                  graph.
+
+                * **export_create_results** --
+                  If set to *true*, returns the graph topology in the response
+                  as arrays.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **enable_graph_draw** --
+                  If set to *true*, adds a 'EDGE_WKTLINE' column identifier to
+                  the specified *graph_table* so the graph can be viewed via
+                  WMS; for social and non-geospatial graphs, the 'EDGE_WKTLINE'
+                  column identifier will be populated with spatial coordinates
+                  derived from a flattening layout algorithm so the graph can
+                  still be viewed.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **save_persist** --
+                  If set to *true*, the graph will be saved in the persist
+                  directory (see the `config reference
+                  <../../../config/index.html>`_ for more information). If set
+                  to *false*, the graph will be removed when the graph server
+                  is shutdown.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **add_table_monitor** --
+                  Adds a table monitor to every table used in the creation of
+                  the graph; this table monitor will trigger the graph to
+                  update dynamically upon inserts to the source table(s). Note
+                  that upon database restart, if *save_persist* is also set to
+                  *true*, the graph will be fully reconstructed and the table
+                  monitors will be reattached. For more details on table
+                  monitors, see :meth:`.create_table_monitor`.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **graph_table** --
+                  If specified, the created graph is also created as a table
+                  with the given name and following identifier columns:
+                  'EDGE_ID', 'EDGE_NODE1_ID', 'EDGE_NODE2_ID'. If left blank,
+                  no table is created.  The default value is ''.
+
+                * **remove_label_only** --
+                  When RESTRICTIONS on labeled entities requested, if set to
+                  true this will NOT delete the entity but only the label
+                  associated with the entity. Otherwise (default), it'll delete
+                  the label AND the entity.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            num_nodes (long)
+                Total number of nodes in the graph.
+
+            num_edges (long)
+                Total number of edges in the graph.
+
+            edges_ids (list of longs)
+                Edges given as pairs of node indices. Only populated if
+                *export_create_results* is set to *true*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( graph_name, (basestring)), "modify_graph(): Argument 'graph_name' must be (one) of type(s) '(basestring)'; given %s" % type( graph_name ).__name__
+        nodes = nodes if isinstance( nodes, list ) else ( [] if (nodes is None) else [ nodes ] )
+        edges = edges if isinstance( edges, list ) else ( [] if (edges is None) else [ edges ] )
+        weights = weights if isinstance( weights, list ) else ( [] if (weights is None) else [ weights ] )
+        restrictions = restrictions if isinstance( restrictions, list ) else ( [] if (restrictions is None) else [ restrictions ] )
+        assert isinstance( options, (dict)), "modify_graph(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/modify/graph" )
+
+        obj = {}
+        obj['graph_name'] = graph_name
+        obj['nodes'] = nodes
+        obj['edges'] = edges
+        obj['weights'] = weights
+        obj['restrictions'] = restrictions
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/modify/graph' )
+
+        return AttrDict( response )
+    # end modify_graph
+
+
     # begin query_graph
     def query_graph( self, graph_name = None, queries = None, restrictions = [],
                      adjacency_table = '', rings = 1, options = {} ):
@@ -18041,6 +18744,11 @@ class GPUdb(object):
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
                 ).
+                Allowed keys are:
+
+                * **columns** --
+                  Apply security to these columns, comma-separated.  The
+                  default value is ''.
 
         Returns:
             A dict with the following entries--
@@ -18587,7 +19295,8 @@ class GPUdb(object):
 
     # begin show_sql_proc
     def show_sql_proc( self, procedure_name = '', options = {} ):
-        """Procedures
+        """Shows information about SQL procedures, including the full definition
+        of each requested procedure.
 
         Parameters:
 
@@ -18602,8 +19311,9 @@ class GPUdb(object):
                 Allowed keys are:
 
                 * **no_error_if_not_exists** --
-                  If *false* will return an error if the provided  does not
-                  exist. If *true* then it will return an empty result.
+                  If *true*, no error will be returned if the requested
+                  procedure does not exist.  If *false*, an error will be
+                  returned if the requested procedure does not exist.
                   Allowed values are:
 
                   * true
@@ -18615,14 +19325,14 @@ class GPUdb(object):
             A dict with the following entries--
 
             procedure_names (list of str)
-                Value of .
+                A list of the names of the requested procedures.
 
             procedure_definitions (list of str)
-                procedures
+                A list of the definitions for the requested procedures.
 
             additional_info (list of dicts of str to str)
-                Additional information about the respective tables in
-                @{procedure_names}.
+                Additional information about the respective tables in the
+                requested procedures.
                 Allowed values are:
 
                 * @INNER_STRUCTURE
@@ -18954,6 +19664,7 @@ class GPUdb(object):
                 * REPLICATED
                 * JOIN
                 * RESULT_TABLE
+                * MATERIALIZED_VIEW_UNDER_CONSTRUCTION
 
             type_ids (list of str)
                 Type ids of the respective tables in output parameter
@@ -19030,8 +19741,9 @@ class GPUdb(object):
 
         # Create record types for the returned types and save them
         for __type_info in zip( response["type_ids"], response["type_labels"], response["type_schemas"], response["properties"] ):
-            # Create a type only if it is not colleciton
-            if (__type_info[ 1 ] != "<collection>"):
+            # Create a type only if it is not colleciton or a materialized view
+            # under construction (which returns an empty string for the schema)
+            if ( (__type_info[ 1 ] != "<collection>") and (__type_info[2] != "") ):
                 record_type = RecordType.from_type_schema( __type_info[ 1 ], __type_info[ 2 ], __type_info[ 3 ] )
                 self.save_known_type( __type_info[ 0 ], record_type )
         # end loop
@@ -19250,8 +19962,9 @@ class GPUdb(object):
 
         # Create record types for the returned types and save them
         for __type_info in zip( response["type_ids"], response["labels"], response["type_schemas"], response["properties"] ):
-            # Create a type only if it is not colleciton
-            if (__type_info[ 1 ] != "<collection>"):
+            # Create a type only if it is not colleciton or a materialized view
+            # under construction (which returns an empty string for the schema)
+            if ( (__type_info[ 1 ] != "<collection>") and (__type_info[2] != "") ):
                 record_type = RecordType.from_type_schema( __type_info[ 1 ], __type_info[ 2 ], __type_info[ 3 ] )
                 self.save_known_type( __type_info[ 0 ], record_type )
         # end loop
@@ -22823,8 +23536,13 @@ class GPUdbTable( object ):
                   a top-level table.  The default value is ''.
 
                 * **materialize_on_gpu** --
-                  If *true*, then the columns of the output table will be
-                  cached on the GPU.
+                  No longer used.  See `Resource Management Concepts
+                  <../../../rm/concepts.html>`_ for information about how
+                  resources are managed, `Tier Strategy Concepts
+                  <../../../rm/concepts.html>`_ for how resources are targeted
+                  for VRAM, and `Tier Strategy Usage
+                  <../../../rm/usage.html#tier-strategies>`_ for how to specify
+                  a table's priority in VRAM.
                   Allowed values are:
 
                   * true
@@ -23349,9 +24067,13 @@ class GPUdbTable( object ):
                   default value is ''.
 
                 * **materialize_on_gpu** --
-                  If *true* then the columns of the groupby result table will
-                  be cached on the GPU. Must be used in combination with the
-                  *result_table* option.
+                  No longer used.  See `Resource Management Concepts
+                  <../../../rm/concepts.html>`_ for information about how
+                  resources are managed, `Tier Strategy Concepts
+                  <../../../rm/concepts.html>`_ for how resources are targeted
+                  for VRAM, and `Tier Strategy Usage
+                  <../../../rm/usage.html#tier-strategies>`_ for how to specify
+                  a table's priority in VRAM.
                   Allowed values are:
 
                   * true
@@ -24314,7 +25036,13 @@ class GPUdbTable( object ):
                   view this result table is part of.  The default value is ''.
 
                 * **materialize_on_gpu** --
-                  If *true* then the output columns will be cached on the GPU.
+                  No longer used.  See `Resource Management Concepts
+                  <../../../rm/concepts.html>`_ for information about how
+                  resources are managed, `Tier Strategy Concepts
+                  <../../../rm/concepts.html>`_ for how resources are targeted
+                  for VRAM, and `Tier Strategy Usage
+                  <../../../rm/usage.html#tier-strategies>`_ for how to specify
+                  a table's priority in VRAM.
                   Allowed values are:
 
                   * true
@@ -24490,16 +25218,22 @@ class GPUdbTable( object ):
                   No longer supported; action will be ignored.
 
                 * **create_index** --
-                  Creates an `index
-                  <../../../concepts/indexes.html#column-index>`_ on the column
-                  name specified in input parameter *value*. If this column is
-                  already indexed, an error will be returned.
+                  Creates either a `column (attribute) index
+                  <../../../concepts/indexes.html#column-index>`_ or `chunk
+                  skip index
+                  <../../../concepts/indexes.html#chunk-skip-index>`_,
+                  depending on the specified *index_type*, on the column name
+                  specified in input parameter *value*. If this column already
+                  has the specified index, an error will be returned.
 
                 * **delete_index** --
-                  Deletes an existing `index
-                  <../../../concepts/indexes.html#column-index>`_ on the column
-                  name specified in input parameter *value*. If this column
-                  does not have indexing turned on, an error will be returned.
+                  Deletes either a `column (attribute) index
+                  <../../../concepts/indexes.html#column-index>`_ or `chunk
+                  skip index
+                  <../../../concepts/indexes.html#chunk-skip-index>`_,
+                  depending on the specified *index_type*, on the column name
+                  specified in input parameter *value*. If this column does not
+                  have the specified index, an error will be returned.
 
                 * **move_to_collection** --
                   Moves a table or view into a collection named input parameter
@@ -24737,14 +25471,18 @@ class GPUdbTable( object ):
                   also specified.
 
                 * **index_type** --
-                  Type of index to create.
+                  Type of index to create, when input parameter *action* is
+                  *create_index*, or to delete, when input parameter *action*
+                  is *delete_index*.
                   Allowed values are:
 
                   * **column** --
-                    Standard column index.
+                    Create or delete a `column (attribute) index
+                    <../../../concepts/indexes.html#column-index>`_.
 
                   * **chunk_skip** --
-                    Chunk skip index.
+                    Create or delete a `chunk skip index
+                    <../../../concepts/indexes.html#chunk-skip-index>`_.
 
                   The default value is 'column'.
 
@@ -25212,8 +25950,13 @@ class GPUdbTable( object ):
                   than the original column name.  The default value is ''.
 
                 * **materialize_on_gpu** --
-                  If *true* then the columns of the projection will be cached
-                  on the GPU.
+                  No longer used.  See `Resource Management Concepts
+                  <../../../rm/concepts.html>`_ for information about how
+                  resources are managed, `Tier Strategy Concepts
+                  <../../../rm/concepts.html>`_ for how resources are targeted
+                  for VRAM, and `Tier Strategy Usage
+                  <../../../rm/usage.html#tier-strategies>`_ for how to specify
+                  a table's priority in VRAM.
                   Allowed values are:
 
                   * true
@@ -26661,6 +27404,7 @@ class GPUdbTable( object ):
                 * REPLICATED
                 * JOIN
                 * RESULT_TABLE
+                * MATERIALIZED_VIEW_UNDER_CONSTRUCTION
 
             type_ids (list of str)
                 Type ids of the respective tables in output parameter
