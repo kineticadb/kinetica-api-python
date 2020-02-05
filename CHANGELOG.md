@@ -2,6 +2,19 @@
 
 ## Version 7.0
 
+### Version 7.0.11.0 - 2019-12-10
+
+#### Added
+-   Support for overriding the high availability synchronicity mode for
+    endpoints; set the property `ha_sync_mode` of gpudb.GPUdb with one of
+    the following values of the enumeration gpudb.GPUdb.HASynchronicityMode:
+    - DEFAULT
+    - SYNCHRONOUS
+    - ASYNCRHONOUS
+
+#### Fixed
+-   Example script to match changed endpoint format.
+
 ### Version 7.0.9.0 - 2019-09-24
 
 #### Added
@@ -108,7 +121,7 @@
     shard key in gpudb_multihead_io.py (file previously named gpudb_ingestor.py)
 -   Renamed gpudb_ingestor.py to gpudb_multihead_io.py
 -   Added an opt-out mechanism for the GPUdb constructor such that no version check
-    or other communication is made with the server. 
+    or other communication is made with the server.
 -   Added an in-house compiled C-module named protcol for avro encoding and
     decoding to drastically increase record ingestion and retrieval speed.
 -   Added a convenience method get_geo_json() to GPUdbTable that returns a

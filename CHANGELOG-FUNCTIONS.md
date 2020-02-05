@@ -2,6 +2,21 @@
 
 ## Version 7.0
 
+### Version 7.0.11.0 - 2019-12-10
+
+#### Added Endpoints
+- Added a new endpoint ``/insert/records/fromfiles`` to insert records from
+  external files into a new or existing table.
+- Added a new endpoint ``/modify/graph`` for updates of an existing graph
+  in a non-streaming fashion.
+
+#### Changed Endpoints
+
+##### Non-breaking Changes
+- Added an option ``remove_label_only`` to create and modify graph endpoints (see option's doc)
+- Added ``enable_overlapped_equi_join`` and ``enable_compound_equi_join`` options to ``/alter/system/properties``
+- Added ``columns`` and ``sql_where`` options to ``/grant/permission/table``
+
 ### Version 7.0.10.0 - 2019-11-13
 
 #### Changed Endpoints
@@ -11,13 +26,13 @@
 
 ##### Non-breaking Changes
 - Added ``allpaths`` solve graph option to solve for all the paths between source and destination.
-  It is recommended to run this with the options of max and min solution radiua set carefully. 
-  The min value should be greater than or equal to the shortest path cost and it is further advised to set the 
+  It is recommended to run this with the options of max and min solution radiua set carefully.
+  The min value should be greater than or equal to the shortest path cost and it is further advised to set the
   max_number_targets option to limit the resulting paths.
- 
-- Added ``modify`` create graph option. When ``recreate`` and ``modify`` is both true for 
+
+- Added ``modify`` create graph option. When ``recreate`` and ``modify`` is both true for
   an existing graph it'll update the graph instead of deleting and recreating it.
-   
+
 - Added ``match_batch_solves`` solver type valid choice to the ``/match/graph``
   endpoint's ``solve_method`` parameter. This solver is strictly for WKTPOINT
   source and destination pairs with an ID and runs as many shortest paths as
@@ -39,6 +54,7 @@
     - ``/get/records/bycolumn``
     - ``/get/records/fromcollection``
     - ``/get/records``
+- Added "compact_after_rebalance" and "compact_only" options to /admin/rebalance
 
 
 ### Version 7.0.9.0 - 2019-10-16
@@ -95,7 +111,7 @@
 - Added the following endpoints to support proc (UDF) execute permissions:
     - ``/grant/permission/proc``
     - ``/revoke/permission/proc``
-  
+
 - Added ``/show/graph`` to show basic properties of one or all graphs on the graph server
 
 #### Changed Endpoints

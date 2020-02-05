@@ -285,7 +285,7 @@ def gpudb_example():
         semi-hemisphere; use binary decoding explicitly since we're using
         the GPUdb class. """
     response = h_db.aggregate_group_by(table_name=weather_nw_view, column_names=["country", "count(country)"], offset=0, limit=25, encoding="binary")
-    countries = gpudb.GPUdbRecord.decode_binary_data(response["response_schema_str"], response["binary_encoded_response"])
+    countries = gpudb.GPUdbRecord.decode_binary_data(response["response_schema_str"], response["binary_encoded_response"])[0]
     print ( "Weather locations per country in the northwest semi-hemisphere:")
     for country in zip(countries["column_1"], countries["column_2"]):
         print ( "\t{:<10s}{:2d}".format(country[0] + ":", country[1]))
