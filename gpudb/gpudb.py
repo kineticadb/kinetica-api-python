@@ -1444,6 +1444,8 @@ class GPUdbRecordType(object):
                     self._columns.append( GPUdbRecordColumn( *col_info ) )
         # end if-else
 
+        # Save the column names
+        self._column_names = [col.name for col in self._columns]
 
         # Column property container
         self._column_properties = {}
@@ -1557,6 +1559,9 @@ class GPUdbRecordType(object):
         # Save the columns
         self._columns = columns
 
+        # Save the column names
+        self._column_names = [col.name for col in columns]
+
         # Create and save a RecordType object
         self._record_type = RecordType.from_type_schema( "", self._schema_string,
                                                          self._column_properties )
@@ -1570,6 +1575,13 @@ class GPUdbRecordType(object):
         """A list of columns for the record type."""
         return self._columns
     # end columns
+
+
+    @property
+    def column_names(self): # read-only column_names
+        """A list of the names of the columns for the record type."""
+        return self._column_names
+    # end column_names
 
 
     @property
@@ -1682,6 +1694,44 @@ class GPUdbRecordType(object):
     def __ne__(self, other):
         return not self.__eq__(other)
     # end __ne__
+
+
+
+    def get_column( self, column_id ):
+        """Return the desired columnd; fetch by name or index.
+
+        Parameters:
+            column_id (str or int)
+                If string, then the name of the column.  If an integer,
+                then the index of the column.  Must be a valid column name
+                or be within bounds.
+
+        Returns:
+            The GPUdbRecordColumn object pertaining to the desired column.
+        """
+        if not isinstance( column_id, (basestring, int) ):
+            raise GPUdbException( "Parameter 'column_id' must be a string "
+                                  "or an integer; given '{}'"
+                                  "".format( str( type( name_or_index ) ) ) )
+
+        # Handle strings--column name
+        if isinstance( column_id, basestring ):
+            try:
+                return self._columns[ self._column_names.index( column_id ) ]
+            except ValueError as ex:
+                raise GPUdbException( "Given key '{}' does not match any column"
+                                      "in the type!".format( column_id ) )
+        # end if
+        
+        # Not a string, so it must be an integer; ensure it's within limits
+        if ( (column_id < 0)
+             or (column_id >= len( self._columns )) ):
+            raise GPUdbException( "Given index {} is out of bounds; # of "
+                                  "columns: {}".format( column_id,
+                                                        len( self._columns ) ) )
+        
+        return self._columns[ column_id ]
+    # end get_column
 
 # end class GPUdbRecordType
 
@@ -3035,7 +3085,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.11.0"
+    api_version   = "7.0.12.0"
 
     # Constants
     END_OF_SET = -9999
@@ -6395,11 +6445,39 @@ class GPUdb(object):
 
                 * **compact_after_rebalance** --
                   Perform compaction of deleted records once the rebalance
-                  completes, to reclaim memory and disk space. Default is true.
+                  completes, to reclaim memory and disk space. Default is true,
+                  unless {add_labels}@{key of options
+                  repair_incorrectly_sharded_data} is set to *true*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
                   The default value is 'true'.
 
                 * **compact_only** --
                   Only perform compaction, do not rebalance. Default is false.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **repair_incorrectly_sharded_data** --
+                  Scans for any data sharded incorrectly and re-routes the
+                  correct location. This can be done as part of a typical
+                  rebalance after expanding the cluster, or in a standalone
+                  fashion when it is believed that data is sharded incorrectly
+                  somewhere in the cluster. Compaction will not be performed by
+                  default when this is enabled. This option may also lengthen
+                  rebalance time, and increase the memory used by the
+                  rebalance.
+                  Allowed values are:
+
+                  * true
+                  * false
+
                   The default value is 'false'.
 
         Returns:
@@ -11502,7 +11580,12 @@ class GPUdb(object):
                 Value of input parameter *projection_name*.
 
             info (dict of str to str)
-                Additional information.
+                Additional information.  The default value is an empty dict (
+                {} ).
+                Allowed keys are:
+
+                * **count** --
+                  Number of records in the final table
         """
         assert isinstance( table_name, (basestring)), "create_projection(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( projection_name, (basestring)), "create_projection(): Argument 'projection_name' must be (one) of type(s) '(basestring)'; given %s" % type( projection_name ).__name__
@@ -11885,17 +11968,25 @@ class GPUdb(object):
     # begin create_table_monitor
     def create_table_monitor( self, table_name = None, options = {} ):
         """Creates a monitor that watches for table modification events such as
-        insert, update or delete on a particular table (identified by input
-        parameter *table_name*) and forwards event notifications to subscribers
-        via ZMQ. After this call completes, subscribe to the returned output
-        parameter *topic_id* on the ZMQ table monitor port (default 9002). Each
-        time a modification operation on the table completes, a multipart
-        message is published for that topic; the first part contains only the
-        topic ID, and each subsequent part contains one binary-encoded Avro
-        object that corresponds to the event and can be decoded using output
-        parameter *type_schema*. The monitor will continue to run (regardless
-        of whether or not there are any subscribers) until deactivated with
+        insert, update or delete on a particular table (identified by
+        input parameter *table_name*) and forwards event notifications to
+        subscribers via ZMQ.
+        After this call completes, subscribe to the returned output parameter
+        *topic_id* on the
+        ZMQ table monitor port (default 9002). Each time a modification
+        operation on the
+        table completes, a multipart message is published for that topic; the
+        first part
+        contains only the topic ID, and each subsequent part contains one
+        binary-encoded
+        Avro object that corresponds to the event and can be decoded using
+        output parameter *type_schema*. The monitor will continue to run
+        (regardless of whether
+        or not there are any subscribers) until deactivated with
         :meth:`.clear_table_monitor`.
+
+        For more information on table monitors, see
+        `Table Monitors <../../../concepts/table_monitors.html>`_.
 
         Parameters:
 
@@ -12562,7 +12653,12 @@ class GPUdb(object):
                 Value of input parameter *table_name*.
 
             info (dict of str to str)
-                Additional information.
+                Additional information.  The default value is an empty dict (
+                {} ).
+                Allowed keys are:
+
+                * **count** --
+                  Number of records in the final table
         """
         assert isinstance( table_name, (basestring)), "create_union(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
@@ -13303,6 +13399,12 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **view_id** --
+                  <DEVELOPER>  The default value is ''.
+
+                * **no_count** --
+                  <DEVELOPER>  The default value is 'false'.
+
         Returns:
             A dict with the following entries--
 
@@ -13335,7 +13437,12 @@ class GPUdb(object):
                 (Subject to config.paging_tables_enabled)
 
             info (dict of str to str)
-                Additional information.
+                Additional information.  The default value is an empty dict (
+                {} ).
+                Allowed keys are:
+
+                * **count** --
+                  Number of records in the final table
 
             record_type (:class:`RecordType` or None)
                 A :class:`RecordType` object using which the user can decode
@@ -13589,6 +13696,12 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **view_id** --
+                  <DEVELOPER>  The default value is ''.
+
+                * **no_count** --
+                  <DEVELOPER>  The default value is 'false'.
+
             record_type (:class:`RecordType` or None)
                 The record type expected in the results, or None to
                 determinethe appropriate type automatically. If known,
@@ -13641,7 +13754,12 @@ class GPUdb(object):
                 (Subject to config.paging_tables_enabled)
 
             info (dict of str to str)
-                Additional information.
+                Additional information.  The default value is an empty dict (
+                {} ).
+                Allowed keys are:
+
+                * **count** --
+                  Number of records in the final table
 
             records (list of :class:`Record`)
                 A list of :class:`Record` objects which contain the decoded
@@ -15044,7 +15162,11 @@ class GPUdb(object):
 
     # begin get_job
     def get_job( self, job_id = None, options = {} ):
-        """
+        """Get the status and result of asynchronously running job.  See the
+        :meth:`.create_job` for starting an asynchronous job.  Some fields of
+        the response are filled only after the submitted job has finished
+        execution.
+
         Parameters:
 
             job_id (long)
@@ -17031,25 +17153,49 @@ class GPUdb(object):
     # begin insert_records_from_files
     def insert_records_from_files( self, table_name = None, filepaths = None,
                                    create_table_options = {}, options = {} ):
-        """
+        """Reads from one or more files located on the server and inserts the data
+        into a new or existing table.
+
+        For CSV files, there are two loading schemes: positional and
+        name-based. The name-based loading scheme is enabled when the file has
+        a header present and *text_has_header* is set to *true*. In this
+        scheme, the source file(s) field names must match the target table's
+        column names exactly; however, the source file can have more fields
+        than the target table has columns. If *error_handling* is set to
+        *permissive*, the source file can have fewer fields than the target
+        table has columns. If the name-based loading scheme is being used,
+        names matching the file header's names may be provided to
+        *columns_to_load* instead of numbers, but ranges are not supported.
+
+        Returns once all files are processed.
+
         Parameters:
 
             table_name (str)
-
+                Name of the table into which the data will be inserted. If the
+                table does not exist, the table will be created using either an
+                existing *type_id* or the type inferred from the file.
 
             filepaths (list of str)
-                (can have wildcards) -- array of strings (can be relative
-                paths)    The user can provide a single element (which will be
+                Absolute or relative filepath(s) from where files will be
+                loaded. Relative filepaths are relative to the defined
+                `external_files_directory
+                <../../../config/index.html#external-files>`_ parameter in the
+                server configuration. The filepaths may include wildcards (*).
+                If the first path ends in .tsv, the text delimiter will be
+                defaulted to a tab character. If the first path ends in .psv,
+                the text delimiter will be defaulted to a pipe character (|).
+                The user can provide a single element (which will be
                 automatically promoted to a list internally) or a list.
 
             create_table_options (dict of str to str)
-                see options in create_table_request.  The default value is an
-                empty dict ( {} ).
+                Options used when creating a new table.  The default value is
+                an empty dict ( {} ).
                 Allowed keys are:
 
                 * **type_id** --
-                  Optional: ID of a currently registered type.  The default
-                  value is ''.
+                  ID of a currently registered `type
+                  <../../../concepts/types.html>`_.  The default value is ''.
 
                 * **no_error_if_exists** --
                   If *true*, prevents an error from occurring if the table
@@ -17068,25 +17214,6 @@ class GPUdb(object):
                   collection will be automatically created. If empty, then the
                   newly created table will be a top-level table.
 
-                * **is_collection** --
-                  Indicates whether the new table to be created will be a
-                  collection.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
-                * **disallow_homogeneous_tables** --
-                  No longer supported; value will be ignored.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
                 * **is_replicated** --
                   For a table, affects the `distribution scheme
                   <../../../concepts/tables.html#distribution>`_ for the
@@ -17096,11 +17223,10 @@ class GPUdb(object):
                   <../../../concepts/tables.html#replication>`_.  If false, the
                   table will be `sharded
                   <../../../concepts/tables.html#sharding>`_ according to the
-                  shard key specified in the given
-                  @{create_table_options.type_id}, or `randomly sharded
-                  <../../../concepts/tables.html#random-sharding>`_, if no
-                  shard key is specified.  Note that a type containing a shard
-                  key cannot be used to create a replicated table.
+                  shard key specified in the given *type_id*, or `randomly
+                  sharded <../../../concepts/tables.html#random-sharding>`_, if
+                  no shard key is specified.  Note that a type containing a
+                  shard key cannot be used to create a replicated table.
                   Allowed values are:
 
                   * true
@@ -17203,85 +17329,178 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
-                * **loading_mode** --
-                  specifies how to divide up data loading among nodes.
-                  Allowed values are:
-
-                  * **head** --
-                    head node loads all data
-
-                  * **distributed_shared** --
-                    worker nodes load all data, all nodes can see all files and
-                    loading is divided up internally
-
-                  * **distributed_local** --
-                    each worker node loads the files that it sees
-
-                  The default value is 'head'.
-
                 * **batch_size** --
-                  number of records per batch when loading from file
+                  Specifies number of records to process before inserting.
 
                 * **column_formats** --
-                  json map of colname to map of format to value
+                  For each target column specified, applies the
+                  column-property-bound format to the source data loaded into
+                  that column.  Each column format will contain a mapping of
+                  one or more of its column properties to an appropriate format
+                  for each property.  Currently supported column properties
+                  include date, time, & datetime. The parameter value must be
+                  formatted as a JSON string of maps of column names to maps of
+                  column properties to their corresponding column formats,
+                  e.g., { "order_date" : { "date" : "%Y.%m.%d" }, "order_time"
+                  : { "time" : "%H:%M:%S" } }.  See *default_column_formats*
+                  for valid format syntax.
+
+                * **columns_to_load** --
+                  For *delimited_text* *file_type* only. Specifies a
+                  comma-delimited list of column positions or names to load
+                  instead of loading all columns in the file(s); if more than
+                  one file is being loaded, the list of columns will apply to
+                  all files. Column numbers can be specified discretely or as a
+                  range, e.g., a value of '5,7,1..3' will create a table with
+                  the first column in the table being the fifth column in the
+                  file, followed by seventh column in the file, then the first
+                  column through the fourth column in the file.
 
                 * **default_column_formats** --
-                  json map of format to value
+                  Specifies the default format to be applied to source data
+                  loaded into columns with the corresponding column property.
+                  This default column-property-bound format can be overridden
+                  by specifying a column property & format for a given target
+                  column in *column_formats*. For each specified annotation,
+                  the format will apply to all columns with that annotation
+                  unless a custom *column_formats* for that annotation is
+                  specified. The parameter value must be formatted as a JSON
+                  string that is a map of column properties to their respective
+                  column formats, e.g., { "date" : "%Y.%m.%d", "time" :
+                  "%H:%M:%S" }. Column formats are specified as a string of
+                  control characters and plain text. The supported control
+                  characters are 'Y', 'm', 'd', 'H', 'M', 'S', and 's', which
+                  follow the Linux 'strptime()' specification, as well as 's',
+                  which specifies seconds and fractional seconds (though the
+                  fractional component will be truncated past milliseconds).
+                  Formats for the 'date' annotation must include the 'Y', 'm',
+                  and 'd' control characters. Formats for the 'time' annotation
+                  must include the 'H', 'M', and either 'S' or 's' (but not
+                  both) control characters. Formats for the 'datetime'
+                  annotation meet both the 'date' and 'time' control character
+                  requirements. For example, '{"datetime" : "%m/%d/%Y %H:%M:%S"
+                  }' would be used to interpret text as "05/04/2000 12:12:11"
 
                 * **dry_run** --
-                  Walk through the files and determine number of valid records.
-                  Does not load data. Applies the error handling mode to
-                  determine valid behavior.
+                  If set to *true*, no data will be inserted but the file will
+                  be read with the applied *error_handling* mode and the number
+                  of valid records that would be normally inserted are
+                  returned.
                   Allowed values are:
 
-                  * **false** --
-                    no dry run
-
-                  * **true** --
-                    do a dry run
+                  * false
+                  * true
 
                   The default value is 'false'.
 
-                * **text_delimiter** --
-                  Delimiter for csv fields and header row. Must be a single
-                  character.  The default value is ','.
+                * **error_handling** --
+                  Specifies how errors should be handled upon insertion.
+                  Allowed values are:
 
-                * **text_header_property_delimiter** --
-                  Delimiter for column properties in csv header row.  The
-                  default value is '|'.
+                  * **permissive** --
+                    Records with missing columns are populated with nulls if
+                    possible; otherwise, the malformed records are skipped.
 
-                * **columns_to_load** --
-                  Optionally used to specify a subset of columns to load,
-                  instead of loading all columns in the file.
-                  The columns to use are delimited by a comma. Column numbers
-                  can be specified discretely or as a range e.g. '1 .. 4'
-                  refers to the first through fourth columns.
-                  For example, a value of '5,3,1..2' will create a table with
-                  the first column in the table being the fifth column in the
-                  file, followed by third column in the file, then the first
-                  column, and lastly the second column.
-                  Additionally, if the file(s) have a header, names matching
-                  the file header names may be provided instead of numbers.
-                  Ranges are not supported.
-                  For example, a value of 'C, B, A' will create a three column
-                  table with column C, followed by column B, followed by column
-                  A.
+                  * **ignore_bad_records** --
+                    Malformed records are skipped.
+
+                  * **abort** --
+                    Stops current insertion and aborts entire operation when an
+                    error is encountered.
+
+                  The default value is 'Permissive'.
+
+                * **file_type** --
+                  File type for the file(s).
+                  Allowed values are:
+
+                  * **delimited_text** --
+                    Indicates the file(s) are in delimited text format, e.g.,
+                    CSV, TSV, PSV, etc.
+
+                  The default value is 'delimited_text'.
+
+                * **loading_mode** --
+                  Specifies how to divide data loading among nodes.
+                  Allowed values are:
+
+                  * **head** --
+                    The head node loads all data. All files must be available
+                    on the head node.
+
+                  * **distributed_shared** --
+                    The worker nodes coordinate loading a set of files that are
+                    available to all of them. All files must be available on
+                    all nodes. This option is best when there is a shared file
+                    system.
+
+                  * **distributed_local** --
+                    Each worker node loads all files that are available to it.
+                    This option is best when each worker node has its own file
+                    system.
+
+                  The default value is 'head'.
 
                 * **text_comment_string** --
-                  ignore all lines starting with the comment value.  The
-                  default value is '#'.
+                  For *delimited_text* *file_type* only. All lines in the
+                  file(s) starting with the provided string are ignored. The
+                  comment string has no effect unless it appears at the
+                  beginning of a line.  The default value is '#'.
 
-                * **text_null_string** --
-                  value to treat as null.  The default value is ''.
-
-                * **text_quote_character** --
-                  quote character, defaults to a double-quote i.e. ".Set an
-                  empty string to not have a quote character. Must be a single
-                  character.  The default value is '"'.
+                * **text_delimiter** --
+                  For *delimited_text* *file_type* only. Specifies the
+                  delimiter for values and columns in the header row (if
+                  present). Must be a single character.  The default value is
+                  ','.
 
                 * **text_escape_character** --
-                  escape character, defaults to no escaping. Must be a single
-                  character
+                  For *delimited_text* *file_type* only.  The character used in
+                  the file(s) to escape certain character sequences in text.
+                  For example, the escape character followed by a literal 'n'
+                  escapes to a newline character within the field. Can be used
+                  within quoted string to escape a quote character. An empty
+                  value for this option does not specify an escape character.
+
+                * **text_has_header** --
+                  For *delimited_text* *file_type* only. Indicates whether the
+                  delimited text files have a header row.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **text_header_property_delimiter** --
+                  For *delimited_text* *file_type* only. Specifies the
+                  delimiter for column properties in the header row (if
+                  present). Cannot be set to same value as text_delimiter.  The
+                  default value is '|'.
+
+                * **text_null_string** --
+                  For *delimited_text* *file_type* only. The value in the
+                  file(s) to treat as a null value in the database.  The
+                  default value is ''.
+
+                * **text_quote_character** --
+                  For *delimited_text* *file_type* only. The quote character
+                  used in the file(s), typically encompassing a field value.
+                  The character must appear at beginning and end of field to
+                  take effect. Delimiters within quoted fields are not treated
+                  as delimiters. Within a quoted field, double quotes (") can
+                  be used to escape a single literal quote character. To not
+                  have a quote character, specify an empty string ("").  The
+                  default value is '"'.
+
+                * **truncate_table** --
+                  If set to *true*, truncates the table specified by input
+                  parameter *table_name* prior to loading the file(s).
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -17290,17 +17509,17 @@ class GPUdb(object):
                 Value of input parameter *table_name*.
 
             type_id (str)
-
+                Type ID for the table.
 
             count_inserted (long)
-                number of records inserted
+                Number of records inserted.
 
             count_skipped (long)
-                number of records skipped, when running in a non-abort error
-                handling mode
+                Number of records skipped when not running in *abort* error
+                handling mode.
 
             count_updated (long)
-                number of records updated.  The default value is -1.
+                Number of records updated.  The default value is -1.
 
             info (dict of str to str)
                 Additional information.
@@ -17857,26 +18076,30 @@ class GPUdb(object):
                   point at a time while looking ahead *chain_width* number of
                   points, so the prediction is corrected after each point. This
                   solution type is the most accurate but also the most
-                  computationally intensive.
+                  computationally intensive. Related options: *num_segments*
+                  and *chain_width*.
 
                 * **incremental_weighted** --
                   Matches input parameter *sample_points* to the graph using
                   time and/or distance between points to influence one or more
-                  shortest paths across the sample points.
+                  shortest paths across the sample points. Related options:
+                  *num_segments*, *max_solve_length*, *time_window_width*, and
+                  *detect_loops*.
 
                 * **match_od_pairs** --
                   Matches input parameter *sample_points* to find the most
                   probable path between origin and destination pairs with cost
-                  constraints
+                  constraints.
 
                 * **match_supply_demand** --
                   Matches input parameter *sample_points* to optimize
                   scheduling multiple supplies (trucks) with varying sizes to
-                  varying demand sites with varying capacities per depot
+                  varying demand sites with varying capacities per depot.
+                  Related options: *partial_loading* and *max_combinations*.
 
                 * **match_batch_solves** --
                   Matches input parameter *sample_points* source and
-                  destination pairs for the shortest path solves in batch mode
+                  destination pairs for the shortest path solves in batch mode.
 
                 The default value is 'markov_chain'.
 
@@ -17967,10 +18190,10 @@ class GPUdb(object):
                   Allowed values are:
 
                   * **true** --
-                    Partial off loading at multiple store (demand) locations
+                    Partial off-loading at multiple store (demand) locations
 
                   * **false** --
-                    No partial off loading allowed if supply is less than the
+                    No partial off-loading allowed if supply is less than the
                     store's demand.
 
                   The default value is 'true'.
@@ -17978,7 +18201,7 @@ class GPUdb(object):
                 * **max_combinations** --
                   For the *match_supply_demand* solver only. This is the cutoff
                   for the number of generated combinations for sequencing the
-                  demand locations - can increase this upto 2M.  The default
+                  demand locations - can increase this up to 2M.  The default
                   value is '10000'.
 
         Returns:
@@ -19664,6 +19887,8 @@ class GPUdb(object):
                 * REPLICATED
                 * JOIN
                 * RESULT_TABLE
+                * MATERIALIZED_VIEW
+                * MATERIALIZED_VIEW_MEMBER
                 * MATERIALIZED_VIEW_UNDER_CONSTRUCTION
 
             type_ids (list of str)
@@ -26048,17 +26273,25 @@ class GPUdbTable( object ):
 
     def create_table_monitor( self, options = {} ):
         """Creates a monitor that watches for table modification events such as
-        insert, update or delete on a particular table (identified by input
-        parameter *table_name*) and forwards event notifications to subscribers
-        via ZMQ. After this call completes, subscribe to the returned output
-        parameter *topic_id* on the ZMQ table monitor port (default 9002). Each
-        time a modification operation on the table completes, a multipart
-        message is published for that topic; the first part contains only the
-        topic ID, and each subsequent part contains one binary-encoded Avro
-        object that corresponds to the event and can be decoded using output
-        parameter *type_schema*. The monitor will continue to run (regardless
-        of whether or not there are any subscribers) until deactivated with
+        insert, update or delete on a particular table (identified by
+        input parameter *table_name*) and forwards event notifications to
+        subscribers via ZMQ.
+        After this call completes, subscribe to the returned output parameter
+        *topic_id* on the
+        ZMQ table monitor port (default 9002). Each time a modification
+        operation on the
+        table completes, a multipart message is published for that topic; the
+        first part
+        contains only the topic ID, and each subsequent part contains one
+        binary-encoded
+        Avro object that corresponds to the event and can be decoded using
+        output parameter *type_schema*. The monitor will continue to run
+        (regardless of whether
+        or not there are any subscribers) until deactivated with
         :meth:`.clear_table_monitor`.
+
+        For more information on table monitors, see
+        `Table Monitors <../../../concepts/table_monitors.html>`_.
 
         Parameters:
 
@@ -27404,6 +27637,8 @@ class GPUdbTable( object ):
                 * REPLICATED
                 * JOIN
                 * RESULT_TABLE
+                * MATERIALIZED_VIEW
+                * MATERIALIZED_VIEW_MEMBER
                 * MATERIALIZED_VIEW_UNDER_CONSTRUCTION
 
             type_ids (list of str)

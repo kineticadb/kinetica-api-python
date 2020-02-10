@@ -1616,7 +1616,7 @@ class _RecordKeyBuilder:
 
         # Save the record schema related information
         self._record_type         = record_type
-        self._record_column_names = [col.name for col in record_type.columns]
+        self._record_column_names = record_type.column_names
         self._column_properties   = record_type.column_properties
 
         # A list of which columns are primary/shard keys
@@ -1914,15 +1914,23 @@ class _RecordKeyBuilder:
                 if ( isinstance(ulong_value, bool) and (ulong_value == False) ):
                     raise GPUdbException( "Value '{}' could not be parsed as an unsigned"
                                           " long!".format( key_value ) )
+
+                key_value = ulong_value
             # end if
             
             # Add the column's value (use function 'is_null()' if the value is a null,
             # otherwise just an equivalency, with double quotes for string types)
-            predicate = ("is_null({n})".format( n = col_name) if (key_value == None)
-                         else ( '({n} = "{d}")'.format( n = col_name,
-                                                        d = key_value ) if (col_type in self._string_types)
-                                else '({n} = {d})'.format( n = col_name,
-                                                           d = key_value ) ) )
+            if (key_value is None):
+                # Handle nulls specially
+                predicate = "is_null({n})".format( n = col_name) 
+            elif (col_type in self._string_types):
+                # String values need to be quoted
+                predicate = '({n} = "{d}")'.format( n = col_name,
+                                                    d = key_value )
+            else:
+                predicate = '({n} = {d})'.format( n = col_name,
+                                                  d = key_value )
+
             predicates.append( predicate )
         # end loop
 
@@ -1948,8 +1956,8 @@ class _RecordKeyBuilder:
         return (self.key_schema_str == other_record_key_builder.key_schema_str)
     # end has_same_key
 
-    @staticmethod
-    def build_expression_with_dict( values_dict, extra_expression = "" ):
+
+    def build_expression_with_dict( self, values_dict, extra_expression = "" ):
         """Builds an expressiong of the format "(x = 1) and is_null(y) and ..."
         where the column names would be the key's column names, and the values
         would be key's values, using the function 'is_null()' for null values,
@@ -1973,11 +1981,32 @@ class _RecordKeyBuilder:
 
         # Build an expression with the given values, but take care of nulls
         expression_items = []
-        for key, val in values_dict.items():
-            if key is None:
-                expression_items.append( "is_null({})".format( key ) )
+        for key, value in values_dict.items():
+            # Ensure that there is a column with the given name
+            col_name = key
+            if ( col_name not in self._record_column_names ):
+                raise GPUdbException( "No column with name with given key "
+                                      "'{}' exists in the type"
+                                      "".format( col_name ) )
+
+            # Get the column's type
+            col_type = self._record_type.get_column( col_name ).column_type
+
+            # Generate the predicate based on the column value and/or type
+            if col_name is None:
+                # Handle nulls specially
+                predicate = "is_null({})".format( col_name )
+            elif (col_type in self._string_types):
+                # String values need to be quoted
+                predicate = '({n} = "{d}")'.format( n = col_name,
+                                                    d = value )
             else:
-                expression_items.append( "({} == {})".format( key, val ) )
+                predicate = '({n} = {d})'.format( n = col_name,
+                                                  d = value )
+
+            # Add the predicate to the list of expressions to be used
+            expression_items.append( predicate )
+            # expression_items.append( "({} == {})".format( key, val ) )
         # end loop
 
         # Put the expression together
@@ -3070,12 +3099,13 @@ class RecordRetriever:
         if isinstance( key_values, dict ):
             # We can build an expression if the column names are given
             # regardless of sharding on the table
-            expression = _RecordKeyBuilder.build_expression_with_dict( key_values,
-                                                                       extra_expression = expression)
+            expression = self.shard_key_builder.build_expression_with_dict( key_values,
+                                                                            expression )
         elif not expression:
             expression = self.shard_key_builder.build_expression_with_key_values_only( key_values )
         else:
-            expression = ( "(" + self.shard_key_builder.build_expression_with_key_values_only( key_values )
+            expression = ( "("
+                           + self.shard_key_builder.build_expression_with_key_values_only( key_values )
                           + ") and (" + expression + ")" )
         # end if
 
