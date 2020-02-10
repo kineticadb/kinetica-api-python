@@ -2,6 +2,13 @@
 
 ## Version 7.0
 
+### Version 7.0.12.0 - 2020-01-10
+
+##### Non-breaking Changes
+- Added "count" to the info map in the responses for create_projection, create_union and execute_sql.
+- Added "repair_incorrectly_sharded_data" options to /admin/rebalance
+
+
 ### Version 7.0.11.0 - 2019-12-10
 
 #### Added Endpoints
@@ -16,6 +23,7 @@
 - Added an option ``remove_label_only`` to create and modify graph endpoints (see option's doc)
 - Added ``enable_overlapped_equi_join`` and ``enable_compound_equi_join`` options to ``/alter/system/properties``
 - Added ``columns`` and ``sql_where`` options to ``/grant/permission/table``
+
 
 ### Version 7.0.10.0 - 2019-11-13
 

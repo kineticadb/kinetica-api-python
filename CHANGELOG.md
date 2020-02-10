@@ -2,6 +2,23 @@
 
 ## Version 7.0
 
+### Version 7.0.12.0 - 2020-02-09
+
+#### Added
+-   GPUdbRecordType property `column_names` which is a list containing the
+    names of all the columns in the record type, in the order they appear
+    in the type.
+-   GPUdbRecordType method `get_column()` that takes a string (column name)
+    or integer (column index) and returns the respective `GPUdbRecordColumn`
+    object.
+
+#### Fixed
+-   `GPUdbTable.get_records_by_key()` issue dict as the input argument
+
+#### Note
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
+
+
 ### Version 7.0.11.0 - 2019-12-10
 
 #### Added
