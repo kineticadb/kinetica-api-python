@@ -2,6 +2,23 @@
 
 ## Version 7.0
 
+### Version 7.0.13.0 - 2020-03-10
+
+#### Changed
+-   GPUdb constructor behavior--if a single URL is used and no primary URL
+    is specified via the options, the given single URL will be treated as
+    the primary URL.
+
+
+#### Changed
+-   GPUdb constructor behavior--if a single URL is used and no primary URL
+    is specified via the options, the given single URL will be treated as
+    the primary URL.
+
+#### Note
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
+
+
 ### Version 7.0.12.0 - 2020-02-09
 
 #### Added

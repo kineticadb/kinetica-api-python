@@ -2357,7 +2357,9 @@ class GPUdb(object):
                 separated string or a list of strings to support HA.  Also, can
                 include the port following a colon (the *port* argument then
                 should be unused).  Host may take the form
-                "https://user:password@domain.com:port/path/".
+                "https://user:password@domain.com:port/path/".  If only a single
+                URL or host is given, and no *primary_host* is explicitly
+                specified, then the given URL will be used as the primary URL.
 
             port (str or list of str)
                 The port of the GPUdb server at the given IP address. May be
@@ -2756,7 +2758,16 @@ class GPUdb(object):
         """
         self._primary_conn_token = None
 
-        # Handle the primary host parameter, if given any
+        if (self.primary_host == None):
+            if ( len( self._conn_tokens )  == 1 ):
+                # Use the one URL provided by the user as the primary,
+                # but only because the user has not specified any primary URL
+                # also
+                self.primary_host = self._conn_tokens[ 0 ]._gpudb_full_url;
+            # end if
+        # end if
+        
+        # Handle the primary host parameter, if any
         if (self.primary_host):
             # Make sure that it's a valid URL
             try:
@@ -3085,7 +3096,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.12.0"
+    api_version   = "7.0.13.0"
 
     # Constants
     END_OF_SET = -9999
@@ -6446,8 +6457,7 @@ class GPUdb(object):
                 * **compact_after_rebalance** --
                   Perform compaction of deleted records once the rebalance
                   completes, to reclaim memory and disk space. Default is true,
-                  unless {add_labels}@{key of options
-                  repair_incorrectly_sharded_data} is set to *true*.
+                  unless *repair_incorrectly_sharded_data* is set to *true*.
                   Allowed values are:
 
                   * true
@@ -10969,6 +10979,27 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                * **add_turns** --
+                  Adds dummy 'pillowed' edges around intersection nodes where
+                  there are more than three edges so that additional weight
+                  penalties can be imposed by the solve endpoints. (increases
+                  the total number of edges).
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **turn_angle** --
+                  Value in degrees modifies the thresholds for attributing
+                  right, left, sharp turns, and intersections. It is the
+                  vertical deviation angle from the incoming edge to the
+                  intersection node. The larger the value, the larger the
+                  threshold for sharp turns and intersections; the smaller the
+                  value, the larger the threshold for right and left turns; 0 <
+                  turn_angle < 90.  The default value is '60'.
 
         Returns:
             A dict with the following entries--
@@ -18204,6 +18235,39 @@ class GPUdb(object):
                   demand locations - can increase this up to 2M.  The default
                   value is '10000'.
 
+                * **left_turn_penalty** --
+                  This will add an additonal weight over the edges labelled as
+                  'left turn' if the 'add_turn' option parameter of the
+                  :meth:`.create_graph` was invoked at graph creation.  The
+                  default value is '0.0'.
+
+                * **right_turn_penalty** --
+                  This will add an additonal weight over the edges labelled as'
+                  right turn' if the 'add_turn' option parameter of the
+                  :meth:`.create_graph` was invoked at graph creation.  The
+                  default value is '0.0'.
+
+                * **intersection_penalty** --
+                  This will add an additonal weight over the edges labelled as
+                  'intersection' if the 'add_turn' option parameter of the
+                  :meth:`.create_graph` was invoked at graph creation.  The
+                  default value is '0.0'.
+
+                * **sharp_turn_penalty** --
+                  This will add an additonal weight over the edges labelled as
+                  'sharp turn' or 'u-turn' if the 'add_turn' option parameter
+                  of the :meth:`.create_graph` was invoked at graph creation.
+                  The default value is '0.0'.
+
+                * **aggregated_output** --
+                  For the *match_supply_demand* solver only. When it is true
+                  (default), each record in the output table shows a particular
+                  truck's scheduled cumulative round trip path
+                  (MULTILINESTRING) and the corresponding aggregated cost.
+                  Otherwise, each record shows a single scheduled truck route
+                  (LINESTRING) towards a particular demand location (store id)
+                  with its corresponding cost.  The default value is 'true'.
+
         Returns:
             A dict with the following entries--
 
@@ -18545,6 +18609,27 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                * **add_turns** --
+                  Adds dummy 'pillowed' edges around intersection nodes where
+                  there are more than three edges so that additional weight
+                  penalties can be imposed by the solve endpoints. (increases
+                  the total number of edges).
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **turn_angle** --
+                  Value in degrees modifies the thresholds for attributing
+                  right, left, sharp turns, and intersections. It is the
+                  vertical deviation angle from the incoming edge to the
+                  intersection node. The larger the value, the larger the
+                  threshold for sharp turns and intersections; the smaller the
+                  value, the larger the threshold for right and left turns; 0 <
+                  turn_angle < 90.  The default value is '60'.
 
         Returns:
             A dict with the following entries--
@@ -20388,6 +20473,64 @@ class GPUdb(object):
                   When specified, assigns the given value to all the edges in
                   the graph. Note that weights provided in input parameter
                   *weights_on_edges* will override this value.
+
+                * **left_turn_penalty** --
+                  This will add an additonal weight over the edges labelled as
+                  'left turn' if the 'add_turn' option parameter of the
+                  :meth:`.create_graph` was invoked at graph creation.  The
+                  default value is '0.0'.
+
+                * **right_turn_penalty** --
+                  This will add an additonal weight over the edges labelled as'
+                  right turn' if the 'add_turn' option parameter of the
+                  :meth:`.create_graph` was invoked at graph creation.  The
+                  default value is '0.0'.
+
+                * **intersection_penalty** --
+                  This will add an additonal weight over the edges labelled as
+                  'intersection' if the 'add_turn' option parameter of the
+                  :meth:`.create_graph` was invoked at graph creation.  The
+                  default value is '0.0'.
+
+                * **sharp_turn_penalty** --
+                  This will add an additonal weight over the edges labelled as
+                  'sharp turn' or 'u-turn' if the 'add_turn' option parameter
+                  of the :meth:`.create_graph` was invoked at graph creation.
+                  The default value is '0.0'.
+
+                * **num_best_paths** --
+                  For *MULTIPLE_ROUTING* solvers only; sets the number of
+                  shortest paths computed from each node. This is the heuristic
+                  criterion. Default value of zero allows the number to be
+                  computed automatically by the solver. The user may want to
+                  override this parameter to speed-up the solver.  The default
+                  value is '0'.
+
+                * **max_num_combinations** --
+                  For *MULTIPLE_ROUTING* solvers only; sets the cap on the
+                  combinatorial sequences generated. If the default value of
+                  two millions is overridden to a lesser value, it can
+                  potentially speed up the solver.  The default value is
+                  '2000000'.
+
+                * **accurate_snaps** --
+                  Valid for single source destination pair solves if points are
+                  described in NODE_WKTPOINT identifier types: When true
+                  (default), it snaps to the nearest node of the graph;
+                  otherwise, it searches for the closest entity that could be
+                  an edge. For the latter case (false), the solver modifies the
+                  resulting cost with the weights proportional to the ratio of
+                  the snap location within the edge. This may be an over-kill
+                  when the performance is considered and the difference is well
+                  less than 1 percent. In batch runs, since the performance is
+                  of utmost importance, the option is always considered
+                  'false'.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
         Returns:
             A dict with the following entries--
