@@ -2,12 +2,28 @@
 
 ## Version 7.0
 
-### Version 7.0.12.0 - 2020-01-10
+### Version 7.0.13.0 - 2020-03-10
+
+#### Added Endpoints
+-   
+
+#### Changed Endpoints
+- /solve/graph option 'accurate_snaps' added.
+- /match/graph for solve type 'match_supply_demand' only: the option 'aggregated_output' (default: true) added
+- /create/graph, /modify/graph: newly added option of 'add_turns' (default: false), 'turn_angle' (default: 60)
+- /solve/graph, /match/graph: newly added options of 'left_turn_penaly', 'right_turn_penalty', 'intersection_penalty', 'sharp_turn_penalty' (default: 0.0)
+
+##### Breaking Changes
+-   
+
+##### Non-breaking Changes
+-   
+
+
+### Version 7.0.12.0 - 2020-1-10
 
 ##### Non-breaking Changes
 - Added "count" to the info map in the responses for create_projection, create_union and execute_sql.
-- Added "repair_incorrectly_sharded_data" options to /admin/rebalance
-
 
 ### Version 7.0.11.0 - 2019-12-10
 
@@ -23,7 +39,6 @@
 - Added an option ``remove_label_only`` to create and modify graph endpoints (see option's doc)
 - Added ``enable_overlapped_equi_join`` and ``enable_compound_equi_join`` options to ``/alter/system/properties``
 - Added ``columns`` and ``sql_where`` options to ``/grant/permission/table``
-
 
 ### Version 7.0.10.0 - 2019-11-13
 
@@ -62,7 +77,7 @@
     - ``/get/records/bycolumn``
     - ``/get/records/fromcollection``
     - ``/get/records``
-- Added "compact_after_rebalance" and "compact_only" options to /admin/rebalance
+- Added "compact_after_rebalance", "compact_only", and "repair_incorrectly_sharded_data" options to /admin/rebalance
 
 
 ### Version 7.0.9.0 - 2019-10-16
