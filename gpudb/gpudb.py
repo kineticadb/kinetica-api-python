@@ -3096,7 +3096,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.13.0"
+    api_version   = "7.0.14.0"
 
     # Constants
     END_OF_SET = -9999
@@ -11777,7 +11777,7 @@ class GPUdb(object):
     def create_table( self, table_name = None, type_id = None, options = {} ):
         """Creates a new table or collection. If a new table is being created,
         the type of the table is given by input parameter *type_id*, which must
-        the be the ID of
+        be the ID of
         a currently registered type (i.e. one created via
         :meth:`.create_type`). The
         table will be created inside a collection if the option
@@ -11803,7 +11803,7 @@ class GPUdb(object):
 
             table_name (str)
                 Name of the table to be created. Error for requests with
-                existing table of the same name and type id may be suppressed
+                existing table of the same name and type ID may be suppressed
                 by using the *no_error_if_exists* option.  See `Tables
                 <../../../concepts/tables.html>`_ for naming restrictions.
 
