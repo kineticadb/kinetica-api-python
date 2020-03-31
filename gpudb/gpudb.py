@@ -2849,7 +2849,7 @@ class GPUdb(object):
                          "".format( client_version, server_version ) )
             if (do_print_warning == True):
                 self.__log_warn( error_msg )
-            raise GPUdbException( error_msg )
+            return False
         # end if
 
         return True # all is well
@@ -3096,7 +3096,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.14.0"
+    api_version   = "7.0.14.1"
 
     # Constants
     END_OF_SET = -9999
@@ -11998,22 +11998,23 @@ class GPUdb(object):
 
     # begin create_table_monitor
     def create_table_monitor( self, table_name = None, options = {} ):
-        """Creates a monitor that watches for table modification events such as
-        insert, update or delete on a particular table (identified by
+        """Creates a monitor that watches for a single table modification event
+        type (insert, update, or delete) on a particular table (identified by
         input parameter *table_name*) and forwards event notifications to
         subscribers via ZMQ.
         After this call completes, subscribe to the returned output parameter
         *topic_id* on the
-        ZMQ table monitor port (default 9002). Each time a modification
-        operation on the
-        table completes, a multipart message is published for that topic; the
-        first part
-        contains only the topic ID, and each subsequent part contains one
-        binary-encoded
-        Avro object that corresponds to the event and can be decoded using
-        output parameter *type_schema*. The monitor will continue to run
-        (regardless of whether
-        or not there are any subscribers) until deactivated with
+        ZMQ table monitor port (default 9002). Each time an operation of the
+        given type
+        on the table completes, a multipart message is published for that
+        topic; the
+        first part contains only the topic ID, and each subsequent part
+        contains one
+        binary-encoded Avro object that corresponds to the event and can be
+        decoded
+        using output parameter *type_schema*. The monitor will continue to run
+        (regardless of
+        whether or not there are any subscribers) until deactivated with
         :meth:`.clear_table_monitor`.
 
         For more information on table monitors, see
@@ -12029,7 +12030,24 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
-                * event
+                * **event** --
+                  Type of modification event on the target table to be
+                  monitored by this table monitor.
+                  Allowed values are:
+
+                  * **insert** --
+                    Get notifications of new record insertions. The new row
+                    images are forwarded to the subscribers.
+
+                  * **update** --
+                    Get notifications of update operations. The modified row
+                    count information is forwarded to the subscribers.
+
+                  * **delete** --
+                    Get notifications of delete operations. The deleted row
+                    count information is forwarded to the subscribers.
+
+                  The default value is 'insert'.
 
         Returns:
             A dict with the following entries--
@@ -26415,22 +26433,23 @@ class GPUdbTable( object ):
 
 
     def create_table_monitor( self, options = {} ):
-        """Creates a monitor that watches for table modification events such as
-        insert, update or delete on a particular table (identified by
+        """Creates a monitor that watches for a single table modification event
+        type (insert, update, or delete) on a particular table (identified by
         input parameter *table_name*) and forwards event notifications to
         subscribers via ZMQ.
         After this call completes, subscribe to the returned output parameter
         *topic_id* on the
-        ZMQ table monitor port (default 9002). Each time a modification
-        operation on the
-        table completes, a multipart message is published for that topic; the
-        first part
-        contains only the topic ID, and each subsequent part contains one
-        binary-encoded
-        Avro object that corresponds to the event and can be decoded using
-        output parameter *type_schema*. The monitor will continue to run
-        (regardless of whether
-        or not there are any subscribers) until deactivated with
+        ZMQ table monitor port (default 9002). Each time an operation of the
+        given type
+        on the table completes, a multipart message is published for that
+        topic; the
+        first part contains only the topic ID, and each subsequent part
+        contains one
+        binary-encoded Avro object that corresponds to the event and can be
+        decoded
+        using output parameter *type_schema*. The monitor will continue to run
+        (regardless of
+        whether or not there are any subscribers) until deactivated with
         :meth:`.clear_table_monitor`.
 
         For more information on table monitors, see
@@ -26443,7 +26462,24 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
-                * event
+                * **event** --
+                  Type of modification event on the target table to be
+                  monitored by this table monitor.
+                  Allowed values are:
+
+                  * **insert** --
+                    Get notifications of new record insertions. The new row
+                    images are forwarded to the subscribers.
+
+                  * **update** --
+                    Get notifications of update operations. The modified row
+                    count information is forwarded to the subscribers.
+
+                  * **delete** --
+                    Get notifications of delete operations. The deleted row
+                    count information is forwarded to the subscribers.
+
+                  The default value is 'insert'.
 
         Returns:
             The response from the server which is a dict containing the
