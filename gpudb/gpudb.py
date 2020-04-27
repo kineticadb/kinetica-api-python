@@ -1246,23 +1246,42 @@ class GPUdbRecordColumn(object):
         """
         # Validate and save the stringified name
         if (not name):
-            raise GPUdbException( "The name of the column must be a non-empty string; given " + repr(name) )
+            raise GPUdbException( "The name of the column must be a non-empty "
+                                  "string; given " + repr(name) )
         self._name = name
 
         # Validate and save the data type
+        if not isinstance( column_type, (basestring, unicode) ):
+            raise GPUdbException( "Data type must be a string, given {}"
+                                  "".format( str(type( column_type )) ) )
+
+        # Allow all casing by normalizing to lower case internally here
+        column_type = column_type.lower()
+        
         if column_type not in self._allowed_data_types:
-            raise GPUdbException( "Data type must be one of " + str(self._allowed_data_types) +
-                              "; given " + str(column_type) )
+            raise GPUdbException( "Data type must be one of "
+                                  + str(self._allowed_data_types)
+                                  + "; given " + str(column_type) )
         self._column_type = column_type
 
         # Validate and save the column properties
         if not column_properties: # it's ok to not have any
             column_properties = []
         if not isinstance( column_properties, list ):
-            raise GPUdbException( "'column_properties' must be a list; given " + str(type(column_properties)) )
+            raise GPUdbException( "'column_properties' must be a list; given "
+                                  + str(type(column_properties)) )
+        if not all( isinstance( prop, (basestring, unicode) )
+                    for prop in column_properties ):
+            raise GPUdbException( "'column_properties' must contain strings only; "
+                                  "given {}"
+                                  "".format( [str(type(p))
+                                              for p in column_properties] ) )
 
-        # Sort and stringify the column properties so that the order for a given set of
-        # properties is always the same--handy for equivalency checks
+        # Normalize the properties by turning them all into lower case
+        column_properties = [prop.lower() for prop in column_properties]
+
+        # Sort and stringify the column properties so that the order for a given
+        # set of properties is always the same--handy for equivalency checks
         self._column_properties = sorted( column_properties, key = lambda x : str(x[0]) )
 
         # Check for nullability
@@ -1672,7 +1691,7 @@ class GPUdbRecordType(object):
             for name, props in self._column_properties.items():
                 sanitized_props = [ prop for prop in props  if (prop not in disregarded_props) ]
                 if sanitized_props:
-                    lhs_col_props[ name ] = sanitized_props
+                    lhs_col_props[ name ] = sorted( sanitized_props )
             # end loop
 
             # Get the sanitized column properties
@@ -1680,7 +1699,7 @@ class GPUdbRecordType(object):
             for name, props in other.column_properties.items():
                 sanitized_props = [ prop for prop in props  if (prop not in disregarded_props) ]
                 if sanitized_props:
-                    rhs_col_props[ name ] = sanitized_props
+                    rhs_col_props[ name ] = sorted( sanitized_props )
             # end loop
 
             if (lhs_col_props == rhs_col_props):
@@ -3096,7 +3115,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.14.1"
+    api_version   = "7.0.15.0"
 
     # Constants
     END_OF_SET = -9999
@@ -17961,38 +17980,7 @@ class GPUdb(object):
 
     # begin list_graph
     def list_graph( self, graph_name = '', options = {} ):
-        """Lists basic information about one or all graphs that exist on the graph
-        server.
 
-        Parameters:
-
-            graph_name (str)
-                Name of the graph on which to retrieve information. If empty,
-                information about all graphs is returned.  The default value is
-                ''.
-
-            options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
-
-        Returns:
-            A dict with the following entries--
-
-            result (bool)
-                Indicates a successful listing.
-
-            graph_names (list of str)
-                Name(s) of the graph(s).
-
-            num_nodes (list of longs)
-                Total number of nodes in the graph.
-
-            num_edges (list of longs)
-                Total number of edges in the graph.
-
-            info (dict of str to str)
-                Additional information.
-        """
         assert isinstance( graph_name, (basestring)), "list_graph(): Argument 'graph_name' must be (one) of type(s) '(basestring)'; given %s" % type( graph_name ).__name__
         assert isinstance( options, (dict)), "list_graph(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -18285,6 +18273,30 @@ class GPUdb(object):
                   Otherwise, each record shows a single scheduled truck route
                   (LINESTRING) towards a particular demand location (store id)
                   with its corresponding cost.  The default value is 'true'.
+
+                * **max_trip_cost** --
+                  For the *match_supply_demand* solver only. If this constraint
+                  is greater than zero (default) then the trucks will skip
+                  travelling from one demand location to another if the cost
+                  between them is greater than this number (distance or time).
+                  Zero (default) value means no check is performed.  The
+                  default value is '0.0'.
+
+                * **filter_folding_paths** --
+                  For the *markov_chain* solver only. When true (non-default),
+                  the paths per sequence combination is checked for folding
+                  over patterns and can significantly increase the execution
+                  time depending on the chain width and the number of gps
+                  samples.
+                  Allowed values are:
+
+                  * **true** --
+                    Filter out the folded paths.
+
+                  * **false** --
+                    Do not filter out the folded paths
+
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -21111,6 +21123,20 @@ class GPUdb(object):
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
                 ).
+                Allowed keys are:
+
+                * **image_encoding** --
+                  Encoding to be applied to the output image. When using JSON
+                  serialization it is recommended to specify this as *base64*.
+                  Allowed values are:
+
+                  * **base64** --
+                    Apply base64 encoding to the output image.
+
+                  * **none** --
+                    Do not apply any additional encoding to the output image.
+
+                  The default value is 'none'.
 
         Returns:
             A dict with the following entries--
