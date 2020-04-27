@@ -2,22 +2,46 @@
 
 ## Version 7.0
 
-### Version 7.0.13.0 - 2020-03-10
+
+### Version 7.0.15.3 - 2020-04-27
+
+#### Changed Endpoints
+
+##### Non-breaking Changes
+- Added ``image_encoding`` option for ``/visualize/image/chart``. When using JSON serialization the option should be set to ``base64``. 
+
+
+### Version 7.0.15.0 - 2020-04-09
 
 #### Added Endpoints
 -   
 
 #### Changed Endpoints
-- /solve/graph option 'accurate_snaps' added.
-- /match/graph for solve type 'match_supply_demand' only: the option 'aggregated_output' (default: true) added
-- /create/graph, /modify/graph: newly added option of 'add_turns' (default: false), 'turn_angle' (default: 60)
-- /solve/graph, /match/graph: newly added options of 'left_turn_penaly', 'right_turn_penalty', 'intersection_penalty', 'sharp_turn_penalty' (default: 0.0)
+- Added filter_folding_paths option to /match/graph's markov_chain solver type to filter out the folding paths for more accurate results during the optimization stage of the HM algorithm - the default is falseto save from execution time.
+- Added max_trip_cost option to /match/graph for match_supply_demand solver type to restrict trip between stops except from/to the origin - default is zero, i.e., no check for max trip cost.  
+- Minimum value for max_cpu_concurrency is now 4 for /create/resourcegroup and /alter/resourcegroup
 
 ##### Breaking Changes
 -   
 
 ##### Non-breaking Changes
 -   
+
+
+### Version 7.0.14.0 - 2020-03-25
+
+### Non-breaking Changes
+-   Updated some docstrings
+
+
+
+### Version 7.0.13.0 - 2020-03-10
+
+#### Changed Endpoints
+- /solve/graph option 'accurate_snaps' added.
+- /match/graph for solve type 'match_supply_demand' only: the option 'aggregated_output' (default: true) added
+- /create/graph, /modify/graph: newly added option of 'add_turns' (default: false), 'turn_angle' (default: 60)
+- /solve/graph, /match/graph: newly added options of 'left_turn_penaly', 'right_turn_penalty', 'intersection_penalty', 'sharp_turn_penalty' (default: 0.0)
 
 
 ### Version 7.0.12.0 - 2020-1-10

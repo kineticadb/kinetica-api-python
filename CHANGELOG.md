@@ -2,6 +2,17 @@
 
 ## Version 7.0
 
+### Version 7.0.15.0 - 2020-04-27
+
+#### Fixed
+-   GPUdbTable creation--type comparison issue where column data type case
+    is not all lower case and the column properties' order and case are
+    different from the existing type.
+
+#### Note
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
+
+
 ### Version 7.0.14.1 - 2020-03-31
 
 #### Changed
@@ -15,13 +26,8 @@
 -   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
 
 
-### Version 7.0.13.0 - 2020-02-15
 
-#### Changed
--   GPUdb constructor behavior--if a single URL is used and no primary URL
-    is specified via the options, the given single URL will be treated as
-    the primary URL.
-
+### Version 7.0.13.0 - 2020-03-10
 
 #### Changed
 -   GPUdb constructor behavior--if a single URL is used and no primary URL
