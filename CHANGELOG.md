@@ -2,6 +2,13 @@
 
 ## Version 7.0
 
+### Version 7.0.15.1 - 2020-05-07
+
+#### Fixed
+-   GPUdbTable.insert_records() bug when using stringified numerics (e.g. "1"
+    for an integer column) with multi-head ingestion.
+
+
 ### Version 7.0.15.0 - 2020-04-27
 
 #### Fixed

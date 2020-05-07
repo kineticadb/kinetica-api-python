@@ -1220,7 +1220,7 @@ class GPUdbRecordColumn(object):
 
     # All allowed integral numeric data types
     _numeric_integral_data_types = [ _ColumnType.INT,
-                                    _ColumnType.LONG
+                                     _ColumnType.LONG
     ]
 
     # All allowed decimal numeric data types
@@ -2131,9 +2131,12 @@ class GPUdbRecord( object ):
                 # The given value for this column
                 column_val = column_values[ i ]
 
-                # Check that the value is of the given type, save the value if it is
-                if self.__is_valid_column_value( column_val, self._record_type.columns[ i ] ):
-                    self._column_values[ column_name ] = column_val
+                # Validate the column value and save it (if valid)
+                ( is_valid,
+                  column_value ) = self.__validate_column_value( column_val,
+                                                                 self._record_type.columns[ i ] )
+                if is_valid:
+                    self._column_values[ column_name ] = column_value
             # end for loop
         else: # the values are given either in a dict or an OrderedDict
             # Check that the column names given match those of the record's type
@@ -2154,9 +2157,12 @@ class GPUdbRecord( object ):
                 column_name = self._record_type.columns[ i ].name
                 column_val  = column_values[ column_name ]
 
-                # Check that the value is of the given type, save the value if it is
-                if self.__is_valid_column_value( column_val, self._record_type.columns[ i ] ):
-                    self._column_values[ column_name ] = column_val
+                # Validate the column value and save it (if valid)
+                ( is_valid,
+                  column_value ) = self.__validate_column_value( column_val,
+                                                                 self._record_type.columns[ i ] )
+                if is_valid:
+                    self._column_values[ column_name ] = column_value
         # end checking and save column values
 
         # Encode the record into binary and save it
@@ -2259,7 +2265,7 @@ class GPUdbRecord( object ):
 
 
 
-    def __is_valid_column_value( self, column_value, column, do_throw = True ):
+    def __validate_column_value( self, column_value, column, do_throw = True ):
         """Private function that validates the given value for a column.
 
         Parameters:
@@ -2272,7 +2278,9 @@ class GPUdbRecord( object ):
                 Throw an exception for invalid columns
 
         Returns:
-            True if the value can be validated, False otherwise.
+            A tuple where the first element is True if the value can be
+            validated, False otherwise.  The second element is the validated
+            value (might have been transformed).
         """
         if not isinstance( column, GPUdbRecordColumn ):
             raise GPUdbException( "'column' must be a GPUdbRecordColumn object; given "
@@ -2280,34 +2288,60 @@ class GPUdbRecord( object ):
 
         # Check that the value is of the given type
         # -----------------------------------------
+        is_valid = True
         column_type = column.column_type
         if (column_value == None): # Handle null values
             if not column.is_nullable: # but the column is not nullable
                 if do_throw:
                     raise GPUdbException( "Non-nullable column '%s' given a null value" % column.name )
                 else:
-                    return False
-        # Numeric types:
-        elif (column_type in GPUdbRecordColumn._numeric_data_types):
-            if not (isinstance( column_value, (int, long, float)) and not isinstance( column_value, bool ) ):
+                    is_valid = False
+        elif column_type in GPUdbRecordColumn._numeric_decimal_data_types:
+            # Floating or double
+            try:
+                column_value = float( column_value )
+            except:
                 if do_throw:
-                    raise GPUdbException( ("Column '%s' must be a numeric type (one of int, long, float); "
-                                       "given " % column.name )
-                                      + str(type( column_value )) )
+                    raise GPUdbException( ("Column '%s' must be a floating point"
+                                           " type (float or double); "
+                                           "given " % column.name )
+                                          + str(type( column_value )) )
                 else:
-                    return False
+                    is_valid = False
+        elif column_type == GPUdbRecordColumn._ColumnType.INT:
+            # Integer
+            try:
+                column_value = int( column_value )
+            except:
+                if do_throw:
+                    raise GPUdbException( ("Column '%s' must be an integer; "
+                                           "given " % column.name )
+                                          + str(type( column_value )) )
+                else:
+                    is_valid = False
+        elif column_type == GPUdbRecordColumn._ColumnType.LONG:
+            # Long
+            try:
+                column_value = long( column_value )
+            except:
+                if do_throw:
+                    raise GPUdbException( ("Column '%s' must be a long; "
+                                           "given " % column.name )
+                                          + str(type( column_value )) )
+                else:
+                    is_valid = False
         else: # string/bytes type
             if not isinstance( column_value, (str, Decimal, unicode, bytes) ):
                 if do_throw:
                     raise GPUdbException( ("Column '%s' must be string or bytes; given " % column.name)
                                       + str(type( column_value )) )
                 else:
-                    return False
+                    is_valid = False
         # end if-else checking type-correctness
 
         # The value checks out; it is valid
-        return True
-    # end __is_valid_column_value
+        return (is_valid, column_value)
+    # end __validate_column_value
 
 
     def __eq__( self, other ):
@@ -3115,7 +3149,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.15.0"
+    api_version   = "7.0.15.1"
 
     # Constants
     END_OF_SET = -9999
