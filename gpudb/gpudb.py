@@ -3149,7 +3149,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.15.1"
+    api_version   = "7.0.15.2"
 
     # Constants
     END_OF_SET = -9999
@@ -22417,14 +22417,6 @@ class GPUdbTable( object ):
 
             # Save the per-insertion-call flushing setting
             self._flush_multi_head_ingest_per_insertion = flush_multi_head_ingest_per_insertion
-
-            # Set the function used by multihead ingestor for encoding records
-            # TODO: Convert the multihead ingestor to use the c-extension
-            self._record_encoding_function = lambda vals: GPUdbRecord( self.gpudbrecord_type, vals )
-        else: # no multi-head ingestion
-            # Set the function used by the regular insertion for encoding records
-            self._record_encoding_function = lambda vals: self.__encode_data_for_insertion_cext( vals )
-            # self._record_encoding_function = lambda vals: self.__encode_data_for_insertion_avro( vals )
         # end if
 
         # Set up multi-head record retriever
@@ -22433,16 +22425,10 @@ class GPUdbTable( object ):
             self._multihead_retriever = RecordRetriever( self.db, self.name,
                                                          self.gpudbrecord_type,
                                                          is_table_replicated = self._is_replicated )
-
-            # Set the function used by multihead ingestor for encoding records
-            # TODO: Convert the multi-head record retriever to use the c-extension
-            self._record_encoding_function = lambda vals: GPUdbRecord( self.gpudbrecord_type, vals )
-        else: # no multi-head ingestion
-            # Set the function used by the regular insertion for encoding records
-            self._record_encoding_function = lambda vals: self.__encode_data_for_insertion_cext( vals )
-            # self._record_encoding_function = lambda vals: self.__encode_data_for_insertion_avro( vals )
         # end if
-        
+
+        # Set the encoding function for data to be inserted
+        self._record_encoding_function = lambda vals: self.__encode_data_for_insertion_cext( vals )
     # end __init__
 
 
@@ -22787,7 +22773,7 @@ class GPUdbTable( object ):
         inserted to the server database.
         """
         if self._multihead_ingestor:
-            self._multihead_ingestor.flush()
+            self._multihead_ingestor.flush( is_data_encoded = True )
     # end flush_data_to_server
 
 
@@ -22918,11 +22904,12 @@ class GPUdbTable( object ):
 
             try:
                 # Call the insertion funciton
-                response = self._multihead_ingestor.insert_records( encoded_data )
+                response = self._multihead_ingestor.insert_records( encoded_data,
+                                                                    is_data_encoded = True )
 
                 # Need to flush the records, per the setting
                 if self._flush_multi_head_ingest_per_insertion:
-                    self._multihead_ingestor.flush()
+                    self._multihead_ingestor.flush( is_data_encoded = True )
             except Exception as e:
                 raise GPUdbException( str(e) )
         else:
@@ -23000,7 +22987,6 @@ class GPUdbTable( object ):
         if not args and not kwargs:
             raise GPUdbException( "No data given to insert!" )
         encoded_data = self.__encode_data_for_insertion( *args, **kwargs )
-
 
         # self.__insert_encoded_records( encoded_data, options )
         try: # if the first attempt fails, we'll check if the table

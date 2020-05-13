@@ -20,9 +20,11 @@ IS_PYTHON_27_OR_ABOVE = sys.version_info >= (2, 7)
 
 
 if IS_PYTHON_3:
-    from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, GPUdbException, GPUdbConnectionException
+    from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty
+    from gpudb.gpudb import GPUdbException, GPUdbConnectionException, RecordType
 else:
-    from gpudb       import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, GPUdbException, GPUdbConnectionException
+    from gpudb       import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty
+    from gpudb       import GPUdbException, GPUdbConnectionException, RecordType
 
 from avro import schema, datafile, io
 import builtins
@@ -696,7 +698,7 @@ class _RecordKey:
         # end if
 
         # Add the eight bytes of the double
-        self._buffer_value += struct.pack( "=d", val )
+        self._buffer_value += struct.pack( "=d", float(val) )
     # end add_double
 
 
@@ -713,7 +715,7 @@ class _RecordKey:
         # end if
 
         # Add the four bytes of the float
-        self._buffer_value += struct.pack( "=f", val )
+        self._buffer_value += struct.pack( "=f", float(val) )
     # end add_float
 
 
@@ -730,7 +732,7 @@ class _RecordKey:
         # end if
 
         # Add each of the four bytes of the integer
-        self._buffer_value += struct.pack( "=i", val )
+        self._buffer_value += struct.pack( "=i", int(val) )
     # end add_int
 
 
@@ -747,7 +749,7 @@ class _RecordKey:
         # end if
 
         # Add the byte of the int8
-        self._buffer_value += struct.pack( "=b", val )
+        self._buffer_value += struct.pack( "=b", int(val) )
     # end add_int8
 
 
@@ -764,7 +766,7 @@ class _RecordKey:
         # end if
 
         # Add the byte of the int8
-        self._buffer_value += struct.pack( "=h", val )
+        self._buffer_value += struct.pack( "=h", int(val) )
     # end add_int8
 
 
@@ -782,7 +784,7 @@ class _RecordKey:
         # end if
 
         # Add the eight bytes of the long
-        self._buffer_value += struct.pack( "=q", val )
+        self._buffer_value += struct.pack( "=q", long(val) )
     # end add_long
 
 
@@ -1757,22 +1759,58 @@ class _RecordKeyBuilder:
         # Extract the internal ordered dict if it's a GPUdbRecord
         if isinstance( record, GPUdbRecord ):
             record = record.column_values
+        # end if
 
-        # Check that the given record is an OrderedDict of the given table
-        # type
-        if not isinstance( record, collections.OrderedDict ):
-            raise GPUdbException( "Given record must be a GPUdbRecord object or"
-                              " an OrderedDict; given %s"
-                              % str( type( record ) ) )
+        # Check that we got a valid record by size
+        if isinstance( record, (dict, GPUdbRecord, Record,
+                                collections.OrderedDict) ):
+            # Got a dict-compatible object; make sure we have the correct
+            # number of columns
+            record_keys = record.keys()
+            if ( record_keys != self._record_column_names):
+                raise GPUdbException( "Given record must be of the type '{}'"
+                                      " (with columns {}); given record has columns: {} "
+                                      "".format( self._record_type.schema_string,
+                                                 self._record_column_names,
+                                                 record_keys ) )
+            # end if
 
-        # Check all the keys of the given record
-        record_keys = list( record.keys() )
-        if (record_keys != self._record_column_names):
-            raise GPUdbException( "Given record must be of the type '%s'"
-                                  " (with columns '%s'); given record has columns '%s' "
-                                  % ( self._record_type.schema_string,
-                                      self._record_column_names,
-                                      record_keys ) )
+            column_values = record.values()
+        elif isinstance( record, list ):
+            # Got a dict-compatible object; make sure we have the correct
+            # number of columns
+            num_columns = len(record)
+            if ( num_columns != len(self._record_column_names)):
+                raise GPUdbException( "Given record must be of the type '{}'"
+                                      " (with columns {}); got a list of {}"
+                                      " columns"
+                                      "".format( self._record_type.schema_string,
+                                                 self._record_column_names,
+                                                 num_columns ) )
+            # end if
+
+            column_values = record
+        else:
+            # We need to at least have a
+            raise GPUdbException( "Give record must be a dict-compatible object "
+                                  "(dict, OrderedDict, GPUdbRecord, Record) or "
+                                  "a list; got {}".format( str(type( record )) ) )
+
+        # # Check that the given record is an OrderedDict of the given table
+        # # type
+        # if not isinstance( record, collections.OrderedDict ):
+        #     raise GPUdbException( "Given record must be a GPUdbRecord object or"
+        #                       " an OrderedDict; given %s"
+        #                       % str( type( record ) ) )
+
+        # # Check all the keys of the given record
+        # record_keys = list( record.keys() )
+        # if (record_keys != self._record_column_names):
+        #     raise GPUdbException( "Given record must be of the type '%s'"
+        #                           " (with columns '%s'); given record has columns '%s' "
+        #                           % ( self._record_type.schema_string,
+        #                               self._record_column_names,
+        #                               record_keys ) )
 
         # Create and populate a RecordKey object
         record_key = _RecordKey( self._key_buffer_size )
@@ -1780,7 +1818,7 @@ class _RecordKeyBuilder:
         # Add each routing column's value to the key
         for i, key_idx in enumerate( self.routing_key_indices ):
             # Extract the value for the relevant routing column
-            value = list( record.values() )[ key_idx ]
+            value = column_values[ key_idx ]
 
             # Based on the column's type, call the appropriate
             # Record.add_xxx() function
@@ -2229,7 +2267,7 @@ class GPUdbIngestor:
                                   "string; given %s"
                                   % str( type( table_name ) ) )
         # Validate input parameter 'record_type'
-        if not isinstance( record_type, GPUdbRecordType ):
+        if not isinstance( record_type, (GPUdbRecordType) ):
             raise GPUdbException( "Parameter 'record_type' must be of "
                                   "type GPUdbRecordType; given %s"
                                   % str( type( record_type ) ) )
@@ -2556,7 +2594,8 @@ class GPUdbIngestor:
     # end __encode_data_for_insertion
 
     
-    def insert_record( self, record, record_encoding = "binary" ):
+    def insert_record( self, record, record_encoding = "binary",
+                       is_data_encoded = False ):
         """Queues a record for insertion into GPUdb. If the queue reaches the
         {@link #get_batch_size batch size}, all records in the queue will be
         inserted into GPUdb before the method returns. If an error occurs while
@@ -2565,7 +2604,7 @@ class GPUdbIngestor:
         being inserted if needed (for example, to retry).
 
         Parameters:
-            record (dict, GPUdbRecord, collections.OrderedDict)
+            record (dict, GPUdbRecord, collections.OrderedDict, Record)
                 The record to insert.
 
             record_encoding (str)
@@ -2576,13 +2615,25 @@ class GPUdbIngestor:
 
                 The default values is 'binary'.
 
+
+            is_data_encoded (bool)
+                Indicates if the data has already been encoded (so that we don't
+                do double encoding).  Use ONLY if the data has already been
+                encoded.  Default is False.
+
         @throws InsertionException if an error occurs while inserting.
         """
         # If a dict is given, convert it into a GPUdbRecord object
         if isinstance( record, dict ):
             record = GPUdbRecord( self.record_type, record )
         
-        if not isinstance(record, (GPUdbRecord, collections.OrderedDict)):
+        if not isinstance( is_data_encoded, bool ):
+            raise GPUdbException( "Input parameter 'is_data_encoded' must be "
+                                  "boolean; given '{}'"
+                                  "".format( str(type( is_data_encoded )) ) )
+
+        # if not isinstance(record, (GPUdbRecord, collections.OrderedDict)):
+        if not isinstance(record, (list, GPUdbRecord, collections.OrderedDict)):
             raise GPUdbException( "Input parameter 'record' must be a GPUdbRecord or an "
                                   "OrderedDict; given %s" % str(type(record)) )
 
@@ -2629,11 +2680,13 @@ class GPUdbIngestor:
 
         # Flush, if necessary (when the worker queue returns a non-empty queue)
         if queue:
-            self.__flush( queue, worker_queue.get_gpudb() )
+            self.__flush( queue, worker_queue.get_gpudb(),
+                          is_data_encoded = is_data_encoded )
     # end insert_record
 
 
-    def insert_records( self, records, record_encoding = "binary" ):
+    def insert_records( self, records, record_encoding = "binary",
+                        is_data_encoded = False ):
         """Queues a list of records for insertion into GPUdb. If any queue reaches
         the {@link #get_batch_size batch size}, all records in that queue will be
         inserted into GPUdb before the method returns. If an error occurs while
@@ -2645,8 +2698,21 @@ class GPUdbIngestor:
         GPUdb may occur.
 
         Parameters:
-            records (GPUdbRecord, collections.OrderedDict)
-                The records to insert
+            records (GPUdbRecord, collections.OrderedDict, Record)
+                The records to insert.
+
+            record_encoding (str)
+                The encoding to use for the insertion.  Allowed values are:
+
+                * 'binary'
+                * 'json'
+
+                The default values is 'binary'.
+
+            is_data_encoded (bool)
+                Indicates if the data has already been encoded (so that we don't
+                do double encoding).  Use ONLY if the data has already been
+                encoded.  Default is False.
 
         @throws InsertionException if an error occurs while inserting
         """
@@ -2661,9 +2727,15 @@ class GPUdbIngestor:
                                   "one of ['json', 'binary']; given '%s'"
                                   % record_encoding )
 
+        if not isinstance( is_data_encoded, bool ):
+            raise GPUdbException( "Input parameter 'is_data_encoded' must be "
+                                  "boolean; given '{}'"
+                                  "".format( str(type( is_data_encoded )) ) )
+
         for record in records:
             try:
-                self.insert_record( record, record_encoding )
+                self.insert_record( record, record_encoding,
+                                    is_data_encoded = is_data_encoded )
             except InsertionException as e:
                 # Add the remaining records that could not be inserted
                 uninserted_records = e.get_records()
@@ -2677,7 +2749,7 @@ class GPUdbIngestor:
 
 
 
-    def flush( self, forced_flush = True ):
+    def flush( self, forced_flush = True, is_data_encoded = False ):
         """Ensures that any queued records are inserted into GPUdb. If an error
         occurs while inserting the records from any queue, the records will no
         longer be in that queue nor in GPUdb; catch {@link InsertException} to
@@ -2690,6 +2762,11 @@ class GPUdbIngestor:
                 Boolean flag indicating whether a user invoked this method or
                 an internal method called it.
 
+            is_data_encoded (bool)
+                Indicates if the data has already been encoded (so that we don't
+                do double encoding).  Use ONLY if the data has already been
+                encoded.  Default is False.
+
         @throws InsertException if an error occurs while inserting records.
         """
         for worker in self.worker_queues:
@@ -2698,14 +2775,16 @@ class GPUdbIngestor:
             
             queue = worker.flush()
             # Actually insert the records
-            self.__flush( queue, worker.get_gpudb(), forced_flush = forced_flush )
+            self.__flush( queue, worker.get_gpudb(), forced_flush = forced_flush,
+                          is_data_encoded = is_data_encoded )
     # end flush
 
 
 
     def __flush( self, queue, worker_gpudb,
                  forced_flush = False,
-                 record_encoding = "binary" ):
+                 record_encoding = "binary",
+                 is_data_encoded = False ):
         """Internal method to flush--actually insert--the records to GPUdb.
 
         Parameters:
@@ -2727,6 +2806,10 @@ class GPUdbIngestor:
 
                 The default values is 'binary'.
 
+            is_data_encoded (bool)
+                Indicates if the data has already been encoded (so that we don't
+                do double encoding).  Use ONLY if the data has already been
+                encoded.  Default is False.
         """
         if not queue:
             return # nothing to do
@@ -2739,15 +2822,20 @@ class GPUdbIngestor:
             # We may need the timestamp later
             insertion_attempt_timestamp = time.time()
 
-            # Encode the data
-            encoded_data = self.__encode_data_for_insertion( queue,
-                                                             record_encoding = record_encoding )
-            
+            # Encode the data, if necessary
+            if not is_data_encoded:
+                encoded_data = self.__encode_data_for_insertion( queue,
+                                                                 record_encoding = record_encoding )
+            else:
+                # The data is already encoded
+                encoded_data = queue
+                
             # Insert the records
             insertion_succeeded = False
             try:
                 insert_rsp = worker_gpudb.insert_records( table_name = self.table_name,
                                                           data = encoded_data,
+                                                          record_type = self.record_type.record_type,
                                                           options = self.options )
                 insertion_succeeded = insert_rsp.is_ok()
                 error_msg           = insert_rsp.get_error_msg()
@@ -3172,8 +3260,8 @@ class RecordRetriever:
             self.__update_worker_queues()
         # end if
         
-        # Decode the records
-        records = GPUdbRecord.decode_binary_data( gr_rsp["type_schema"],
+        # Decode the records (using the C-extension RecordType object)
+        records = GPUdbRecord.decode_binary_data( self.record_type.record_type,
                                                   gr_rsp["records_binary"] )
 
         # Replace the encoded records in the response with the decoded records
