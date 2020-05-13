@@ -2,6 +2,12 @@
 
 ## Version 7.0
 
+### Version 7.0.15.2 - 2020-05-13
+
+#### Fixed
+-   GPUdbTable.insert_records() slow-down when using multi-head ingestion.
+
+
 ### Version 7.0.15.1 - 2020-05-07
 
 #### Fixed
