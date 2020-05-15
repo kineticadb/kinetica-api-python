@@ -2,6 +2,12 @@
 
 ## Version 7.0
 
+### Version 7.0.15.3 - 2020-05-15
+
+#### Fixed
+-   GPUdbIngestor bug introduced in 7.0.15.2 :-/
+
+
 ### Version 7.0.15.2 - 2020-05-13
 
 #### Fixed

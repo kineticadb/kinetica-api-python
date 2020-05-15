@@ -2595,7 +2595,7 @@ class GPUdbIngestor:
 
     
     def insert_record( self, record, record_encoding = "binary",
-                       is_data_encoded = False ):
+                       is_data_encoded = True ):
         """Queues a record for insertion into GPUdb. If the queue reaches the
         {@link #get_batch_size batch size}, all records in the queue will be
         inserted into GPUdb before the method returns. If an error occurs while
@@ -2632,7 +2632,6 @@ class GPUdbIngestor:
                                   "boolean; given '{}'"
                                   "".format( str(type( is_data_encoded )) ) )
 
-        # if not isinstance(record, (GPUdbRecord, collections.OrderedDict)):
         if not isinstance(record, (list, GPUdbRecord, collections.OrderedDict)):
             raise GPUdbException( "Input parameter 'record' must be a GPUdbRecord or an "
                                   "OrderedDict; given %s" % str(type(record)) )
@@ -2686,7 +2685,7 @@ class GPUdbIngestor:
 
 
     def insert_records( self, records, record_encoding = "binary",
-                        is_data_encoded = False ):
+                        is_data_encoded = True ):
         """Queues a list of records for insertion into GPUdb. If any queue reaches
         the {@link #get_batch_size batch size}, all records in that queue will be
         inserted into GPUdb before the method returns. If an error occurs while
@@ -2749,7 +2748,7 @@ class GPUdbIngestor:
 
 
 
-    def flush( self, forced_flush = True, is_data_encoded = False ):
+    def flush( self, forced_flush = True, is_data_encoded = True ):
         """Ensures that any queued records are inserted into GPUdb. If an error
         occurs while inserting the records from any queue, the records will no
         longer be in that queue nor in GPUdb; catch {@link InsertException} to
@@ -2784,7 +2783,7 @@ class GPUdbIngestor:
     def __flush( self, queue, worker_gpudb,
                  forced_flush = False,
                  record_encoding = "binary",
-                 is_data_encoded = False ):
+                 is_data_encoded = True ):
         """Internal method to flush--actually insert--the records to GPUdb.
 
         Parameters:
