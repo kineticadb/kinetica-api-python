@@ -1765,8 +1765,9 @@ class _RecordKeyBuilder:
         if isinstance( record, (dict, GPUdbRecord, Record,
                                 collections.OrderedDict) ):
             # Got a dict-compatible object; make sure we have the correct
-            # number of columns
-            record_keys = record.keys()
+            # number of columns (need to explicitly convert to a list for
+            # python 3)
+            record_keys = list( record.keys() )
             if ( record_keys != self._record_column_names):
                 raise GPUdbException( "Given record must be of the type '{}'"
                                       " (with columns {}); given record has columns: {} "
@@ -1775,7 +1776,8 @@ class _RecordKeyBuilder:
                                                  record_keys ) )
             # end if
 
-            column_values = record.values()
+            # Need to explicitly convert to a list for python 3
+            column_values = list( record.values() )
         elif isinstance( record, list ):
             # Got a dict-compatible object; make sure we have the correct
             # number of columns
