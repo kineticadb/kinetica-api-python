@@ -2,6 +2,12 @@
 
 ## Version 7.0
 
+### Version 7.0.15.4 - 2020-05-18
+
+#### Fixed
+-   Python 3 compatibility issue in GPUdbIngestor
+
+
 ### Version 7.0.15.3 - 2020-05-15
 
 #### Fixed
