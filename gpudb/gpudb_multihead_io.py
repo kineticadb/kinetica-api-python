@@ -1798,22 +1798,6 @@ class _RecordKeyBuilder:
                                   "(dict, OrderedDict, GPUdbRecord, Record) or "
                                   "a list; got {}".format( str(type( record )) ) )
 
-        # # Check that the given record is an OrderedDict of the given table
-        # # type
-        # if not isinstance( record, collections.OrderedDict ):
-        #     raise GPUdbException( "Given record must be a GPUdbRecord object or"
-        #                       " an OrderedDict; given %s"
-        #                       % str( type( record ) ) )
-
-        # # Check all the keys of the given record
-        # record_keys = list( record.keys() )
-        # if (record_keys != self._record_column_names):
-        #     raise GPUdbException( "Given record must be of the type '%s'"
-        #                           " (with columns '%s'); given record has columns '%s' "
-        #                           % ( self._record_type.schema_string,
-        #                               self._record_column_names,
-        #                               record_keys ) )
-
         # Create and populate a RecordKey object
         record_key = _RecordKey( self._key_buffer_size )
 
