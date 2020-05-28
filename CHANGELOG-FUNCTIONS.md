@@ -2,30 +2,38 @@
 
 ## Version 7.0
 
-
-### Version 7.0.15.3 - 2020-04-27
+### Version 7.0.16.0 - 2020-05-08
 
 #### Changed Endpoints
 
 ##### Non-breaking Changes
-- Added ``image_encoding`` option for ``/visualize/image/chart``. When using JSON serialization the option should be set to ``base64``. 
+-   Added 'unit_unloading_cost' option is added to the /match/graph endpoint for
+    match_supply_demand solve case to add the unloading time per drop amount.
+-   Added total_number_of_records and has_more_records to
+    /get/recordsfromcollection response info map.
 
 
-### Version 7.0.15.0 - 2020-04-09
 
-#### Added Endpoints
--   
+### Version 7.0.15.3 - 2020-04-28
 
 #### Changed Endpoints
-- Added filter_folding_paths option to /match/graph's markov_chain solver type to filter out the folding paths for more accurate results during the optimization stage of the HM algorithm - the default is falseto save from execution time.
-- Added max_trip_cost option to /match/graph for match_supply_demand solver type to restrict trip between stops except from/to the origin - default is zero, i.e., no check for max trip cost.  
-- Minimum value for max_cpu_concurrency is now 4 for /create/resourcegroup and /alter/resourcegroup
-
-##### Breaking Changes
--   
 
 ##### Non-breaking Changes
--   
+- Added ``image_encoding`` option for ``/visualize/image/chart``. When using JSON serialization the option should be set to ``base64``.
+
+
+### Version 7.0.15.0 - 2020-04-13
+
+#### Non-breaking Changes
+-   Added filter_folding_paths option to /match/graph's markov_chain solver type
+    to filter out the folding paths for more accurate results during the
+    optimization stage of the HM algorithm - the default is falseto save from
+    execution time.
+-   Added max_trip_cost option to /match/graph for match_supply_demand solver type
+    to restrict trip between stops except from/to the origin - default is zero,
+    i.e., no check for max trip cost.
+-   Minimum value for max_cpu_concurrency is now 4 for /create/resourcegroup
+    and /alter/resourcegroup.
 
 
 ### Version 7.0.14.0 - 2020-03-25

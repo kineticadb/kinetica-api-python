@@ -2,6 +2,17 @@
 
 ## Version 7.0
 
+### Version 7.0.16.0 - 2020-05-28
+
+#### Fixed
+-   GPUdbTable.alter_table() now updates the multi-head I/O objects' table
+    names so that subsequent multi-head I/O operations work.
+-   Response encoding for GPUdb endpoints that return encoded data for
+    JSON encoding.
+-   Occassional data corruption issue with replacing '\U' with '\u' for
+    JSON encoding.
+
+
 ### Version 7.0.15.4 - 2020-05-18
 
 #### Fixed

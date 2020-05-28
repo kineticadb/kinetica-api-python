@@ -1872,7 +1872,7 @@ class GPUdbRecord( object ):
         """
         # Decode the single data object
         if not isinstance( json_string_data, list ):
-            json_string_data = json_string_data.replace( "\\U", "\\u")
+            json_string_data = json_string_data
             json_string_data = _Util.ensure_str( json_string_data )
             decoded_datum = json.loads( json_string_data )
             return decoded_datum
@@ -1881,7 +1881,7 @@ class GPUdbRecord( object ):
         # Decode the list of data data
         decoded_data = []
         for json_datum in json_string_data:
-            json_datum = json_datum.replace( "\\U", "\\u")
+            json_datum = json_datum
             json_datum = _Util.ensure_str( json_datum )
             decoded_datum = json.loads( json_datum,
                                         object_pairs_hook = collections.OrderedDict )
@@ -3149,7 +3149,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.15.4"
+    api_version   = "7.0.16.0"
 
     # Constants
     END_OF_SET = -9999
@@ -3678,7 +3678,7 @@ class GPUdb(object):
         if (encoding == 'BINARY') or (encoding == 'SNAPPY'):
             return _Util.decode_binary_data( SCHEMA, encoded_datum )
         elif encoding == 'JSON':
-            data_str = json.loads( _Util.ensure_str(encoded_datum).replace('\\U','\\u') )
+            data_str = json.loads( _Util.ensure_str(encoded_datum) )
             return data_str
     # end __read_orig_datum
 
@@ -3739,7 +3739,7 @@ class GPUdb(object):
             if (encoding == 'BINARY') or (encoding == 'SNAPPY'):
                 return SCHEMA.decode( encoded_datum )
             elif encoding == 'JSON':
-                data_str = json.loads( _Util.ensure_str(encoded_datum).replace('\\U','\\u') )
+                data_str = json.loads( _Util.ensure_str(encoded_datum) )
                 return data_str
         except (Exception, RuntimeError) as e:
             raise GPUdbDecodingException ( "Unable to parse server response {}; "
@@ -7492,6 +7492,12 @@ class GPUdb(object):
 
         (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/aggregate/groupby" )
 
+        # Force JSON encoding if client encoding is json and method encoding
+        # is binary (checking for binary so that we do not accidentally override
+        # the GeoJSON encoding)
+        if ( (self.encoding == "JSON") and (encoding == "binary") ):
+            encoding = "json"
+
         obj = {}
         obj['table_name'] = table_name
         obj['column_names'] = column_names
@@ -8659,6 +8665,12 @@ class GPUdb(object):
 
         (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/aggregate/unique" )
 
+        # Force JSON encoding if client encoding is json and method encoding
+        # is binary (checking for binary so that we do not accidentally override
+        # the GeoJSON encoding)
+        if ( (self.encoding == "JSON") and (encoding == "binary") ):
+            encoding = "json"
+
         obj = {}
         obj['table_name'] = table_name
         obj['column_name'] = column_name
@@ -9133,6 +9145,12 @@ class GPUdb(object):
         assert isinstance( options, (dict)), "aggregate_unpivot(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/aggregate/unpivot" )
+
+        # Force JSON encoding if client encoding is json and method encoding
+        # is binary (checking for binary so that we do not accidentally override
+        # the GeoJSON encoding)
+        if ( (self.encoding == "JSON") and (encoding == "binary") ):
+            encoding = "json"
 
         obj = {}
         obj['table_name'] = table_name
@@ -13561,6 +13579,12 @@ class GPUdb(object):
 
         (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/execute/sql" )
 
+        # Force JSON encoding if client encoding is json and method encoding
+        # is binary (checking for binary so that we do not accidentally override
+        # the GeoJSON encoding)
+        if ( (self.encoding == "JSON") and (encoding == "binary") ):
+            encoding = "json"
+
         obj = {}
         obj['statement'] = statement
         obj['offset'] = offset
@@ -15505,6 +15529,12 @@ class GPUdb(object):
 
         (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/get/records" )
 
+        # Force JSON encoding if client encoding is json and method encoding
+        # is binary (checking for binary so that we do not accidentally override
+        # the GeoJSON encoding)
+        if ( (self.encoding == "JSON") and (encoding == "binary") ):
+            encoding = "json"
+
         obj = {}
         obj['table_name'] = table_name
         obj['offset'] = offset
@@ -15853,6 +15883,12 @@ class GPUdb(object):
         assert isinstance( options, (dict)), "get_records_by_column(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/get/records/bycolumn" )
+
+        # Force JSON encoding if client encoding is json and method encoding
+        # is binary (checking for binary so that we do not accidentally override
+        # the GeoJSON encoding)
+        if ( (self.encoding == "JSON") and (encoding == "binary") ):
+            encoding = "json"
 
         obj = {}
         obj['table_name'] = table_name
@@ -16203,6 +16239,12 @@ class GPUdb(object):
 
         (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/get/records/byseries" )
 
+        # Force JSON encoding if client encoding is json and method encoding
+        # is binary (checking for binary so that we do not accidentally override
+        # the GeoJSON encoding)
+        if ( (self.encoding == "JSON") and (encoding == "binary") ):
+            encoding = "json"
+
         obj = {}
         obj['table_name'] = table_name
         obj['world_table_name'] = world_table_name
@@ -16456,7 +16498,19 @@ class GPUdb(object):
                 Otherwise it will be empty.
 
             info (dict of str to str)
-                Additional information.
+                Additional information.  The default value is an empty dict (
+                {} ).
+                Allowed keys are:
+
+                * **total_number_of_records** --
+                  Total number of records.
+
+                * **has_more_records** --
+                  Too many records. Returned a partial set.
+                  Allowed values are:
+
+                  * true
+                  * false
 
             record_types (list of :class:`RecordType`)
                 A list of :class:`RecordType` objects using which the user can
@@ -16470,6 +16524,12 @@ class GPUdb(object):
         assert isinstance( options, (dict)), "get_records_from_collection(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/get/records/fromcollection" )
+
+        # Force JSON encoding if client encoding is json and method encoding
+        # is binary (checking for binary so that we do not accidentally override
+        # the GeoJSON encoding)
+        if ( (self.encoding == "JSON") and (encoding == "binary") ):
+            encoding = "json"
 
         obj = {}
         obj['table_name'] = table_name
@@ -16586,7 +16646,19 @@ class GPUdb(object):
                 Otherwise it will be empty.
 
             info (dict of str to str)
-                Additional information.
+                Additional information.  The default value is an empty dict (
+                {} ).
+                Allowed keys are:
+
+                * **total_number_of_records** --
+                  Total number of records.
+
+                * **has_more_records** --
+                  Too many records. Returned a partial set.
+                  Allowed values are:
+
+                  * true
+                  * false
 
             records (list of :class:`Record`)
                 A list of :class:`Record` objects which contain the decoded
@@ -18331,6 +18403,14 @@ class GPUdb(object):
                     Do not filter out the folded paths
 
                   The default value is 'false'.
+
+                * **unit_unloading_cost** --
+                  For the *match_supply_demand* solver only. The unit cost per
+                  load amount to be delivered. If this value is greater than
+                  zero (default) then the additional cost of this unit load
+                  multiplied by the total dropped load will be added over to
+                  the trip cost to the demand location.  The default value is
+                  '0.0'.
 
         Returns:
             A dict with the following entries--
@@ -25962,7 +26042,14 @@ class GPUdbTable( object ):
         self.__save_table_type( response.type_definition,
                                 response.properties )
         if (action == "rename_table" ):
-             self.name = value
+            self.name = value
+
+            # Update the name for multi-head I/O objects, if any
+            if self._multihead_ingestor is not None:
+                self._multihead_ingestor.table_name = value
+
+            if self._multihead_retriever is not None:
+                self._multihead_retriever.table_name = value
         return response
     # end alter_table
 
