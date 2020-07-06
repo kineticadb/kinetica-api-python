@@ -2,6 +2,28 @@
 
 ## Version 7.0
 
+### Version 7.0.17.0 - 2020-07-06
+
+#### Added
+
+-   Introduced new API for client side table monitor feature.
+    The name of the class to use is `GPUdbTableMonitorBase`
+    A default implementation which demonstrates usage of this class is
+    included in the class `GPUdbTableMonitor`.
+    A full example is found in the directory `examples` in the Python file 
+    `table_monitor_example_Default_impl.py`.
+    There are other variants of the example in the Python files, 
+    `table_monitor_example_basic_first.py` and
+    `table_monitor_example_basic_second.py`.
+    Several test cases are included in the `test/table_monitor` directory.
+
+
+#### Changed
+
+-   GPUdbTable.random_name() and GPUdbTable.prefix_name() now generate
+    strings without hyphens to be more SQL-compatible.
+
+
 ### Version 7.0.16.0 - 2020-05-28
 
 #### Fixed
