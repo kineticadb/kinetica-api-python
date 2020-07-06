@@ -81,13 +81,13 @@ c_avro_module = Extension( "gpudb.protocol",
 setup(
     name = 'gpudb',
     packages = ['gpudb'],
-    version = '7.0.16.0',
+    version = '7.0.17.0',
     description = 'Python client for GPUdb',
     long_description = "The client-side Python API for Kinetica.  Create, store, retrieve, and query data with ease and speed.",
     author = 'Kinetica DB Inc.',
     author_email = 'mmahmud@kinetica.com',
     package_data = {'gpudb': extra_files},
     url = 'http://www.kinetica.com',
-    install_requires = [ "future" ],
+    install_requires = [ "future", 'pyzmq'],
     ext_modules = [ c_avro_module ]
 )

@@ -3149,7 +3149,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.16.0"
+    api_version   = "7.0.17.0"
 
     # Constants
     END_OF_SET = -9999
@@ -9666,7 +9666,9 @@ class GPUdb(object):
 
                 * **clear_cache** --
                   Clears cached results.  Useful to allow repeated timing of
-                  endpoints. Value string is ignored
+                  endpoints.  Value string is the name of the table for which
+                  to clear the cached results, or an empty string to clear the
+                  cached results for all tables.
 
                 * **communicator_test** --
                   Invoke the communicator test and report timing results. Value
@@ -9686,10 +9688,6 @@ class GPUdb(object):
 
                   * true
                   * false
-
-                * **bulk_add_test** --
-                  Invoke the bulk add test and report timing results. Value
-                  string is ignored.
 
                 * **network_speed** --
                   Invoke the network speed test and report timing results.
@@ -16897,7 +16895,9 @@ class GPUdb(object):
                 permission also applies to tables and views in the collection.
 
             filter_expression (str)
-                Reserved for future use.  The default value is ''.
+                Optional filter expression to apply to this grant.  Only rows
+                that match the filter will be affected.  The default value is
+                ''.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -17676,6 +17676,10 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **num_tasks_per_rank** --
+                  Optional: number of tasks for reading file per rank. Default
+                  will be external_file_reader_num_tasks
+
         Returns:
             A dict with the following entries--
 
@@ -18222,13 +18226,6 @@ class GPUdb(object):
                   computationally intensive. Related options: *num_segments*
                   and *chain_width*.
 
-                * **incremental_weighted** --
-                  Matches input parameter *sample_points* to the graph using
-                  time and/or distance between points to influence one or more
-                  shortest paths across the sample points. Related options:
-                  *num_segments*, *max_solve_length*, *time_window_width*, and
-                  *detect_loops*.
-
                 * **match_od_pairs** --
                   Matches input parameter *sample_points* to find the most
                   probable path between origin and destination pairs with cost
@@ -18273,8 +18270,7 @@ class GPUdb(object):
                 * **num_segments** --
                   Maximum number of potentially matching road segments for each
                   sample point. For the *markov_chain* solver, the default is
-                  3; for the *incremental_weighted*, the default is 5.  The
-                  default value is ''.
+                  3.  The default value is '3'.
 
                 * **search_radius** --
                   Maximum search radius used when snapping sample points onto
@@ -18287,32 +18283,6 @@ class GPUdb(object):
                   points lookahead window within the Markov kernel; the larger
                   the number, the more accurate the solution.  The default
                   value is '9'.
-
-                * **max_solve_length** --
-                  For the *incremental_weighted* solver only. Maximum number of
-                  samples along the path on which to solve.  The default value
-                  is '200'.
-
-                * **time_window_width** --
-                  For the *incremental_weighted* solver only. Time window, also
-                  known as sampling period, in which points are favored. To
-                  determine the raw window value, the *time_window_width* value
-                  is multiplied by the mean sample time (in seconds) across all
-                  points, e.g., if *time_window_width* is 30 and the mean
-                  sample time is 2 seconds, points that are sampled greater
-                  than 60 seconds after the previous point are no longer
-                  favored in the solution.  The default value is '30'.
-
-                * **detect_loops** --
-                  For the *incremental_weighted* solver only. If *true*, a loop
-                  will be detected and traversed even if it would make a
-                  shorter path to ignore the loop.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
 
                 * **source** --
                   Optional WKT starting point from input parameter
@@ -18411,6 +18381,35 @@ class GPUdb(object):
                   multiplied by the total dropped load will be added over to
                   the trip cost to the demand location.  The default value is
                   '0.0'.
+
+                * **max_num_threads** --
+                  For the *markov_chain* solver only. If specified (greater
+                  than zero), the maximum number of threads will not be greater
+                  than the specified value. It can be lower due to the memory
+                  and the number cores available. Default value of zero allows
+                  the algorithm to set the maximal number of threads within
+                  these constraints.  The default value is '0'.
+
+                * **truck_service_limit** --
+                  For the *match_supply_demand* solver only. If specified
+                  (greather than zero), any truck's total service cost
+                  (distance or time) will be limited by the specified value
+                  including multiple rounds (if set).  The default value is
+                  '0.0'.
+
+                * **enable_truck_reuse** --
+                  For the *match_supply_demand* solver only. If specified
+                  (true), all trucks can be scheduled for second rounds from
+                  their originating depots.
+                  Allowed values are:
+
+                  * **true** --
+                    Allows reusing trucks for scheduling again.
+
+                  * **false** --
+                    Trucks are scheduled only once from their depots.
+
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -20007,11 +20006,13 @@ class GPUdb(object):
         If input parameter *table_name* is empty, information about all
         collections and top-level tables and views can be returned.
 
-        If the option *get_sizes* is set to *true*, then the sizes (objects and
-        elements) of each table are returned (in output parameter *sizes* and
+        If the option *get_sizes* is set to
+        *true*, then the number of records
+        in each table is returned (in output parameter *sizes* and
         output parameter *full_sizes*), along with the total number of objects
-        in the requested table (in output parameter *total_size* and output
-        parameter *total_full_size*).
+        across all
+        requested tables (in output parameter *total_size* and output parameter
+        *total_full_size*).
 
         For a collection, setting the *show_children* option to *false* returns
         only information about the collection itself; setting *show_children*
@@ -20045,8 +20046,8 @@ class GPUdb(object):
                   The default value is 'true'.
 
                 * **get_sizes** --
-                  If *true* then the table sizes will be returned; blank,
-                  otherwise.
+                  If *true* then the number of records in each table, along
+                  with a cumulative count, will be returned; blank, otherwise.
                   Allowed values are:
 
                   * true
@@ -20144,38 +20145,34 @@ class GPUdb(object):
                 * @INNER_STRUCTURE
 
             sizes (list of longs)
-                Empty array if the *get_sizes* option is *false*. Otherwise,
-                sizes of the respective tables represented in output parameter
-                *table_names*. For all but track data types, this is simply the
-                number of total objects in a table. For track types, since each
-                track semantically contains many individual objects, the output
-                parameter *sizes* are the counts of conceptual tracks (each of
-                which may be associated with multiple objects).
+                If *get_sizes* is *true*, an array containing the number of
+                records of each corresponding table in output parameter
+                *table_names*.  Otherwise, an empty array.
 
             full_sizes (list of longs)
-                Empty array if the *get_sizes* option is *false*. Otherwise,
-                number of total objects in the respective tables represented in
-                output parameter *table_names*. For all but track data types,
-                this is the same as output parameter *sizes*. For track types,
-                since each track semantically contains many individual objects,
-                output parameter *full_sizes* is the count of total objects.
+                If *get_sizes* is *true*, an array containing the number of
+                records of each corresponding table in output parameter
+                *table_names* (same values as output parameter *sizes*).
+                Otherwise, an empty array.
 
             join_sizes (list of floats)
-                Empty array if the *get_sizes* option is *false*. Otherwise,
-                number of unfiltered objects in the cross product of the
-                sub-tables in the joined-tables represented in output parameter
+                If *get_sizes* is *true*, an array containing the number of
+                unfiltered records in the cross product of the sub-tables of
+                each corresponding join-table in output parameter
                 *table_names*. For simple tables, this number will be the same
-                as output parameter *sizes*.  For join-tables this value gives
+                as output parameter *sizes*.  For join-tables, this value gives
                 the number of joined-table rows that must be processed by any
-                aggregate functions operating on the table.
+                aggregate functions operating on the table.  Otherwise, (if
+                *get_sizes* is *false*), an empty array.
 
             total_size (long)
-                -1 if the *get_sizes* option is *false*. Otherwise, the sum of
-                the elements of output parameter *sizes*.
+                If *get_sizes* is *true*, the sum of the elements of output
+                parameter *sizes*.  Otherwise, -1.
 
             total_full_size (long)
-                -1 if the *get_sizes* option is *false*. The sum of the
-                elements of output parameter *full_sizes*.
+                If *get_sizes* is *true*, the sum of the elements of output
+                parameter *full_sizes* (same value as output parameter
+                *total_size*).  Otherwise, -1.
 
             info (dict of str to str)
                 Additional information.
@@ -22184,8 +22181,10 @@ class GPUdbTable( object ):
 
     @staticmethod
     def random_name():
-        """Returns a randomly generated uuid-based name"""
-        return str( uuid.uuid4() )
+        """Returns a randomly generated uuid-based name.  Use underscores
+        instead of hyphens.
+        """
+        return str( uuid.uuid4() ).replace( '-', '_' )
     # end random_name
 
 
@@ -27844,11 +27843,13 @@ class GPUdbTable( object ):
         If input parameter *table_name* is empty, information about all
         collections and top-level tables and views can be returned.
 
-        If the option *get_sizes* is set to *true*, then the sizes (objects and
-        elements) of each table are returned (in output parameter *sizes* and
+        If the option *get_sizes* is set to
+        *true*, then the number of records
+        in each table is returned (in output parameter *sizes* and
         output parameter *full_sizes*), along with the total number of objects
-        in the requested table (in output parameter *total_size* and output
-        parameter *total_full_size*).
+        across all
+        requested tables (in output parameter *total_size* and output parameter
+        *total_full_size*).
 
         For a collection, setting the *show_children* option to *false* returns
         only information about the collection itself; setting *show_children*
@@ -27877,8 +27878,8 @@ class GPUdbTable( object ):
                   The default value is 'true'.
 
                 * **get_sizes** --
-                  If *true* then the table sizes will be returned; blank,
-                  otherwise.
+                  If *true* then the number of records in each table, along
+                  with a cumulative count, will be returned; blank, otherwise.
                   Allowed values are:
 
                   * true
@@ -27977,38 +27978,34 @@ class GPUdbTable( object ):
                 * @INNER_STRUCTURE
 
             sizes (list of longs)
-                Empty array if the *get_sizes* option is *false*. Otherwise,
-                sizes of the respective tables represented in output parameter
-                *table_names*. For all but track data types, this is simply the
-                number of total objects in a table. For track types, since each
-                track semantically contains many individual objects, the output
-                parameter *sizes* are the counts of conceptual tracks (each of
-                which may be associated with multiple objects).
+                If *get_sizes* is *true*, an array containing the number of
+                records of each corresponding table in output parameter
+                *table_names*.  Otherwise, an empty array.
 
             full_sizes (list of longs)
-                Empty array if the *get_sizes* option is *false*. Otherwise,
-                number of total objects in the respective tables represented in
-                output parameter *table_names*. For all but track data types,
-                this is the same as output parameter *sizes*. For track types,
-                since each track semantically contains many individual objects,
-                output parameter *full_sizes* is the count of total objects.
+                If *get_sizes* is *true*, an array containing the number of
+                records of each corresponding table in output parameter
+                *table_names* (same values as output parameter *sizes*).
+                Otherwise, an empty array.
 
             join_sizes (list of floats)
-                Empty array if the *get_sizes* option is *false*. Otherwise,
-                number of unfiltered objects in the cross product of the
-                sub-tables in the joined-tables represented in output parameter
+                If *get_sizes* is *true*, an array containing the number of
+                unfiltered records in the cross product of the sub-tables of
+                each corresponding join-table in output parameter
                 *table_names*. For simple tables, this number will be the same
-                as output parameter *sizes*.  For join-tables this value gives
+                as output parameter *sizes*.  For join-tables, this value gives
                 the number of joined-table rows that must be processed by any
-                aggregate functions operating on the table.
+                aggregate functions operating on the table.  Otherwise, (if
+                *get_sizes* is *false*), an empty array.
 
             total_size (long)
-                -1 if the *get_sizes* option is *false*. Otherwise, the sum of
-                the elements of output parameter *sizes*.
+                If *get_sizes* is *true*, the sum of the elements of output
+                parameter *sizes*.  Otherwise, -1.
 
             total_full_size (long)
-                -1 if the *get_sizes* option is *false*. The sum of the
-                elements of output parameter *full_sizes*.
+                If *get_sizes* is *true*, the sum of the elements of output
+                parameter *full_sizes* (same value as output parameter
+                *total_size*).  Otherwise, -1.
 
             info (dict of str to str)
                 Additional information.

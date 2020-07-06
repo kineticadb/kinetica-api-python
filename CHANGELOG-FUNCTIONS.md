@@ -2,6 +2,17 @@
 
 ## Version 7.0
 
+### Version 7.0.17.0 - 2020-07-06
+
+#### Changed Endpoints
+
+##### Non-breaking Changes
+-   Added 'max_num_threads' option is added to the /match/graph endpoint for multi-threading support for many trips' map matching. If specified it'll not exceed the number of threads used within the constraints of the available memory and the number of cores."
+- Removed defunc 'incremental_weighted" solve method.
+- Added new option 'enable_truck_reuse' for supply demand solver of /match/graph for reusing truck in multiple rounds from the same originating depot
+- Added new option 'truck_service_limit' for sypply demand solver of /match/graph as an additional constraint on the total cost of any truck's delivery route.
+- Added option 'num_tasks_per_rank', to insert_records_fromfiles_request and create_external_table_request 
+
 ### Version 7.0.16.0 - 2020-05-08
 
 #### Changed Endpoints
