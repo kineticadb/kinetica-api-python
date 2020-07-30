@@ -2,6 +2,18 @@
 
 ## Version 7.0
 
+### Version 7.0.18.0 - 2020-07-30
+
+#### Changed Endpoints
+
+##### Non-breaking Changes
+
+- Added ``cb_pointalphas`` option and ``cb_pointalpha_attrs`` and 
+  ``cb_pointalpha_vals`` fields to ``visualize/image/classbreak`` to support 
+  manipulation of transparency in class-break visualization.
+
+##### Breaking Changes
+
 ### Version 7.0.17.0 - 2020-07-06
 
 #### Changed Endpoints

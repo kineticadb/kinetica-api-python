@@ -168,7 +168,7 @@ class C:
     _HEADER_AUTHORIZATION = "Authorization";
     _HEADER_CONTENT_TYPE  = "Content-type";
     _HEADER_HA_SYNC_MODE  = "ha_sync_mode";
-    
+
 # end class C
 
 
@@ -249,7 +249,7 @@ class GPUdbConnectionException( GPUdbException ):
     def __str__( self ):
         return repr( self.value )
     # end __str__
-    
+
 # end class GPUdbConnectionException
 
 
@@ -266,7 +266,7 @@ class GPUdbDecodingException( GPUdbException ):
     def __str__( self ):
         return repr( self.value )
     # end __str__
-    
+
 # end class GPUdbDecodingException
 
 
@@ -283,7 +283,7 @@ class GPUdbExitException( GPUdbException ):
     def __str__( self ):
         return repr( self.value )
     # end __str__
-    
+
 # end class GPUdbExitException
 
 
@@ -376,7 +376,7 @@ class _ConnectionToken(object):
         self._gpudb_full_url    = str( full_url )
     # end __init__
 
-    
+
     def __eq__( self, other ):
         if isinstance(other, self.__class__):
             if ( self._host != other._host ):
@@ -596,7 +596,7 @@ class _Util(object):
             # (it is assumed that the python avro package has been used to encode
             # the records)
             return (False, records)
-        
+
         # If the record type is given, ensure that it is a RecordType
         if not isinstance( record_type, RecordType):
             raise GPUdbException( "Argument 'record_type' must be a RecordType object; "
@@ -631,13 +631,13 @@ class _Util(object):
                 for column in record_type:
                     col_name = column.name
                     col_value = obj[ col_name ]
-                
+
                     # Handle nulls
                     if col_value is None:
                         record[ col_name ] = col_value
                         continue
                     # end if
-                
+
                     # Get column data type
                     col_data_type = column.data_type
 
@@ -664,7 +664,7 @@ class _Util(object):
                     #                                   "object or a string, given {}".format( str( type( col_value ) ) ) )
 
                     #         col_value = col_value.strip()
-                        
+
                     #         if _Util.re_datetime_full.match( col_value ):
                     #             # Full datetime with time (including milliseconds)
                     #             col_value = datetime.datetime.strptime( col_value, "%Y-%m-%d %H:%M:%S.%f" )
@@ -720,10 +720,10 @@ class _Util(object):
                     #         # end if
                     #     # end if
                     # end handling special data type conversions
-                
+
                     record[ col_name ] = col_value
                 # end inner loop
-            
+
                 converted_records.append( record )
             # end loop
         except GPUdbException as e:
@@ -737,7 +737,7 @@ class _Util(object):
         return (True, converted_records)
     # end convert_binary_data_to_cext_records
 
-    
+
     # ----------- Begin override of strftime ------------------
     # Override datetime's strftime which in python does not accept
     # years before 1900--how annoying!
@@ -876,13 +876,13 @@ class _Util(object):
             for column in columns_needing_conversion:
                 col_name = column.name
                 col_value = record[ col_name ]
-                
+
                 # Handle nulls
                 if col_value is None:
                     record[ col_name ] = col_value
                     continue
                 # end if
-                
+
                 # Get column data type
                 col_data_type = column.data_type
 
@@ -902,17 +902,17 @@ class _Util(object):
                 elif (col_data_type == "ipv4"): # Handle IPv4
                     raise GPUdbException("TODO: *********type 'ipv4' not supported yet*********")
                 # end handling special data type conversions
-                
+
                 record[ col_name ] = col_value
             # end inner loop
-            
+
             converted_records.append( record )
         # end loop
 
         return converted_records
     # end convert_cext_records_to_ordered_dicts
-    
-    
+
+
 # end class _Util
 
 # ---------------------------------------------------------------------------
@@ -948,7 +948,7 @@ class AttrDict(dict):
                                   " the following key: {}".format( str(ex) ) )
     # end get_error_msg
 
-    
+
 # end class AttrDict
 
 
@@ -1257,7 +1257,7 @@ class GPUdbRecordColumn(object):
 
         # Allow all casing by normalizing to lower case internally here
         column_type = column_type.lower()
-        
+
         if column_type not in self._allowed_data_types:
             raise GPUdbException( "Data type must be one of "
                                   + str(self._allowed_data_types)
@@ -1562,7 +1562,7 @@ class GPUdbRecordType(object):
             # end if
 
             field_name = field["name"]
-            
+
             # Get any properties for the column
             col_props = None
             if (self._column_properties and (field_name in self._column_properties)):
@@ -1741,14 +1741,14 @@ class GPUdbRecordType(object):
                 raise GPUdbException( "Given key '{}' does not match any column"
                                       "in the type!".format( column_id ) )
         # end if
-        
+
         # Not a string, so it must be an integer; ensure it's within limits
         if ( (column_id < 0)
              or (column_id >= len( self._columns )) ):
             raise GPUdbException( "Given index {} is out of bounds; # of "
                                   "columns: {}".format( column_id,
                                                         len( self._columns ) ) )
-        
+
         return self._columns[ column_id ]
     # end get_column
 
@@ -1908,7 +1908,7 @@ class GPUdbRecord( object ):
         """
         # Convert the dynamic schema to an Avro schema
         dynamic_schema = schema.parse( dynamic_schema )
-        
+
         decoded_data = collections.OrderedDict()
 
         column_names = dynamic_json_data['column_headers']
@@ -1945,7 +1945,7 @@ class GPUdbRecord( object ):
         """
         # Convert the dynamic schema to an Avro schema
         dynamic_schema = schema.parse( dynamic_schema )
-        
+
         decoded_records = []
 
         # Get the actual column names
@@ -2050,7 +2050,7 @@ class GPUdbRecord( object ):
         """
         if not row_major_data: # Handle empty/none etc.
             return row_major_data
-        
+
         # Turn a single record into a list, if applicable
         row_major_data = [ row_major_data ] if not isinstance( row_major_data, list ) else row_major_data
 
@@ -2371,7 +2371,7 @@ class GPUdbRecord( object ):
 
 class GPUdb(object):
 
-   
+
     class HASynchronicityMode( enum.Enum ):
         """Inner enumeration class to represent the high-availability
         synchronicity override mode that is applied to each eandpoint call.
@@ -2390,8 +2390,8 @@ class GPUdb(object):
         # Do NOT synchronize any endpoint call
         ASYNCHRONOUS = "async"
     # end inner class HASynchronicityMode
-    
-    
+
+
     def __init__( self, host = "127.0.0.1", port = "9191",
                   host_manager_port = "9300",
                   encoding = "BINARY", connection = 'HTTP',
@@ -2559,7 +2559,7 @@ class GPUdb(object):
 
         # Identification for this instance (useful in logging)
         self._id = str( uuid.uuid4() )
-        
+
         assert isinstance( encoding, (basestring, unicode) ), \
             "Parameter 'encoding' must be a string; given {}".format( str(type(encoding)) )
         encoding = encoding.upper() # Just in case a different case is given
@@ -2603,7 +2603,7 @@ class GPUdb(object):
 
         # Set the synchronicity override mode to be default
         self._ha_sync_mode = GPUdb.HASynchronicityMode.DEFAULT
-        
+
         # Load all gpudb schemas
         self.__load_logger_schemas()
         self.load_gpudb_schemas()
@@ -2819,7 +2819,7 @@ class GPUdb(object):
                 self.primary_host = self._conn_tokens[ 0 ]._gpudb_full_url;
             # end if
         # end if
-        
+
         # Handle the primary host parameter, if any
         if (self.primary_host):
             # Make sure that it's a valid URL
@@ -2839,7 +2839,7 @@ class GPUdb(object):
         # end if
     # end __handle_primary_host
 
-    
+
 
     def __get_current_conn_token( self ):
         """Returns the connection information for the current server."""
@@ -2872,7 +2872,7 @@ class GPUdb(object):
             # Shuffle from the 2nd element onward
             non_primary_host_indices = list( range(1, self._num_conn_tokens) )
             random.shuffle( non_primary_host_indices )
-            
+
             # Put them back together
             self._conn_token_indices = ([ 0 ] + non_primary_host_indices)
         # end if
@@ -2960,7 +2960,7 @@ class GPUdb(object):
         # Delete the old primary host, if any
         if (delete_old_primary_host and old_primary_conn_token):
             self._conn_tokens.remove( old_primary_conn_token )
-            
+
         # Save the new primary host
         self.primary_host = new_primary_host
 
@@ -3073,7 +3073,7 @@ class GPUdb(object):
     def save_known_type(self, type_id, _type ):
         self._known_types[ type_id ] = _type
 
-        
+
     @property
     def get_known_types(self):
         """Return all known types; if
@@ -3084,7 +3084,7 @@ class GPUdb(object):
 
         return self._known_types[ type_id ]
     # end get_known_type
-    
+
     def get_known_type(self, type_id, lookup_type = True ):
         """Given an type ID, return any associated known type; if
         none is found, then optionally try to look it up and save it.
@@ -3101,7 +3101,7 @@ class GPUdb(object):
 
         Returns:
             The associated RecordType, if found (or looked up).  None
-            otherwise.            
+            otherwise.
         """
         if type_id in self._known_types:
             return self._known_types[ type_id ]
@@ -3124,11 +3124,11 @@ class GPUdb(object):
 
             return record_type
         # end if
-        
+
         return None # none found
     # end get_known_type
 
-    
+
     def get_num_ha_switches(self):
         return self._num_ha_switches
 
@@ -3149,7 +3149,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.17.0"
+    api_version   = "7.0.18.0"
 
     # Constants
     END_OF_SET = -9999
@@ -3206,7 +3206,7 @@ class GPUdb(object):
     def __log_warn_with_id( self, message ):
         self.log.warn( "[GPUdb] {} {}".format( self._id, message ) )
     # end __warn_with_id
-    
+
     def __log_info_with_id( self, message ):
         self.log.info( "[GPUdb] {} {}".format( self._id, message ) )
     # end __log_info_with_id
@@ -3222,15 +3222,15 @@ class GPUdb(object):
     def __log_warn( self, message ):
         self.log.warn( "[GPUdb] {}".format( message ) )
     # end __warn
-    
+
     def __log_info( self, message ):
         self.log.info( "[GPUdb] {}".format( message ) )
     # end __log_info
-    
+
     def __log_error( self, message ):
         self.log.error( "[GPUdb] {}".format( message ) )
     # end __log_error
-    
+
 
     def __update_connection_token_index( self, initial_index = None ):
         """Choose the next connection token (effect is random).  If an 'initial'
@@ -3271,7 +3271,7 @@ class GPUdb(object):
             # And start from the beginning again
             self._current_conn_token_index = 0
         # end if
-            
+
         return exhausted_all_conn_tokens
     # end __update_connection_token_index
 
@@ -3309,7 +3309,7 @@ class GPUdb(object):
                                                  headers,
                                                  body_data,
                                                  endpoint )
-            
+
             # Upon success, update the connection token's host manager port
             conn_token._host_manager_port = hm_port
         except (GPUdbException, GPUdbConnectionException) as ex:
@@ -3349,8 +3349,8 @@ class GPUdb(object):
 
         return (headers, body_data)
     # end __create_header_and_process_body_data
-   
- 
+
+
     def __post_and_get( self,
                         host, port, url_path, connection_type,
                         headers, body_data, endpoint ):
@@ -3474,7 +3474,7 @@ class GPUdb(object):
 
                 if previous_error_msg:
                     error_msg += previous_error_msg
-                    
+
                 raise GPUdbException( error_msg )
             else:
                 # Haven't exhausted all the clusters in the HA; try the next one
@@ -3520,7 +3520,7 @@ class GPUdb(object):
                 # end if
                 error_msg = error_msg_prefix + error_msg
             # end inner if
-                
+
             raise GPUdbException( error_msg )
         # done handling errors
 
@@ -3528,7 +3528,7 @@ class GPUdb(object):
     # end __post_to_gpudb_read
 
 
-    
+
     def __post_to_hm_read( self, body_data, endpoint, is_retry = False,
                            previous_error_msg = None ):
         """
@@ -3572,7 +3572,7 @@ class GPUdb(object):
 
                 if previous_error_msg:
                     error_msg += " Error encountered: {}".format( previous_error_msg )
-                    
+
                 raise GPUdbException( error_msg )
             else:
                 # Haven't exhausted all the clusters in the HA; try the next one
@@ -3765,7 +3765,7 @@ class GPUdb(object):
         # Parse the gpudb_response message
         RSP_SCHEMA = self.gpudb_schemas["gpudb_response"]["RSP_SCHEMA"]
         resp = self.__read_orig_datum_cext( RSP_SCHEMA, encoded_datum, encoding )
-            
+
 
         # Now parse the actual response if there is no error
         # NOTE: DATA_SCHEMA should be equivalent to SCHEMA but is NOT for get_set_sorted
@@ -3804,7 +3804,7 @@ class GPUdb(object):
                  or (C._DB_SYSTEM_LIMITED_ERROR_MESSAGE in error_msg) ):
                 raise GPUdbExitException( error_msg )
         # end if
-            
+
         return out
     # end __read_datum_cext
 
@@ -3893,7 +3893,7 @@ class GPUdb(object):
             endpoint   : Server path to POST to, e.g. "/add".
             return_raw_response : If True, return the raw response along with the
                                   decoded response.
- 
+
         Returns:
             The decoded response.  If `return_raw_response` is True, then return
             a tuple of the decoded response and the raw response.
@@ -4001,7 +4001,7 @@ class GPUdb(object):
         DB_OFFLINE_ERROR_MESSAGE = "System is offline"
 
         initial_index = self._current_conn_token_index
-        
+
         while True:
             conn_token = self.__get_current_conn_token()
             exhausted_all_conn_tokens = False
@@ -4017,7 +4017,7 @@ class GPUdb(object):
                                                      headers,
                                                      body_data,
                                                      endpoint )
-                
+
                 # Decode and return the response
                 decoded_response = self.__read_datum_cext(REP_SCHEMA, response, None, resp_time)
 
@@ -4028,7 +4028,7 @@ class GPUdb(object):
                     if (DB_OFFLINE_ERROR_MESSAGE in error_msg):
                         # The database is offline
                         raise GPUdbExitException( error_msg )
-                
+
                 return decoded_response
             except GPUdbExitException as ex:
                 # An HA failover trigger happened; try other clusters, if any
@@ -4133,7 +4133,7 @@ class GPUdb(object):
             obj['data_str'] = ''
             obj['data'    ] = ( encoded_datum )
         obj['options'] = {}
-        
+
         # Make the asynchronouse /recate/job call
         response = self.__post_then_get_cext( create_job_req_schema, create_job_rsp_schema,
                                               obj, create_job_endpoint )
@@ -4199,7 +4199,7 @@ class GPUdb(object):
             obj['data_str'] = ''
             obj['data'    ] = encoded_datum
         obj['options'] = {}
-        
+
         # Make the asynchronouse /recate/job call
         response = self.__post_then_get_cext( create_job_req_schema, create_job_rsp_schema,
                                               obj, create_job_endpoint )
@@ -4282,7 +4282,7 @@ class GPUdb(object):
             return
 
         # Iterate over a copy of the keys so that we can modify the dict
-        for key in _dict.keys(): 
+        for key in _dict.keys():
             val = _dict[ key ]
 
             if isinstance( val, bool ):
@@ -4352,7 +4352,7 @@ class GPUdb(object):
         elif encoding == 'JSON':
             # Convert bytes to strings first
             datum = _Util.convert_dict_bytes_to_str( datum )
-            
+
             # Create an OrderedDict for the JSON since the server expects
             # fields in order
             json_datum = collections.OrderedDict()
@@ -4370,7 +4370,7 @@ class GPUdb(object):
 
     # ------------- Convenience Functions ------------------------------------
 
-    
+
     def read_trigger_msg(self, encoded_datum):
         RSP_SCHEMA = self.gpudb_schemas[ "trigger_notification" ]["RSP_SCHEMA"]
         return self.__read_orig_datum_cext(RSP_SCHEMA, encoded_datum, 'BINARY')
@@ -4456,7 +4456,7 @@ class GPUdb(object):
             raise GPUdbException("Invalid log level: '{}'".format( str(ex) ))
     # end set_client_logger_level
 
-    
+
     # Helper function to emulate old /add (single object insert) capability
     def insert_object(self, set_id, object_data, params=None):
         if (params):
@@ -6018,9 +6018,9 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/visualize/image/classbreak"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"cb_attr","type":"string"},{"name":"cb_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointcolor_attr","type":"string"},{"name":"cb_pointcolor_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointsize_attr","type":"string"},{"name":"cb_pointsize_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointshape_attr","type":"string"},{"name":"cb_pointshape_vals","type":{"type":"array","items":"string"}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}},{"name":"cb_transparency_vec","type":{"type":"array","items":"int"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"cb_attr","type":"string"},{"name":"cb_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointcolor_attr","type":"string"},{"name":"cb_pointcolor_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointalpha_attr","type":"string"},{"name":"cb_pointalpha_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointsize_attr","type":"string"},{"name":"cb_pointsize_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointshape_attr","type":"string"},{"name":"cb_pointshape_vals","type":{"type":"array","items":"string"}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}},{"name":"cb_transparency_vec","type":{"type":"array","items":"int"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("world_table_names", "array", [("string")]), ("x_column_name", "string"), ("y_column_name", "string"), ("geometry_column_name", "string"), ("track_ids", "array", [("array", [("string")])]), ("cb_attr", "string"), ("cb_vals", "array", [("string")]), ("cb_pointcolor_attr", "string"), ("cb_pointcolor_vals", "array", [("string")]), ("cb_pointsize_attr", "string"), ("cb_pointsize_vals", "array", [("string")]), ("cb_pointshape_attr", "string"), ("cb_pointshape_vals", "array", [("string")]), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("projection", "string"), ("bg_color", "long"), ("style_options", "map", [("array", [("string")])]), ("options", "map", [("string")]), ("cb_transparency_vec", "array", [("int")])] )
+        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("world_table_names", "array", [("string")]), ("x_column_name", "string"), ("y_column_name", "string"), ("geometry_column_name", "string"), ("track_ids", "array", [("array", [("string")])]), ("cb_attr", "string"), ("cb_vals", "array", [("string")]), ("cb_pointcolor_attr", "string"), ("cb_pointcolor_vals", "array", [("string")]), ("cb_pointalpha_attr", "string"), ("cb_pointalpha_vals", "array", [("string")]), ("cb_pointsize_attr", "string"), ("cb_pointsize_vals", "array", [("string")]), ("cb_pointshape_attr", "string"), ("cb_pointshape_vals", "array", [("string")]), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("projection", "string"), ("bg_color", "long"), ("style_options", "map", [("array", [("string")])]), ("options", "map", [("string")]), ("cb_transparency_vec", "array", [("int")])] )
         RSP_SCHEMA = Schema( "record", [("width", "double"), ("height", "double"), ("bg_color", "long"), ("image_data", "bytes"), ("info", "map", [("string")])] )
         ENDPOINT = "/visualize/image/classbreak"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -20738,7 +20738,14 @@ class GPUdb(object):
         Meaning, all primary key columns must appear in an equality predicate
         in the expressions.  Furthermore each 'pure primary key' predicate must
         be unique within a given request.  These restrictions can be removed by
-        utilizing some available options through input parameter *options*.
+        utilizing some available options through input parameter *options*.Note
+        that this operation can only be run on an original table and not on a
+        collection or a result view.
+
+        The *update_on_existing_pk* option specifies the record collision
+        policy for tables with a `primary key
+        <../../../concepts/tables.html#primary-keys>`_, and is ignored on
+        tables with no primary key.
 
         Parameters:
 
@@ -20821,13 +20828,27 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **update_on_existing_pk** --
-                  Can be used to customize behavior when the updated primary
-                  key value already exists as described in
-                  :meth:`.insert_records`.
+                  Specifies the record collision policy for tables with a
+                  `primary key <../../../concepts/tables.html#primary-keys>`_
+                  when updating columns of the `primary key
+                  <../../../concepts/tables.html#primary-keys>`_ or inserting
+                  new records.  If *true*, existing records with primary key
+                  values that match those of a record being updated or inserted
+                  will be replaced by the updated and new records.  If *false*,
+                  existing records with matching primary key values will remain
+                  unchanged, and the updated or new records with primary key
+                  values that match those of existing records will be
+                  discarded.  If the specified table does not have a primary
+                  key, then this option has no effect.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Overwrite existing records when updated and inserted
+                    records have the same primary keys
+
+                  * **false** --
+                    Discard updated and inserted records when the same primary
+                    keys already exist
 
                   The default value is 'false'.
 
@@ -21350,7 +21371,9 @@ class GPUdb(object):
                                     None, geometry_column_name = None, track_ids
                                     = None, cb_attr = None, cb_vals = None,
                                     cb_pointcolor_attr = None,
-                                    cb_pointcolor_vals = None, cb_pointsize_attr
+                                    cb_pointcolor_vals = None,
+                                    cb_pointalpha_attr = None,
+                                    cb_pointalpha_vals = None, cb_pointsize_attr
                                     = None, cb_pointsize_vals = None,
                                     cb_pointshape_attr = None,
                                     cb_pointshape_vals = None, min_x = None,
@@ -21370,6 +21393,8 @@ class GPUdb(object):
         cb_vals = cb_vals if isinstance( cb_vals, list ) else ( [] if (cb_vals is None) else [ cb_vals ] )
         assert isinstance( cb_pointcolor_attr, (basestring)), "visualize_image_classbreak(): Argument 'cb_pointcolor_attr' must be (one) of type(s) '(basestring)'; given %s" % type( cb_pointcolor_attr ).__name__
         cb_pointcolor_vals = cb_pointcolor_vals if isinstance( cb_pointcolor_vals, list ) else ( [] if (cb_pointcolor_vals is None) else [ cb_pointcolor_vals ] )
+        assert isinstance( cb_pointalpha_attr, (basestring)), "visualize_image_classbreak(): Argument 'cb_pointalpha_attr' must be (one) of type(s) '(basestring)'; given %s" % type( cb_pointalpha_attr ).__name__
+        cb_pointalpha_vals = cb_pointalpha_vals if isinstance( cb_pointalpha_vals, list ) else ( [] if (cb_pointalpha_vals is None) else [ cb_pointalpha_vals ] )
         assert isinstance( cb_pointsize_attr, (basestring)), "visualize_image_classbreak(): Argument 'cb_pointsize_attr' must be (one) of type(s) '(basestring)'; given %s" % type( cb_pointsize_attr ).__name__
         cb_pointsize_vals = cb_pointsize_vals if isinstance( cb_pointsize_vals, list ) else ( [] if (cb_pointsize_vals is None) else [ cb_pointsize_vals ] )
         assert isinstance( cb_pointshape_attr, (basestring)), "visualize_image_classbreak(): Argument 'cb_pointshape_attr' must be (one) of type(s) '(basestring)'; given %s" % type( cb_pointshape_attr ).__name__
@@ -21399,6 +21424,8 @@ class GPUdb(object):
         obj['cb_vals'] = cb_vals
         obj['cb_pointcolor_attr'] = cb_pointcolor_attr
         obj['cb_pointcolor_vals'] = cb_pointcolor_vals
+        obj['cb_pointalpha_attr'] = cb_pointalpha_attr
+        obj['cb_pointalpha_vals'] = cb_pointalpha_vals
         obj['cb_pointsize_attr'] = cb_pointsize_attr
         obj['cb_pointsize_vals'] = cb_pointsize_vals
         obj['cb_pointshape_attr'] = cb_pointshape_attr
@@ -22265,7 +22292,7 @@ class GPUdbTable( object ):
                 (meaning ingestion and lookup).  Default is False.
                 Note that multi-head ingestion is more computation intensive
                 for sharded tables, and it it probably advisable only if there
-                is a heavy ingestion load.  Choose carefully.  
+                is a heavy ingestion load.  Choose carefully.
 
                 Please see documentation of parameters *multihead_ingest_batch_size*
                 and *flush_multi_head_ingest_per_insertion* for controlling
@@ -22377,7 +22404,7 @@ class GPUdbTable( object ):
 
             # Update the table's type
             self.__update_table_type()
-            
+
             return # Nothing more to do
         # end if
 
@@ -22392,7 +22419,7 @@ class GPUdbTable( object ):
             if not _Util.is_ok( has_table_rsp ): # problem creating the table
                 raise GPUdbException( "Problem checking existence of the table: " + _Util.get_error_msg( has_table_rsp ) )
             table_exists = has_table_rsp["table_exists"]
-            
+
             # Do different things based on whether the table already exists
             if table_exists:
                 # Check that the given type agrees with the existing table's type, if any given
@@ -22562,7 +22589,7 @@ class GPUdbTable( object ):
 
             return self._count
         # end if read only table
-        
+
         # Not a read-only table; get the current size
         show_table_rsp = self.db.show_table( self.name, options = {"get_sizes": "true"} )
         if not show_table_rsp.is_ok():
@@ -22676,13 +22703,13 @@ class GPUdbTable( object ):
             # Table exists; so the problem is something else
             raise GPUdbException("Problem while updating table type: '{}'"
                                  "".format( show_table_rsp.get_error_msg() ) )
-            
-        
+
+
         # Check if the type ID matches with the cached type
         type_id = show_table_rsp["type_ids"][0]
         if (self._type_id == type_id):
             return False
-        
+
         self.__save_table_type( show_table_rsp["type_schemas"][0],
                                 show_table_rsp["properties"][0] )
         # And also the type ID
@@ -22710,7 +22737,7 @@ class GPUdbTable( object ):
             # The multi-head ingestor's logger
             if self._multihead_ingestor:
                 self._multihead_ingestor.set_logger_level( log_level )
-                
+
             # The multi-head retriever's logger
             if self._multihead_retriever:
                 self._multihead_retriever.set_logger_level( log_level )
@@ -22718,7 +22745,7 @@ class GPUdbTable( object ):
             raise GPUdbException("Invalid log level: '{}'".format( str(ex) ))
     # end set_logger_level
 
-    
+
     @property
     def table_name( self ):
         return self.name
@@ -22740,14 +22767,14 @@ class GPUdbTable( object ):
         return self.__len__()
     # end count
 
-    
+
     @property
     def is_collection( self ):
         """Returns True if the table is a collection; False otherwise."""
         return self._is_collection
     # end is_collection
 
-    
+
     @property
     def collection_name( self ):
         """Returns the name of the collection this table is a member of; None if
@@ -22755,7 +22782,7 @@ class GPUdbTable( object ):
         """
         return self._collection_name
     # end collection_name
-    
+
 
     def is_replicated( self ):
         """Returns True if the table is replicated."""
@@ -22785,7 +22812,7 @@ class GPUdbTable( object ):
 
         return "{0} as {1}".format( self.name, alias )
     # end alias
-    
+
 
 
     def create_view( self, view_name, count = None ):
@@ -22863,15 +22890,15 @@ class GPUdbTable( object ):
     def __log_warn( self, message ):
         self.log.warn( "[GPUdbTable] {}".format( message ) )
     # end __warn
-    
+
     def __log_info( self, message ):
         self.log.info( "[GPUdbTable] {}".format( message ) )
     # end __log_info
-    
+
     def __log_error( self, message ):
         self.log.error( "[GPUdbTable] {}".format( message ) )
     # end __log_error
-    
+
 
     def __encode_data_for_insertion_avro( self, values ):
         """Encode the given values with the database client's encoding
@@ -22970,7 +22997,7 @@ class GPUdbTable( object ):
 
         return encoded_data
     # end __encode_data_for_insertion
-    
+
 
     def __insert_encoded_records( self, encoded_data, options ):
         """Given encoded records and some options, insert the records
@@ -23034,7 +23061,7 @@ class GPUdbTable( object ):
                     insert_records( [ {"a":  1, "b":  1},
                                       {"a": 42, "b": 32} ] )
 
- 
+
                 Additionally, the user may provide options for the insertion
                 operation.  For example:
 
@@ -23342,13 +23369,13 @@ class GPUdbTable( object ):
         if not self._multihead_retriever:
             raise GPUdbException( "Record retrieval by sharding/primary keys "
                                   "is not set up for this table." )
-        
+
         return self._multihead_retriever.get_records_by_key( key_values, expression, options )
     # end get_records_by_key
 
 
-    
-    def get_records( self, offset = 0, limit = 10000,
+
+    def get_records( self, offset = 0, limit = -9999,
                      encoding = 'binary', options = {},
                      force_primitive_return_types = True ):
         """Retrieves records from a given table, optionally filtered by an
@@ -23377,7 +23404,7 @@ class GPUdbTable( object ):
             limit (long)
                 A positive integer indicating the maximum number of results to
                 be returned. Or END_OF_SET (-9999) to indicate that the max
-                number of results should be returned.  Default value is 10000.
+                number of results should be returned.  Default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records.  Default value is
@@ -23463,7 +23490,7 @@ class GPUdbTable( object ):
 
 
 
-    def get_records_by_column( self, column_names, offset = 0, limit = 10000,
+    def get_records_by_column( self, column_names, offset = 0, limit = -9999,
                                encoding = 'binary', options = {},
                                print_data = False,
                                force_primitive_return_types = True, get_column_major = True ):
@@ -23497,7 +23524,7 @@ class GPUdbTable( object ):
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned (if not provided the default is 10000), or
+                be returned (if not provided the default is -9999), or
                 END_OF_SET (-9999) to indicate that the maximum number of
                 results allowed by the server should be returned.
 
@@ -23588,7 +23615,7 @@ class GPUdbTable( object ):
         # Print the date, if desired
         if print_data and get_column_major:
             print( tabulate( data , headers = 'keys', tablefmt = 'psql') )
-        
+
         # Else, return the decoded records
         return data
     # end get_records_by_column
@@ -23683,7 +23710,7 @@ class GPUdbTable( object ):
 
 
 
-    def get_records_from_collection( self, offset = 0, limit = 10000,
+    def get_records_from_collection( self, offset = 0, limit = -9999,
                                      encoding = 'binary', options = {},
                                      force_primitive_return_types = True ):
         """Retrieves records from a collection. The operation can optionally
@@ -23707,7 +23734,7 @@ class GPUdbTable( object ):
             limit (long)
                 A positive integer indicating the maximum number of results to
                 be returned, or END_OF_SET (-9999) to indicate that the max
-                number of results should be returned.  Default value is 10000.
+                number of results should be returned.  Default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records; either 'binary' or
@@ -23765,7 +23792,7 @@ class GPUdbTable( object ):
     # end get_records_from_collection
 
 
-    def get_geo_json( self, offset = 0, limit = 10000,
+    def get_geo_json( self, offset = 0, limit = -9999,
                      options = {}, force_primitive_return_types = True ):
         """Retrieves records as a GeoJSON from a given table, optionally filtered by an
         expression and/or sorted by a column. This operation can be performed
@@ -23793,7 +23820,7 @@ class GPUdbTable( object ):
             limit (long)
                 A positive integer indicating the maximum number of results to
                 be returned. Or END_OF_SET (-9999) to indicate that the max
-                number of results should be returned.  Default value is 10000.
+                number of results should be returned.  Default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records.  Default value is
@@ -23864,7 +23891,7 @@ class GPUdbTable( object ):
         # Return just the records; disregard the extra info within the response
         return response.records[0]
     # end get_geo_json
-    
+
 
 
 
@@ -28045,7 +28072,14 @@ class GPUdbTable( object ):
         Meaning, all primary key columns must appear in an equality predicate
         in the expressions.  Furthermore each 'pure primary key' predicate must
         be unique within a given request.  These restrictions can be removed by
-        utilizing some available options through input parameter *options*.
+        utilizing some available options through input parameter *options*.Note
+        that this operation can only be run on an original table and not on a
+        collection or a result view.
+
+        The *update_on_existing_pk* option specifies the record collision
+        policy for tables with a `primary key
+        <../../../concepts/tables.html#primary-keys>`_, and is ignored on
+        tables with no primary key.
 
         Parameters:
 
@@ -28109,13 +28143,27 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **update_on_existing_pk** --
-                  Can be used to customize behavior when the updated primary
-                  key value already exists as described in
-                  :meth:`.insert_records`.
+                  Specifies the record collision policy for tables with a
+                  `primary key <../../../concepts/tables.html#primary-keys>`_
+                  when updating columns of the `primary key
+                  <../../../concepts/tables.html#primary-keys>`_ or inserting
+                  new records.  If *true*, existing records with primary key
+                  values that match those of a record being updated or inserted
+                  will be replaced by the updated and new records.  If *false*,
+                  existing records with matching primary key values will remain
+                  unchanged, and the updated or new records with primary key
+                  values that match those of existing records will be
+                  discarded.  If the specified table does not have a primary
+                  key, then this option has no effect.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Overwrite existing records when updated and inserted
+                    records have the same primary keys
+
+                  * **false** --
+                    Discard updated and inserted records when the same primary
+                    keys already exist
 
                   The default value is 'false'.
 
@@ -28677,6 +28725,3 @@ class GPUdbTableOptions(object):
     # end strategy_definition
 
 # end class GPUdbTableOptions
-
-
-
