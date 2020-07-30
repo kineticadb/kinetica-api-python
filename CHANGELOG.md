@@ -2,6 +2,21 @@
 
 ## Version 7.0
 
+### Version 7.0.18.0 - 2020-07-30
+
+#### Changed
+
+-   Some GPUdbTable methods to have a limit of -9999, instead of 10,000, to
+    align it with the GPUdb method default value:
+    -   ``get_records()``
+    -   ``get_records_by_column()``
+    -   ``get_records_from_collection()``
+    -   ``get_geo_json()``
+
+#### Note
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
+
+
 ### Version 7.0.17.0 - 2020-07-06
 
 #### Added
@@ -10,9 +25,9 @@
     The name of the class to use is `GPUdbTableMonitorBase`
     A default implementation which demonstrates usage of this class is
     included in the class `GPUdbTableMonitor`.
-    A full example is found in the directory `examples` in the Python file 
+    A full example is found in the directory `examples` in the Python file
     `table_monitor_example_Default_impl.py`.
-    There are other variants of the example in the Python files, 
+    There are other variants of the example in the Python files,
     `table_monitor_example_basic_first.py` and
     `table_monitor_example_basic_second.py`.
     Several test cases are included in the `test/table_monitor` directory.
