@@ -1,106 +1,160 @@
 # Kinetica REST API Changelog
 
-## Version 7.0
 
-### Version 7.0.18.0 - 2020-07-30
+## Version 7.1
+
+#### Added 
+-   Added the following endpoints to support cluster resiliency:
+    -   ``/admin/add/host``
+    -   ``/admin/alter/host``
+    -   ``/admin/remove/host``
+    -   ``/admin/switchover``
+-   Added the following endpoints to support SQL schemas:
+    -   ``/create/schema``
+    -   ``/alter/schema``
+    -   ``/drop/schema``
+    -   ``/show/schema``
+    -   ``/has/schema``
+-   Added the following endpoints to support data source:
+    -   ``/create/datasource``
+    -   ``alter/datasource``
+    -   ``/drop/datasource``
+    -   ``/show/datasource``
+    -   ``/grant/permission/datasource``
+    -   ``/revoke/permission/datasource``
 
 #### Changed Endpoints
 
 ##### Non-breaking Changes
+-   Deprecated collection_name parameters wherever they appear. The new method is to qualify the table name or set the default schema.
+-   Added qualified_table_name to the response info map for the following endpoints:
+    -   ``/create/materializedview``
+    -   ``/create/table``
+    -   ``/create/union``
+    -   ``/merge/records``
+-   Added qualified_projection_name to the response info map for the following endpoints:
+    -   ``/create/projection``
+-   Added qualified_result_table_name to the response info map for the following endpoints:
+    -   ``/aggregate/groupby``
+    -   ``/aggregate/unique``
+    -   ``/aggregate/unpivot``
+-   Added qualified_table_name to the response info map for the following endpoints:
+    -   ``/filter``
+    -   ``/filter/byarea``
+    -   ``/filter/byarea/geometry``
+    -   ``/filter/bybox``
+    -   ``/filter/bybox/geometry``
+    -   ``/filter/bygeometry``
+    -   ``/filter/bylist``
+    -   ``/filter/byradius``
+    -   ``/filter/byradius/geometry``
+    -   ``/filter/byrange``
+    -   ``/filter/byseries``
+    -   ``/filter/bystring``
+    -   ``/filter/bytable``
+    -   ``/filter/byvalue``
+-   /admin/rebalance
+    -   Renamed option table_whitelist to include_tables
+    -   Renamed option table_blacklist to exclude_tables
+-   /alter/system/properties
+      - Removed "enable_compound_equi_join" as an option
+-   /alter/user
+    -   Added "set_default_schema" as an action
+-   /alter/table
+    -   Added "move_to_schema" as an action
+-   /show/table
+    -   Added "schema_name" to additional_info map
+    -   Added the following table_descriptions: LOGICAL_VIEW, LOGICAL_EXTERNAL_TABLE, MATERIALIZED_EXTERNAL_TABLE, SCHEMA
 
 - Added ``cb_pointalphas`` option and ``cb_pointalpha_attrs`` and 
   ``cb_pointalpha_vals`` fields to ``visualize/image/classbreak`` to support 
   manipulation of transparency in class-break visualization.
 
-##### Breaking Changes
+-   /create/type
+    -   Added "uuid" as an allowed value in properties.
 
-### Version 7.0.17.0 - 2020-07-06
+##### Breaking Changes
+-   /admin/add/ranks
+    -   changed added_ranks parameter in response to an array of strings
+    -   removed results parameter from response
+-   /admin/remove/ranks
+    -   changed ranks parameter in request to an array of strings
+    -   changed removed_ranks parameter in response to an array of strings
+    -   removed results parameter from response
+
+
+
+### Version 7.0.17.0 - TBD
 
 #### Changed Endpoints
 
 ##### Non-breaking Changes
--   Added 'max_num_threads' option is added to the /match/graph endpoint for multi-threading support for many trips' map matching. If specified it'll not exceed the number of threads used within the constraints of the available memory and the number of cores."
-- Removed defunc 'incremental_weighted" solve method.
-- Added new option 'enable_truck_reuse' for supply demand solver of /match/graph for reusing truck in multiple rounds from the same originating depot
-- Added new option 'truck_service_limit' for sypply demand solver of /match/graph as an additional constraint on the total cost of any truck's delivery route.
-- Added option 'num_tasks_per_rank', to insert_records_fromfiles_request and create_external_table_request 
+-   Added a job_tag option to the following endpoints:
+    -   ``/create/job``
+    -   ``/get/job``
+    -   ``/admin/alter/job``
+-   Added a job_tag field to ``/show/job``
 
-### Version 7.0.16.0 - 2020-05-08
+#### Changed Endpoints
+- /match/graph option 'enable_truck_reuse' added for supply demand solver of /match/graph for reusing truck in multiple rounds from the same originating depot
+- /match/graph option 'truck_service_limit' added for sypply demand solver of /match/graph as an additional constraint on the total cost of any truck's delivery route.
+- /match/graph option 'max_num_threads" added for multi-core support for many trips map matching. If specified it will not be exceeded but it can be lower due to memory and number of core threads availibility.
+- /match/graph solve_method 'incremental_weighted' is removed as it was defunc.
+- /match/graph option 'unit_unloading_cost' added for match_supply_demand_solver type to add unloading time to the optimization.
+- /match/graph option 'filter_folding_paths' added for the markov_chain solver type to filter out the folding paths for more accurate results.
+- /match/graph option 'max_trip_cost' added for match_supply_demand solver type to restrict trips between stops excedding this number except from/to the origin. 
+- /solve/graph option 'accurate_snaps' added.
+- /match/graph for solve type 'match_supply_demand' only: the option 'aggregated_output' (default: true) added
+- /create/graph, /modify/graph: newly added option of 'add_turns' (default: false), 'turn_angle' (default: 60)
+- /solve/graph, /match/graph: newly added options of 'left_turn_penaly', 'right_turn_penalty', 'intersection_penalty', 'sharp_turn_penalty' (default: 0.0)
+- /solve/graph Added 'output_edge_path' (default=false) and 'output_wkt_path' (default=true) options for turning on and off ability to export out aggregated path lists columns onto the solutioon table for the path solvers of /solve/graph endpoint for more speed. 
+
+##### Breaking Changes
+-   
+
+##### Non-breaking Changes
+-   Added ``datasource_name`` option to ``/create/external/table`` and ``/insert/records/from/files``  
+
+
+## Version 7.0
+
+### Version 7.0.16.0 - TBD
 
 #### Changed Endpoints
 
 ##### Non-breaking Changes
 -   Added 'unit_unloading_cost' option is added to the /match/graph endpoint for
     match_supply_demand solve case to add the unloading time per drop amount.
--   Added total_number_of_records and has_more_records to
-    /get/recordsfromcollection response info map.
+-   Added total_number_of_records and has_more_records to /get/recordsfromcollection response info map.
 
-
-
-### Version 7.0.15.3 - 2020-04-28
-
-#### Changed Endpoints
-
-##### Non-breaking Changes
-- Added ``image_encoding`` option for ``/visualize/image/chart``. When using JSON serialization the option should be set to ``base64``.
-
-
-### Version 7.0.15.0 - 2020-04-13
-
-#### Non-breaking Changes
--   Added filter_folding_paths option to /match/graph's markov_chain solver type
-    to filter out the folding paths for more accurate results during the
-    optimization stage of the HM algorithm - the default is falseto save from
-    execution time.
--   Added max_trip_cost option to /match/graph for match_supply_demand solver type
-    to restrict trip between stops except from/to the origin - default is zero,
-    i.e., no check for max trip cost.
--   Minimum value for max_cpu_concurrency is now 4 for /create/resourcegroup
-    and /alter/resourcegroup.
-
-
-### Version 7.0.14.0 - 2020-03-25
-
-### Non-breaking Changes
--   Updated some docstrings
-
-
-
-### Version 7.0.13.0 - 2020-03-10
-
-#### Changed Endpoints
-- /solve/graph option 'accurate_snaps' added.
-- /match/graph for solve type 'match_supply_demand' only: the option 'aggregated_output' (default: true) added
-- /create/graph, /modify/graph: newly added option of 'add_turns' (default: false), 'turn_angle' (default: 60)
-- /solve/graph, /match/graph: newly added options of 'left_turn_penaly', 'right_turn_penalty', 'intersection_penalty', 'sharp_turn_penalty' (default: 0.0)
-
+##### Breaking Changes
 
 ### Version 7.0.12.0 - 2020-1-10
 
 ##### Non-breaking Changes
-- Added "count" to the info map in the responses for create_projection, create_union and execute_sql.
+-   Added "count" to the info map in the responses for create_projection, create_union and execute_sql.
 
 ### Version 7.0.11.0 - 2019-12-10
 
 #### Added Endpoints
-- Added a new endpoint ``/insert/records/fromfiles`` to insert records from
-  external files into a new or existing table.
-- Added a new endpoint ``/modify/graph`` for updates of an existing graph
-  in a non-streaming fashion.
+-   Added a new endpoint ``/insert/records/fromfiles`` to insert records from
+    external files into a new or existing table.
+-   Added a new endpoint ``/modify/graph`` for updates of an existing graph
+    in a non-streaming fashion.
 
 #### Changed Endpoints
 
 ##### Non-breaking Changes
-- Added an option ``remove_label_only`` to create and modify graph endpoints (see option's doc)
-- Added ``enable_overlapped_equi_join`` and ``enable_compound_equi_join`` options to ``/alter/system/properties``
-- Added ``columns`` and ``sql_where`` options to ``/grant/permission/table``
+-   Added an option ``remove_label_only`` to create and modify graph endpoints (see option's doc)
+-   Added ``enable_overlapped_equi_join`` and ``enable_compound_equi_join`` options to ``/alter/system/properties``
+-   Added ``columns`` and ``sql_where`` options to ``/grant/permission/table``
 
 ### Version 7.0.10.0 - 2019-11-13
 
 #### Changed Endpoints
 
 ##### Breaking Changes
-- Add ``additional_info`` map to ``/show/sql/proc`` to list attributes of sql procedures.
+-   Add ``additional_info`` map to ``/show/sql/proc`` to list attributes of sql procedures.
 
 ##### Non-breaking Changes
 - Added ``allpaths`` solve graph option to solve for all the paths between source and destination.

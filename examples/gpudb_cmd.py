@@ -60,7 +60,7 @@ def gpudb_cmd( argv ):
                          help = "Send a request query by specifying the name of the query and the parameters associated with the query. " \
                                 "Help is provided if only the query name is specified. " \
                                 "Note that unspecified parameters will take a default value. " \
-                                "Example: '--query aggregate_min_max --column_name x --table_name DataTable'" )
+                                "Example: '--query /aggregate/minmax --column_name x --table_name DataTable'" )
 
     # Print the help message and quit if no arguments are given
     if ( len(sys.argv) == 1 ): # None provided
@@ -196,7 +196,7 @@ def gpudb_cmd( argv ):
 
     # --------------------------------------
     # Perform the GPUDB query
-    response = gpudb._GPUdb__post_then_get_cext( req_schema, resp_schema, param_vals, endpoint )
+    response = gpudb._GPUdb__submit_request( endpoint, param_vals )
 
     print_dict( response, args.format )
     # --------------------------------------

@@ -1,8 +1,60 @@
 # GPUdb Python API Changelog
 
+## Version 7.1
+
+### Version 7.1.0.0 - TBD
+
+#### Added
+-   GPUdbTable read-only property `qualified_table_name` which returns the
+    fully qualified table name.
+-   GPUdbTable static helper method `get_qualified_table_name` which returns the
+    fully qualified version of the given table name.
+-   GPUdb.HASynchronicityMode `NONE`
+-   New exception classe(s):
+    -   GPUdbHAUnavailableException (for internal API use)
+    -   GPUdbFailoverDisabledException (for internal API use)
+    -   GPUdbUnauthorizedAccessException
+-   Method `is_kinetica_running()` for checking if a Kinetica instance is
+    running at the given URL.
+-   `GPUdb` read-only properties:
+    -   all_cluster_info
+    -   logging_level
+    -   options
+    -   protocol
+-   Some convenience methods:
+    -   GPUdb.ping()
+    -   GPUdb.is_kinetica_running()
+    -   GPUdb.get_server_debug_information()
+    -   GPUdb.wms()
+-   `GPUdbIngestor` read-only properties:
+    -   retry_count
+
+
+#### Changed
+-   GPUdbTable methods that return a GPUdbTable object now creates that object
+    based on a fully qualified (i.e. with schema) name which is returned in
+    the response of the endpoint query.
+-   `GPUdb.get_url()` takes an optional argument `stringified` with default value
+    True.
+-   `GPUdb.get_all_available_full_urls()` takes an optional argument
+    `stringified` with default value True.
+-   If the user gives the wrong host manager port to `GPUdb` via `GPUdb.Options`,
+    `GPUdb` will no longer attempt to fix it.
+
+#### Deprecated
+-   The following `GPUdb` property setters have been deprecated; they will
+    no longer have any effect on the GPUdb object:
+    -   `GPUdb.connection`
+    -   `GPUdb.host`
+    -   `GPUdb.port`
+    -   `GPUdb.host_manager_port`
+    -   `GPUdb.gpudb_url_path`
+
+
+
 ## Version 7.0
 
-### Version 7.0.18.0 - 2020-07-30
+### Version 7.0.18.0 - TBD
 
 #### Changed
 
@@ -17,7 +69,7 @@
 -   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
 
 
-### Version 7.0.17.0 - 2020-07-06
+### Version 7.0.17.0 - TBD
 
 #### Added
 

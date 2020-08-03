@@ -1,6 +1,7 @@
 from __future__ import print_function
 
 import argparse
+import copy
 import datetime
 import logging
 import random
@@ -125,14 +126,6 @@ class TableMonitorExampleClient():
                                         cb_deleted=self.on_delete,
                                         cb_table_dropped=self.on_table_dropped
                                         )
-
-    @property
-    def callbacks(self):
-        return self.callbacks
-
-    @callbacks.setter
-    def callbacks(self, value):
-        self.callbacks = value
 
     def __process_table_event(self, item):
         """
@@ -284,7 +277,7 @@ def load_data():
     ]
 
     # Grab a handle to the history table for inserting new weather records
-    history_table = gpudb.GPUdbTable(name="table_monitor_history", db=h_db)
+    history_table = gpudb.GPUdbTable(name="examples.table_monitor_history", db=h_db)
 
     random.seed(0)
 
@@ -375,8 +368,8 @@ def create_tables():
 def clear_tables():
     # Drop all the tables
     for table_name in reversed([
-        "table_monitor_status",
-        "table_monitor_history"
+        "examples.table_monitor_status",
+        "examples.table_monitor_history"
     ]):
         h_db.clear_table(table_name)
 
@@ -393,7 +386,7 @@ def delete_records(h_db):
 
     """
     print("In delete records ...")
-    history_table = gpudb.GPUdbTable(name="table_monitor_history", db=h_db)
+    history_table = gpudb.GPUdbTable(name="examples.table_monitor_history", db=h_db)
     pre_delete_records = history_table.size()
     print("Records before = %s" % pre_delete_records)
     delete_expr = ["state_province = 'Sao Paulo'"]
@@ -409,14 +402,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run table monitor example.')
     parser.add_argument('command', nargs="?",
                         help='command to execute (currently only "clear" to remove the example tables')
-    parser.add_argument('--host', default='localhost', help='Kinetica host to '
+    parser.add_argument('--host', default='10.0.0.21', help='Kinetica host to '
                                                             'run '
                                                             'example against')
     parser.add_argument('--port', default='9191', help='Kinetica port')
     parser.add_argument('--username', default='admin', help='Username of user to run example with')
     parser.add_argument('--password', default='Kinetica1!', help='Password of '
                                                               'user')
-    parser.add_argument('--tablename', default='table_monitor_history', help='Name of Kinetica table to monitor')
+    parser.add_argument('--tablename', default='examples.table_monitor_history', help='Name of Kinetica table to monitor')
 
     args = parser.parse_args()
 

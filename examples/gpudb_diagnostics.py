@@ -36,6 +36,15 @@ def diagnose_gpudb( argv ):
       argv -- Command line arguments
     """
 
+    def get_prefix_table_name_with_current_datetime( prefix ):
+        # Get a table name without a period (not allowed in 7.1)
+        return "{prefix}_{now}".format( prefix = prefix,
+                                        now = datetime.datetime.now()
+                                                  .isoformat()
+                                                  .split(".")[0] )
+    # end get_prefix_table_name_with_current_datetime
+
+
     # Parse the command line arguments
     if ( len(sys.argv) == 1 ): # None provided
         # Print help message and quit
@@ -92,7 +101,8 @@ def diagnose_gpudb( argv ):
     # Using the registered type's ID, create a new set (and check that worked)
     # Endpoint: /create/table
     type_id = create_resp[ 'type_id' ]
-    table_name = "diagnostics_point_set_" + datetime.datetime.now().isoformat()
+    # Get a table name without a period (not allowed in 7.1)
+    table_name = get_prefix_table_name_with_current_datetime( "diagnostics_point_set" )
     create_table_resp = gpudb.create_table( table_name, type_id ) # not a part of a collection
     assert create_table_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to create point table; error message: %s" \
                                               % create_table_resp['status_info'][ 'message' ]
@@ -130,14 +140,14 @@ def diagnose_gpudb( argv ):
 
     # Bounding box: x within [10, 20] and y within [10, 20]
     # Endpoint: /filter/bybox
-    bbox_view_name = "diagnostics_bbox_result_" + datetime.datetime.now().isoformat()
+    bbox_view_name = get_prefix_table_name_with_current_datetime( "diagnostics_bbox_result" )
     bbox_resp = gpudb.filter_by_box( table_name, bbox_view_name, "x", 10, 20, "y", 10, 20 )
     assert bbox_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to perform bounding box query; error message: %s" \
                                               % bbox_resp['status_info'][ 'message' ]
 
     # Filter by radius: 100km radius around (lon, lat) = (15, 15)
     # Endpoint: /filter/byradius
-    fradius_view_name = "diagnostics_filter_by_radius_result_" + datetime.datetime.now().isoformat()
+    fradius_view_name = get_prefix_table_name_with_current_datetime( "diagnostics_filter_by_radius_result" )
     fradius_resp = gpudb.filter_by_radius( bbox_view_name, fradius_view_name, "x", 15, "y", 15, 100000 )
     assert fradius_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to perform filter by radius query; error message: %s" \
                                               % fradius_resp['status_info'][ 'message' ]
@@ -146,7 +156,7 @@ def diagnose_gpudb( argv ):
     # as the above chained queries
     # Select: ( (10 <= x) and (x <= 20) and (10 <= y) and (y <= 20) and (geodist(x, y, 15, 15) < 100000) )
     # Endpoint: /filter
-    filter_view_name = "diagnostics_filter_result_" + datetime.datetime.now().isoformat()
+    filter_view_name = get_prefix_table_name_with_current_datetime( "diagnostics_filter_result" )
     predicate = "( (10 <= x) and (x <= 20) and (10 <= y) and (y <= 20) and (geodist(x, y, 15, 15) < 100000) )"
     filter_resp = gpudb.filter( table_name, filter_view_name, predicate )
     assert filter_resp['status_info'][ 'status' ] == 'OK', "GPUdb failed to perform filter query; error message: %s" \
@@ -187,7 +197,7 @@ def diagnose_gpudb( argv ):
     #
     # Obtain the selected objects by performing a select query
     # Endpoint: /filter
-    filter_view_name2 = "diagnostics_filter_result_2_" + datetime.datetime.now().isoformat()
+    filter_view_name2 = get_prefix_table_name_with_current_datetime( "diagnostics_filter_result_2" )
     filter_resp1 = gpudb.filter( table_name, filter_view_name2, update_predicate )
     assert filter_resp1['status_info'][ 'status' ] == 'OK', "GPUdb failed to perform filter operation; error message: %s" \
                                               % filter_resp1['status_info'][ 'message' ]
@@ -196,7 +206,7 @@ def diagnose_gpudb( argv ):
     # and check that it matches with the above count
     # Endpont: /filter
     filter_expression = "(y == 71)"
-    filter_view_name3 = "diagnostics_filter_result_3_" + datetime.datetime.now().isoformat()
+    filter_view_name3 = get_prefix_table_name_with_current_datetime( "diagnostics_filter_result_3" )
     filter_resp2 = gpudb.filter( table_name, filter_view_name3, filter_expression )
     assert filter_resp2['status_info'][ 'status' ] == 'OK', "GPUdb failed to perform filter operation; error message: %s" \
                                               % filter_resp2['status_info'][ 'message' ]

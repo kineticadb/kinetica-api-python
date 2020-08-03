@@ -246,7 +246,9 @@ class BaseTask(threading.Thread):
 
         # Setup the logger for this instance
         self._id = str(uuid.uuid4())
-        self.__logger = logging.getLogger("gpudb_table_monitor.BaseTask_instance_" + self._id)
+        # self._logger is kept protected since it is also accessed from the
+        # BaseTask derived classes
+        self._logger = logging.getLogger("gpudb_table_monitor.BaseTask_instance_" + self._id)
 
         handler = logging.StreamHandler()
         formatter = logging.Formatter("%(asctime)s %(levelname)-8s {%("
@@ -254,10 +256,10 @@ class BaseTask(threading.Thread):
                                        "%Y-%m-%d %H:%M:%S")
         handler.setFormatter( formatter )
 
-        self.__logger.addHandler( handler )
+        self._logger.addHandler(handler)
 
         # Prevent logging statements from being duplicated
-        self.__logger.propagate = False
+        self._logger.propagate = False
 
     # End __init__ BaseTask
 
@@ -336,7 +338,7 @@ class BaseTask(threading.Thread):
             self.type_schema = retval["type_schema"]
             return True
         except GPUdbException as gpe:
-            self.__logger.error(gpe.message)
+            self._logger.error(gpe.message)
             return False
     # End _create_table_monitor BaseTask
 
@@ -355,7 +357,7 @@ class BaseTask(threading.Thread):
 
         """
         # Connect to queue using specified table monitor URL and topic ID
-        self.__logger.debug("Starting...")
+        self._logger.debug("Starting...")
         self.socket.connect(table_monitor_queue_url)
 
         if sys.version_info[:3] > (3, 0):
@@ -365,17 +367,17 @@ class BaseTask(threading.Thread):
 
         self.socket.setsockopt_string(zmq.SUBSCRIBE, topicid)
 
-        self.__logger.debug(" Started!")
+        self._logger.debug(" Started!")
 
     # End _connect_to_topic BaseTask
 
     def _disconnect_from_topic(self):
         """ This method closes the ZMQ socket and terminates the context
         """
-        self.__logger.debug(" Stopping...")
+        self._logger.debug(" Stopping...")
         self.socket.close()
         self.context.term()
-        self.__logger.debug(" Stopped!")
+        self._logger.debug(" Stopped!")
 
     # End _disconnect_from_topic BaseTask
 
@@ -391,7 +393,7 @@ class BaseTask(threading.Thread):
             try:
                 self._fetch_message()
             except zmq.ZMQError as zmqe:
-                self.__logger.error("ZMQ connection error : %s" % zmqe.message)
+                self._logger.error("ZMQ connection error : %s" % zmqe.message)
                 # Try to re-create the table monitor, resorting to HA
                 if not self.__recreate_table_monitor():
                     self.kill = True
@@ -462,10 +464,10 @@ class BaseTask(threading.Thread):
                 decoded = True
                 break
             except Exception as e:
-                self.__logger.error("Exception received "
+                self._logger.error("Exception received "
                                 "while decoding : "
                                 "%s" % str(e))
-                self.__logger.error(
+                self._logger.error(
                     "Failed to decode message %s with "
                     "updated schema %s" % message_data,
                     self.type_schema)
@@ -486,7 +488,7 @@ class BaseTask(threading.Thread):
         Returns: Nothing
 
         """
-        self.__logger.debug("In __check_state_on_no_zmq_message ...")
+        self._logger.debug("In __check_state_on_no_zmq_message ...")
 
         self.check_gpudb_and_table_state_count += 1
 
@@ -495,7 +497,7 @@ class BaseTask(threading.Thread):
             # counter and process further
             self.check_gpudb_and_table_state_count = 0
 
-            self.__logger.debug("In __check_state_on_no_zmq_message : COUNT THRESHOLD REACHED")
+            self._logger.debug("In __check_state_on_no_zmq_message : COUNT THRESHOLD REACHED")
 
             try:
                 # Check whether the table is still valid
@@ -509,15 +511,14 @@ class BaseTask(threading.Thread):
 
                         # Cache the full_url value
                         self.full_url = self.db.gpudb_full_url
-
-                        self.__logger.debug("{} :: HA Switchover "
+                        self._logger.warning("{} :: HA Switchover "
                                           "happened : Current_full_url = {} "
                                           "and "
                                           "new_gpudb_full_url = {}".format(self.id, current_full_url, self.db.gpudb_full_url))
 
                         new_type_id, new_type_schema = self.__get_type_and_schema_for_table()
 
-                        self.__logger.debug("Old type_id = {} : New type_id = {}".format(self.type_id, new_type_id))
+                        self._logger.debug("Old type_id = {} : New type_id = {}".format(self.type_id, new_type_id))
 
                         if self.type_id != new_type_id and self._options.terminate_on_table_altered:
                             # Means table has been altered
@@ -548,7 +549,7 @@ class BaseTask(threading.Thread):
 
             except GPUdbException as gpe:
                 if isinstance(gpe, GPUdbConnectionException):
-                    self.__logger.error("GpuDb error : %s" % gpe.message)
+                    self._logger.error("GpuDb error : %s" % gpe.message)
             except Exception as e:
                 self._quit_on_exception(event_type=None, message=str(e))
 
@@ -575,7 +576,7 @@ class BaseTask(threading.Thread):
             # valid anymore
             del message_list[:]
 
-        self.__logger.error(message)
+        self._logger.error(message)
 
         if event_type == NotificationEventType.TABLE_DROPPED:
             self._callbacks.cb_table_dropped(message)
@@ -620,7 +621,7 @@ class BaseTask(threading.Thread):
                         # Cache the full_url value
                         self.full_url = self.db.gpudb_full_url
 
-                        self.__logger.debug("{} :: HA Switchover "
+                        self._logger.warning("{} :: HA Switchover "
                                         "happened : Current_full_url = {} "
                                         "and "
                                         "new_gpudb_full_url = {}".format(
@@ -644,7 +645,7 @@ class BaseTask(threading.Thread):
                     break
 
             except GPUdbException as gpe:
-                self.__logger.error(gpe.message)
+                self._logger.error(gpe.message)
 
             if (round(time.time()) - start_time) >= HA_CHECK_THRESHOLD_SECS:
                 break
@@ -671,7 +672,7 @@ class BaseTask(threading.Thread):
             latest_type_id = show_table_response['type_ids'][0]
             return latest_type_id, latest_type_schema
         except GPUdbException as gpe:
-            self.__logger.error(gpe.message)
+            self._logger.error(gpe.message)
             return None, None
 
     # End __get_type_and_schema_for_table BaseTask
@@ -712,7 +713,7 @@ class BaseTask(threading.Thread):
         ret = self.socket.poll(self._options.zmq_polling_interval)
 
         if ret != 0:
-            self.__logger.debug("Received message .. ")
+            self._logger.debug("Received message .. ")
             messages = self.socket.recv_multipart()
             self._process_message(messages)
 
@@ -755,7 +756,7 @@ class BaseTask(threading.Thread):
 
     @property
     def logging_level(self):
-        return self.__logger.level
+        return self._logger.level
 
     @logging_level.setter
     def logging_level(self, value):
@@ -770,7 +771,7 @@ class BaseTask(threading.Thread):
             or logging.DEBUG etc.
         """
         try:
-            self.__logger.setLevel(value)
+            self._logger.setLevel(value)
         except (ValueError, TypeError, Exception) as ex:
             raise GPUdbException("Invalid log level: '{}'".format(str(ex)))
 
@@ -835,7 +836,7 @@ class InsertWatcherTask(BaseTask):
         else:
             topic_id_recvd = str(messages[0], 'utf-8')
 
-        self.__logger.info("Topic_id_received = " + topic_id_recvd)
+        self._logger.info("Topic_id_received = " + topic_id_recvd)
 
         message_parsing_failed = False
         # Process all messages, skipping the (first) topic frame
@@ -858,9 +859,9 @@ class InsertWatcherTask(BaseTask):
                 # issue with decoding the data; possibly due to
                 # a different schema resulting from a table
                 # alteration.
-                self.__logger.error("Exception received while decoding {}".format(str(e)))
+                self._logger.error("Exception received while decoding {}".format(str(e)))
 
-                self.__logger.error("Failed to decode message {} "
+                self._logger.error("Failed to decode message {} "
                                   "with schema {}".format(message_data,
                                                           self.type_schema))
 
@@ -902,11 +903,11 @@ class InsertWatcherTask(BaseTask):
                 if self.__cb_insert_raw is not None:
                     self.__cb_insert_raw(message_data)
             except Exception as e:
-                self.__logger.error(e)
+                self._logger.error(e)
                 raise GPUdbException(e)
 
         if not message_parsing_failed:
-            self.__logger.debug("Received <%s> messages and one topic frame" % (len(messages) - 1))
+            self._logger.debug("Received <%s> messages and one topic frame" % (len(messages) - 1))
             if self.__cb_insert_decoded is not None:
                 try:
                     self.__cb_insert_decoded(message_list)
@@ -1006,18 +1007,18 @@ class UpdateWatcherTask(BaseTask):
                 GPUdbRecord.decode_binary_data(self.record_type, messages[1])[
                     0])
 
-            self.__logger.debug("Topic Id = {} , record = {} "
-                                .format(topic_id_recvd,
+            self._logger.debug("Topic Id = {} , record = {} "
+                               .format(topic_id_recvd,
                                       retobj["count"]))
         except Exception as e:
             # The exception could only be because of some
             # issue with decoding the data; possibly due to
             # a different schema resulting from a table
             # alteration.
-            self.__logger.error(
+            self._logger.error(
                 "Exception received while decoding {}".format(
                     str(e)))
-            self.__logger.error("Failed to decode message {} "
+            self._logger.error("Failed to decode message {} "
                               "with schema {}".format(
                                                         messages[1],
                                                         self.type_schema
@@ -1054,7 +1055,7 @@ class UpdateWatcherTask(BaseTask):
             if self.__cb_update is not None:
                 self.__cb_update(retobj["count"])
         except Exception as e:
-            self.__logger.error(e)
+            self._logger.error(e)
             raise GPUdbException(e)
 
         if message_parsing_failed:
@@ -1128,7 +1129,7 @@ class DeleteWatcherTask(BaseTask):
         """
 
         """
-        self.__logger.debug("Messages  = %s" % messages)
+        self._logger.debug("Messages  = %s" % messages)
 
         if sys.version_info[0] == 2:
             topic_id_recvd = "".join(
@@ -1149,18 +1150,18 @@ class DeleteWatcherTask(BaseTask):
                 GPUdbRecord.decode_binary_data(self.type_schema, messages[1])[
                     0])
 
-            self.__logger.debug("Topic Id = {} , record = {} "
-                                .format(topic_id_recvd,
+            self._logger.debug("Topic Id = {} , record = {} "
+                               .format(topic_id_recvd,
                                       retobj["count"]))
         except Exception as e:
             # The exception could only be because of some
             # issue with decoding the data; possibly due to
             # a different schema resulting from a table
             # alteration.
-            self.__logger.error(
+            self._logger.error(
                 "Exception received while decoding {}".format(str(e)))
 
-            self.__logger.error("Failed to decode message {} "
+            self._logger.error("Failed to decode message {} "
                               "with schema {}".format( messages[1], self.type_schema))
 
             message_parsing_failed = True
@@ -1195,7 +1196,7 @@ class DeleteWatcherTask(BaseTask):
             if self.__cb_delete is not None:
                 self.__cb_delete(retobj["count"])
         except Exception as e:
-            self.__logger.error(e)
+            self._logger.error(e)
             raise GPUdbException(e)
 
         if message_parsing_failed:
@@ -1316,7 +1317,7 @@ class GPUdbTableMonitorBase(object):
                     HA_CHECK_THRESHOLD_SECS = self.options.ha_check_threshold
                     DECODE_FAILURE_THRESHOLD_SECS = self.options.decode_failure_threshold
                 except GPUdbException as ge:
-                    self.__logger.error(ge.message)
+                    self._logger.error(ge.message)
                     raise GPUdbException(ge)
 
             else:
@@ -1326,7 +1327,9 @@ class GPUdbTableMonitorBase(object):
 
         # Setup the logger for this instance
         self._id = str(uuid.uuid4())
-        self.__logger = logging.getLogger("gpudb_table_monitor.GPUdbTableMonitorBase_instance_" + self._id)
+        # self._logger is kept protected since it is alos accessed from
+        # GPUtbTableMonitorBase derived classes.
+        self._logger = logging.getLogger("gpudb_table_monitor.GPUdbTableMonitorBase_instance_" + self._id)
 
         handler = logging.StreamHandler()
         formatter = logging.Formatter("%(asctime)s %(levelname)-8s {%("
@@ -1334,10 +1337,10 @@ class GPUdbTableMonitorBase(object):
                                        "%Y-%m-%d %H:%M:%S")
         handler.setFormatter( formatter )
 
-        self.__logger.addHandler( handler )
+        self._logger.addHandler(handler)
 
         # Prevent logging statements from being duplicated
-        self.__logger.propagate = False
+        self._logger.propagate = False
 
     # End __init__ GPUdbTableMonitorBase
 
@@ -1389,12 +1392,16 @@ class GPUdbTableMonitorBase(object):
         if db is not None and isinstance(db, GPUdb):
             gpu_db_value_correct = True
 
-        if table_name is not None and \
-                (isinstance(table_name, (basestring, unicode)) and len(
-                    table_name.strip()) > 0) and \
-                gpu_db_value_correct and \
-                db.has_table(table_name, options={})["table_exists"]:
-            table_name_value_correct = True
+        if gpu_db_value_correct:
+            if table_name is not None and \
+                isinstance(table_name, (basestring, unicode)) and \
+                    len(table_name.strip()) > 0:
+                try:
+                    has_table_response = db.has_table(table_name, options={})
+                    if has_table_response.is_ok:
+                        table_name_value_correct = has_table_response["table_exists"]
+                except GPUdbException as gpe:
+                    self._logger.error(gpe.message)
 
         return gpu_db_value_correct and table_name_value_correct
 
@@ -1443,6 +1450,7 @@ class GPUdbTableMonitorBase(object):
                                                 callbacks=self.callbacks
                                                 )
                 insert_task.setup()
+                insert_task.logging_level = self.logging_level
                 insert_task.start()
                 self.task_list.append(insert_task)
             elif event_type == TableEventType.UPDATE:
@@ -1454,6 +1462,7 @@ class GPUdbTableMonitorBase(object):
                                                 callbacks=self.callbacks,
                                                 )
                 update_task.setup()
+                update_task.logging_level = self.logging_level
                 update_task.start()
                 self.task_list.append(update_task)
             else:
@@ -1465,6 +1474,7 @@ class GPUdbTableMonitorBase(object):
                                                 callbacks=self.callbacks,
                                                 )
                 delete_task.setup()
+                delete_task.logging_level = self.logging_level
                 delete_task.start()
                 self.task_list.append(delete_task)
 
@@ -1490,7 +1500,7 @@ class GPUdbTableMonitorBase(object):
 
     @property
     def logging_level(self):
-        return self.__logger.level
+        return self._logger.level
 
     @logging_level.setter
     def logging_level(self, value):
@@ -1505,7 +1515,7 @@ class GPUdbTableMonitorBase(object):
             or logging.DEBUG etc.
         """
         try:
-            self.__logger.setLevel(value)
+            self._logger.setLevel(value)
         except (ValueError, TypeError, Exception) as ex:
             raise GPUdbException("Invalid log level: '{}'".format( str(ex) ))
 
@@ -2223,7 +2233,7 @@ class GPUdbTableMonitor(GPUdbTableMonitorBase):
         """
         table_event = TableEvent(TableEventType.INSERT,
                                  count=-1, record_list=list(payload))
-        self.__logger.info("Payload received : %s " % str(table_event))
+        self._logger.info("Payload received : %s " % str(table_event))
 
     def on_insert_decoded(self, payload):
         """
@@ -2233,7 +2243,7 @@ class GPUdbTableMonitor(GPUdbTableMonitorBase):
         """
         table_event = TableEvent(TableEventType.INSERT,
                                  count=-1, record_list=payload)
-        self.__logger.info("Payload received : %s " % str(table_event))
+        self._logger.info("Payload received : %s " % str(table_event))
 
     def on_update(self, count):
         """
@@ -2242,7 +2252,7 @@ class GPUdbTableMonitor(GPUdbTableMonitorBase):
             count:
         """
         table_event = TableEvent(TableEventType.UPDATE, count=count)
-        self.__logger.info("Update count : %s " % count)
+        self._logger.info("Update count : %s " % count)
 
     def on_delete(self, count):
         """
@@ -2251,7 +2261,7 @@ class GPUdbTableMonitor(GPUdbTableMonitorBase):
             count:
         """
         table_event = TableEvent(TableEventType.DELETE, count=count)
-        self.__logger.info("Delete count : %s " % count)
+        self._logger.info("Delete count : %s " % count)
 
     def on_table_dropped(self, table_name):
         """
@@ -2261,6 +2271,6 @@ class GPUdbTableMonitor(GPUdbTableMonitorBase):
         """
         notif_event = NotificationEvent(NotificationEventType.TABLE_DROPPED,
                                         table_name)
-        self.__logger.error("Table %s dropped " % self.table_name)
+        self._logger.error("Table %s dropped " % self.table_name)
 
 # End GPUdbTableMonitor class
