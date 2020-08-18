@@ -254,6 +254,31 @@ class GPUdbException( Exception ):
         return self.__had_connection_failure
     # end had_connection_failure
 
+
+    @staticmethod
+    def stringify_exception( ex ):
+        """Given any exception, return a stringified representation.
+        If an error message is available, return that.  If no error message,
+        then return the exceptions representation using repr() method.
+
+        Note that this method should probably only be used for Python exceptions
+        that are not derived from GPUdbException (or itself).  All GPUdbException
+        objects (and its children) ought to have a proper error message; so this
+        extra check should not be needed.
+
+        Parameters:
+            ex (Exception)
+                Python exception object.
+
+        Returns:
+            A string representing the exception.
+        """
+        if str(ex):
+            return str(ex)
+        else:
+            return repr(ex)
+    # end stringify_exception
+
 # end class GPUdbException
 
 
@@ -847,7 +872,8 @@ class _Util(object):
         except GPUdbException as e:
             raise
         except KeyError as e:
-            raise GPUdbException( "Missing column value for '{}'".format( str(e) ) )
+            raise GPUdbException( "Missing column value for '{}'"
+                                  "".format( GPUdbException.stringify_exception( e ) ) )
         except:
             raise GPUdbException( str( sys.exc_info()[1] ) )
 
@@ -1051,7 +1077,8 @@ class AttrDict(dict):
             return (self.__dict__['status_info']['status'] == 'OK')
         except KeyError as ex:
             raise GPUdbException( "Unknown wrapped object; could not find "
-                                  " the following key: {}".format( str(ex) ) )
+                                  " the following key: {}"
+                                  "".format( GPUdbException.stringify_exception( ex ) ) )
     # end is_ok
 
 
@@ -1063,7 +1090,8 @@ class AttrDict(dict):
             return self.__dict__['status_info']['message']
         except KeyError as ex:
             raise GPUdbException( "Unknown wrapped object; could not find "
-                                  " the following key: {}".format( str(ex) ) )
+                                  " the following key: {}"
+                                  "".format( GPUdbException.stringify_exception( ex ) ) )
     # end get_error_msg
 
 
@@ -1123,12 +1151,6 @@ class GPUdbColumnProperty(object):
     integer data type. The string can only be interpreted as an unsigned long
     data type with minimum value of zero, and maximum value of
     18446744073709551615.
-    """
-
-
-    UUID = "uuid"
-    """str: Valid only for 'string' columns.  It represents an uuid data type.
-    Internally, it is stored as an 128-bit ingeger.
     """
 
 
@@ -2123,9 +2145,9 @@ class GPUdbRecord( object ):
 
         try:
             schema_json = json.loads( col_major_schema_str )
-        except Exception as e:
+        except Exception as ex:
             raise GPUdbException( "Could not parse 'col_major_schema_str': "
-                                  "%s" % str(e) )
+                                  "{}".format( GPUdbException.stringify_exception( ex ) ) )
 
         # Create the schema for each record from the column-major format's schema
         columns = []
@@ -3315,7 +3337,7 @@ class GPUdb(object):
                     dummy_logger.setLevel( value )
                 except (ValueError, TypeError, Exception) as ex:
                     raise GPUdbException("Invalid log level value: '{}'"
-                                         "".format( str(ex) ))
+                                         "".format( GPUdbException.stringify_exception( ex ) ))
             # end if
 
             self.__logging_level = value
@@ -3952,7 +3974,8 @@ class GPUdb(object):
                 self.__head_rank_url =  GPUdb.URL( value )
             except Exception as ex:
                 raise GPUdbException( "Unable to set property 'head_rank_url'"
-                                      "; error: '{}'".format( str(ex) ) )
+                                      "; error: {}"
+                                      "".format( GPUdbException.stringify_exception( ex ) ) )
         # end setter
 
 
@@ -3998,7 +4021,8 @@ class GPUdb(object):
                 self.__worker_rank_urls =  [ GPUdb.URL(x) for x in value ]
             except Exception as ex:
                 raise GPUdbException( "Unable to set property 'worker_rank_urls'"
-                                      "; error: '{}'".format( str(ex) ) )
+                                      "; error: {}"
+                                      "".format( GPUdbException.stringify_exception( ex ) ) )
         # end setter
 
 
@@ -4056,7 +4080,8 @@ class GPUdb(object):
                 self.__host_manager_url = GPUdb.URL( value )
             except Exception as ex:
                 raise GPUdbException( "Unable to set property 'host_manager_url'"
-                                      "; error: '{}'".format( str(ex) ) )
+                                      "; error: {}"
+                                      "".format( GPUdbException.stringify_exception( ex ) ) )
         # end setter
 
 
@@ -4209,9 +4234,10 @@ class GPUdb(object):
 
     # -------------------------  GPUdb Members --------------------------------
     __http_response_triggering_failover = [
-        httplib.SERVICE_UNAVAILABLE, # most likely
+        httplib.SERVICE_UNAVAILABLE,   # most likely
         httplib.INTERNAL_SERVER_ERROR,
-        httplib.GATEWAY_TIMEOUT
+        httplib.GATEWAY_TIMEOUT,
+        httplib.BAD_GATEWAY            # rank-0 killed with HTTPD gives this
     ]
     __endpoint_server_error_magic_strings = [
         C._DB_EXITING_ERROR_MESSAGE,
@@ -4815,7 +4841,8 @@ class GPUdb(object):
                 urls = [ GPUdb.URL( urls ) ]
             except Exception as ex:
                 raise GPUdbException( "Unable to parse argument 'urls'"
-                                      "; error: '{}'".format( str(ex) ) )
+                                      "; error: {}"
+                                      "".format( GPUdbException.stringify_exception( ex ) ) )
         else:
             # Got a list, verify that all elements are either URL objects
             # or a valid URL in a string
@@ -4835,7 +4862,8 @@ class GPUdb(object):
             urls = [ GPUdb.URL(x) for x in urls ]
         except Exception as ex:
             raise GPUdbException( "Unable to parse argument 'urls'; "
-                                  "error: '{}'".format( str(ex) ) )
+                                  "error: {}"
+                                  "".format( GPUdbException.stringify_exception( ex ) ) )
         # end try
 
         # Keep a stringified version to be used in logs
@@ -4883,21 +4911,11 @@ class GPUdb(object):
                 self.__primary_host = primary_url.host
             except GPUdbException as ex:
                 self.__log_debug( "Problem parsing primary host '{}': {}"
-                                  "".format( str(self.primary_host), str(ex) ) )
+                                  "".format( str(self.primary_host),
+                                             str(ex) ) )
                 # No-op if it's not a fully qualified URL (e.g. the user
                 # may have only given a hostname)
             # end try
-        else:
-            self.__log_debug( "No primary url given" )
-            # The user didn't give any primary URL, but let's see if they gave
-            # only one server URL (in which case, we'll treat that as the
-            # primary cluster
-            if ( len( url_deque ) == 1 ):
-                # Save just the hostname of the ONLY, hence the primary,
-                # cluster's URL for future use
-                self.__log_debug( "Only one url given by the user; setting that as the primary" )
-                self.__primary_host = url_deque[ 0 ].host
-            # end inner if
         # end if
         self.__log_debug( "Primary hostname: '{}'".format( self.primary_host ) )
 
@@ -4908,20 +4926,52 @@ class GPUdb(object):
         # Note that we're updating the member here
         self.__cluster_info = []
 
+        # We will store API-discovered URLs even if we cannot communicate with
+        # any server at that address (it might be temporarily down)
+        num_user_given_urls = len( url_deque )
+        num_processed_urls  = 0
+        is_discovered_url   = False
+
+        # We need to keep track of whether all the user given URLs all belong to
+        # the same cluster (for the purpose of primary choosing)
+        cluster_index_for_user_given_urls = []
+
         # Parse each user given URL (until the queue is empty)
         while ( url_deque ):
-            url = url_deque.popleft()
-            self.__log_debug( "Processing url: {}".format( str(url) ) );
+            url     = url_deque.popleft()
+            url_str = str( url )
+            self.__log_debug( "Processing url: {}".format( url_str ) );
             self.__log_debug( "URLs queue after removing this url (size {}): {}"
                               "".format( len(url_deque),
                                          [ str(u) for u in list( url_deque ) ] ) )
+
+            # Figure out if this URL is user given or discovered by the API
+            if (num_processed_urls >= num_user_given_urls):
+                self.__log_debug( "This url is API discovered" )
+                is_discovered_url = True
+            # end if
+            num_processed_urls += 1
 
             # Skip processing this URL if the hostname/IP address is used in
             # any of the known (already registered) clusters
             index_of_hostname_in_ring = self.__get_index_of_cluster_containing_node( url.host )
             if ( index_of_hostname_in_ring != -1 ):
                 self.__log_debug( "Already contains hostname of {}; skipping "
-                                  "processing this one".format( str(url) ) )
+                                  "processing this one".format( url_str ) )
+
+                # Save the fact that this user given URL belong to an existing
+                # cluster
+                if not is_discovered_url:
+                    self.__log_debug("Adding index {} for url {} to "
+                                     "cluster_index_for_user_given_urls"
+                                     "".format(index_of_hostname_in_ring, url_str) )
+                    cluster_index_for_user_given_urls.append( index_of_hostname_in_ring )
+                else:
+                    self.__log_debug("NOT adding index url {} to "
+                                     "cluster_index_for_user_given_urls"
+                                     "".format( url_str ) )
+                # end if
+
                 continue
             # end if
 
@@ -4931,7 +4981,21 @@ class GPUdb(object):
             if ( self.__disable_auto_discovery ):
                 self.__log_debug( "Auto discovery disabled; not connecting"
                                   " to server at '{}' at initialization for "
-                                  "verification".format( str(url) ) );
+                                  "verification".format( url_str ) );
+
+                # Save the fact that this user given URL is being added as a cluster
+                # of its own
+                if not is_discovered_url:
+                    self.__log_debug("Adding index {} for url {} to "
+                                     "cluster_index_for_user_given_urls"
+                                     "".format(len(self.__cluster_info), url_str) )
+                    cluster_index_for_user_given_urls.append( len(self.__cluster_info) )
+                else:
+                    self.__log_debug("NOT adding index url {} to "
+                                     "cluster_index_for_user_given_urls"
+                                     "".format( url_str ) )
+                # end if
+
                 # Create a cluster info object with just the given URL and the
                 # host manager port in the option
                 cluster_info = GPUdb.ClusterAddressInfo( url,
@@ -4943,8 +5007,22 @@ class GPUdb(object):
 
             # Skip processing this URL if Kinetica is not running at this address
             if not self.__is_system_running( url = url ):
-                self.__log_debug( "System is not running at {}; skipping"
-                                  "".format( str(url) ) )
+                self.__log_debug( "System is not running at {}"
+                                  "".format( url_str ) )
+                # If this URL has been discovered by the API, then add it to
+                # the cluster list anyway
+                if ( is_discovered_url ):
+                    self.__log_debug( "API-discovered URL" );
+                    # Create a cluster info object with just the given URL and the
+                    # host manager port in the option
+                    cluster_info = self.__create_cluster_address_info_with_hm_port( url,
+                                                                                    self.options.host_manager_port )
+                    self.__cluster_info.append( cluster_info )
+                    self.__log_debug( "Added cluster: {}".format( str(cluster_info) ) )
+                else:
+                    self.__log_debug( "Skipping user-given URL: {}"
+                                      "".format( url_str ) )
+                # end if
                 continue
             # end if
 
@@ -4957,17 +5035,44 @@ class GPUdb(object):
                 raise
             except GPUdbException as ex:
                 # Couldn't get the properties, so can't process this URL
-                self.__log_debug( "Could not get properties from {}; skipping"
-                                  "".format( str(url) ) )
+                self.__log_debug( "Could not get properties from {}"
+                                  "".format( url_str ) )
+                # If this URL has been discovered by the API, then add it to
+                # the cluster list anyway
+                if ( is_discovered_url ):
+                    self.__log_debug( "API-discovered URL" );
+                    # Create a cluster info object with just the given URL and the
+                    # host manager port in the option
+                    cluster_info = self.__create_cluster_address_info_with_hm_port( url,
+                                                                                    self.options.host_manager_port )
+                    self.__cluster_info.append( cluster_info )
+                    self.__log_debug( "Added cluster: {}".format( str(cluster_info) ) )
+                else:
+                    self.__log_debug( "Skipping user-given URL: {}"
+                                      "".format( url_str ) )
+                # end if
                 continue
             # end try
+
+            # Save the fact that this user given URL is being added as a cluster
+            # of its own
+            if not is_discovered_url:
+                self.__log_debug("Adding index {} for url {} to "
+                                 "cluster_index_for_user_given_urls"
+                                 "".format(len(self.__cluster_info), url_str) )
+                cluster_index_for_user_given_urls.append( len(self.__cluster_info) )
+            else:
+                self.__log_debug("NOT adding index url {} to "
+                                 "cluster_index_for_user_given_urls"
+                                 "".format( url_str ) )
+            # end if
 
             # Create an object to store all the information about this cluster
             # (this could fail due to a host name regex mismatch)
             cluster_info = self.__create_cluster_address_info( url, sys_props )
             self.__cluster_info.append( cluster_info )
 
-            self.__log_debug( "Added cluster for url: {}".format( str(url) ) )
+            self.__log_debug( "Added cluster for url: {}".format( url_str ) )
             self.__log_debug( "Added cluster: {}".format( str(cluster_info) ) )
             self.__log_debug( "URLs queue after processing this url (size {}): {}"
                               "".format( len(url_deque),
@@ -4997,7 +5102,7 @@ class GPUdb(object):
             # end for
 
             self.__log_debug( "URLs queue after processing this ha head nodes "
-                              "(size {}: {}"
+                              "(size {}: {})"
                               "".format( len(url_deque),
                                          [ str(u) for u in list(url_deque) ] ) )
         # end while
@@ -5030,8 +5135,37 @@ class GPUdb(object):
             self.__log_debug( "New primary host name: '{}'"
                               "".format( self.primary_host ) )
         else:
-            self.__log_debug( "More than one cluster in the "
-                              "ring; no need to reset the primary hostname"  )
+            self.__log_debug( "More than one cluster in the ring" )
+
+            # If the user has not given any primary host AND all the user
+            # given URLs belong to a single cluster, set that as the primary
+            if (not self.primary_host):
+                self.__log_debug( "No primary host given & more than one user "
+                                  "given URL: {}".format( urls_str ) )
+
+                all_urls_in_same_cluster = ( cluster_index_for_user_given_urls.count(
+                    cluster_index_for_user_given_urls[0] )
+                                             == len( cluster_index_for_user_given_urls ) )
+                self.__log_debug( "cluster_index_for_user_given_urls {} "
+                                  "".format( cluster_index_for_user_given_urls ) )
+                self.__log_debug( "all_urls_in_same_cluster {} "
+                                  "".format( all_urls_in_same_cluster ) )
+                if all_urls_in_same_cluster:
+                    primary_index = cluster_index_for_user_given_urls[0]
+                    self.__log_debug( "All user given URLs belong to the same "
+                                      "cluster! Index {}".format( primary_index ) )
+
+                    # Save the hostname of the single/primary cluster for future use
+                    self.__primary_host = self.__cluster_info[ primary_index ].head_rank_url.host
+
+                    # Also save it in the options for the future
+                    self.options.primary_host = self.primary_host
+                    self.__log_debug( "New primary host name: '{}'"
+                                      "".format( self.primary_host ) )
+                else:
+                    self.__log_debug( "User given URLs belong to different clusters" )
+                # end innermost if
+            # end if
         # end if
 
         # Flag the primary cluster as such and ensure it's the first element in
@@ -5040,6 +5174,7 @@ class GPUdb(object):
         self.__log_debug( "Before finding the primary cluster in the list of clusters..."  )
         # Check if the primary host exists in the list of user given hosts
         primary_index = self.__get_index_of_cluster_containing_node( self.primary_host )
+
         self.__log_debug( "Checking if the primary cluster is in the"
                           " ring; index: {}".format( primary_index ) )
         if ( primary_index != -1 ):
@@ -5192,10 +5327,16 @@ class GPUdb(object):
                                       "".format( sys_status.get_error_msg() ) );
         except GPUdbUnauthorizedAccessException as ex:
             # Any permission related problem should get propagated
+            self.__log_debug("Caught unauthorized exception: {}".format( str(ex) ))
+            raise
+        except (GPUdbConnectionException, GPUdbExitException) as ex:
+            # Also propagate special connection or exit errors
+            self.__log_debug("Caught conn/exit exception: {}".format( str(ex) ))
             raise
         except Exception as ex:
             raise GPUdbException( "Error calling /show/sys/status at URL {}: {}"
-                                  "".format( str(url), str(ex) ) )
+                                  "".format( str(url),
+                                             GPUdbException.stringify_exception( ex ) ) )
         # end try
 
         # Get the 'system' entry in the status response and parse it
@@ -5356,7 +5497,12 @@ class GPUdb(object):
                                   "".format( str(url) ) );
                 return True
         except GPUdbUnauthorizedAccessException as ex:
-                # Any permission related problem should get propagated
+            # Any permission related problem should get propagated
+            self.__log_debug("Caught unauthorized exception: {}".format( str(ex) ))
+            raise
+        except (GPUdbConnectionException, GPUdbExitException) as ex:
+            # Also propagate special connection or exit errors
+            self.__log_debug("Caught conn/exit exception: {}".format( str(ex) ))
             raise
         except GPUdbException as ex:
             # Any error means we don't know whether the system is running
@@ -5390,10 +5536,16 @@ class GPUdb(object):
                                                    convert_to_attr_dict = True )
         except GPUdbUnauthorizedAccessException as ex:
             # Any permission related problem should get propagated
+            self.__log_debug("Caught unauthorized exception: {}".format( str(ex) ))
+            raise
+        except (GPUdbConnectionException, GPUdbExitException) as ex:
+            # Also propagate special connection or exit errors
+            self.__log_debug("Caught conn/exit exception: {}".format( str(ex) ))
             raise
         except Exception as ex:
             raise GPUdbException( "Error calling /show/sys/properties at URL {}: {}"
-                                  "".format( str(url), str(ex) ) )
+                                  "".format( str(url),
+                                             GPUdbException.stringify_exception( ex ) ) )
         # end try
 
         if not sys_prop_resp.is_ok():
@@ -5700,6 +5852,92 @@ class GPUdb(object):
 
 
 
+    def __create_host_manager_url( self, url, host_manager_port ):
+        """Given a :class:`GPUdb.URL` and a host manager port, create
+        another :class:`GPUdb.URL` object that represents the host manager
+        URL.  Return that.
+        """
+        # Create the host manager URL
+        try:
+            self.__log_debug( "Using httpd? {}".format( self.__use_httpd ) )
+            # Create the host manager URL using the user given (or default) port
+            if ( ( self.__use_httpd == True )
+                 and ( len(url.path) > 0) ):
+                # We're using HTTPD, so use the appropriate URL
+                # (likely, http[s]://hostname_or_IP:port/gpudb-host-manager)
+                # Also, use the default httpd port (8082, usually)
+                host_manager_url = GPUdb.URL( "{protocol}://{host}:{port}/gpudb-host-manager"
+                                              "".format( protocol = url.protocol,
+                                                         host = url.host,
+                                                         # the port will be the same as the
+                                                         # head rank's; we'll just use a
+                                                         # different path
+                                                         port = url.port ) )
+            else:
+                # The host manager URL shouldn't use any path and
+                # use the host manager port
+                host_manager_url = GPUdb.URL( "{protocol}://{host}:{port}"
+                                              "".format( protocol = url.protocol,
+                                                         host = url.host,
+                                                         port = host_manager_port ) )
+            # end if
+        except Exception as ex:
+            raise GPUdbException( GPUdbException.stringify_exception( ex ) )
+
+        self.__log_debug( "Created host manager URL: {}".format( host_manager_url ) )
+        return host_manager_url
+    # end __create_host_manager_url
+
+
+
+    def __create_cluster_address_info_with_hm_port( self, url,
+                                                    host_manager_port ):
+        """Given the host manager port and a URL, create a
+        :class:`GPUdb.ClusterAddressInfo` object and return it.
+        -- active head rank URL
+        -- all worker rank URLs
+        -- host manager URL
+        -- hostnames for all the nodes in the cluster
+
+        Parameters:
+            url (GPUdb.URL)
+                The URL of the cluster.
+
+            host_manager_port (string)
+                The host manager port.
+
+        Returns:
+            A :class:`GPUdb.ClusterAddressInfo` object.
+        """
+        # Create the host manager URL
+        try:
+            host_manager_url = self.__create_host_manager_url( url,
+                                                               host_manager_port )
+        except Exception as ex:
+            raise GPUdbException( GPUdbException.stringify_exception( ex ) )
+
+        # Create an object to store all the information about this cluster
+        cluster_info = GPUdb.ClusterAddressInfo( url,
+                                                 host_manager_url = host_manager_url )
+
+        # Check if this cluster is the primary cluster
+        self.__log_debug( "Checking if this is the primary cluster; "
+                          "self.primary_host: {}"
+                          "".format( self.primary_host ) )
+        if ( self.primary_host
+             and cluster_info.does_cluster_contain_node( self.primary_host ) ):
+            # Yes, it is; mark this cluster as the primary cluster
+            cluster_info.is_primary_cluster = True
+        # end if
+
+        self.__log_debug( "Is primary cluster?: {}"
+                          "".format( cluster_info.is_primary_cluster ) )
+
+        return cluster_info
+    # end __create_cluster_address_info_with_hm_port
+
+
+
     def __create_cluster_address_info( self, url, sys_props ):
         """Given system properties, extract all the relevant address information
         about the cluster and create an object containing the following:
@@ -5746,30 +5984,10 @@ class GPUdb(object):
 
         # Create the host manager URL
         try:
-            self.__log_debug( "Using httpd? {}".format( self.__use_httpd ) )
-            # Create the host manager URL using the user given (or default) port
-            if ( ( self.__use_httpd == True )
-                 and ( len(head_rank_url.path) > 0) ):
-                # We're using HTTPD, so use the appropriate URL
-                # (likely, http[s]://hostname_or_IP:port/gpudb-host-manager)
-                # Also, use the default httpd port (8082, usually)
-                host_manager_url = GPUdb.URL( "{protocol}://{host}:{port}/gpudb-host-manager"
-                                              "".format( protocol = head_rank_url.protocol,
-                                                         host = head_rank_url.host,
-                                                         # the port will be the same as the
-                                                         # head rank's; we'll just use a
-                                                         # different path
-                                                         port = head_rank_url.port ) )
-            else:
-                # The host manager URL shouldn't use any path and
-                # use the host manager port
-                host_manager_url = GPUdb.URL( "{protocol}://{host}:{port}"
-                                              "".format( protocol = head_rank_url.protocol,
-                                                         host = head_rank_url.host,
-                                                         port = self.options.host_manager_port ) )
-            # end if
+            host_manager_url = self.__create_host_manager_url( head_rank_url,
+                                                               self.options.host_manager_port )
         except Exception as ex:
-            raise GPUdbException( str(ex) )
+            raise GPUdbException( GPUdbException.stringify_exception( ex ) )
 
         # Create an object to store all the information about this cluster
         cluster_info = GPUdb.ClusterAddressInfo( head_rank_url,
@@ -6828,7 +7046,8 @@ class GPUdb(object):
                 # (request_schema, response_schema) = self.__get_schemas( endpoint )
             except Exception as ex:
                 msg = ("Unable to retrieve avro schemas for endpoint '{}': {}"
-                       "".format( endpoint, str(ex) ) )
+                       "".format( endpoint,
+                                  GPUdbException.stringify_exception( ex ) ) )
                 self.__log_debug( msg )
                 raise GPUdbException( msg)
             # end try
@@ -6853,11 +7072,14 @@ class GPUdb(object):
             http_conn.request( "POST", path, body_data, headers )
         except ssl.SSLError as ex:
             msg = ("Unable to execute SSL handshake with '{}' due to: {}"
-                   "".format( url.url, str(ex) ))
+                   "".format( url.url,
+                              GPUdbException.stringify_exception( ex ) ))
             self.__log_debug( msg )
             raise GPUdbUnauthorizedAccessException( msg )
         except Exception as ex:
-            msg = "Error posting to '{}' due to: {}".format( url.url, str(ex))
+            msg = ("Error posting to '{}' due to: {}"
+                   "".format( url.url,
+                              GPUdbException.stringify_exception( ex ) ) )
             self.__log_debug( msg )
             # TODO: In the Java API, this is an GPUdbExitException; decide what this should be here
             raise GPUdbConnectionException( msg )
@@ -6866,8 +7088,10 @@ class GPUdb(object):
         # Get the response
         try:
             response = http_conn.getresponse()
-        except: # some error occurred; return a message
-            msg = "Timeout Error: No response received from '{}'".format( url.url )
+        except Exception as ex: # some error occurred; return a message
+            msg = ( "No response received from {} due to {}"
+                    "".format( url.url,
+                               GPUdbException.stringify_exception( ex ) ) )
             self.__log_debug( msg )
             raise GPUdbConnectionException( msg )
         # end try
@@ -6920,7 +7144,9 @@ class GPUdb(object):
         except GPUdbUnauthorizedAccessException as ex:
                 # Any permission related problem should get propagated
             raise
-        except GPUdbExitException as ex: # some error occurred; return a message
+        except (GPUdbConnectionException, GPUdbExitException) as ex:
+            # For special connection or exit errors, just pass them on
+            self.__log_debug("Caught conn/exit exception: {}".format( str(ex) ))
             raise
         except GPUdbException as ex:
             # An end-of-file problem from the server is also a failover trigger
@@ -6938,7 +7164,8 @@ class GPUdb(object):
             # end if
         except Exception as ex: # some error occurred; return a message
             msg = ("Error reading response from {} for endpoint {}: {}"
-                   "".format( url.url, endpoint, str(ex) ) )
+                   "".format( url.url, endpoint,
+                              GPUdbException.stringify_exception( ex ) ) )
             # TODO: Or should this be an exit exception also??
             self.__log_debug( "Throwing GPUdb exception; {}".format( msg ) )
             raise GPUdbException( msg )
@@ -7135,9 +7362,10 @@ class GPUdb(object):
                                   "".format( str(ex) ) )
                 raise
             except Exception as ex:
+                orig_ex_str = GPUdbException.stringify_exception( ex )
                 self.__log_debug( "Got regular exception when trying endpoint {}"
                                   " at {}: {}; switch URL..."
-                                  "".format( endpoint, str(url), str(ex) ) )
+                                  "".format( endpoint, str(url), orig_ex_str ) )
                 # And other random exceptions probably are also connection errors
                 try:
                     url = self.__switch_url( original_url, current_cluster_switch_count )
@@ -7145,12 +7373,12 @@ class GPUdb(object):
                 except GPUdbHAUnavailableException as ha_ex:
                     # We've now tried all the HA clusters and circled back
                     # Get the original cause to propagate to the user
-                    error_message  = ("{orig}; {new}".format( orig = str(ex),
+                    error_message  = ("{orig}; {new}".format( orig = orig_ex_str,
                                                               new  = str(ha_ex) ) )
                     raise GPUdbException( error_message, True )
                 except GPUdbFailoverDisabledException as ha_ex:
                     # Failover is disabled; return the original cause
-                    error_message  = ("{orig}; {new}".format( orig = str(ex),
+                    error_message  = ("{orig}; {new}".format( orig = orig_ex_str,
                                                               new  = str(ha_ex) ) )
                     raise GPUdbException( error_message, True )
                 # end try
@@ -7379,13 +7607,15 @@ class GPUdb(object):
                 # end if
             except Exception as ex:
                 # Save the original exception for later use
+                orig_ex_str = GPUdbException.stringify_exception( ex )
                 if original_exception is None:
-                    original_exception = GPUdbException( str(ex) )
+
+                    original_exception = GPUdbException( orig_ex_str )
                 # end if
 
                 self.__log_debug( "Got regular exception when trying endpoint {}"
                                   " at {}: {}; switch URL..."
-                                  "".format( endpoint, str(hm_url), str(ex) ) )
+                                  "".format( endpoint, str(hm_url), orig_ex_str ) )
                 # And other random exceptions probably are also connection errors
                 try:
                     hm_url = self.__switch_hm_url( original_url, current_cluster_switch_count )
@@ -7393,13 +7623,13 @@ class GPUdb(object):
                 except GPUdbHAUnavailableException as ha_ex:
                     # We've now tried all the HA clusters and circled back
                     # Get the original cause to propagate to the user
-                    error_message  = ("{orig}; {new}".format( orig = str(ex),
+                    error_message  = ("{orig}; {new}".format( orig = orig_ex_str,
                                                               new  = str(ha_ex) ) )
                     self.__log_debug( error_message )
                     raise GPUdbException( error_message, True )
                 except GPUdbFailoverDisabledException as ha_ex:
                     # Failover is disabled; return the original cause
-                    error_message  = ("{orig}; {new}".format( orig = str(ex),
+                    error_message  = ("{orig}; {new}".format( orig = orig_ex_str,
                                                               new  = str(ha_ex) ) )
                     self.__log_debug( error_message )
                     raise GPUdbException( error_message, True )
@@ -7509,10 +7739,13 @@ class GPUdb(object):
                                                     port    = url.port,
                                                     timeout = timeout)
         except Exception as ex:
-            raise GPUdbConnectionException( "Error connecting to '{}' on port "
-                                            "'{}' due to (full url '{}'): {}"
-                                            "".format( url.host, url.port,
-                                                       url.url, str(ex)) )
+            msg = ( "Error connecting to '{}' on port "
+                    "'{}' due to (full url '{}'): {}"
+                    "".format( url.host, url.port,
+                               url.url,
+                               GPUdbException.stringify_exception( ex ) ) )
+            self.__log_debug( msg )
+            raise GPUdbConnectionException( msg )
 
         return conn
     # end __initialize_http_connection
@@ -7868,12 +8101,13 @@ class GPUdb(object):
                                               "".format( sleep_interval ) )
                             time.sleep( sleep_interval )
                         except ( KeyboardInterrupt, SystemExit ) as ex:
+                            ex_str = GPUdbException.stringify_exception( ex )
                             self.__log_debug( "Sleep interrupted; throwing "
                                               "exception: {}"
-                                              "".format( str(ex) ) )
+                                              "".format( ex_str ) )
                             raise GPUdbException( "Intra-cluster failover "
                                                   "interrupted: "
-                                                  "".format( str(ex) ) )
+                                                  "".format( ex_str ) )
                         # end try
                     # end if
                 # end inner while
@@ -8127,12 +8361,13 @@ class GPUdb(object):
                                                   "".format( sleep_interval_long ) )
                                 time.sleep( sleep_interval_long )
                             except ( KeyboardInterrupt, SystemExit ) as ex:
+                                ex_str = GPUdbException.stringify_exception( ex )
                                 self.__log_debug( "Sleep interrupted; throwing "
                                                   "exception: {}"
-                                                  "".format( str(ex) ) )
+                                                  "".format( ex_str ) )
                                 raise GPUdbException( "Intra-cluster failover "
                                                       "interrupted: {}"
-                                                      "".format( str(ex) ) )
+                                                      "".format( ex_str ) )
                             # end try
                         elif self.__is_system_running( sys_status_info = sys_status_info ):
                             # System is back up; re-parse the URLs for this cluster
@@ -8186,10 +8421,11 @@ class GPUdb(object):
                                                   "".format( sleep_interval_long ) )
                                 time.sleep( sleep_interval_long )
                             except ( KeyboardInterrupt, SystemExit ) as ex:
+                                ex_str = GPUdbException.stringify_exception( ex )
                                 self.__log_debug( "Sleep interrupted; throwing exception" )
                                 raise GPUdbException( "Intra-cluster failover "
                                                       "interrupted: {}"
-                                                      "".format( str(ex) ) )
+                                                      "".format( ex_str ) )
                             # end try
                         # end if
                     except GPUdbUnauthorizedAccessException as ex:
@@ -8198,7 +8434,7 @@ class GPUdb(object):
                                           "{}".format( str(ex) ) )
                         raise
                     except (GPUdbConnectionException, GPUdbExitException) as ex:
-                        self.__log_debug( "Caught GPUdb EXIT exception; "
+                        self.__log_debug( "Caught GPUdb CONN/EXIT exception; "
                                           "skipping to next rank: {}"
                                           "".format( str(ex) ) )
                         # Try the next URL, but keep track of the fact that this
@@ -8255,9 +8491,10 @@ class GPUdb(object):
                                   "the ranks again".format( sleep_interval_short ) )
                 time.sleep( sleep_interval_short )
             except ( KeyboardInterrupt, SystemExit ) as ex:
+                ex_str = GPUdbException.stringify_exception( ex )
                 self.__log_debug( "Sleep interrupted; throwing exception" )
                 raise GPUdbException( "Intra-cluster failover interrupted: {}"
-                                      "".format( str(ex) ) )
+                                      "".format( ex_str ) )
             # end try
         # end while (stage 1)
 
@@ -8373,10 +8610,11 @@ class GPUdb(object):
                                               "".format( sleep_interval_long ) )
                             time.sleep( sleep_interval_long )
                         except ( KeyboardInterrupt, SystemExit ) as ex:
+                            ex_str = GPUdbException.stringify_exception( ex )
                             self.__log_debug( "Sleep interrupted; throwing exception" )
                             raise GPUdbException( "Intra-cluster failover "
                                                   "interrupted: {}"
-                                                  "".format( str(ex) ) )
+                                                  "".format( ex_str ) )
                         # end try
                     elif self.__is_system_running( sys_status_info = sys_status_info ):
                         # System is back up; re-parse the URLs for this cluster
@@ -8454,10 +8692,11 @@ class GPUdb(object):
                                       "".format( sleep_interval_short ) )
                     time.sleep( sleep_interval_short )
                 except ( KeyboardInterrupt, SystemExit ) as ex:
+                    ex_str = GPUdbException.stringify_exception( ex )
                     self.__log_debug( "Sleep interrupted; throwing exception: "
-                                      "{}".format( str(ex) ) )
+                                      "{}".format( ex_str ) )
                     raise GPUdbException( "Intra-cluster failover interrupted: "
-                                          "{}".format( str(ex) ) )
+                                          "{}".format( ex_str ) )
                 # end try
             # end inner while
 
@@ -8536,16 +8775,21 @@ class GPUdb(object):
                     conn = httplib.HTTPSConnection( host = host,
                                                     port = port,
                                                     timeout = self.timeout)
-        except Exception as e:
-            raise GPUdbConnectionException("Error connecting to '{}' on port {} due to: {}"
-                                           "".format(host, port, str(e)) )
+        except Exception as ex:
+            ex_str = GPUdbException.stringify_exception( ex )
+            raise GPUdbConnectionException( "Error connecting to '{}' on port "
+                                            "{} due to: {}"
+                                           "" .format(host, port, ex_str) )
 
         # Try to post the message
         try:
             conn.request("POST", url_path, body_data, headers)
-        except Exception as e:
-            raise GPUdbConnectionException( "Error posting to '{}:{}{}' due to: {}"
-                                            "".format(host, port, url_path, str(e)) )
+        except Exception as ex:
+            ex_str = GPUdbException.stringify_exception( ex )
+            raise GPUdbConnectionException( "Error posting to '{}:{}{}' due "
+                                            "to: {}"
+                                            "".format(host, port,
+                                                      url_path, ex_str) )
 
         # Get the response
         try:
@@ -8664,11 +8908,13 @@ class GPUdb(object):
             elif encoding == 'JSON':
                 data_str = json.loads( _Util.ensure_str(encoded_datum) )
                 return data_str
-        except (Exception, RuntimeError) as e:
+        except (Exception, RuntimeError) as ex:
+            self.__log_debug( "Encountred problem for encoded_datum: {}"
+                              "".format( encoded_datum ) )
             msg = ( "Unable to parse server response; "
                     "please check that the client and server "
                     "versions match.  Got error {}"
-                    "".format( str(e) ) )
+                    "".format( GPUdbException.stringify_exception( ex ) ) )
             self.__log_debug( msg )
             raise GPUdbDecodingException ( msg )
     # end __read_orig_datum_cext
@@ -8702,11 +8948,13 @@ class GPUdb(object):
             elif (self.encoding == 'BINARY') or (self.encoding == 'SNAPPY'):
                 try:
                     out = SCHEMA.decode( encoded_datum, resp['data'] )
-                except (Exception, RuntimeError) as e:
+                except (Exception, RuntimeError) as ex:
+                    ex_str = GPUdbException.stringify_exception( ex )
                     raise GPUdbDecodingException ( "Unable to parse server response from {}; "
                                                    "please check that the client and "
                                                    "server versions match. Got error '{}'"
-                                                   "".format( self.gpudb_full_url, str(e) ) )
+                                                   "".format( self.gpudb_full_url,
+                                                              ex_str ) )
             # end inner if
         # end if
 
@@ -8978,7 +9226,8 @@ class GPUdb(object):
         try:
             self.log.setLevel( log_level )
         except (ValueError, TypeError, Exception) as ex:
-            raise GPUdbException("Invalid log level: '{}'".format( str(ex) ))
+            ex_str = GPUdbException.stringify_exception( ex )
+            raise GPUdbException("Invalid log level: '{}'".format( ex_str ))
     # end set_client_logger_level
 
 
@@ -9125,8 +9374,9 @@ class GPUdb(object):
             try:
                 url = GPUdb.URL( url )
             except Exception as ex:
+                ex_str = GPUdbException.stringify_exception( ex )
                 raise GPUdbException( "Error parsing given URL '{}': {}"
-                                      "".format( url, str(ex)) )
+                                      "".format( url, ex_str) )
         elif not isinstance( url, GPUdb.URL ):
             msg = ("Argument 'url' must be a GPUdb.URL object, a string, or None;"
                    " given '{}'".format( str(type(url)) ) )
@@ -9175,7 +9425,7 @@ class GPUdb(object):
         except Exception as ex:
             # Save the error status and message
             status_info["status"] = "ERROR"
-            status_info["message"] = str(ex)
+            status_info["message"] = GPUdbException.stringify_exception( ex )
             status_info["response_time"] = raw_response.getheader( "x-request-time-secs" )
         # end try
 
@@ -9202,8 +9452,9 @@ class GPUdb(object):
             try:
                 url = GPUdb.URL( url )
             except Exception as ex:
+                ex_str = GPUdbException.stringify_exception( ex )
                 raise GPUdbException( "Error parsing given URL '{}': {}"
-                                      "".format( url, str(ex)) )
+                                      "".format( url, ex_str ) )
         elif not isinstance( url, GPUdb.URL ):
             msg = ("Argument 'url' must be a GPUdb.URL object or a string; "
                    "given '{}'".format( str(type(url)) ) )
@@ -9238,7 +9489,8 @@ class GPUdb(object):
                                                  str(type(raw_data)) ) )
             # end if
         except Exception as ex:
-            self.__log_debug( "Got error while pinging: {}".format( str(ex) ) )
+            ex_str = GPUdbException.stringify_exception( ex )
+            self.__log_debug( "Got error while pinging: {}".format( ex_str ) )
             return ""
        # end try
     # end ping( url )
@@ -9287,8 +9539,9 @@ class GPUdb(object):
             try:
                 url = GPUdb.URL( url )
             except Exception as ex:
+                ex_str = GPUdbException.stringify_exception( ex )
                 raise GPUdbException( "Error parsing given URL '{}': {}"
-                                      "".format( url, str(ex)) )
+                                      "".format( url, ex_str) )
         elif not isinstance( url, GPUdb.URL ):
             msg = ("Argument 'url' must be a GPUdb.URL object, a string, "
                    "or None; given '{}'".format( str(type(url)) ) )
@@ -10686,6 +10939,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/show/functions"
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_functions_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_functions_response","fields":[{"name":"function_names","type":{"type":"array","items":"string"}},{"name":"return_types","type":{"type":"array","items":"string"}},{"name":"parameters","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"optional_parameter_count","type":{"type":"array","items":"int"}},{"name":"flags","type":{"type":"array","items":"int"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("function_names", "array", [("string")]), ("return_types", "array", [("string")]), ("parameters", "array", [("array", [("string")])]), ("optional_parameter_count", "array", [("int")]), ("flags", "array", [("int")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/show/functions"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/show/graph"
         REQ_SCHEMA_STR = """{"name":"show_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"name":"show_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"graph_names","type":{"type":"array","items":"string"}},{"name":"directed","type":{"type":"array","items":"boolean"}},{"name":"num_nodes","type":{"type":"array","items":"long"}},{"name":"num_edges","type":{"type":"array","items":"long"}},{"name":"is_persisted","type":{"type":"array","items":"boolean"}},{"name":"is_sync_db","type":{"type":"array","items":"boolean"}},{"name":"has_insert_table_monitor","type":{"type":"array","items":"boolean"}},{"name":"original_request","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -11146,6 +11410,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["revoke_permission_table"] = "/revoke/permission/table"
         self.gpudb_func_to_endpoint_map["revoke_role"] = "/revoke/role"
         self.gpudb_func_to_endpoint_map["show_datasource"] = "/show/datasource"
+        self.gpudb_func_to_endpoint_map["show_functions"] = "/show/functions"
         self.gpudb_func_to_endpoint_map["show_graph"] = "/show/graph"
         self.gpudb_func_to_endpoint_map["show_graph_grammar"] = "/show/graph/grammar"
         self.gpudb_func_to_endpoint_map["show_proc"] = "/show/proc"
@@ -16435,12 +16700,15 @@ class GPUdb(object):
         """Creates a new graph network using given nodes, edges, weights, and
         restrictions.
 
-        IMPORTANT: It's highly recommended that you review the `Network Graphs
-        & Solvers <../../../graph_solver/network_graph_solver.html>`_ concepts
-        documentation, the `Graph REST Tutorial
-        <../../../graph_solver/examples/graph_rest_guide.html>`_, and/or some
-        `graph examples <../../../graph_solver/examples.html>`_ before using
-        this endpoint.
+        IMPORTANT: It's highly recommended that you review the
+        `Network Graphs & Solvers
+        <../../../graph_solver/network_graph_solver.html>`_
+        concepts documentation, the
+        `Graph REST Tutorial
+        <../../../graph_solver/examples/graph_rest_guide.html>`_,
+        and/or some `graph examples <../../../graph_solver/examples.html>`_
+        before
+        using this endpoint.
 
         Parameters:
 
@@ -16461,64 +16729,82 @@ class GPUdb(object):
                 The default value is True.
 
             nodes (list of str)
-                Nodes represent fundamental topological units of a graph. Nodes
-                must be specified using `identifiers
+                Nodes represent fundamental topological units of a graph.
+                Nodes must be specified using
+                `identifiers
                 <../../../graph_solver/network_graph_solver.html#identifiers>`_;
-                identifiers are grouped as `combinations
+                identifiers are grouped as
+                `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS NODE_ID', expressions, e.g.,
-                'ST_MAKEPOINT(column1, column2) AS NODE_WKTPOINT', or raw
-                values, e.g., '{9, 10, 11} AS NODE_ID'. If using raw values in
-                an identifier combination, the number of values specified must
-                match across the combination.    The user can provide a single
-                element (which will be automatically promoted to a list
-                internally) or a list.
+                'ST_MAKEPOINT(column1, column2) AS NODE_WKTPOINT', or constant
+                values, e.g.,
+                '{9, 10, 11} AS NODE_ID'.
+                If using constant values in an identifier combination, the
+                number of values
+                specified must match across the combination.    The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
 
             edges (list of str)
-                Edges represent the required fundamental topological unit of a
-                graph that typically connect nodes. Edges must be specified
-                using `identifiers
+                Edges represent the required fundamental topological unit of
+                a graph that typically connect nodes. Edges must be specified
+                using
+                `identifiers
                 <../../../graph_solver/network_graph_solver.html#identifiers>`_;
-                identifiers are grouped as `combinations
+                identifiers are grouped as
+                `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
                 Identifiers can be used with existing column names, e.g.,
-                'table.column AS EDGE_ID', expressions, e.g., 'SUBSTR(column,
-                1, 6) AS EDGE_NODE1_NAME', or raw values, e.g., "{'family',
-                'coworker'} AS EDGE_LABEL". If using raw values in an
-                identifier combination, the number of values specified must
-                match across the combination.    The user can provide a single
-                element (which will be automatically promoted to a list
-                internally) or a list.
+                'table.column AS EDGE_ID', expressions, e.g.,
+                'SUBSTR(column, 1, 6) AS EDGE_NODE1_NAME', or constant values,
+                e.g.,
+                "{'family', 'coworker'} AS EDGE_LABEL".
+                If using constant values in an identifier combination, the
+                number of values
+                specified must match across the combination.    The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
 
             weights (list of str)
-                Weights represent a method of informing the graph solver of the
-                cost of including a given edge in a solution. Weights must be
-                specified using `identifiers
+                Weights represent a method of informing the graph solver of
+                the cost of including a given edge in a solution. Weights must
+                be specified
+                using
+                `identifiers
                 <../../../graph_solver/network_graph_solver.html#identifiers>`_;
-                identifiers are grouped as `combinations
+                identifiers are grouped as
+                `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS WEIGHTS_EDGE_ID', expressions, e.g.,
-                'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED', or raw values,
-                e.g., '{4, 15} AS WEIGHTS_VALUESPECIFIED'. If using raw values
-                in an identifier combination, the number of values specified
+                'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED', or constant values,
+                e.g.,
+                '{4, 15} AS WEIGHTS_VALUESPECIFIED'.
+                If using constant values in an identifier combination, the
+                number of values specified
                 must match across the combination.    The user can provide a
                 single element (which will be automatically promoted to a list
                 internally) or a list.
 
             restrictions (list of str)
-                Restrictions represent a method of informing the graph solver
-                which edges and/or nodes should be ignored for the solution.
-                Restrictions must be specified using `identifiers
+                Restrictions represent a method of informing the graph
+                solver which edges and/or nodes should be ignored for the
+                solution. Restrictions
+                must be specified using
+                `identifiers
                 <../../../graph_solver/network_graph_solver.html#identifiers>`_;
-                identifiers are grouped as `combinations
+                identifiers are grouped as
+                `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS RESTRICTIONS_EDGE_ID', expressions, e.g.,
-                'column/2 AS RESTRICTIONS_VALUECOMPARED', or raw values, e.g.,
-                '{0, 0, 0, 1} AS RESTRICTIONS_ONOFFCOMPARED'. If using raw
-                values in an identifier combination, the number of values
+                'column/2 AS RESTRICTIONS_VALUECOMPARED', or constant values,
+                e.g.,
+                '{0, 0, 0, 1} AS RESTRICTIONS_ONOFFCOMPARED'.
+                If using constant values in an identifier combination, the
+                number of values
                 specified must match across the combination.    The user can
                 provide a single element (which will be automatically promoted
                 to a list internally) or a list.
@@ -18732,10 +19018,6 @@ class GPUdb(object):
                   long integer data type. The string can only be interpreted as
                   an unsigned long data type with minimum value of zero, and
                   maximum value of 18446744073709551615.
-
-                * **uuid** --
-                  Valid only for 'string' columns.  It represents an uuid data
-                  type. Internally, it is stored as an 128-bit ingeger.
 
                 * **decimal** --
                   Valid only for 'string' columns.  It represents a SQL type
@@ -24073,7 +24355,7 @@ class GPUdb(object):
         list_encoding = list_encoding if list_encoding else self.__client_to_object_encoding()
         obj['list_encoding'] = list_encoding
         obj['options'] = self.__sanitize_dicts( options )
-        
+
         if (list_encoding == 'binary'):
             # Convert the objects to proper Records
             use_object_array, data = _Util.convert_binary_data_to_cext_records( self, table_name, data, record_type )
@@ -25597,17 +25879,20 @@ class GPUdb(object):
                 using input parameter *sample_points*.
 
             sample_points (list of str)
-                Sample points used to match to an underlying geospatial graph.
-                Sample points must be specified using `identifiers
+                Sample points used to match to an underlying geospatial
+                graph. Sample points must be specified using
+                `identifiers
                 <../../../graph_solver/network_graph_solver.html#match-identifiers>`_;
-                identifiers are grouped as `combinations
+                identifiers are grouped as
+                `combinations
                 <../../../graph_solver/network_graph_solver.html#match-combinations>`_.
                 Identifiers can be used with: existing column names, e.g.,
                 'table.column AS SAMPLE_X'; expressions, e.g.,
-                'ST_MAKEPOINT(table.x, table.y) AS SAMPLE_WKTPOINT'; or raw
-                values, e.g., '{1, 2, 10} AS SAMPLE_TRIPID'.    The user can
-                provide a single element (which will be automatically promoted
-                to a list internally) or a list.
+                'ST_MAKEPOINT(table.x, table.y) AS SAMPLE_WKTPOINT'; or
+                constant values, e.g.,
+                '{1, 2, 10} AS SAMPLE_TRIPID'.    The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
 
             solve_method (str)
                 The type of solver to use for graph matching.
@@ -26838,6 +27123,20 @@ class GPUdb(object):
     # end show_datasource
 
 
+    # begin show_functions
+    def show_functions( self, options = {} ):
+
+        assert isinstance( options, (dict)), "show_functions(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/show/functions', obj, convert_to_attr_dict = True )
+
+        return response
+    # end show_functions
+
+
     # begin show_graph
     def show_graph( self, graph_name = '', options = {} ):
         """Shows information and characteristics of graphs that exist on the graph
@@ -28044,8 +28343,8 @@ class GPUdb(object):
         `Graph REST Tutorial
         <../../../graph_solver/examples/graph_rest_guide.html>`_,
         and/or some
-        `/match/graph examples
-        <../../../graph_solver/examples.html#match-graph>`_
+        `/solve/graph examples
+        <../../../graph_solver/examples.html#solve-graph>`_
         before using this endpoint.
 
         Parameters:
@@ -28054,21 +28353,26 @@ class GPUdb(object):
                 Name of the graph resource to solve.
 
             weights_on_edges (list of str)
-                Additional weights to apply to the edges of an existing graph.
-                Weights must be specified using `identifiers
+                Additional weights to apply to the edges of an existing
+                graph. Weights must be specified using
+                `identifiers
                 <../../../graph_solver/network_graph_solver.html#identifiers>`_;
-                identifiers are grouped as `combinations
+                identifiers are grouped as
+                `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS WEIGHTS_EDGE_ID', expressions, e.g.,
-                'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED', or raw values,
-                e.g., '{4, 15, 2} AS WEIGHTS_VALUESPECIFIED'. Any provided
-                weights will be added (in the case of 'WEIGHTS_VALUESPECIFIED')
-                to or multiplied with (in the case of
-                'WEIGHTS_FACTORSPECIFIED') the existing weight(s). If using raw
-                values in an identifier combination, the number of values
-                specified must match across the combination.  The default value
-                is an empty list ( [] ).  The user can provide a single element
+                'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED', or constant values,
+                e.g.,
+                '{4, 15, 2} AS WEIGHTS_VALUESPECIFIED'. Any provided weights
+                will be added
+                (in the case of 'WEIGHTS_VALUESPECIFIED') to or multiplied with
+                (in the case of 'WEIGHTS_FACTORSPECIFIED') the existing
+                weight(s). If using
+                constant values in an identifier combination, the number of
+                values specified
+                must match across the combination.  The default value is an
+                empty list ( [] ).  The user can provide a single element
                 (which will be automatically promoted to a list internally) or
                 a list.
 
@@ -28077,22 +28381,29 @@ class GPUdb(object):
                 existing graph. Restrictions must be specified using
                 `identifiers
                 <../../../graph_solver/network_graph_solver.html#identifiers>`_;
-                identifiers are grouped as `combinations
+                identifiers are grouped as
+                `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS RESTRICTIONS_EDGE_ID', expressions, e.g.,
-                'column/2 AS RESTRICTIONS_VALUECOMPARED', or raw values, e.g.,
-                '{0, 0, 0, 1} AS RESTRICTIONS_ONOFFCOMPARED'. If using raw
-                values in an identifier combination, the number of values
-                specified must match across the combination. If
-                *remove_previous_restrictions* is set to *true*, any provided
-                restrictions will replace the existing restrictions. If
-                *remove_previous_restrictions* is set to *false*, any provided
+                'column/2 AS RESTRICTIONS_VALUECOMPARED', or constant values,
+                e.g.,
+                '{0, 0, 0, 1} AS RESTRICTIONS_ONOFFCOMPARED'. If using constant
+                values in an
+                identifier combination, the number of values specified must
+                match across the
+                combination. If *remove_previous_restrictions* is set
+                to *true*, any
+                provided restrictions will replace the existing restrictions.
+                If
+                *remove_previous_restrictions* is set to
+                *false*, any provided
                 restrictions will be added (in the case of
-                'RESTRICTIONS_VALUECOMPARED') to or replaced (in the case of
-                'RESTRICTIONS_ONOFFCOMPARED').  The default value is an empty
-                list ( [] ).  The user can provide a single element (which will
-                be automatically promoted to a list internally) or a list.
+                'RESTRICTIONS_VALUECOMPARED') to or
+                replaced (in the case of 'RESTRICTIONS_ONOFFCOMPARED').  The
+                default value is an empty list ( [] ).  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
 
             solver_type (str)
                 The type of solver to use for the graph.
@@ -28576,7 +28887,7 @@ class GPUdb(object):
         obj['records_to_insert_str'] = records_to_insert_str
         obj['record_encoding'] = record_encoding
         obj['options'] = self.__sanitize_dicts( options )
-        
+
         if (record_encoding == 'binary'):
             # Convert the objects to proper Records
             use_object_array, data = _Util.convert_binary_data_to_cext_records( self, table_name, records_to_insert, record_type )
@@ -30183,8 +30494,9 @@ class GPUdbTable( object ):
                 raise GPUdbException( "Error creating GPUdbTable: '{}'"
                                       "".format( e.message ) )
         except Exception as e: # all other exceptions
+            ex_str = GPUdbException.stringify_exception( e )
             raise GPUdbException( "Error creating GPUdbTable; {}: '{}'"
-                                  "".format( e.__doc__, str(e) ) )
+                                  "".format( e.__doc__, ex_str ) )
 
 
         # Set up multi-head ingestion, if needed
@@ -30486,7 +30798,8 @@ class GPUdbTable( object ):
             if self._multihead_retriever:
                 self._multihead_retriever.set_logger_level( log_level )
         except (ValueError, TypeError, Exception) as ex:
-            raise GPUdbException("Invalid log level: '{}'".format( str(ex) ))
+            ex_str = GPUdbException.stringify_exception( ex )
+            raise GPUdbException("Invalid log level: '{}'".format( ex_str ))
     # end set_logger_level
 
 

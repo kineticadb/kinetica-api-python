@@ -2378,7 +2378,7 @@ class GPUdbIngestor:
                                    update_on_existing_pk = self.update_on_existing_pk )
                 self.worker_queues.append( wq )
             except Exception as e:
-                raise GPUdbException( str(e) )
+                raise GPUdbException( GPUdbException.stringify_exception( e ) )
         # end loop over workers
 
         # Get the number of workers
@@ -2638,7 +2638,9 @@ class GPUdbIngestor:
                                    update_on_existing_pk = self.update_on_existing_pk )
                 new_worker_queues.append( wq )
             except Exception as e:
-                raise GPUdbException( str(e) )
+                # In case the exception has no message, we need to stringify
+                # the exceptio properly to at least get the exception type
+                raise GPUdbException( GPUdbException.stringify_exception( e ) )
         # end loop over workers
 
         # Get the number of workers
@@ -2760,7 +2762,8 @@ class GPUdbIngestor:
         try:
             self.log.setLevel( log_level )
         except (ValueError, TypeError, Exception) as ex:
-            raise GPUdbException("Invalid log level: '{}'".format( str(ex) ))
+            raise GPUdbException("Invalid log level: '{}'"
+                                 "".format( GPUdbException.stringify_exception( ex ) ))
     # end set_client_logger_level
 
 
@@ -3132,7 +3135,7 @@ class GPUdbIngestor:
                                       "{}".format( str(ex) ) )
                     raise
                 except GPUdbException as ex:
-                    self.__log_debug( "Caught GPUdb exception: {}"
+                    self.__log_debug( "Caught GPUdb (original) exception: {}"
                                       "".format( str(ex) ) )
                     retry = False
 
@@ -3155,6 +3158,8 @@ class GPUdbIngestor:
                             # We've now tried all the HA clusters and circled back;
                             # propagate the error to the user, but only there
                             # are no more retries left
+                            self.__log_debug( "Caught (second) exception: {}"
+                                              "".format( str(ex2) ) )
                             raise GPUdbException( "{orig}; {second}"
                                                   "".format( orig = str(ex),
                                                              second = str(ex2) ),
@@ -3217,8 +3222,9 @@ class GPUdbIngestor:
                         raise InsertionException( str(ex), queue )
                     # end if
                 except Exception as ex:
+                    ex_str = GPUdbException.stringify_exception( ex )
                     self.__log_debug( "Caught regular exception: {}"
-                                      "".format( str(ex) ) )
+                                      "".format( ex_str ) )
                     # Insertion failed, but maybe due to shard mapping changes (due to
                     # cluster reconfiguration)? Check if the mapping needs to be updated
                     # or has been updated by another thread already after the
@@ -3274,7 +3280,8 @@ class GPUdbIngestor:
                                                                  sys.exc_info()[1],
                                                                  sys.exc_info()[2] ) )
             self.__log_debug( "Got stacktrace: {}".format( traceback_msg ) )
-            raise InsertionException( str(ex), queue )
+            raise InsertionException( GPUdbException.stringify_exception( ex ),
+                                      queue )
         # end outer try
     # end __flush
 
@@ -3407,8 +3414,8 @@ class RecordRetriever:
                 wq = _WorkerQueue( worker,
                                    capacity = 1 ) # using one for now..........
                 self.worker_queues.append( wq )
-            except Exception as e:
-                raise GPUdbException( str(e) )
+            except Exception as ex:
+                raise GPUdbException( GPUdbException.stringify_exception( ex ) )
         # end loop over workers
 
         # Get the number of workers
@@ -3695,8 +3702,8 @@ class RecordRetriever:
                 wq = _WorkerQueue( worker,
                                    capacity = 1 ) # using one for now..........
                 new_worker_queues.append( wq )
-            except Exception as e:
-                raise GPUdbException( str(e) )
+            except Exception as ex:
+                raise GPUdbException( GPUdbException.stringify_exception( ex ) )
         # end loop over workers
 
         # Get the number of workers
@@ -3720,7 +3727,8 @@ class RecordRetriever:
         try:
             self.log.setLevel( log_level )
         except (ValueError, TypeError, Exception) as ex:
-            raise GPUdbException("Invalid log level: '{}'".format( str(ex) ))
+            ex_str = GPUdbException.stringify_exception( ex )
+            raise GPUdbException("Invalid log level: '{}'".format( ex_str ))
     # end set_client_logger_level
 
 
@@ -3786,6 +3794,7 @@ class RecordRetriever:
 
         # Create the expression based on the record's sharded columns' values
         # and any enveloping expression given by the user
+        orig_expression = expression
         if isinstance( key_values, dict ):
             # We can build an expression if the column names are given
             # regardless of sharding on the table
@@ -3903,17 +3912,19 @@ class RecordRetriever:
                 # they came from)
                 try:
                     self.__log_debug( "Retrying fetching the records" )
-                    return self.get_records_by_key( key_values, expression, options )
+                    return self.get_records_by_key( key_values, orig_expression,
+                                                    options )
                 except Exception as ex2:
                     # Re-setting the exception since we may re-try again
-                    raise GPUdbException( str(ex2) )
+                    raise GPUdbException( GPUdbException.stringify_exception( ex2 ) )
                 # end try
             # end if
 
             raise GPUdbException( str(ex) )
         except Exception as ex:
+            ex_str = GPUdbException.stringify_exception( ex )
             self.__log_debug( "Caught regular exception: {}"
-                              "".format( str(ex) ) )
+                              "".format( ex_str ) )
             # Retrieval failed, but maybe due to shard mapping changes (due to
             # cluster reconfiguration)? Check if the mapping needs to be updated
             # or has been updated by another thread already after the
@@ -3930,14 +3941,15 @@ class RecordRetriever:
                 # go to a worker queue different from the one they came from)
                 try:
                     self.__log_debug( "Retrying fetching the records" )
-                    return self.get_records_by_key( key_values, expression, options )
+                    return self.get_records_by_key( key_values, orig_expression,
+                                                    options )
                 except Exception as ex2:
                     # Re-setting the exception since we may re-try again
-                    raise GPUdbException( str(ex2) )
+                    raise GPUdbException( GPUdbException.stringify_exception( ex2 ) )
                 # end try
             # end if
 
-            raise GPUdbException( str(ex) )
+            raise GPUdbException( ex_str )
         # end try
     # end get_records_by_key
 

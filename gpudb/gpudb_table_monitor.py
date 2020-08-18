@@ -174,18 +174,18 @@ class BaseTask(threading.Thread):
 
     """
 
-    def __init__(self, 
-                 db, 
-                 table_name, 
-                 topic_id_to_mode_map, 
-                 table_event=TableEventType.INSERT, 
-                 options=None, 
-                 callbacks=None, 
+    def __init__(self,
+                 db,
+                 table_name,
+                 topic_id_to_mode_map,
+                 table_event=TableEventType.INSERT,
+                 options=None,
+                 callbacks=None,
                  id=None):
 
         """
-        Constructor for BaseTask class, generally will not be needed to be 
-        called directly, will be called by one of the subclasses 
+        Constructor for BaseTask class, generally will not be needed to be
+        called directly, will be called by one of the subclasses
         InsertWatcherTask, UpdateWatcherTask or DeleteWatcherTask
 
         Args:
@@ -200,9 +200,9 @@ class BaseTask(threading.Thread):
             'insert', 'update' or 'delete'
 
         Raises:
-            GPUdbException: 
+            GPUdbException:
         """
-                
+
         super(BaseTask, self).__init__()
 
         if db is None or not isinstance(db, GPUdb):
@@ -464,9 +464,10 @@ class BaseTask(threading.Thread):
                 decoded = True
                 break
             except Exception as e:
+                ex_str = GPUdbException.stringify_exception( e )
                 self._logger.error("Exception received "
                                 "while decoding : "
-                                "%s" % str(e))
+                                   "%s" % ex_str)
                 self._logger.error(
                     "Failed to decode message %s with "
                     "updated schema %s" % message_data,
@@ -551,7 +552,8 @@ class BaseTask(threading.Thread):
                 if isinstance(gpe, GPUdbConnectionException):
                     self._logger.error("GpuDb error : %s" % gpe.message)
             except Exception as e:
-                self._quit_on_exception(event_type=None, message=str(e))
+                ex_str = GPUdbException.stringify_exception( e )
+                self._quit_on_exception(event_type = None, message = ex_str)
 
     # End _check_state_on_no_zmq_message BaseTask
 
@@ -773,7 +775,9 @@ class BaseTask(threading.Thread):
         try:
             self._logger.setLevel(value)
         except (ValueError, TypeError, Exception) as ex:
-            raise GPUdbException("Invalid log level: '{}'".format(str(ex)))
+            ex_str = GPUdbException.stringify_exception( ex )
+            raise GPUdbException("Invalid log level: '{}'"
+                                 "".format( ex_str ))
 
 
 # End class BaseTask
@@ -859,7 +863,8 @@ class InsertWatcherTask(BaseTask):
                 # issue with decoding the data; possibly due to
                 # a different schema resulting from a table
                 # alteration.
-                self._logger.error("Exception received while decoding {}".format(str(e)))
+                ex_str = GPUdbException.stringify_exception( e )
+                self._logger.error("Exception received while decoding {}".format(ex_str))
 
                 self._logger.error("Failed to decode message {} "
                                   "with schema {}".format(message_data,
@@ -1015,14 +1020,14 @@ class UpdateWatcherTask(BaseTask):
             # issue with decoding the data; possibly due to
             # a different schema resulting from a table
             # alteration.
-            self._logger.error(
-                "Exception received while decoding {}".format(
-                    str(e)))
+            ex_str = GPUdbException.stringify_exception( e )
+            self._logger.error( "Exception received while decoding {}"
+                                "".format( ex_str ) )
             self._logger.error("Failed to decode message {} "
-                              "with schema {}".format(
-                                                        messages[1],
-                                                        self.type_schema
-                                                        ))
+                               "with schema {}".format(
+                                   messages[1],
+                                   self.type_schema
+                               ))
             message_parsing_failed = True
 
             # Introduce a configuration variable to
@@ -1158,8 +1163,9 @@ class DeleteWatcherTask(BaseTask):
             # issue with decoding the data; possibly due to
             # a different schema resulting from a table
             # alteration.
+            ex_str = GPUdbException.stringify_exception( e )
             self._logger.error(
-                "Exception received while decoding {}".format(str(e)))
+                "Exception received while decoding {}".format( ex_str ))
 
             self._logger.error("Failed to decode message {} "
                               "with schema {}".format( messages[1], self.type_schema))
@@ -1517,7 +1523,8 @@ class GPUdbTableMonitorBase(object):
         try:
             self._logger.setLevel(value)
         except (ValueError, TypeError, Exception) as ex:
-            raise GPUdbException("Invalid log level: '{}'".format( str(ex) ))
+            ex_str = GPUdbException.stringify_exception( ex )
+            raise GPUdbException("Invalid log level: '{}'".format( ex_str ))
 
 
     class Callbacks(object):

@@ -70,9 +70,6 @@
   ``cb_pointalpha_vals`` fields to ``visualize/image/classbreak`` to support 
   manipulation of transparency in class-break visualization.
 
--   /create/type
-    -   Added "uuid" as an allowed value in properties.
-
 ##### Breaking Changes
 -   /admin/add/ranks
     -   changed added_ranks parameter in response to an array of strings
