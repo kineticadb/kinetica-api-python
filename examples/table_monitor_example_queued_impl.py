@@ -97,7 +97,7 @@ class QueuedGPUdbTableMonitor(GPUdbTableMonitorBase):
         Args:
             payload:
         """
-        self.__logger.info("Payload received : %s " % payload)
+        self._logger.info("Payload received : %s " % payload)
         table_event = TableEvent(TableEventType.INSERT,
                                  count=-1, record_list=list(payload))
         self.record_queue.put(table_event)
@@ -108,7 +108,7 @@ class QueuedGPUdbTableMonitor(GPUdbTableMonitorBase):
         Args:
             payload:
         """
-        self.__logger.info("Payload received : %s " % payload)
+        self._logger.info("Payload received : %s " % payload)
         table_event = TableEvent(TableEventType.INSERT,
                                  count=-1, record_list=payload)
         self.record_queue.put(table_event)
@@ -119,7 +119,7 @@ class QueuedGPUdbTableMonitor(GPUdbTableMonitorBase):
         Args:
             count:
         """
-        self.__logger.info("Update count : %s " % count)
+        self._logger.info("Update count : %s " % count)
         table_event = TableEvent(TableEventType.UPDATE, count=count)
         self.record_queue.put(table_event)
 
@@ -129,7 +129,7 @@ class QueuedGPUdbTableMonitor(GPUdbTableMonitorBase):
         Args:
             count:
         """
-        self.__logger.info("Delete count : %s " % count)
+        self._logger.info("Delete count : %s " % count)
         table_event = TableEvent(TableEventType.DELETE, count=count)
         self.record_queue.put(table_event)
 
@@ -139,7 +139,7 @@ class QueuedGPUdbTableMonitor(GPUdbTableMonitorBase):
             table_name:
 
         """
-        self.__logger.error("Table %s dropped " % self.table_name)
+        self._logger.error("Table %s dropped " % self.table_name)
         notif_event = NotificationEvent(NotificationEventType.TABLE_DROPPED,
                                         table_name)
         self.record_queue.put(notif_event)

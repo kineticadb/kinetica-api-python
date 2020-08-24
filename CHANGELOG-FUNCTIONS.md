@@ -2,14 +2,21 @@
 
 ## Version 7.0
 
+### Version 7.0.19.0 - 2020-08-24
+- Added 'output_edge_path' (default=false) and 'output_wkt_path' (default=true)
+  options for turning on and off ability to export out aggregated path lists
+  columns onto the solutioon table for the path solvers of /solve/graph endpoint
+  for more speed. 
+
+
 ### Version 7.0.18.0 - 2020-07-30
 
 #### Changed Endpoints
 
 ##### Non-breaking Changes
 
-- Added ``cb_pointalphas`` option and ``cb_pointalpha_attrs`` and 
-  ``cb_pointalpha_vals`` fields to ``visualize/image/classbreak`` to support 
+- Added ``cb_pointalphas`` option and ``cb_pointalpha_attrs`` and
+  ``cb_pointalpha_vals`` fields to ``visualize/image/classbreak`` to support
   manipulation of transparency in class-break visualization.
 
 ##### Breaking Changes
@@ -23,7 +30,7 @@
 - Removed defunc 'incremental_weighted" solve method.
 - Added new option 'enable_truck_reuse' for supply demand solver of /match/graph for reusing truck in multiple rounds from the same originating depot
 - Added new option 'truck_service_limit' for sypply demand solver of /match/graph as an additional constraint on the total cost of any truck's delivery route.
-- Added option 'num_tasks_per_rank', to insert_records_fromfiles_request and create_external_table_request 
+- Added option 'num_tasks_per_rank', to insert_records_fromfiles_request and create_external_table_request
 
 ### Version 7.0.16.0 - 2020-05-08
 

@@ -3149,7 +3149,7 @@ class GPUdb(object):
     encoding      = "BINARY"    # Input encoding, either 'BINARY' or 'JSON'.
     username      = ""          # Input username or empty string for none.
     password      = ""          # Input password or empty string for none.
-    api_version   = "7.0.18.0"
+    api_version   = "7.0.19.0"
 
     # Constants
     END_OF_SET = -9999
@@ -5773,6 +5773,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/show/functions"
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_functions_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_functions_response","fields":[{"name":"function_names","type":{"type":"array","items":"string"}},{"name":"return_types","type":{"type":"array","items":"string"}},{"name":"parameters","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"optional_parameter_count","type":{"type":"array","items":"int"}},{"name":"flags","type":{"type":"array","items":"int"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("function_names", "array", [("string")]), ("return_types", "array", [("string")]), ("parameters", "array", [("array", [("string")])]), ("optional_parameter_count", "array", [("int")]), ("flags", "array", [("int")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/show/functions"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/show/graph"
         REQ_SCHEMA_STR = """{"name":"show_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"name":"show_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"graph_names","type":{"type":"array","items":"string"}},{"name":"directed","type":{"type":"array","items":"boolean"}},{"name":"num_nodes","type":{"type":"array","items":"long"}},{"name":"num_edges","type":{"type":"array","items":"long"}},{"name":"is_persisted","type":{"type":"array","items":"boolean"}},{"name":"is_sync_db","type":{"type":"array","items":"boolean"}},{"name":"has_insert_table_monitor","type":{"type":"array","items":"boolean"}},{"name":"original_request","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -6207,6 +6218,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["revoke_permission_system"] = "/revoke/permission/system"
         self.gpudb_func_to_endpoint_map["revoke_permission_table"] = "/revoke/permission/table"
         self.gpudb_func_to_endpoint_map["revoke_role"] = "/revoke/role"
+        self.gpudb_func_to_endpoint_map["show_functions"] = "/show/functions"
         self.gpudb_func_to_endpoint_map["show_graph"] = "/show/graph"
         self.gpudb_func_to_endpoint_map["show_graph_grammar"] = "/show/graph/grammar"
         self.gpudb_func_to_endpoint_map["show_proc"] = "/show/proc"
@@ -10821,12 +10833,15 @@ class GPUdb(object):
         """Creates a new graph network using given nodes, edges, weights, and
         restrictions.
 
-        IMPORTANT: It's highly recommended that you review the `Network Graphs
-        & Solvers <../../../graph_solver/network_graph_solver.html>`_ concepts
-        documentation, the `Graph REST Tutorial
-        <../../../graph_solver/examples/graph_rest_guide.html>`_, and/or some
-        `graph examples <../../../graph_solver/examples.html>`_ before using
-        this endpoint.
+        IMPORTANT: It's highly recommended that you review the
+        `Network Graphs & Solvers
+        <../../../graph_solver/network_graph_solver.html>`_
+        concepts documentation, the
+        `Graph REST Tutorial
+        <../../../graph_solver/examples/graph_rest_guide.html>`_,
+        and/or some `graph examples <../../../graph_solver/examples.html>`_
+        before
+        using this endpoint.
 
         Parameters:
 
@@ -10847,64 +10862,82 @@ class GPUdb(object):
                 The default value is True.
 
             nodes (list of str)
-                Nodes represent fundamental topological units of a graph. Nodes
-                must be specified using `identifiers
+                Nodes represent fundamental topological units of a graph.
+                Nodes must be specified using
+                `identifiers
                 <../../../graph_solver/network_graph_solver.html#identifiers>`_;
-                identifiers are grouped as `combinations
+                identifiers are grouped as
+                `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS NODE_ID', expressions, e.g.,
-                'ST_MAKEPOINT(column1, column2) AS NODE_WKTPOINT', or raw
-                values, e.g., '{9, 10, 11} AS NODE_ID'. If using raw values in
-                an identifier combination, the number of values specified must
-                match across the combination.    The user can provide a single
-                element (which will be automatically promoted to a list
-                internally) or a list.
+                'ST_MAKEPOINT(column1, column2) AS NODE_WKTPOINT', or constant
+                values, e.g.,
+                '{9, 10, 11} AS NODE_ID'.
+                If using constant values in an identifier combination, the
+                number of values
+                specified must match across the combination.    The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
 
             edges (list of str)
-                Edges represent the required fundamental topological unit of a
-                graph that typically connect nodes. Edges must be specified
-                using `identifiers
+                Edges represent the required fundamental topological unit of
+                a graph that typically connect nodes. Edges must be specified
+                using
+                `identifiers
                 <../../../graph_solver/network_graph_solver.html#identifiers>`_;
-                identifiers are grouped as `combinations
+                identifiers are grouped as
+                `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
                 Identifiers can be used with existing column names, e.g.,
-                'table.column AS EDGE_ID', expressions, e.g., 'SUBSTR(column,
-                1, 6) AS EDGE_NODE1_NAME', or raw values, e.g., "{'family',
-                'coworker'} AS EDGE_LABEL". If using raw values in an
-                identifier combination, the number of values specified must
-                match across the combination.    The user can provide a single
-                element (which will be automatically promoted to a list
-                internally) or a list.
+                'table.column AS EDGE_ID', expressions, e.g.,
+                'SUBSTR(column, 1, 6) AS EDGE_NODE1_NAME', or constant values,
+                e.g.,
+                "{'family', 'coworker'} AS EDGE_LABEL".
+                If using constant values in an identifier combination, the
+                number of values
+                specified must match across the combination.    The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
 
             weights (list of str)
-                Weights represent a method of informing the graph solver of the
-                cost of including a given edge in a solution. Weights must be
-                specified using `identifiers
+                Weights represent a method of informing the graph solver of
+                the cost of including a given edge in a solution. Weights must
+                be specified
+                using
+                `identifiers
                 <../../../graph_solver/network_graph_solver.html#identifiers>`_;
-                identifiers are grouped as `combinations
+                identifiers are grouped as
+                `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS WEIGHTS_EDGE_ID', expressions, e.g.,
-                'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED', or raw values,
-                e.g., '{4, 15} AS WEIGHTS_VALUESPECIFIED'. If using raw values
-                in an identifier combination, the number of values specified
+                'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED', or constant values,
+                e.g.,
+                '{4, 15} AS WEIGHTS_VALUESPECIFIED'.
+                If using constant values in an identifier combination, the
+                number of values specified
                 must match across the combination.    The user can provide a
                 single element (which will be automatically promoted to a list
                 internally) or a list.
 
             restrictions (list of str)
-                Restrictions represent a method of informing the graph solver
-                which edges and/or nodes should be ignored for the solution.
-                Restrictions must be specified using `identifiers
+                Restrictions represent a method of informing the graph
+                solver which edges and/or nodes should be ignored for the
+                solution. Restrictions
+                must be specified using
+                `identifiers
                 <../../../graph_solver/network_graph_solver.html#identifiers>`_;
-                identifiers are grouped as `combinations
+                identifiers are grouped as
+                `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS RESTRICTIONS_EDGE_ID', expressions, e.g.,
-                'column/2 AS RESTRICTIONS_VALUECOMPARED', or raw values, e.g.,
-                '{0, 0, 0, 1} AS RESTRICTIONS_ONOFFCOMPARED'. If using raw
-                values in an identifier combination, the number of values
+                'column/2 AS RESTRICTIONS_VALUECOMPARED', or constant values,
+                e.g.,
+                '{0, 0, 0, 1} AS RESTRICTIONS_ONOFFCOMPARED'.
+                If using constant values in an identifier combination, the
+                number of values
                 specified must match across the combination.    The user can
                 provide a single element (which will be automatically promoted
                 to a list internally) or a list.
@@ -18179,17 +18212,21 @@ class GPUdb(object):
     # begin match_graph
     def match_graph( self, graph_name = None, sample_points = None, solve_method =
                      'markov_chain', solution_table = '', options = {} ):
-        """Matches a directed route implied by a given set of latitude/longitude
-        points to an existing underlying road network graph using a given
-        solution type.
+        """Matches a directed route implied by a given set of
+        latitude/longitude points to an existing underlying road network graph
+        using a
+        given solution type.
 
-        IMPORTANT: It's highly recommended that you review the `Network Graphs
-        & Solvers <../../../graph_solver/network_graph_solver.html>`_ concepts
-        documentation, the `Graph REST Tutorial
-        <../../../graph_solver/examples/graph_rest_guide.html>`_, and/or some
+        IMPORTANT: It's highly recommended that you review the
+        `Network Graphs & Solvers
+        <../../../graph_solver/network_graph_solver.html>`_
+        concepts documentation, the
+        `Graph REST Tutorial
+        <../../../graph_solver/examples/graph_rest_guide.html>`_,
+        and/or some
         `/match/graph examples
-        <../../../graph_solver/examples.html#match-graph>`_ before using this
-        endpoint.
+        <../../../graph_solver/examples.html#match-graph>`_
+        before using this endpoint.
 
         Parameters:
 
@@ -18198,17 +18235,20 @@ class GPUdb(object):
                 using input parameter *sample_points*.
 
             sample_points (list of str)
-                Sample points used to match to an underlying geospatial graph.
-                Sample points must be specified using `identifiers
+                Sample points used to match to an underlying geospatial
+                graph. Sample points must be specified using
+                `identifiers
                 <../../../graph_solver/network_graph_solver.html#match-identifiers>`_;
-                identifiers are grouped as `combinations
+                identifiers are grouped as
+                `combinations
                 <../../../graph_solver/network_graph_solver.html#match-combinations>`_.
                 Identifiers can be used with: existing column names, e.g.,
                 'table.column AS SAMPLE_X'; expressions, e.g.,
-                'ST_MAKEPOINT(table.x, table.y) AS SAMPLE_WKTPOINT'; or raw
-                values, e.g., '{1, 2, 10} AS SAMPLE_TRIPID'.    The user can
-                provide a single element (which will be automatically promoted
-                to a list internally) or a list.
+                'ST_MAKEPOINT(table.x, table.y) AS SAMPLE_WKTPOINT'; or
+                constant values, e.g.,
+                '{1, 2, 10} AS SAMPLE_TRIPID'.    The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
 
             solve_method (str)
                 The type of solver to use for graph matching.
@@ -19280,6 +19320,22 @@ class GPUdb(object):
 
         return AttrDict( response )
     # end revoke_role
+
+
+    # begin show_functions
+    def show_functions( self, options = {} ):
+
+        assert isinstance( options, (dict)), "show_functions(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        (REQ_SCHEMA, RSP_SCHEMA) = self.__get_schemas( "/show/functions" )
+
+        obj = {}
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__post_then_get_cext( REQ_SCHEMA, RSP_SCHEMA, obj, '/show/functions' )
+
+        return AttrDict( response )
+    # end show_functions
 
 
     # begin show_graph
@@ -20431,15 +20487,19 @@ class GPUdb(object):
                      options = {} ):
         """Solves an existing graph for a type of problem (e.g., shortest path,
         page rank, travelling salesman, etc.) using source nodes, destination
-        nodes, and additional, optional weights and restrictions.
+        nodes, and
+        additional, optional weights and restrictions.
 
-        IMPORTANT: It's highly recommended that you review the `Network Graphs
-        & Solvers <../../../graph_solver/network_graph_solver.html>`_ concepts
-        documentation, the `Graph REST Tutorial
-        <../../../graph_solver/examples/graph_rest_guide.html>`_, and/or some
+        IMPORTANT: It's highly recommended that you review the
+        `Network Graphs & Solvers
+        <../../../graph_solver/network_graph_solver.html>`_
+        concepts documentation, the
+        `Graph REST Tutorial
+        <../../../graph_solver/examples/graph_rest_guide.html>`_,
+        and/or some
         `/solve/graph examples
-        <../../../graph_solver/examples.html#solve-graph>`_ before using this
-        endpoint.
+        <../../../graph_solver/examples.html#solve-graph>`_
+        before using this endpoint.
 
         Parameters:
 
@@ -20447,21 +20507,26 @@ class GPUdb(object):
                 Name of the graph resource to solve.
 
             weights_on_edges (list of str)
-                Additional weights to apply to the edges of an existing graph.
-                Weights must be specified using `identifiers
+                Additional weights to apply to the edges of an existing
+                graph. Weights must be specified using
+                `identifiers
                 <../../../graph_solver/network_graph_solver.html#identifiers>`_;
-                identifiers are grouped as `combinations
+                identifiers are grouped as
+                `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS WEIGHTS_EDGE_ID', expressions, e.g.,
-                'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED', or raw values,
-                e.g., '{4, 15, 2} AS WEIGHTS_VALUESPECIFIED'. Any provided
-                weights will be added (in the case of 'WEIGHTS_VALUESPECIFIED')
-                to or multiplied with (in the case of
-                'WEIGHTS_FACTORSPECIFIED') the existing weight(s). If using raw
-                values in an identifier combination, the number of values
-                specified must match across the combination.  The default value
-                is an empty list ( [] ).  The user can provide a single element
+                'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED', or constant values,
+                e.g.,
+                '{4, 15, 2} AS WEIGHTS_VALUESPECIFIED'. Any provided weights
+                will be added
+                (in the case of 'WEIGHTS_VALUESPECIFIED') to or multiplied with
+                (in the case of 'WEIGHTS_FACTORSPECIFIED') the existing
+                weight(s). If using
+                constant values in an identifier combination, the number of
+                values specified
+                must match across the combination.  The default value is an
+                empty list ( [] ).  The user can provide a single element
                 (which will be automatically promoted to a list internally) or
                 a list.
 
@@ -20470,22 +20535,29 @@ class GPUdb(object):
                 existing graph. Restrictions must be specified using
                 `identifiers
                 <../../../graph_solver/network_graph_solver.html#identifiers>`_;
-                identifiers are grouped as `combinations
+                identifiers are grouped as
+                `combinations
                 <../../../graph_solver/network_graph_solver.html#id-combos>`_.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS RESTRICTIONS_EDGE_ID', expressions, e.g.,
-                'column/2 AS RESTRICTIONS_VALUECOMPARED', or raw values, e.g.,
-                '{0, 0, 0, 1} AS RESTRICTIONS_ONOFFCOMPARED'. If using raw
-                values in an identifier combination, the number of values
-                specified must match across the combination. If
-                *remove_previous_restrictions* is set to *true*, any provided
-                restrictions will replace the existing restrictions. If
-                *remove_previous_restrictions* is set to *false*, any provided
+                'column/2 AS RESTRICTIONS_VALUECOMPARED', or constant values,
+                e.g.,
+                '{0, 0, 0, 1} AS RESTRICTIONS_ONOFFCOMPARED'. If using constant
+                values in an
+                identifier combination, the number of values specified must
+                match across the
+                combination. If *remove_previous_restrictions* is set
+                to *true*, any
+                provided restrictions will replace the existing restrictions.
+                If
+                *remove_previous_restrictions* is set to
+                *false*, any provided
                 restrictions will be added (in the case of
-                'RESTRICTIONS_VALUECOMPARED') to or replaced (in the case of
-                'RESTRICTIONS_ONOFFCOMPARED').  The default value is an empty
-                list ( [] ).  The user can provide a single element (which will
-                be automatically promoted to a list internally) or a list.
+                'RESTRICTIONS_VALUECOMPARED') to or
+                replaced (in the case of 'RESTRICTIONS_ONOFFCOMPARED').  The
+                default value is an empty list ( [] ).  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
 
             solver_type (str)
                 The type of solver to use for the graph.
@@ -20666,6 +20738,28 @@ class GPUdb(object):
                   less than 1 percent. In batch runs, since the performance is
                   of utmost importance, the option is always considered
                   'false'.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **output_edge_path** --
+                  If true then concatenated edge ids will be added as the EDGE
+                  path column of the solution table for each source and target
+                  pair in shortest path solves.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **output_wkt_path** --
+                  If true then concatenated wkt line segments will be added as
+                  the Wktroute column of the solution table for each source and
+                  target pair in shortest path solves.
                   Allowed values are:
 
                   * true
