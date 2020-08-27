@@ -15,6 +15,7 @@ if (sys.version_info[0] == 3):  # checking the major component
     from gpudb.gpudb import GPUdbFailoverDisabledException
     from gpudb.gpudb import GPUdbHAUnavailableException
     from gpudb.gpudb import GPUdbHostnameRegexFailureException
+    from gpudb.gpudb import GPUdbUnauthorizedAccessException
     from gpudb.gpudb import GPUdbRecordColumn
     from gpudb.gpudb import GPUdbRecordType
     from gpudb.gpudb import GPUdbRecord
@@ -24,6 +25,7 @@ if (sys.version_info[0] == 3):  # checking the major component
     from gpudb.gpudb import GPUdbTableOptions
 
     from gpudb.gpudb import AttrDict
+    from gpudb.gpudb import _Util
 
     from gpudb.gpudb_multihead_io import GPUdbWorkerList, GPUdbIngestor, InsertionException, RecordRetriever
 
@@ -48,6 +50,7 @@ else:
     from gpudb import GPUdbFailoverDisabledException
     from gpudb import GPUdbHAUnavailableException
     from gpudb import GPUdbHostnameRegexFailureException
+    from gpudb import GPUdbUnauthorizedAccessException
     from gpudb import GPUdbRecordColumn
     from gpudb import GPUdbRecordType
     from gpudb import GPUdbRecord
@@ -57,6 +60,7 @@ else:
     from gpudb import GPUdbTableOptions
 
     from gpudb import AttrDict
+    from gpudb import _Util
 
     from gpudb_multihead_io import GPUdbWorkerList, GPUdbIngestor, InsertionException, RecordRetriever
 

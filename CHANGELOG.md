@@ -2,7 +2,15 @@
 
 ## Version 7.1
 
-### Version 7.1.0.0 - TBD
+### Version 7.1.0.1 - 2020-08-27
+
+#### Fixed
+-   Added missing imports:
+    -  Exception class `GPUdbUnauthorizedAccessException`
+    -  Utility class `_Util`
+
+
+### Version 7.1.0.0 - 2020-08-18
 
 #### Added
 -   GPUdbTable read-only property `qualified_table_name` which returns the
@@ -54,7 +62,7 @@
 
 ## Version 7.0
 
-### Version 7.0.18.0 - TBD
+### Version 7.0.18.0 - 2020-07-30
 
 #### Changed
 
@@ -69,7 +77,7 @@
 -   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
 
 
-### Version 7.0.17.0 - TBD
+### Version 7.0.17.0 - 2020-07-06
 
 #### Added
 
