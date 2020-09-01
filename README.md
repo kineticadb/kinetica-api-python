@@ -6,8 +6,7 @@ first two components of the client version must match that of the Kinetica
 server.  When the versions do not match, the API will print a warning.  Often,
 there are breaking changes between versions, so it is critical that they match.
 For example, Kinetica 6.2 and 7.0 have incompatible changes, so the 6.2.x.y
-versions of the Python API would NOT be compatible with 7.0.a.b versions, but
-note that Kinetica 7.0 and 7.1 will remain compatible.
+versions of the Python API would NOT be compatible with 7.0.a.b versions.
 
 To install this package, run 'python setup.py install' in the root directory of
 the repo.  Note that due to the in-house compiled C-module dependency, this
