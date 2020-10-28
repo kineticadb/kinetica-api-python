@@ -193,8 +193,8 @@ class BaseTask(threading.Thread):
         db (GPUdb) : Handle to GPUdb instance
         table_name (str): Name of the table to create the monitor for
         table_event (TableEventType): Enum of TableEventType
-        options (GPUdbTableMonitor.Options): Options to configure GPUdbTableMonitor
-        callbacks (GPUdbTableMonitor.Callbacks): Callbacks passed by user to be
+        options (GPUdbTableMonitorBase.Options): Options to configure GPUdbTableMonitor
+        callbacks (GPUdbTableMonitorBase.Callbacks): Callbacks passed by user to be
             called on various events
         topic_id_to_mode_map (dict): map to store topic_id to mode string like
             'insert', 'update' or 'delete'
@@ -223,7 +223,7 @@ class BaseTask(threading.Thread):
 
         if not isinstance(callbacks, GPUdbTableMonitorBase.Callbacks):
             raise GPUdbException("callbacks must be of type : "
-                                 "GPUdbTableMonitor.Callbacks")
+                                 "GPUdbTableMonitorBase.Callbacks")
         else:
             self._callbacks = callbacks
 
@@ -800,8 +800,8 @@ class InsertWatcherTask(BaseTask):
         db (GPUdb) : Handle to GPUdb instance
         table_name (str): Name of the table to create the monitor for
         table_event (TableEventType): Enum of TableEventType
-        options (GPUdbTableMonitor.Options): Options to configure GPUdbTableMonitor
-        callbacks (GPUdbTableMonitor.Callbacks): Callbacks passed by user to be
+        options (GPUdbTableMonitorBase.Options): Options to configure GPUdbTableMonitor
+        callbacks (GPUdbTableMonitorBase.Callbacks): Callbacks passed by user to be
             called on various events
         topic_id_to_mode_map (dict): map to store topic_id to mode string like
             'insert', 'update' or 'delete'
@@ -960,8 +960,8 @@ class UpdateWatcherTask(BaseTask):
         db (GPUdb) : Handle to GPUdb instance
         table_name (str): Name of the table to create the monitor for
         table_event (TableEventType): Enum of TableEventType
-        options (GPUdbTableMonitor.Options): Options to configure GPUdbTableMonitor
-        callbacks (GPUdbTableMonitor.Callbacks): Callbacks passed by user to be
+        options (GPUdbTableMonitorBase.Options): Options to configure GPUdbTableMonitor
+        callbacks (GPUdbTableMonitorBase.Callbacks): Callbacks passed by user to be
             called on various events
         topic_id_to_mode_map (dict): map to store topic_id to mode string like
             'insert', 'update' or 'delete'
@@ -1009,7 +1009,7 @@ class UpdateWatcherTask(BaseTask):
         retobj = None
         try:
             retobj = dict(
-                GPUdbRecord.decode_binary_data(self.record_type, messages[1])[
+                GPUdbRecord.decode_binary_data(self.type_schema, messages[1])[
                     0])
 
             self._logger.debug("Topic Id = {} , record = {} "
@@ -1102,10 +1102,10 @@ class DeleteWatcherTask(BaseTask):
         table_event (TableEventType):
             Enum value of TableEventType
 
-        options (GPUdbTableMonitor.Options):
+        options (GPUdbTableMonitorBase.Options):
             Options to configure GPUdbTableMonitor
 
-        callbacks (GPUdbTableMonitor.Callbacks):
+        callbacks (GPUdbTableMonitorBase.Callbacks):
             Callbacks passed by user to be called on various events
 
         topic_id_to_mode_map (dict):
@@ -1254,7 +1254,7 @@ class GPUdbTableMonitorBase(object):
             cannot be an empty string. In case this parameter does not have a
             valid value the constructor will raise a GPUdbException exception.
 
-            callbacks (GPUdbTableMonitor.Callbacks): Instance of the Callbacks
+            callbacks (GPUdbTableMonitorBase.Callbacks): Instance of the Callbacks
                 nested class of GPUdbTableMonitor class.
 
             options (GPUdbTableMonitorOptions):
@@ -1281,7 +1281,7 @@ class GPUdbTableMonitorBase(object):
 
         if not isinstance(callbacks, GPUdbTableMonitorBase.Callbacks):
             raise GPUdbException("callbacks must be of type : "
-                                 "'GPUdbTableMonitor.Callbacks'")
+                                 "'GPUdbTableMonitorBase.Callbacks'")
         else:
             self.callbacks = callbacks
 
@@ -1329,7 +1329,7 @@ class GPUdbTableMonitorBase(object):
             else:
                 raise GPUdbException("Passed in options is not of the expected "
                                      "type: Expected "
-                                     "'GPUdbTableMonitor.Options' type")
+                                     "'GPUdbTableMonitorBase.Options' type")
 
         # Setup the logger for this instance
         self._id = str(uuid.uuid4())
@@ -1528,9 +1528,8 @@ class GPUdbTableMonitorBase(object):
 
 
     class Callbacks(object):
-        """ This is an inner class to GPUdbTableMonitor to encapsulate all
+        """This is an inner class to GPUdbTableMonitor to encapsulate all
         the callback methods needed to be passed in.
-
         """
 
         def __init__(
@@ -1633,55 +1632,63 @@ class GPUdbTableMonitorBase(object):
         class is initialized with sensible defaults which can be overridden by
         the users of the class. The following options are supported :
 
-        1. operation_list - This is a list which can be passed values of
-            TableEventType enum like 'TableEventType.INSERT',
-            'TableEventType.UPDATE' etc. The list can contain a maximum of three
-            elements one for each type in the enum.
+        * **operation_list**
+            A list which indicates which type(s) of table monitor(s) to create and
+            subscribe to for the given table.  List members must be of type
+            `TableEventType` (enum with values: `INSERT`, `UPDATE`, and
+            `DELETE`).  The list can contain each enum value up to one time (no
+            duplicates).  This option is mutually exclusive with the option
+            `table_monitor_topic_id_list`; if using the latter, pass `None`
+            for this option.
 
-        2. notification_list - This is list which can be passed values of type
-            NotificationEventType enum like NotificationEventType.
+        * **notification_list**
+            This is list which can be passed values of type NotificationEventType
+            enum like NotificationEventType.
 
-        3. terminate_on_table_altered -
-            This is a boolean value indicating whether a table monitor is to be
-            terminated or not when a change in the table schema is detected.
+        * **terminate_on_table_altered**
+            A boolean value indicating whether a table monitor is to be
+            terminated when a change in the table schema is detected.
 
-        4. terminate_on_connection_lost -
+        * **terminate_on_connection_lost**
             This is a boolean value indicating whether the table monitor is to be
             terminated or not if the communication with GPUdb is broken for some
             reason.
 
-        5. check_gpudb_and_table_state_counter -
-            This is a counter which defines a threshold to check the state of
-            GPUdb and the table to invoke methods to activate HA if needed. It
-            is mainly counted in the main loop in idle state when polling the
-            ZMQ socket has returned nothing.
+        * **check_gpudb_and_table_state_counter**
+            A threshold for any period of inactivity in the table monitor; after
+            the given number of inactive poll results, the API will check if the
+            active Kinetica server is down.  If so, the API will failover to any
+            available backup cluster and recreate the table monitor(s) there.
+            Keep in mind that the inactivity could also be due to the table not
+            having had its data modified.
 
-        6. decode_failure_threshold -
-            This is a value (in seconds) to restrict
-            the number of times the program tries to decode a message after
-            having failed the first time, probably due to an alteration in the
-            table schema.
+        * **decode_failure_threshold**
+            The number of seconds to restrict how long the program tries to
+            decode a message after having failed the first time; the failure
+            is possibly due to an alteration in the table schema.
 
-        7. ha_check_threshold -
-            This is a value (in seconds) to set the limit
-            to the number of seconds the program checks to activate HA when
-            needed.
+        * **ha_check_threshold**
+            The number of seconds the program checks to failover to any
+            available backup cluster.  When the active database server cluster
+            has not responded for a long time, and the API determines that it
+            is time to failover to a backup cluster (if available), this option
+            sets the timeout for the failover event.
 
-        8. zmq_polling_interval - This option controls the time interval to
-            set the timeout for ZMQ socket polling. This is a value specified
-            in milliseconds.
+        * **zmq_polling_interval**
+            This option controls the time interval to set the timeout for ZMQ
+            socket polling. It is specified in milliseconds.
 
-        9. table_monitor_topic_id_list - In case the table monitors for the
-            given table are already existing, the users can pass in the
-            topic_ids so that the messages can be subscribed to without the need
-            to create the monitors. The maximum number of elements in this list
-            can be three one topic_id for each table monitor for insert, update
-            and delete. Passing None for this mandates passing a valid value
-            for 'operation_list'. Passing both as None is not allowed as also
-            passing valid values for both is not allowed.
+        * **table_monitor_topic_id_list**
+            If the user wants to subscribe to table monitors that have already
+            been created, use this option to pass in the `topic_ids`.  When used,
+            the API will not attempt to create new table monitors, but subscribe
+            to the existing ones instead.  Pass one `topic_id` per type of table
+            monitor (i.e. insert, update, delete).  This option is mutually
+            exclusive with the option `operation_list`; if using the latter,
+            pass None for this option.
 
         Example usage:
-            options = GPUdbTableMonitor.Options(_dict=dict(
+            options = GPUdbTableMonitorBase.Options(_dict=dict(
                                                         operation_list = None,
                                                         notification_list = [NotificationEventType.TABLE_ALTERED,
                                                                         NotificationEventType.TABLE_DROPPED],
@@ -2194,9 +2201,7 @@ class GPUdbTableMonitorBase(object):
 # End GPUdbTableMonitorBase class
 
 class GPUdbTableMonitor(GPUdbTableMonitorBase):
-    """ A default implementation which just passes on the received objects
-        to the callbacks which are passed in as arguments to the constructor
-        of this class.
+    """ A default implementation which just logs the table monitor events.
 
         This class can be used as it is for simple requirements or more
         involved cases could directly inherit from GPUdbTableMonitor class and
@@ -2217,7 +2222,7 @@ class GPUdbTableMonitor(GPUdbTableMonitorBase):
             tablename (str):
                 Name of the table to create the monitor for
 
-            options (GPUdbTableMonitor.Options):
+            options (GPUdbTableMonitorBase.Options):
                 Options instance which is passed on to the super class
                 GPUdbTableMonitor constructor
         """

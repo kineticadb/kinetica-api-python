@@ -2,6 +2,21 @@
 
 ## Version 7.1
 
+### Version 7.1.1.0 - 2020-10-28
+
+#### Added
+-   GPUdb methods for adding custom headers per endpoint call:
+    -   ``add_http_header()``
+    -   ``remove_http_header()``
+    -   ``get_http_headers()``
+-   Add multi-head i/o support for new column type UUID
+-   New log level ``trace`` for GPUdb
+
+
+#### Note
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
+
+
 ### Version 7.1.0.1 - 2020-08-27
 
 #### Fixed
@@ -58,6 +73,9 @@
     -   `GPUdb.host_manager_port`
     -   `GPUdb.gpudb_url_path`
 
+
+#### Note
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
 
 
 ## Version 7.0

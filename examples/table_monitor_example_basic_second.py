@@ -62,20 +62,20 @@ The client class has a member of GPUdbTableMonitorBase.Callbacks type and it is
 created and initialized with the callbacks defined by this class
 (TableMonitorExampleClient).
 
-The member of type GPUdbTableMonitorBase.Callbacks is exposed by the 
+The member of type GPUdbTableMonitorBase.Callbacks is exposed by the
 TableMonitorExampleClient class as a property named 'callbacks'.
 
-The main method creates the TableMonitorExampleClient class and then an 
-instance of GPUdbTableMonitorBase class separately. The 'callbacks' value 
-returned by the instance of TableMonitorExampleClient instance is passed to the 
+The main method creates the TableMonitorExampleClient class and then an
+instance of GPUdbTableMonitorBase class separately. The 'callbacks' value
+returned by the instance of TableMonitorExampleClient instance is passed to the
 constructor of GPUdbTableMonitorBase class as shown below.
 
 The main method runs as follows:
 
     # This is the main client code
-    # First create a TableMonitorExampleclient object 
-    # Then create an instance of GPUdbTableMonitorBase class 
-    # and pass the value of the 'callbacks' property from the 
+    # First create a TableMonitorExampleclient object
+    # Then create an instance of GPUdbTableMonitorBase class
+    # and pass the value of the 'callbacks' property from the
     # TableMonitorExampleClient instance.
     # Call the 'start_monitor' method of GPUdbTableMonitorBase instance.
 
@@ -110,10 +110,10 @@ class TableMonitorExampleClient():
         Args:
             db (GPUdb):
                 The handle to the GPUdb
-            
+
             tablename (str):
                 Name of the table to create the monitor for
-            
+
         """
 
         self.logger = EXAMPLE_LOGGER
@@ -146,7 +146,7 @@ class TableMonitorExampleClient():
 
         Args:
             item (TableEvent): The events could be one of TableEvent enum types
-            like TableEventType.INSERT, TableEventType.UPDATE etc. The item is 
+            like TableEventType.INSERT, TableEventType.UPDATE etc. The item is
             checked for the exact type and could be handled differently as has
             been demonstrated in this method.
         """
@@ -172,13 +172,13 @@ class TableMonitorExampleClient():
         methods with the respective payloads of NotificationEvent type.
 
         This example implementation just prints the payloads but in reality
-        they could be passed on to other processing methods, logged for error 
+        they could be passed on to other processing methods, logged for error
         and system health tracing etc.
 
         Args:
-            notification_event (NotificationEvent): The events could be one of 
-            NotificationEvent enum types like NotificationEvent.TABLE_ALTERED, 
-            NotificationEvent.TABLE_DROPPED etc. The item is checked for the 
+            notification_event (NotificationEvent): The events could be one of
+            NotificationEvent enum types like NotificationEvent.TABLE_ALTERED,
+            NotificationEvent.TABLE_DROPPED etc. The item is checked for the
             exact type and could be handled differently as has been demonstrated
             in this method.
         """
@@ -316,7 +316,7 @@ def load_data():
 """
 
 
-def create_tables():
+def create_table( table_name ):
     # Put both tables into the "examples" schema
     schema_option = {"collection_name": "examples"}
 
@@ -335,50 +335,22 @@ def create_tables():
     # Create the "history" table using the column list
     gpudb.GPUdbTable(
         columns,
-        name="table_monitor_history",
-        options=schema_option,
-        db=h_db
+        name = table_name,
+        options = schema_option,
+        db = h_db
     )
-
-    # Create a column list for the "status" table
-    columns = [
-        ["city", GRC._ColumnType.STRING, GCP.CHAR16, GCP.PRIMARY_KEY],
-        ["state_province", GRC._ColumnType.STRING, GCP.CHAR32, GCP.PRIMARY_KEY],
-        ["country", GRC._ColumnType.STRING, GCP.CHAR16],
-        ["temperature", GRC._ColumnType.DOUBLE],
-        ["last_update_ts", GRC._ColumnType.STRING, GCP.DATETIME]
-    ]
-
-    # Create the "status" table using the column list
-    gpudb.GPUdbTable(
-        columns,
-        name="table_monitor_status",
-        options=schema_option,
-        db=h_db
-    )
-
-
 # end create_tables()
 
 
-""" Drop the city weather "history" & "status" tables used in this example
-"""
+def clear_table( table_name ):
+    # Drop the table
+    h_db.clear_table( table_name )
+# end clear_table
 
 
-def clear_tables():
-    # Drop all the tables
-    for table_name in reversed([
-        "examples.table_monitor_status",
-        "examples.table_monitor_history"
-    ]):
-        h_db.clear_table(table_name)
-
-
-# end clear_tables()
 
 def delete_records(h_db):
     """
-
     Args:
         h_db:
 
@@ -395,9 +367,12 @@ def delete_records(h_db):
     print("Records after = %s" % post_delete_records)
 
     return pre_delete_records - post_delete_records
+# end delete_records
+
 
 
 if __name__ == '__main__':
+
     # Set up args
     parser = argparse.ArgumentParser(description='Run table monitor example.')
     parser.add_argument('command', nargs="?",
@@ -414,33 +389,33 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Establish connection with an instance of Kinetica on port 9191
-    h_db = gpudb.GPUdb(encoding="BINARY", host=args.host, port="9191", 
+    h_db = gpudb.GPUdb(encoding="BINARY", host=args.host, port="9191",
                        username=args.username, password=args.password)
-    
+
     # Identify the message queue, running on port 9002
     table_monitor_queue_url = "tcp://" + args.host + ":9002"
-    tablename = args.tablename
+    table_name = args.tablename
 
     # If command line arg is clear, just clear tables and exit
     if (args.command == "clear"):
-        clear_tables()
+        clear_table( table_name )
         quit()
 
-    clear_tables()
+    clear_table( table_name )
 
-    create_tables()
+    create_table( table_name )
 
     # This is the main client code
-    # First create a TableMonitorExampleclient object 
-    # Then create an instance of GPUdbTableMonitorBase class 
-    # and pass the value of the 'callbacks' property from the 
+    # First create a TableMonitorExampleclient object
+    # Then create an instance of GPUdbTableMonitorBase class
+    # and pass the value of the 'callbacks' property from the
     # TableMonitorExampleClient instance.
     # Call the 'start_monitor' method of GPUdbTableMonitorBase instance.
 
-    client = TableMonitorExampleClient(h_db, tablename)
-    monitor = GPUdbTableMonitorBase(db=h_db,
-                                    tablename=tablename,
-                                    callbacks=client.callbacks)
+    client = TableMonitorExampleClient(h_db, table_name)
+    monitor = GPUdbTableMonitorBase(db = h_db,
+                                    tablename = table_name,
+                                    callbacks = client.callbacks)
     monitor.logging_level = logging.DEBUG
 
     # Start the monitor

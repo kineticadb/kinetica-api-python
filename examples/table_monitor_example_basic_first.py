@@ -93,10 +93,10 @@ class TableMonitorExampleClient():
         Args:
             db (GPUdb):
                 The handle to the GPUdb
-            
+
             tablename (str):
                 Name of the table to create the monitor for
-            
+
             options (GPUdbTableMonitorBase.Options):
                 Options instance which is passed on to the super class
                 GPUdbTableMonitorBase constructor
@@ -141,7 +141,7 @@ class TableMonitorExampleClient():
 
         Args:
             item (TableEvent): The events could be one of TableEvent enum types
-            like TableEventType.INSERT, TableEventType.UPDATE etc. The item is 
+            like TableEventType.INSERT, TableEventType.UPDATE etc. The item is
             checked for the exact type and could be handled differently as has
             been demonstrated in this method.
         """
@@ -167,13 +167,13 @@ class TableMonitorExampleClient():
         methods with the respective payloads of NotificationEvent type.
 
         This example implementation just prints the payloads but in reality
-        they could be passed on to other processing methods, logged for error 
+        they could be passed on to other processing methods, logged for error
         and system health tracing etc.
 
         Args:
-            notification_event (NotificationEvent): The events could be one of 
-            NotificationEvent enum types like NotificationEvent.TABLE_ALTERED, 
-            NotificationEvent.TABLE_DROPPED etc. The item is checked for the 
+            notification_event (NotificationEvent): The events could be one of
+            NotificationEvent enum types like NotificationEvent.TABLE_ALTERED,
+            NotificationEvent.TABLE_DROPPED etc. The item is checked for the
             exact type and could be handled differently as has been demonstrated
             in this method.
         """
@@ -237,14 +237,14 @@ class TableMonitorExampleClient():
 # End class TableMonitorExampleClient
 
 
-""" Load random city weather data into a "history" table, in batches.  Each
-    batch will be loaded 2 seconds apart, to give the table monitor time to push
-    that batch to the message queue and the queue client time to process the
-    batch
-"""
 
 
 def load_data():
+    """ Load random city weather data into a "history" table, in batches.  Each
+    batch will be loaded 2 seconds apart, to give the table monitor time to push
+    that batch to the message queue and the queue client time to process the
+    batch.
+    """
     # Base data set, from which cities will be randomly chosen, with a random
     #   new temperature picked for each, per batch loaded
     city_data = [
@@ -307,11 +307,9 @@ def load_data():
 # end load_data_and_wait()
 
 
-""" Create the city weather "history" & "status" tables used in this example
-"""
+def create_table( table_name ):
+    """Create the table used in this example."""
 
-
-def create_tables():
     # Put both tables into the "examples" schema
     schema_option = {"collection_name": "examples"}
 
@@ -330,46 +328,18 @@ def create_tables():
     # Create the "history" table using the column list
     gpudb.GPUdbTable(
         columns,
-        name="table_monitor_history",
-        options=schema_option,
-        db=h_db
+        name = table_name,
+        options = schema_option,
+        db = h_db
     )
-
-    # Create a column list for the "status" table
-    columns = [
-        ["city", GRC._ColumnType.STRING, GCP.CHAR16, GCP.PRIMARY_KEY],
-        ["state_province", GRC._ColumnType.STRING, GCP.CHAR32, GCP.PRIMARY_KEY],
-        ["country", GRC._ColumnType.STRING, GCP.CHAR16],
-        ["temperature", GRC._ColumnType.DOUBLE],
-        ["last_update_ts", GRC._ColumnType.STRING, GCP.DATETIME]
-    ]
-
-    # Create the "status" table using the column list
-    gpudb.GPUdbTable(
-        columns,
-        name="table_monitor_status",
-        options=schema_option,
-        db=h_db
-    )
-
-
 # end create_tables()
 
 
-""" Drop the city weather "history" & "status" tables used in this example
-"""
+def clear_table( table_name ):
+    """Delete the table used in this example."""
+    h_db.clear_table( table_name )
+# end clear_table
 
-
-def clear_tables():
-    # Drop all the tables
-    for table_name in reversed([
-        "examples.table_monitor_status",
-        "examples.table_monitor_history"
-    ]):
-        h_db.clear_table(table_name)
-
-
-# end clear_tables()
 
 def delete_records(h_db):
     """
@@ -390,6 +360,7 @@ def delete_records(h_db):
     print("Records after = %s" % post_delete_records)
 
     return pre_delete_records - post_delete_records
+# end delete_records
 
 
 if __name__ == '__main__':
@@ -409,27 +380,27 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Establish connection with an instance of Kinetica on port 9191
-    h_db = gpudb.GPUdb(encoding="BINARY", host=args.host, port="9191", 
+    h_db = gpudb.GPUdb(encoding="BINARY", host=args.host, port="9191",
                        username=args.username, password=args.password)
-    
+
     # Identify the message queue, running on port 9002
     table_monitor_queue_url = "tcp://" + args.host + ":9002"
-    tablename = args.tablename
+    table_name = args.tablename
 
     # If command line arg is clear, just clear tables and exit
     if (args.command == "clear"):
-        clear_tables()
+        clear_table( table_name )
         quit()
 
-    clear_tables()
+    clear_table( table_name )
 
-    create_tables()
+    create_table( table_name )
 
     # This is the main client code
     # First create a TableMonitorExampleClient instance and call the 'start'
     # method
 
-    client = TableMonitorExampleClient(h_db, tablename)
+    client = TableMonitorExampleClient(h_db, table_name)
 
     # Start the monitor
     client.start()

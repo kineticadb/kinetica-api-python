@@ -23,6 +23,7 @@ except:
     import http.client as httplib
 
 import base64
+import copy
 import os
 import inspect
 import json
@@ -102,6 +103,23 @@ except ImportError:
     HAVE_SNAPPY = False
 
 from tabulate import tabulate
+
+# -----------------------------------------------------------------
+# Logging -- Add a trace method
+# -----------------------------
+logging.TRACE = 9
+logging.addLevelName( logging.TRACE, "TRACE" )
+
+def trace( self, message, *args, **kws ):
+    if self.isEnabledFor( logging.TRACE ):
+        # Yes, logger takes its '*args' as 'args'
+        self._log( logging.TRACE, message, args, **kws )
+    # end if
+# end def trace
+
+logging.Logger.trace = trace
+
+
 
 # -----------------------------------------------------------------
 
@@ -1154,6 +1172,12 @@ class GPUdbColumnProperty(object):
     """
 
 
+    UUID = "uuid"
+    """str: Valid only for 'string' columns.  It represents an uuid data type.
+    Internally, it is stored as a 128-bit integer.
+    """
+
+
     DECIMAL = "decimal"
     """str: Valid only for 'string' columns.  It represents a SQL type NUMERIC(19,
     4) data type.  There can be up to 15 digits before the decimal point and up
@@ -1320,6 +1344,12 @@ class GPUdbColumnProperty(object):
     INIT_WITH_NOW = "init_with_now"
     """str: For 'date', 'time', 'datetime', or 'timestamp' column types, replace
     empty strings and invalid timestamps with 'NOW()' upon insert.
+    """
+
+
+    INIT_WITH_UUID = "init_with_uuid"
+    """str: For 'uuid' type,  repalce empty strings and invalid uuid values with
+    new_uuid()' upon insert.
     """
 
 # end class GPUdbColumnProperty
@@ -2511,6 +2541,14 @@ class GPUdbRecord( object ):
 
 class GPUdb(object):
 
+    # Headers that are protected and cannot be overridden by users
+    _protected_headers = [
+        C._HEADER_ACCEPT,
+        C._HEADER_AUTHORIZATION,
+        C._HEADER_CONTENT_TYPE,
+        C._HEADER_HA_SYNC_MODE
+    ]
+
     class HASynchronicityMode( enum.Enum ):
         """Inner enumeration class to represent the high-availability
         synchronicity override mode that is applied to each endpoint call.
@@ -2581,14 +2619,6 @@ class GPUdb(object):
                                options = opts )
         """
 
-        # Headers that are protected and cannot be overridden by users
-        __protected_headers = [
-            C._HEADER_ACCEPT,
-            C._HEADER_AUTHORIZATION,
-            C._HEADER_CONTENT_TYPE,
-            C._HEADER_HA_SYNC_MODE
-        ]
-
         # Names of properties
         __cluster_reconnect_count_str            = "cluster_reconnect_count"
         __disable_auto_discovery_str             = "disable_auto_discovery"
@@ -2654,7 +2684,7 @@ class GPUdb(object):
             self.__ha_failover_order                  = GPUdb.HAFailoverOrder.RANDOM
             self.__host_manager_port                  = GPUdb._DEFAULT_HOST_MANAGER_PORT
             self.__hostname_regex                     = None
-            self.__http_headers                       = None
+            self.__http_headers                       = {}
             self.__initial_connection_attempt_timeout = 0
             self.__intra_cluster_failover_timeout     = 0 # infinite wait
             self.__logging_level                      = None
@@ -3119,9 +3149,9 @@ class GPUdb(object):
         def http_headers(self):
             """Gets the custom HTTP headers that will be used per HTTP endpoint
             submission by the :class:`GPUdb` to the server.  The header keys
-            and values must be strings.
+            and values must be strings.  Returns a deep copy.
             """
-            return self.__http_headers
+            return copy.deepcopy( self.__http_headers )
 
 
         @http_headers.setter
@@ -3169,7 +3199,7 @@ class GPUdb(object):
 
             # Ensure that none of the protected headers are being overriddent
             for header in list( value.keys() ):
-                if header in self.__protected_headers:
+                if header in GPUdb._protected_headers:
                     raise GPUdbException( "Header '{}' is protected and cannot "
                                           "be overridden by the user"
                                           "".format( header ) )
@@ -3204,7 +3234,7 @@ class GPUdb(object):
                                       "".format( header, value ) )
             # end if
 
-            if header in self.__protected_headers:
+            if header in GPUdb._protected_headers:
                 raise GPUdbException( "Header '{}' is protected and cannot "
                                       "be overridden by the user"
                                       "".format( header ) )
@@ -3323,6 +3353,7 @@ class GPUdb(object):
             WARNING  --      30
             INFO     --      20
             DEBUG    --      10
+            TRACE    --       9
             NOTSET   --       0
 
             Both the string values (in any case) and the numeric values are
@@ -4247,7 +4278,7 @@ class GPUdb(object):
         C._DB_CONNECTION_RESET
     ]
 
-    # Default  host manager port for http and httpd
+    # Default host manager port for http and httpd
     _DEFAULT_HOST_MANAGER_PORT       = 9300
     _DEFAULT_HTTPD_HOST_MANAGER_PORT = 8082
 
@@ -4268,7 +4299,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.0.1"
+    api_version = "7.1.1.0"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -6387,7 +6418,7 @@ class GPUdb(object):
                 treated as a regular back-up cluster's host.  Default value is False.
 
 
-        .. deprecated::
+        .. deprecated:: 7.1.0.0
 
             As of version 7.1.0.0, this method will no longer be
             functional.  This method will be a no-op, not changing primary host.
@@ -6516,7 +6547,7 @@ class GPUdb(object):
     @host.setter
     def host(self, value):
         """
-        .. deprecated::
+        .. deprecated:: 7.1.0.0
 
             As of version 7.1.0.0, this method will no longer be
             functional.  This method will be a no-op, not changing host.
@@ -6534,7 +6565,7 @@ class GPUdb(object):
     @port.setter
     def port(self, value):
         """
-        .. deprecated::
+        .. deprecated:: 7.1.0.0
 
             As of version 7.1.0.0, this method will no longer be
             functional.  This method will be a no-op, not changing port.
@@ -6552,7 +6583,7 @@ class GPUdb(object):
     @host_manager_port.setter
     def host_manager_port(self, value):
         """
-        .. deprecated::
+        .. deprecated:: 7.1.0.0
 
             As of version 7.1.0.0, this method will no longer be
             functional.  This method will be a no-op, not changing host manager
@@ -6570,7 +6601,7 @@ class GPUdb(object):
     @gpudb_url_path.setter
     def gpudb_url_path(self, value):
         """
-        .. deprecated::
+        .. deprecated:: 7.1.0.0
 
             As of version 7.1.0.0, this method will no longer be
             functional.  This method will be a no-op, not changing URL path
@@ -6594,7 +6625,7 @@ class GPUdb(object):
     @connection.setter
     def connection(self, value):
         """
-        .. deprecated::
+        .. deprecated:: 7.1.0.0
 
             As of version 7.1.0.0, this method will no longer be
             functional.  This method will be a no-op, not changing protocol
@@ -6743,6 +6774,70 @@ class GPUdb(object):
             return [ cluster.head_rank_url for cluster in self.all_cluster_info ]
     # end get_all_available_full_urls
 
+    def add_http_header( self, header, value ):
+        """Adds an HTTP header to the map of additional HTTP headers to send to
+        the server with each request.  If the header is already in the map, its
+        value is replaced with the specified value.  The user is not allowed
+        to modify the following headers:
+        *  ``Accept``
+        *  ``Authorization``
+        *  ``ha_sync_mode``
+        *  ``Content-type``
+        """
+        # Validate input
+        if not header:
+            raise GPUdbException( "Must provide non-empty header; given {}"
+                                  "".format( header ) )
+        # end if
+        if value is None:
+            raise GPUdbException( "Must provide non-None header value; given {}"
+                                  "".format( value ) )
+        # end if
+
+        # Ensure that the given header is not a protected header
+        if header in self._protected_headers:
+            raise GPUdbException( "Not allowed to change protected header {}"
+                                  "".format( header ) )
+        # end if
+
+        self.__custom_http_headers[ header ] = value
+    # end add_http_header
+
+
+    def remove_http_header( self, header ):
+        """Removes the given HTTP header from the map of additional HTTP headers
+        to send to GPUdb with each request. The user is not allowed to remove
+        the following headers:
+        *  ``Accept``
+        *  ``Authorization``
+        *  ``ha_sync_mode``
+        *  ``Content-type``
+        """
+        # Ensure that the given header is not a protected header
+        if header in self._protected_headers:
+            raise GPUdbException( "Not allowed to change protected header {}"
+                                  "".format( header ) )
+        # end if
+
+        # Can remove the header only if it exists
+        if header in self.__custom_http_headers.keys():
+            del self.__custom_http_headers[ header ]
+    # end remove_http_header
+
+
+    def get_http_headers( self ):
+        """Returns a dict containing all the custom headers used currently
+        by :class:`GPUdb`.  Returns a deep copy so that the user does not
+        accidentally change the headers.  Note that the API may use other
+        headers as appropriate; the ones returned here are the custom ones set
+        up by the user.
+        """
+        # Need to return a deep copy, otherwise, the user could unintentionally
+        # change the headers
+        return copy.deepcopy( self.__custom_http_headers )
+    # end get_http_header
+
+
     # ==========================================================================
 
 
@@ -6830,6 +6925,25 @@ class GPUdb(object):
         self.log.error( "[GPUdb] {} {}".format( self._id, message ) )
     # end __log_error_with_id
 
+    def __log_trace( self, message ):
+        try:
+            # Get calling method's information from the stack
+            stack = inspect.stack()
+            # stack[1] gives the previous/calling function
+            filename = stack[1][1].split("/")[-1]
+            ln       = stack[1][2]
+            func     = stack[1][3]
+
+            self.log.trace( "[GPUdb::{fn}::{line}::{func}]  {msg}"
+                            "".format( fn = filename,
+                                       func = func, line = ln,
+                                       msg = message ) )
+        except:
+            # Some error occurred with inspect; just log the debug message
+            self.log.trace( "[GPUdb]  {msg}"
+                            "".format( msg = message ) )
+    # end __log_trace
+
     def __log_debug( self, message ):
         try:
             # Get calling method's information from the stack
@@ -6865,7 +6979,7 @@ class GPUdb(object):
     def log_debug( self, message ):
         """Logging method for debug.
 
-        .. deprecated::
+        .. deprecated:: 7.1.0.0
 
             As of version 7.1.0.0, this method is deprecated,
             and may be removed in a future version.  Previously,
@@ -6879,7 +6993,7 @@ class GPUdb(object):
     def log_warn( self, message ):
         """Logging method for warnings.
 
-        .. deprecated::
+        .. deprecated:: 7.1.0.0
 
             As of version 7.1.0.0, this method is deprecated,
             and may be removed in a future version.  Previously,
@@ -6893,7 +7007,7 @@ class GPUdb(object):
     def log_info( self, message ):
         """Logging method for information.
 
-        .. deprecated::
+        .. deprecated:: 7.1.0.0
 
             As of version 7.1.0.0, this method is deprecated,
             and may be removed in a future version.  Previously,
@@ -6907,7 +7021,7 @@ class GPUdb(object):
     def log_error( self, message ):
         """Logging method for error.
 
-        .. deprecated::
+        .. deprecated:: 7.1.0.0
 
             As of version 7.1.0.0, this method is deprecated,
             and may be removed in a future version.  Previously,
@@ -7054,7 +7168,7 @@ class GPUdb(object):
         # end if
 
         # Log the request and the endpoint
-        self.__log_debug( "Sending {} request {} to {}"
+        self.__log_trace( "Sending {} request {} to {}"
                           "".format( endpoint, request_body, str(url) ) )
 
         # Encode the request
@@ -15147,12 +15261,22 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **azure_storage_account_name** --
+                  Name of the Azure storage account to use as the data source,
+                  this is valid only if tenant_id is specified
+
                 * **azure_container_name** --
                   Name of the Azure storage container to use as the data source
+
+                * **azure_tenant_id** --
+                  Active Directory tenant ID (or directory ID)
 
                 * **azure_sas_token** --
                   Shared access signature token for Azure storage account to
                   use as the data source
+
+                * **azure_oauth_token** --
+                  Oauth token to access given storage container
 
             options (dict of str to str)
                 Optional parameters.
@@ -16658,12 +16782,22 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **azure_storage_account_name** --
+                  Name of the Azure storage account to use as the data source,
+                  this is valid only if tenant_id is specified
+
                 * **azure_container_name** --
                   Name of the Azure storage container to use as the data source
+
+                * **azure_tenant_id** --
+                  Active Directory tenant ID (or directory ID)
 
                 * **azure_sas_token** --
                   Shared access signature token for Azure storage account to
                   use as the data source
+
+                * **azure_oauth_token** --
+                  Oauth token to access given storage container
 
         Returns:
             A dict with the following entries--
@@ -19019,6 +19153,10 @@ class GPUdb(object):
                   an unsigned long data type with minimum value of zero, and
                   maximum value of 18446744073709551615.
 
+                * **uuid** --
+                  Valid only for 'string' columns.  It represents an uuid data
+                  type. Internally, it is stored as a 128-bit integer.
+
                 * **decimal** --
                   Valid only for 'string' columns.  It represents a SQL type
                   NUMERIC(19, 4) data type.  There can be up to 15 digits
@@ -19152,6 +19290,10 @@ class GPUdb(object):
                   For 'date', 'time', 'datetime', or 'timestamp' column types,
                   replace empty strings and invalid timestamps with 'NOW()'
                   upon insert.
+
+                * **init_with_uuid** --
+                  For 'uuid' type,  repalce empty strings and invalid uuid
+                  values with new_uuid()' upon insert.
 
                 The default value is an empty dict ( {} ).
 
@@ -24709,8 +24851,7 @@ class GPUdb(object):
                     CSV, TSV, PSV, etc.
 
                   * **parquet** --
-                    Indicates the file(s) are in Parquet format. Parquet files
-                    are not supported yet.
+                    Indicates the file(s) are in Parquet format.
 
                   The default value is 'delimited_text'.
 
@@ -25232,8 +25373,7 @@ class GPUdb(object):
                     CSV, TSV, PSV, etc.
 
                   * **parquet** --
-                    Indicates the file(s) are in Parquet format. Parquet files
-                    are not supported yet.
+                    Indicates the file(s) are in Parquet format.
 
                   The default value is 'delimited_text'.
 
@@ -28736,13 +28876,13 @@ class GPUdb(object):
                 list internally) or a list.
 
             records_to_insert_str (list of str)
-                An optional list of new json-avro encoded objects to insert,
-                one for each update, to be added to the set if the particular
-                update did not affect any objects.  The default value is an
-                empty list ( [] ).  The user can provide a single element
-                (which will be automatically promoted to a list internally) or
-                a list.  The user can provide a single element (which will be
-                automatically promoted to a list internally) or a list.
+                An optional list of JSON encoded objects to insert, one for
+                each update, to be added if the particular update did not match
+                any objects.  The default value is an empty list ( [] ).  The
+                user can provide a single element (which will be automatically
+                promoted to a list internally) or a list.  The user can provide
+                a single element (which will be automatically promoted to a
+                list internally) or a list.
 
             record_encoding (str)
                 Identifies which of input parameter *records_to_insert* and
@@ -36576,10 +36716,9 @@ class GPUdbTable( object ):
                 the table.  The default value is an empty list ( [] ).
 
             records_to_insert_str (list of str)
-                An optional list of new json-avro encoded objects to insert,
-                one for each update, to be added to the set if the particular
-                update did not affect any objects.  The default value is an
-                empty list ( [] ).
+                An optional list of JSON encoded objects to insert, one for
+                each update, to be added if the particular update did not match
+                any objects.  The default value is an empty list ( [] ).
 
             record_encoding (str)
                 Identifies which of input parameter *records_to_insert* and

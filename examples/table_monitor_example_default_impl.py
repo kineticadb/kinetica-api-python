@@ -127,11 +127,9 @@ def load_data():
 # end load_data_and_wait()
 
 
-""" Create the city weather "history" & "status" tables used in this example
-"""
 
-
-def create_tables():
+def create_table( table_name ):
+    """Create the table used in this example."""
     # Put both tables into the "examples" schema
     schema_option = {"collection_name": "examples"}
 
@@ -150,46 +148,22 @@ def create_tables():
     # Create the "history" table using the column list
     gpudb.GPUdbTable(
         columns,
-        name="table_monitor_history",
-        options=schema_option,
-        db=h_db
+        name = table_name,
+        options = schema_option,
+        db = h_db
     )
-
-    # Create a column list for the "status" table
-    columns = [
-        ["city", GRC._ColumnType.STRING, GCP.CHAR16, GCP.PRIMARY_KEY],
-        ["state_province", GRC._ColumnType.STRING, GCP.CHAR32, GCP.PRIMARY_KEY],
-        ["country", GRC._ColumnType.STRING, GCP.CHAR16],
-        ["temperature", GRC._ColumnType.DOUBLE],
-        ["last_update_ts", GRC._ColumnType.STRING, GCP.DATETIME]
-    ]
-
-    # Create the "status" table using the column list
-    gpudb.GPUdbTable(
-        columns,
-        name="table_monitor_status",
-        options=schema_option,
-        db=h_db
-    )
-
-
-# end create_tables()
+# end create_table
 
 
 """ Drop the city weather "history" & "status" tables used in this example
 """
 
 
-def clear_tables():
-    # Drop all the tables
-    for table_name in reversed([
-        "examples.table_monitor_status",
-        "examples.table_monitor_history"
-    ]):
-        h_db.clear_table(table_name)
+def clear_table( table_name ):
+    """Delete the table used in this example."""
+    h_db.clear_table( table_name )
+# end clear_table
 
-
-# end clear_tables()
 
 def delete_records(h_db):
     """
@@ -210,6 +184,7 @@ def delete_records(h_db):
     print("Records after = %s" % post_delete_records)
 
     return pre_delete_records - post_delete_records
+# end delete_records
 
 
 if __name__ == '__main__':
@@ -229,26 +204,26 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Establish connection with an instance of Kinetica on port 9191
-    h_db = gpudb.GPUdb(encoding="BINARY", host=args.host, port="9191", 
+    h_db = gpudb.GPUdb(encoding="BINARY", host=args.host, port="9191",
                        username=args.username, password=args.password)
-    
+
     # Identify the message queue, running on port 9002
     table_monitor_queue_url = "tcp://" + args.host + ":9002"
-    tablename = args.tablename
+    table_name = args.tablename
 
     # If command line arg is clear, just clear tables and exit
     if (args.command == "clear"):
-        clear_tables()
+        clear_table( table_name )
         quit()
 
-    clear_tables()
+    clear_table( table_name )
 
-    create_tables()
+    create_table( table_name )
 
     # This is the main client code
 
     # Create a GPUdbTableMonitor class
-    monitor = GPUdbTableMonitor(h_db, tablename)
+    monitor = GPUdbTableMonitor(h_db, table_name)
     monitor.logging_level = logging.DEBUG
 
     # Start the monitor

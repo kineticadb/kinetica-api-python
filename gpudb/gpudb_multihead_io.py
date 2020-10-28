@@ -85,9 +85,27 @@ if IS_PYTHON_3:
     class unicode:
         pass
 
+# -----------------------------------------------------------------
+#                            Logging
+# -----------------------------------------------------------------
+# -----------------------------
+# Add a trace method
+# -----------------------------
+logging.TRACE = 9
+logging.addLevelName( logging.TRACE, "TRACE" )
 
+def trace( self, message, *args, **kws ):
+    if self.isEnabledFor( logging.TRACE ):
+        # Yes, logger takes its '*args' as 'args'
+        self._log( logging.TRACE, message, args, **kws )
+    # end if
+# end def trace
 
-# Logging
+logging.Logger.trace = trace
+
+# -----------------------------------------------
+# Logging utility for helper classes in this file
+# -----------------------------------------------
 mh_io_log  = logging.getLogger( "gpudb.MultiHeadIO" )
 handler    = logging.StreamHandler()
 formatter  = logging.Formatter( "%(asctime)s %(levelname)-8s %(message)s",
@@ -96,7 +114,38 @@ handler.setFormatter( formatter )
 mh_io_log.addHandler( handler )
 
 # Prevent logging statements from being duplicated
-mh_io_log.propagate = False
+mh_io_log.propagate = True
+# mh_io_log.propagate = False
+
+
+def mh_log_debug( message ):
+    # Get calling method's information from the stack
+    stack = inspect.stack()
+    # stack[1] gives the previous/calling function
+    filename = stack[1][1].split("/")[-1]
+    ln       = stack[1][2]
+    func     = stack[1][3]
+
+    mh_io_log.debug( "[gpudb_multihead_io::{fn}::{line}::{func}]  {msg}"
+                     "".format( fn = filename,
+                                func = func, line = ln,
+                                msg = message ) )
+# end mh_log_debug
+
+def mh_log_warn( message ):
+    mh_io_log.warn( "[gpudb_multihead_io] {}".format( message ) )
+# end mh_log_warn
+
+def mh_log_info( message ):
+    mh_io_log.info( "[gpudb_multihead_io] {}".format( message ) )
+# end mh_log_info
+
+def mh_log_error( message ):
+    mh_io_log.error( "[gpudb_multihead_io] {}".format( message ) )
+# end mh_log_error
+# ------------------------------------------------------------------------
+
+
 
 # Some string constants used throughout the program
 class C:
@@ -429,7 +478,7 @@ class GPUdbWorkerList:
 # Internal Class _ColumnTypeSize
 # ==============================
 class _ColumnTypeSize:
-    """Contains type size information.
+    """Contains type size information in bytes.
     """
     CHAR1     =   1
     CHAR2     =   2
@@ -454,6 +503,7 @@ class _ColumnTypeSize:
     TIME      =   4
     TIMESTAMP =   8
     ULONG     =   8
+    UUID      =  16
 
     # A dict mapping column types to its size in bytes
     column_type_sizes = collections.OrderedDict()
@@ -480,6 +530,7 @@ class _ColumnTypeSize:
     column_type_sizes[ "long"     ] =   8
     column_type_sizes[ "string"   ] =   8
     column_type_sizes[ "ulong"    ] =   8
+    column_type_sizes[ "uuid"     ] =  16
 # end class _ColumnTypeSize
 
 
@@ -1513,7 +1564,7 @@ class _RecordKey:
     def add_ulong( self, val ):
         """Add an unsigned long to the buffer (can be null)--eight bytes.
         Given value is a string; need to parse.  If not a valid unsigned
-        long value, thrown an exception.
+        long value, throw an exception.
 
         @throws GPUdbException if the value cannot be parsed as unsigned long
         """
@@ -1535,6 +1586,144 @@ class _RecordKey:
         # Add the eight bytes of the unsigned long
         self._buffer_value += struct.pack( "=Q", ulong_value )
     # end add_ulong
+
+
+
+    @staticmethod
+    def validate_uuid( value ):
+        """Check if the given value is a UUID.  If parsable as
+        as UUID, return the value; else, return False.
+        """
+        #  From core/Utils/Uuid.cpp:
+        #  Accept 'xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx', with or without
+        #  hyphens are fine.
+        #  Version Msb0  Msb1  Msb2 Msb3     Description
+        #  1       0     0     0    1        The time-based version specified
+        #                                    in this document.
+        #  2       0     0     1    0        DCE Security version, with embedded
+        #                                    POSIX UIDs.
+        #  3       0     0     1    1        The name-based version specified in
+        #                                    this document that uses MD5 hashing.
+        #  4       0     1     0    0        The randomly or pseudo- randomly
+        #                                    generated version specified in this
+        #                                    document.
+        #  5       0     1     0    1        The name-based version specified in
+        #                                    this document that uses SHA-1
+        #                                    hashing.
+
+        # Check that it is a string!
+        if not isinstance(value, (basestring, unicode)):
+            mh_log_debug( "Given UUID value {} is not a string!".format( value ) )
+            return False
+        # end if
+
+        # Validation based on string length
+        str_len = len( value )
+        if (str_len == 36):
+            has_hyphens = True
+        elif (str_len == 32):
+            has_hyphens = False
+        else:
+            # We have only two possible lengths for UUIDs: 36 & 32
+            return False
+        # end if
+
+        # Parse each character to validate the content of the value
+        for (idx, c) in enumerate( value ):
+            if has_hyphens:
+                if ( ( (idx == 8) or (idx == 13) or (idx == 18) or (idx == 23) )
+                     and (c != '-') ):
+                    # Supposed to be a hyphen!
+                    return False
+                elif (idx == 14):
+                    # TODO: Figure out this logic; don't understand this!
+                    if ((c < '1') or (c > '5')):
+                        return False
+                # end if
+
+            else:
+                # If not a hyphen, it better be a digit!
+                if not c.isdigit():
+                    return False
+                # end if
+
+                # TODO: Figure out this logic, too!
+                if ( (idx == 12) and ((c < '1') or (c > '5')) ):
+                    return False
+                # end if
+            # end if
+        # end for
+
+        # Extract any hyphen from the UUID and return just the digits
+        if has_hyphens:
+            return value.replace( '-', '' )
+        else:
+            # Nothing to extract!
+            return value
+        # end if
+    # end validate_uuid
+
+
+    def add_uuid( self, val ):
+        """Add a UUID to the buffer (can be null)--16 bytes (128 bits).
+        Given value is a string; need to parse.  If not a valid UUID,
+        throw an exception.
+
+        @throws GPUdbException if the value cannot be parsed as a UUID
+        """
+        # Longs are eight bytes long
+        self.__will_buffer_overflow( _ColumnTypeSize.UUID )
+
+        # Handle nulls
+        if val is None:
+            # Add 16 0s
+            for i in list( range( 0, _ColumnTypeSize.UUID ) ):
+                self._buffer_value += struct.pack( "=b", 0 )
+            # end for
+            return
+            # self._buffer_value += struct.pack( "=q", 0 )
+            # return
+        # end if
+
+        # Check that it is indeed a valid UUID (this will also extract
+        # the hyphens and return just th hexadecimal digits if it is a valid
+        # UUID)
+        parsed_uuid = _RecordKey.validate_uuid( val )
+        if (parsed_uuid is False):
+            # The validating function returns False if it is an invalid UUID
+            raise GPUdbException( "Value '{}' could not be parsed as a UUID!"
+                                  "".format( val ) )
+        # end if
+
+        def convert_hex_to_int( hex_digit ):
+            """Internal helper method to convert a hexadecimal digit to integer.
+            """
+            if hex_digit.isdigit():
+                # We just need to numerical value
+                return int( hex_digit )
+            # if ( (hex_digit >= '0') and (hex_digit <= '9') ):
+            #     return (hex_digit - '0')
+            elif ( (hex_digit >= 'A') and (hex_digit <= 'F') ):
+                return (ord(hex_digit) - ord('A') + 10)
+            elif ( (hex_digit >= 'a') and (hex_digit <= 'f') ):
+                return (ord(hex_digit) - ord('a') + 10)
+                # return (hex_digit - 'a' + 10)
+            else:
+                raise GPUdbException( "Unknown hexadecimal value given ({})!"
+                                      "".format( hex_digit ) )
+        # end convert_hex_to_int
+
+
+        # Parse the UUID segments and store in a little-endian fashion
+        for i in range(15, -1, -1):
+            # Iterate over 15 to 0, decrementing by one, to store the values
+            # in a little-endian fashion
+            byte_val = ( (convert_hex_to_int( parsed_uuid[ 2 * i ] ) << 4)
+                         + convert_hex_to_int( parsed_uuid[ 2 * i + 1] ) )
+            byte_val = byte_val & 0xFF
+            self._buffer_value += struct.pack( "B", byte_val )
+        # end for
+    # end add_uuid
 
 
 
@@ -1625,13 +1814,14 @@ class _RecordKeyBuilder:
     _column_type_add_functions[ "time"      ] = _RecordKey.add_time
     _column_type_add_functions[ "timestamp" ] = _RecordKey.add_timestamp
     _column_type_add_functions[ "ulong"     ] = _RecordKey.add_ulong
+    _column_type_add_functions[ "uuid"      ] = _RecordKey.add_uuid
 
 
     # A dict for string types
     _string_types = [ "char1",  "char2",  "char4",  "char8",
                       "char16", "char32", "char64", "char128", "char256",
                       "date", "datetime", "decimal", "ipv4", "time",
-                      "string" ]
+                      "uuid", "string" ]
 
     def __init__( self, record_type,
                   is_primary_key = False ):
@@ -1675,7 +1865,7 @@ class _RecordKeyBuilder:
                 # turned out to be a shard key
                 is_key = True
 
-            # Save the key index
+            # Save the key index for primary or shard keys
             if is_key:
                 self.routing_key_indices.append( i )
                 self.key_columns_names.append( column_name )
@@ -1688,7 +1878,6 @@ class _RecordKeyBuilder:
                 self.key_schema_fields.append( key )
             # end if
         # end loop over columns
-
 
         # Check if it's a track-type
         track_type_special_columns = set(["TRACKID", "TIMESTAMP", "x", "y"])
@@ -2673,11 +2862,25 @@ class GPUdbIngestor:
                         "".format( fn = filename,
                                    func = func, line = ln,
                                    msg = message ) )
-    # end __debug
+    # end __log_debug
+
+    def __log_trace( self, message ):
+        # Get calling method's information from the stack
+        stack = inspect.stack()
+        # stack[1] gives the previous/calling function
+        filename = stack[1][1].split("/")[-1]
+        ln       = stack[1][2]
+        func     = stack[1][3]
+
+        self.log.trace( "[GPUdbIngestor::{fn}::{line}::{func}]  {msg}"
+                        "".format( fn = filename,
+                                   func = func, line = ln,
+                                   msg = message ) )
+    # end __log_trace
 
     def __log_warn( self, message ):
         self.log.warn( "[GPUdbIngestor] {}".format( message ) )
-    # end __warn
+    # end __log_warn
 
     def __log_info( self, message ):
         self.log.info( "[GPUdbIngestor] {}".format( message ) )
@@ -2872,6 +3075,10 @@ class GPUdbIngestor:
             # Use the routing table and the shard key to find the right worker
             worker_index = shard_key.route( self.routing_table )
         # end if-else
+
+        # Log which rank this record is going to at the trace level
+        self.__log_trace( "Record {} going to worker rank with index {}"
+                          "".format( str(record), worker_index ) )
 
         # Check that the index is withing bounds
         if (worker_index >= len(self.worker_queues)):
@@ -3460,9 +3667,23 @@ class RecordRetriever:
                                    msg = message ) )
     # end __debug
 
+    def __log_trace( self, message ):
+        # Get calling method's information from the stack
+        stack = inspect.stack()
+        # stack[1] gives the previous/calling function
+        filename = stack[1][1].split("/")[-1]
+        ln       = stack[1][2]
+        func     = stack[1][3]
+
+        self.log.trace( "[RecordRetriever]::{fn}::{line}::{func}]  {msg}"
+                        "".format( fn = filename,
+                                   func = func, line = ln,
+                                   msg = message ) )
+    # end __log_trace
+
     def __log_warn( self, message ):
         self.log.warn( "[RecordRetriever] {}".format( message ) )
-    # end __warn
+    # end __log_warn
 
     def __log_info( self, message ):
         self.log.info( "[RecordRetriever] {}".format( message ) )
@@ -3839,7 +4060,10 @@ class RecordRetriever:
             # Get the worker
             worker_queue = self.worker_queues[ worker_index ]
 
+            # Send the /get/records query to the appropriate worker
             url = GPUdb.URL( worker_queue.get_url() )
+            self.__log_trace( "Retrieving key values {} from worker at {}"
+                              "".format( key_values, url ) )
             gr_rsp = self.__get_records_from_url( url = url,
                                                   options = options )
 
