@@ -4,7 +4,6 @@ import argparse
 import datetime
 import logging
 import random
-import sys
 import threading
 import time
 
@@ -15,21 +14,20 @@ except ImportError:
     import Queue as queue
     from queue import Queue
 
-if sys.version_info[0] == 2:
-    from gpudb import GPUdbColumnProperty as GCP, GPUdbRecordColumn as GRC
-    from gpudb import TableEventType, TableEvent, \
-        NotificationEventType, NotificationEvent, GPUdbTableMonitorBase
-    from gpudb import gpudb
-else:
-    from gpudb import GPUdbColumnProperty as GCP, GPUdbRecordColumn as GRC
-    from gpudb.gpudb_table_monitor import TableEventType, TableEvent, \
-        NotificationEventType, NotificationEvent, GPUdbTableMonitorBase
-    from gpudb import gpudb
-
+import gpudb
+from gpudb import GPUdbColumnProperty as GCP, GPUdbRecordColumn as GRC, \
+    GPUdbTableMonitor
 
 """
-This example demonstrates the usage of the QueuedGPUdbTableMonitor class
-which is provided as a default implementation of the GPUdbTableMonitor class.
+This example demonstrates a scenario where the GPUdbTableMonitor.Client class
+might be needed to be used in a code which already runs in it's own thread.
+
+Since the table monitor Client class itself runs threads internally, it is
+possible to pass on the notification data received to the user code using a
+shared Queue, which this example shows.
+
+The class QueuedGPUdbTableMonitor derives from GPUdbTableMonitor.Client class
+and defines the callback methods.
 
 The class TableMonitorExampleClient is a class running in its own thread
 and communicating with an instance of QueuedGPUdbTableMonitor class using
@@ -49,100 +47,155 @@ The main method does the following:
 
 """
 
-class QueuedGPUdbTableMonitor(GPUdbTableMonitorBase):
-    """ A default implementation which just passes on the received objects
+
+class QueuedGPUdbTableMonitor(GPUdbTableMonitor.Client):
+    """ An example implementation which just passes on the received objects
         to a simple Queue which is passed in as an argument to the constructor
         of this class.
-
-        This class can be used as it is for simple requirements or more
-        involved cases could directly inherit from GPUdbTableMonitor class and
-        implement the callbacks to do further downstream processing.
-
     """
 
     def __init__(self, db, tablename,
-                 record_queue, options = None):
+                 record_queue, options=None):
         """ Constructor for QueuedGPUdbTableMonitor class
 
         Args:
             db (GPUdb):
                 The handle to the GPUdb
-            
+
             tablename (str):
                 Name of the table to create the monitor for
-            
+
             record_queue (queue.Queue):
                 A Queue instance where notifications along with payloads can be
                 passed into for client to consume and act upon
-            
-            options (GPUdbTableMonitor.Options):
+
+            options (GPUdbTableMonitor.Client.Options):
                 Options instance which is passed on to the super class
                 GPUdbTableMonitor constructor
         """
-        callbacks = GPUdbTableMonitorBase.Callbacks(cb_insert_raw=self.on_insert_raw,
-                                                    cb_insert_decoded=self.on_insert_decoded,
-                                                    cb_updated=self.on_update,
-                                                    cb_deleted=self.on_delete,
-                                                    cb_table_dropped=self.on_table_dropped
-                                                    )
+        # Define the callback methods and create the objects of type
+        # GPUdbTableMonitor.Callback wrapping the callback methods according to
+        # type of the callback object. Pass on the list of such objects to the
+        # GPUdbTableMonitor.Client constructor to receive notifications of the
+        # events of interest and implement custom processing of the payloads
+        # received. The default behaviour only logs the payloads and does not
+        # do anything more useful.
+
+        # Create the list of callbacks objects which are to be passed to the
+        # 'GPUdbTableMonitor.Client' class constructor
+        callbacks = [
+            GPUdbTableMonitor.Callback(
+                GPUdbTableMonitor.Callback.Type.INSERT_RAW,
+                self.on_insert_raw,
+                self.on_error),
+
+            GPUdbTableMonitor.Callback(
+                GPUdbTableMonitor.Callback.Type.INSERT_DECODED,
+                self.on_insert_decoded,
+                self.on_error,
+                GPUdbTableMonitor.Callback.InsertDecodedOptions(
+                    GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode.ABORT)),
+
+            GPUdbTableMonitor.Callback(GPUdbTableMonitor.Callback.Type.UPDATED,
+                                       self.on_update,
+                                       self.on_error),
+
+            GPUdbTableMonitor.Callback(GPUdbTableMonitor.Callback.Type.DELETED,
+                                       self.on_delete,
+                                       self.on_error),
+
+            GPUdbTableMonitor.Callback(
+                GPUdbTableMonitor.Callback.Type.TABLE_DROPPED,
+                self.on_table_dropped,
+                self.on_error),
+
+            GPUdbTableMonitor.Callback(
+                GPUdbTableMonitor.Callback.Type.TABLE_ALTERED,
+                self.on_table_altered,
+                self.on_error)
+        ]
+
+        # Invoke the base class constructor. This invocation is mandatory for
+        # the table monitor to be actually functional.
         super(QueuedGPUdbTableMonitor, self).__init__(
-            db, tablename,
-            callbacks, options=options)
+            db, tablename, callback_list=callbacks,
+            options=options)
 
         self.record_queue = record_queue
 
-    def on_insert_raw(self, payload):
-        """
+    def on_insert_raw(self, record):
+        """Callback method which is invoked with the raw payload bytes
+           received from the table monitor when a new record is inserted
 
         Args:
-            payload:
+            record (bytes): This is a collection of undecoded bytes. Decoding
+            is left to the user who uses this callback.
         """
-        self._logger.info("Payload received : %s " % payload)
-        table_event = TableEvent(TableEventType.INSERT,
-                                 count=-1, record_list=list(payload))
-        self.record_queue.put(table_event)
+        self._logger.info("Payload received : %s " % record)
+        self.record_queue.put("Record inserted (raw) = %s" % record)
 
-    def on_insert_decoded(self, payload):
-        """
+    def on_insert_decoded(self, record):
+        """Callback method which is invoked with the decoded payload record
+           received from the table monitor when a new record is inserted
 
         Args:
-            payload:
+            record (dict): This will be a dict in the format given below
+            {u'state_province': u'--', u'city': u'Auckland',
+            u'temperature': 57.5, u'country': u'New Zealand',
+            u'time_zone': u'UTC+12',
+            u'ts': u'2020-09-28 00:28:37.481119', u'y': -36.840556,
+            u'x': 174.74}
         """
-        self._logger.info("Payload received : %s " % payload)
-        table_event = TableEvent(TableEventType.INSERT,
-                                 count=-1, record_list=payload)
-        self.record_queue.put(table_event)
+        self._logger.info("Payload received : %s " % record)
+        self.record_queue.put("Record inserted (decoded) = %s" % record)
 
     def on_update(self, count):
-        """
+        """Callback method which is invoked with the number of records updated
+           as received from the table monitor when records are updated
 
         Args:
-            count:
+            count (int): Number of records updated.
         """
         self._logger.info("Update count : %s " % count)
-        table_event = TableEvent(TableEventType.UPDATE, count=count)
-        self.record_queue.put(table_event)
+        self.record_queue.put("Update count : %s " % count)
 
     def on_delete(self, count):
-        """
+        """Callback method which is invoked with the number of records updated
+           as received from the table monitor when records are deleted
 
         Args:
-            count:
+            count (int): Number of records deleted.
         """
         self._logger.info("Delete count : %s " % count)
-        table_event = TableEvent(TableEventType.DELETE, count=count)
-        self.record_queue.put(table_event)
+        self.record_queue.put("Delete count : %s " % count)
 
     def on_table_dropped(self, table_name):
-        """
+        """Callback method which is invoked with the name of the table which
+           is dropped when the table monitor is in operation.
         Args:
-            table_name:
-
+            table_name (str): Name of the table dropped.
         """
-        self._logger.error("Table %s dropped " % self.table_name)
-        notif_event = NotificationEvent(NotificationEventType.TABLE_DROPPED,
-                                        table_name)
-        self.record_queue.put(notif_event)
+        self._logger.error("Table %s dropped " % table_name)
+        self.record_queue.put("Table %s dropped " % table_name)
+
+    def on_table_altered(self, message):
+        """Callback method which is invoked with the name of the table which
+           is altered when the table monitor is in operation.
+        Args:
+            message (str): Name of the table altered.
+        """
+        self._logger.error("Table %s altered " % message)
+        self.record_queue.put("Table %s altered " % message)
+
+    def on_error(self, message):
+        """Callback method which is invoked with the error message
+           when some error has occurred.
+        Args:
+            message: The error message; often wrapping an exception
+            raised.
+        """
+        self._logger.error("Error occurred " % message)
+        self.record_queue.put("Error occurred " % message)
 
 
 class TableMonitorExampleClient(threading.Thread):
@@ -152,11 +205,11 @@ class TableMonitorExampleClient(threading.Thread):
         [summary]
 
         Args:
-            table_monitor (GPUdbTableMonitor): An instance of 
-                GPUdbTableMonitor class
-            
+            table_monitor (GPUdbTableMonitor.Client): An instance of
+                GPUdbTableMonitor.Client class or some derivative of it.
+
             work_queue (Queue): A Queue instance shared by this client and
-                the GPUdbTableMonitor subclass for doing the notification
+                the GPUdbTableMonitor.Client subclass for doing the notification
                 message exchange as they are received by the table monitor
                 for various events (table operation related and otherwise)
         """
@@ -175,20 +228,7 @@ class TableMonitorExampleClient(threading.Thread):
             if item is None:
                 break
             else:
-                if isinstance(item, TableEvent) \
-                        and item.table_event_type == TableEventType.INSERT \
-                        and item.records is not None \
-                        and len(item.records) > 0:
-                    for index, message in enumerate(item.records):
-                        print(message)
-                elif isinstance(item, TableEvent) \
-                        and (item.table_event_type in [TableEventType.DELETE, TableEventType.UPDATE]) \
-                        and item.count is not None \
-                        and item.count > 0:
-                    if item.table_event_type == TableEventType.DELETE:
-                        print("Records deleted = %s" % item.count)
-                    else:
-                        print("Records updated = %s" % item.count)
+                print(item)
 
         print("Exiting Client ...")
 
@@ -206,7 +246,7 @@ class TableMonitorExampleClient(threading.Thread):
 """
 
 
-def load_data():
+def load_data(table_name):
     # Base data set, from which cities will be randomly chosen, with a random
     #   new temperature picked for each, per batch loaded
     city_data = [
@@ -214,27 +254,33 @@ def load_data():
         ["Paris", "TX", "USA", -95.547778, 33.6625, 64.6, "UTC-6"],
         ["Memphis", "TN", "USA", -89.971111, 35.1175, 63, "UTC-6"],
         ["Sydney", "Nova Scotia", "Canada", -60.19551, 46.13631, 44.5, "UTC-4"],
-        ["La Paz", "Baja California Sur", "Mexico", -110.310833, 24.142222, 77, "UTC-7"],
+        ["La Paz", "Baja California Sur", "Mexico", -110.310833, 24.142222, 77,
+         "UTC-7"],
         ["St. Petersburg", "FL", "USA", -82.64, 27.773056, 74.5, "UTC-5"],
         ["Oslo", "--", "Norway", 10.75, 59.95, 45.5, "UTC+1"],
         ["Paris", "--", "France", 2.3508, 48.8567, 56.5, "UTC+1"],
         ["Memphis", "--", "Egypt", 31.250833, 29.844722, 73, "UTC+2"],
         ["St. Petersburg", "--", "Russia", 30.3, 59.95, 43.5, "UTC+3"],
         ["Lagos", "Lagos", "Nigeria", 3.384082, 6.455027, 83, "UTC+1"],
-        ["La Paz", "Pedro Domingo Murillo", "Bolivia", -68.15, -16.5, 44, "UTC-4"],
+        ["La Paz", "Pedro Domingo Murillo", "Bolivia", -68.15, -16.5, 44,
+         "UTC-4"],
         ["Sao Paulo", "Sao Paulo", "Brazil", -46.633333, -23.55, 69.5, "UTC-3"],
-        ["Santiago", "Santiago Province", "Chile", -70.666667, -33.45, 62, "UTC-4"],
-        ["Buenos Aires", "--", "Argentina", -58.381667, -34.603333, 65, "UTC-3"],
+        ["Santiago", "Santiago Province", "Chile", -70.666667, -33.45, 62,
+         "UTC-4"],
+        ["Buenos Aires", "--", "Argentina", -58.381667, -34.603333, 65,
+         "UTC-3"],
         ["Manaus", "Amazonas", "Brazil", -60.016667, -3.1, 83.5, "UTC-4"],
-        ["Sydney", "New South Wales", "Australia", 151.209444, -33.865, 63.5, "UTC+10"],
+        ["Sydney", "New South Wales", "Australia", 151.209444, -33.865, 63.5,
+         "UTC+10"],
         ["Auckland", "--", "New Zealand", 174.74, -36.840556, 60.5, "UTC+12"],
         ["Jakarta", "--", "Indonesia", 106.816667, -6.2, 83, "UTC+7"],
         ["Hobart", "--", "Tasmania", 147.325, -42.880556, 56, "UTC+10"],
-        ["Perth", "Western Australia", "Australia", 115.858889, -31.952222, 68, "UTC+8"]
+        ["Perth", "Western Australia", "Australia", 115.858889, -31.952222, 68,
+         "UTC+8"]
     ]
 
     # Grab a handle to the history table for inserting new weather records
-    history_table = gpudb.GPUdbTable(name="examples.table_monitor_history", db=h_db)
+    history_table = gpudb.GPUdbTable(name=table_name, db=h_db)
 
     random.seed(0)
 
@@ -246,7 +292,8 @@ def load_data():
         city_updates = []
 
         # Grab a random set of cities
-        cities = random.sample(city_data, k=random.randint(1, int(len(city_data) / 2)))
+        cities = random.sample(city_data,
+                               k=random.randint(1, int(len(city_data) / 2)))
 
         # Create a list of weather records to insert
         for city in cities:
@@ -260,7 +307,8 @@ def load_data():
         # Insert the records into the table and allow time for table monitor to
         #   process them before inserting the next batch
         print
-        print("[Main/Loader]  Inserting <%s> new city temperatures..." % len(city_updates))
+        print("[Main/Loader]  Inserting <%s> new city temperatures..." % len(
+            city_updates))
         history_table.insert_records(city_updates)
 
         time.sleep(2)
@@ -273,7 +321,7 @@ def load_data():
 """
 
 
-def create_tables():
+def create_table(table_name):
     # Put both tables into the "examples" schema
     schema_option = {"collection_name": "examples"}
 
@@ -292,24 +340,7 @@ def create_tables():
     # Create the "history" table using the column list
     gpudb.GPUdbTable(
         columns,
-        name="table_monitor_history",
-        options=schema_option,
-        db=h_db
-    )
-
-    # Create a column list for the "status" table
-    columns = [
-        ["city", GRC._ColumnType.STRING, GCP.CHAR16, GCP.PRIMARY_KEY],
-        ["state_province", GRC._ColumnType.STRING, GCP.CHAR32, GCP.PRIMARY_KEY],
-        ["country", GRC._ColumnType.STRING, GCP.CHAR16],
-        ["temperature", GRC._ColumnType.DOUBLE],
-        ["last_update_ts", GRC._ColumnType.STRING, GCP.DATETIME]
-    ]
-
-    # Create the "status" table using the column list
-    gpudb.GPUdbTable(
-        columns,
-        name="table_monitor_status",
+        name=table_name,
         options=schema_option,
         db=h_db
     )
@@ -318,22 +349,18 @@ def create_tables():
 # end create_tables()
 
 
-""" Drop the city weather "history" & "status" tables used in this example
+""" Drop the city weather "history" table
 """
 
 
-def clear_tables():
+def clear_table(table_name):
     # Drop all the tables
-    for table_name in reversed([
-        "examples.table_monitor_status",
-        "examples.table_monitor_history"
-    ]):
-        h_db.clear_table(table_name)
+    h_db.clear_table(table_name)
 
 
 # end clear_tables()
 
-def delete_records(h_db):
+def delete_records(h_db, table_name):
     """
 
     Args:
@@ -343,7 +370,7 @@ def delete_records(h_db):
 
     """
     print("In delete records ...")
-    history_table = gpudb.GPUdbTable(name="examples.table_monitor_history", db=h_db)
+    history_table = gpudb.GPUdbTable(name=table_name, db=h_db)
     pre_delete_records = history_table.size()
     print("Records before = %s" % pre_delete_records)
     delete_expr = ["state_province = 'Sao Paulo'"]
@@ -359,59 +386,58 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run table monitor example.')
     parser.add_argument('command', nargs="?",
                         help='command to execute (currently only "clear" to remove the example tables')
-    parser.add_argument('--host', default='10.0.0.21', help='Kinetica host to '
+    parser.add_argument('--host', default='localhost', help='Kinetica host to '
                                                             'run '
                                                             'example against')
     parser.add_argument('--port', default='9191', help='Kinetica port')
-    parser.add_argument('--username', default='admin', help='Username of user to run example with')
-    parser.add_argument('--password', default='Kinetica1!', help='Password of '
-                                                              'user')
-    parser.add_argument('--tablename', default='examples.table_monitor_history', help='Name of Kinetica table to monitor')
+    parser.add_argument('--username',
+                        help='Username of user to run example with')
+    parser.add_argument('--password', help='Password of the given user')
 
     args = parser.parse_args()
 
     # Establish connection with an instance of Kinetica on port 9191
-    h_db = gpudb.GPUdb(encoding="BINARY", host=args.host, port="9191", 
+    h_db = gpudb.GPUdb(encoding="BINARY", host=args.host, port="9191",
                        username=args.username, password=args.password)
-    
+
     # Identify the message queue, running on port 9002
     table_monitor_queue_url = "tcp://" + args.host + ":9002"
-    tablename = args.tablename
+    tablename = 'examples.table_monitor_history'
 
     # If command line arg is clear, just clear tables and exit
     if (args.command == "clear"):
-        clear_tables()
+        clear_table(tablename)
         quit()
 
-    clear_tables()
+    clear_table(tablename)
 
-    create_tables()
+    create_table(tablename)
 
-    # This is the main client code
-    # First create a Queue, create a TableMonitor object and call the
-    # 'start_monitor' method
-    # operation_list = [TableEventType.INSERT, TableEventType.DELETE]
-    # notification_list = [NotificationEventType.TABLE_ALTERED,
-    #                      NotificationEventType.TABLE_DROPPED]
     work_queue = Queue()
+
+    # create the `QueuedGPUdbTableMonitor` class and pass in the Queue instance.
     monitor = QueuedGPUdbTableMonitor(h_db, tablename,
                                       record_queue=work_queue)
     monitor.logging_level = logging.DEBUG
 
+    # Create the `TableMonitorExampleClient` class and pass in the Queue
+    # instance.
     client = TableMonitorExampleClient(table_monitor=monitor,
                                        work_queue=work_queue)
 
+    # Start the client
     client.start()
+
+    # Start the table monitor
     monitor.start_monitor()
 
-    load_data()
+    load_data(tablename)
 
-    delete_records(h_db)
-    # Create the client object, passing in the Queue object created earlier
-    # and passed to the TableMonitor ctor.
-    # The TableMonitorClient class demonstrates a possible usage of the
-    # TableMonitor class
+    delete_records(h_db, tablename)
+
     time.sleep(10)
+
+    # Close the client
     client.close()
 
     # Stop the Table monitor after the client is done with it

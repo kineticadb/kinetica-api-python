@@ -3,6 +3,24 @@
 
 ## Version 7.1
 
+## Version 7.1.1.0 -- TBD
+
+#### Added 
+-   xxx
+
+#### Changed Endpoints
+
+##### Non-breaking Changes
+-   /create/type
+    -   Added "uuid" as a new column property.
+    -   Added "init_with_uuid" as a new column property for uuid column.
+
+
+##### Breaking Changes
+-   xxx
+
+## Version 7.1.0.0 -- 2020-08-18
+
 #### Added 
 -   Added the following endpoints to support cluster resiliency:
     -   ``/admin/add/host``

@@ -1,5 +1,4 @@
-Kinetica Python API
-===================
+# Kinetica Python API
 
 This is the 7.1.x.y version of the client-side Python API for Kinetica.  The
 first two components of the client version must match that of the Kinetica
@@ -7,6 +6,19 @@ server.  When the versions do not match, the API will print a warning.  Often,
 there are breaking changes between versions, so it is critical that they match.
 For example, Kinetica 6.2 and 7.0 have incompatible changes, so the 6.2.x.y
 versions of the Python API would NOT be compatible with 7.0.a.b versions.
+
+## Contents
+
+* [Installation Instructions](#installation-instructions)
+* [Troubleshooting Installation](#troubleshooting-installation)
+* [GPUdb Table Monitor Client API](#gpudb-table-monitor-client-api)
+* [GPUdbTableMonitorBase.Options](#gpudbtablemonitorbaseoptions)
+* [GPUdbTableMonitorBase.Options Examples](#gpudbtablemonitorbaseoptions-examples)
+* [GPUdbTableMonitorBase.Callbacks](#gpudbtablemonitorbasecallbacks)
+* [Table Monitor Examples](#examples)
+
+
+## Installation Instructions
 
 To install this package, run 'python setup.py install' in the root directory of
 the repo.  Note that due to the in-house compiled C-module dependency, this
@@ -26,7 +38,7 @@ For changes to the client-side API, please refer to CHANGELOG.md.  For
 changes to GPUdb functions, please refer to CHANGELOG-FUNCTIONS.md.
 
 
-Troubleshooting
+### Troubleshooting Installation
 
 * If you get an error when running pip like
 
@@ -39,7 +51,7 @@ please try upgrading pip with command:
 ```
     python -m pip install --upgrade --force pip
 ```
- 
+
 * If you get an error when running pip like
 ```
     "Exception: Traceback ... File "/usr/lib/python2.7/site-packages/pip/basecommand.py", line 215, in main status = self.run(options, args)"
@@ -51,218 +63,189 @@ please try downgrading your version of pip setuptools with command:
     pip install setuptools==33.1.1
 ```
 
-### GPUdb Table Monitor Client API
+## GPUdb Table Monitor Client API
 
-This is a new API introduced in v7.0.17.0 to facilitate working with
-the table monitors created on the server to watch for insert, update
-and delete operations on a table.
+A new API was introduced in version 7.0.17.0 to facilitate working with table
+monitors, which watch for insert, update, and delete operations on a table.
+The main classes to use are `GPUdbTableMonitor.Client` and
+`GPUdbTableMonitor.Callback`.  `GPUdbTableMonitor.Client` creates and subscribes
+to monitors on the target table per the user's choice; it can create one of each
+type of the following monitors:
 
-The main class to use is `GPUdbTableMonitorBase` and the idea is to create
-an instance of that class and pass the relevant callbacks for insert,
-update and delete notifications to be received as they are received
-from the ZMQ socket exposed by the table monitor.
+| Monitor Type | Triggered Event Result         |
+|:-------------|:-------------------------------|
+| Insert       | A list of the inserted records |
+| Update       | Count of updated rows          |
+| Delete       | Count of deleted rows          |
 
-In the current implementation, the `GPUdbTableMonitorBase` class is designed to
-handle a single Kinetica table.
+When one of the above events happen at the target table, the monitor client API
+can invoke user-written functions that supposedly react to that type of event.
+To facilitate integrating such user-written functions, `GPUdbTableMonitor.Callback`
+is provided.  More on that to follow.
+`GPUdbTableMonitor.Client` can be used in two ways:
 
-It is possible to customize the behaviour of the `GPUdbTableMonitorBase`
-class using an instance of `GPUdbTableMonitorBase.Options` class.
-
-The options keys `operation_list` and `table_monitor_topic_id_list` are
-mutually exclusive. Both cannot be given in the same `Options` instance.
-
-```python
-options = GPUdbTableMonitorBase.Options(
-                                    _dict=dict(
-                                    operation_list = None,
-                                    notification_list = [NotificationEventType.TABLE_ALTERED,
-                                    NotificationEventType.TABLE_DROPPED],
-                                    terminate_on_table_altered=True,
-                                    terminate_on_connection_lost=True,
-                                    check_gpudb_and_table_state_counter=500,
-                                    decode_failure_threshold=5,
-                                    ha_check_threshold=10,
-                                    zmq_polling_interval=1000,
-                                    table_monitor_topic_id_list=["oEdnBcnFw5xArIPbpxm9tA==","0qpcEpoMR+x7tBNDZ4lMhg==","PBvWoh0Dcmz8nr3ce8zW3w=="]
-                                ))
-
-options = GPUdbTableMonitorBase.Options(
-                                    _dict=dict(
-                                    operation_list = [TableEventType.INSERT],
-                                    notification_list = [NotificationEventType.TABLE_ALTERED,
-                                    NotificationEventType.TABLE_DROPPED],
-                                    terminate_on_table_altered=True,
-                                    terminate_on_connection_lost=True,
-                                    check_gpudb_and_table_state_counter=500,
-                                    decode_failure_threshold=5,
-                                    ha_check_threshold=10,
-                                    zmq_polling_interval=1000,
-                                    table_monitor_topic_id_list=None
-                                ))
+*  Create an instance and pass in the appropriate arguments (including a list of
+   `GPUdbTableMonitor.Callback` objects.  Use this instance in ther user's
+   application directly.
+   
+*  Extend the class with all the necessary callback functions.  These newly
+   definied functions then need to be passed to the superclass's, i.e.
+   `GPUdbTableMonitor.Client`'s, constructor.
+   
+Note that the current implementation, the `GPUdbTableMonitor.Client` class
+is designed to handle a single Kinetica table.
+Also note that `GPUdbTableMonitor.Client` utilizes multiple threads internally.
+This needs to be taken into consideration if the user application is also
+multi-threaded.  There is an example of such a scenario included in the
+`examples` directory (see the examples section below).
 
 
-```
+### GPUdbTableMonitor.Options
 
-### `GPUdbTableMonitorBase.Options` Property Details
+This class allows the user to configure the behavior of the
+`GPUdbTableMonitor.Client` class.  The following options are currently available:
 
-| No\. | Property Name                            | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Default Value                         |
-|------|------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------|
-| 1    | **operation_list**                          | This is a list which can be passed values of TableEventType enum like 'TableEventType.INSERT', 'TableEventType.UPDATE' etc. The list can contain a maximum of three elements one for each type in the enum\.                                                                                                                                                                                                                                                                                                                                       | *TableEventType.INSERT*                |
-| 2    | **notification_list**                     | This is list which can be passed values of type<br>NotificationEventType enum like NotificationEventType.                                                                                                                                                                                                                                                                                                                                                                                                                                            | *NotificationEventType.TABLE_DROPPED* |
-| 3    | **terminate_on_table\_altered**            | This is a boolean value indicating whether a table monitor is to be<br>terminated or not when a change in the table schema is detected.                                                                                                                                                                                                                                                                                                                                                                                                              | *True*                                  |
-| 4    | **terminate_on_connection_lost**          | This is a boolean value indicating whether the table monitor is to be<br>terminated or not if the communication with GPUdb is broken for some<br>reason.                                                                                                                                                                                                                                                                                                                                                                                             | *True*                                  |
-| 5    | **check_gpudb_and_table_state_counter** | This is a counter which<br>defines a threshold to check the state of GPUdb and the table to invoke<br>methods to activate HA if needed. It is mainly counted in the main loop<br>in idle state when polling the ZMQ socket has returned nothing\.                                                                                                                                                                                                                                                                                                    | *500*                                   |
-| 6    | **decode_failure_threshold**               | This is a value (in seconds) to restrict<br>the number of times the program tries to decode a message after<br>having failed the first time, probably due to an alteration in the<br>table schema.                                                                                                                                                                                                                                                                                                                                                 | *5 seconds*                             |
-| 7    | **ha_check_threshold**                     | This is a value (in seconds) to set the limit<br>to the number of seconds the program checks to activate HA when<br>needed.                                                                                                                                                                                                                                                                                                                                                                                                                        | *10 seconds*                            |
-| 8    | **zmq_polling_interval**                   | This option controls the time interval to<br>set the timeout for ZMQ socket polling\. This is a value specified<br>in milliseconds.                                                                                                                                                                                                                                                                                                                                                                                                                  | *1000 milliseconds*                     |
-| 9    | **table_monitor_topic_id_list**          | In case the table monitors for the              given table are already existing, the users can pass in the              topic_ids so that the messages can be subscribed to without the need             to create the monitors. The maximum number of elements in this list<br>can be three one topic_id for each table monitor for insert, update<br>and delete. Passing None for this mandates passing a valid value<br>for 'operation_list'. Passing both as None is not allowed as also<br>passing valid values for both is not allowed. | *[TableEventType.INSERT]*            |
+| Property Name             | Description | Default Value |
+|:---                       | :---        | :---          |
+| ``inactivity_timeout``    | A timeout in minutes for monitor inactivity. If the monitor does not receive any even triggers during such a period, the API will check if the table still exists or if the active Kinetica cluster is still operational.  The API will take appropriate corrective actions to ensure that the monitor continues to function.  In case of the deletion of the target table, the monitor will log the event and stop execution.  The parameter takes in float values to allow for fractions of minutes as the timeout. | 20 (minutes) |
 
 
-The callbacks are passed in using an instance of the class `GPUdbTableMonitorBase.Callbacks`.
-
-#### The details on the callbacks that could be used are as follows
-
-| Name                | Purpose                                                                                                                                                                                                                                           | Payload Type                                                                  |
-|---------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------|
-| **cb_insert_raw**     | There could be cases where the payload from ZMQ could be needed as it is since the<br> decoding and further downstream processing need to be done<br> at a later stage. The purpose of this callback is to hand<br>this data over to the users. | The type of the payload is the raw binary data in a list                      |
-| **cb_insert_decoded** | There could be cases where the payload from ZMQ could be needed properly decoded since the<br> further downstream processing need to be done<br> at a later stage. The purpose of this callback is to hand<br>this data over to the users.  | The type of the payload is the decoded data in a list                         |
-| **cb_updated**         | This callback carries the information about the number of records actually updated                                                                                                                                                                | The type of the payload is an integer indicating the count of records updated |
-| **cb_deleted**         | This callback carries the information about the number of records actually deleted                                                                                                                                                                | The type of the payload is an integer indicating the count of records updated |
-| **cb_table_dropped**  | This callback carries the information about the name of the table dropped                                                                                                                                                                         | The type of the payload is 'str' indicating the name of the table             |
-
-
-
-
-As an example of creating the Callbacks class please have a look at a
-code snippet for the class as given below:
+#### GPUdbTableMonitor.Options Examples
 
 ```python
-class GPUdbTableMonitorExampleImpl(GPUdbTableMonitorBase):
-    """ An implementation which just passes on the received objects
-        to a simple Queue which is passed in as an argument to the constructor
-        of this class.
-
-        This is an example implementation which can be used for simple cases
-        to receive various notifications as they are received from the server
-        as a result of operations on a given table.
-
-    """
-
-    def __init__(self, db, tablename,
-                 record_queue, options = None):
-        """ Constructor for GPUdbTableMonitorImpl class
-
-        Args:
-            db (GPUdb):
-                The handle to the GPUdb
-            
-            tablename (str):
-                Name of the table to create the monitor for
-            
-            record_queue (queue.Queue):
-                A Queue instance where notifications along with payloads can be
-                passed into for client to consume and act upon
-            
-            options (GPUdbTableMonitorBase.Options):
-                Options instance which is passed on to the super class
-                GPUdbTableMonitorBase constructor
-        """
-        callbacks = GPUdbTableMonitorBase.Callbacks(cb_insert_raw=self.on_insert_raw,
-                                                cb_insert_decoded=self.on_insert_decoded,
-                                                cb_updated=self.on_update,
-                                                cb_deleted=self.on_delete,
-                                                cb_table_dropped=self.on_table_dropped
-                                                )
-        super(GPUdbTableMonitorExampleImpl, self).__init__(
-            db, tablename,
-            callbacks, options=options)
-
-        self.record_queue = record_queue
-    def on_insert_raw(self, payload):
-        """
-
-        Args:
-            payload:
-        """
-        self.logger.info("Payload received : %s " % payload)
-        table_event = TableEvent(TableEventType.INSERT,
-                                 count=-1, record_list=list(payload))
-        self.record_queue.put(table_event)
-
-    def on_insert_decoded(self, payload):
-        """
-
-        Args:
-            payload:
-        """
-        self.logger.info("Payload received : %s " % payload)
-        table_event = TableEvent(TableEventType.INSERT,
-                                 count=-1, record_list=payload)
-        self.record_queue.put(table_event)
-
-    def on_update(self, count):
-        """
-
-        Args:
-            count:
-        """
-        self.logger.info("Update count : %s " % count)
-        table_event = TableEvent(TableEventType.UPDATE, count=count)
-        self.record_queue.put(table_event)
-
-    def on_delete(self, count):
-        """
-
-        Args:
-            count:
-        """
-        self.logger.info("Delete count : %s " % count)
-        table_event = TableEvent(TableEventType.DELETE, count=count)
-        self.record_queue.put(table_event)
-
-    def on_table_dropped(self, table_name):
-        """
-        Args:
-            table_name:
-
-        """
-        self.logger.error("Table %s dropped " % self.table_name)
-        notif_event = NotificationEvent(NotificationEventType.TABLE_DROPPED,
-                                        table_name)
-        self.record_queue.put(notif_event)
-
+from gpudb import GPUdbTableMonitor
+options = GPUdbTableMonitor.Options(
+                                    _dict=dict(
+                                    inactivity_timeout = 0.1,
+                                ))
 ```
+
+### GPUdbTableMonitor.Callback
+
+This class facilitates integration of the table monitor API with the user's
+client application code.  When the target table is monitored by
+`GPUdbTableMonitor.Client` to have a triggering event like insertion, update, or
+deletion of records, the client application needs to be notified.  There are
+some additional events like the table being dropped or altered that also may
+need to trigger actions in the user's application.  This class is the mechanism
+for notifying the user application.  The notification is done via user-written
+methods called callbacks that will be executed upon such trigger events; these
+callbacks are passed to `GPUdbTableMonitor.Client` as a method reference via the
+`GPUdbTableMonitor.Callback` class.
+In other words, users pass methods that they have written via
+`GPUdbTableMonitor.Callback` to `GPUdbTableMonitor.Client`, and the latter class
+invokes these methods when trigger events occur.
+
+### GPUdbTableMonitor.Callback.Type
+
+Each `GPUdbTableMonitor.Callback` instance corresponds to a certain type of table
+monitor event.  The `GPUdbTableMonitor.Callback.Type` enum represents which event
+it is for.  The following are the currently available event types:
+
+| Callback Type  |  Description |
+|:---------------|:-------------|
+| INSERT_DECODED | Describes a callback that is to be invoked when a record has been insserted into the target table; the API is to decode the record into a Python dict object and pass it to the callback. |
+| INSERT_RAW     | Describes a callback that is to be invoked when a record has been insserted into the target table; the API will invoke the callback and pass the raw data (per record) to the method without any decoding. |
+| DELETED        | Describes a callback that is to be invoked when records have been deleted from the target table; the API will pass the count of records deleted to the callback method. |
+| UPDATED        | Describes a callback that is to be invoked when records have been update in the target table; the API will pass the count of updated records to the callback method. |
+| TABLE_ALTERED  | Describes a callback that is to be invoked when the table has been altered in such a way that the record's structure type has been also changed. |
+| TABLE_DROPPED  | Describes a callback that is to be invoked when the table has been dropped. |
+
+
+### Callback Methods
+
+Per callback type, there are two methods: one for the actual event (insert, update,
+delete, alter, dropped etc.) and another for any error case.  The former is
+called an `event callback`, and the latter `error callback`.
+
+
+#### Event Callback
+
+The event callback is a method that is written by the end-user of this API.  It
+is passed by reference to `GPUdbTableMonitor.Callback`.  When the target table
+has a trigger event, this method will be invoked by the table monitor API,
+passing to it the value corresponding to the change that happened to the table.
+The method must have a single input argument.  No return value is expected or
+handled (therefore, the method could return something but it will simply be
+ignored).  The actual name of the method does not matter at all.  Only the
+signature--the sole input argument in this case--matters.  Here are the descriptions
+of the method signature based on the table monitor type:
+
+| Callback Type  | Input Argument Type | Input Argument Description |
+|:---------------|:--------------------|:---------------------------|
+| INSERT_DECODED | dict                | The record inserted into the target table decoded as a Python dict |
+| INSERT_RAW     | bytes               | The record inserted into the target table in binary-encoded format |
+| DELETED        | int                 | The number of records deleted from the target table. |
+| UPDATED        | int                 | The number of records updated in the target table. |
+| TABLE_ALTERED  | str                 | The name of the table. |
+| TABLE_DROPPED  | str                 | The name of the table. |
+
+
+#### Error Callback
+
+`GPUdbTableMonitor.Callback` can take an optional method reference for error
+cases.  If provided, this method will be called when errors occur during the
+lifetime of the specific table monitor.  Note that since each
+`GPUdbTableMonitor.Callback` instance takes in this optional method reference,
+each type of table monitor event type can have its own specialized error
+handling written by the user.  This method, like the event callback, needs to
+have a single input argument.  The data type of this argument is string.  An
+error message is passed to the method describing the error.  Like the event
+callback, the return value of the method is ignored.
+
+
+### GPUdbTableMonitor.Callback.Options
+
+Each `GPUdbTableMonitor.Callback` object can have specialized options.  Note
+that `GPUdbTableMonitor.Callback.Options` is not supposed to be passed to the
+`GPUdbTableMonitor.Callback` constructor, but one its derived classes ought
+to be passed in (each derived class pertains to a certain callback type).
+Currently, only the `GPUdbTableMonitor.Callback.Type.INSERT_DECODED` has
+meaningful options; therefore, only one class,
+`GPUdbTableMonitor.Callback.InsertDecodedOptions` is defined.
+
+#### GPUdbTableMonitor.Callback.InsertDecodedOptions
+
+The following options are available for callbacks of type
+`GPUdbTableMonitor.Callback.Type.INSERT_DECODED`:
+
+| Property Name            | Description | Default Value |
+|:---                      | :---        | :---          |
+| ``decode_failure_mode``  | Indicates how the table monitor API should behave upon failures when trying to decode inserted records.  Upon a failure, the API will automatically try to recover once by checking if the table's type has been altered; if so, the API will retry decoding the record with the current type of the table.  If that succeeds, then the API continues.  However, if this second attempt at decoding fails, then the API needs to know what to do next.  | GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode.SKIP |
+
+See `GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode` below.
+
+#### GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode
+
+An enum describing the various modes of behavior when a decoding failure occurs
+for an insert table monitor.
+
+| Mode       | Description|
+|:---        | :---       |
+| ``SKIP``   | Skip this record upon decoding failure and proceed with the monitoring activities. |
+| ``ABORT``  | Abort all monitoring activities and quit the program. |
+
 
 ### Examples
 
-1. This example uses the class `GPUdbTableMonitor` to demonstrate the how to use 
-   the default implementation provided by Kinetica to enable a fast bootstrapping
-   for the first time API users. It provides the callbacks already configured 
-   and the class can be inherited from to override the callbacks so that some
-   other processing needed by a specific use case can easily be done. The example
-   shown here does not override the class `GPUdbTableMonitor` and uses it as is.
-   So, the default behavior that will be observed is just a log of the event 
-   payloads as they are received by the callbacks. 
-   The link to this example is - 
-   [table_monitor_example_default_impl.py - using GPUdbTableMonitor](./examples/table_monitor_example_default_impl.py)
-2. This example demonstrates the use of `GPUdbTableMonitorBase` class from an
-   example client class (`TableMonitorExampleClient`) where the instance of
-   `GPUdbTableMonitorBase` is used by composition.
-   The `TableMonitorExampleClient` class contains an instance of the
-   `GPUdbTableMonitorBase` class. The link to this examples is -
-   [table_monitor_example_basic_first.py - Basic example](./examples/table_monitor_example_basic_first.py)
-3. This example is another variant of the previous example where the 
-   `TableMonitorExampleClient` class is created as it was earlier but the 
-   `GPUdbTableMonitorBase` class is instantiated separately using the callbacks
-   defined by the `TableMonitorExampleClient` class. Both the class instances are
-   constructed separately and then the method `start_monitor` is called on the 
-   `GPUdbTableMonitor` class to start the monitor. The link to this example 
-   is - [table_monitor_example_basic_second.py - Basic example](./examples/table_monitor_example_basic_second.py)
-4. This example uses a class `QueuedGPUdbTableMonitor` which inherits from the
-   class `GPUdbTableMonitorBase` and implements the callbacks. Additionally this
-   class has a Queue instance which is shared with a client class 
-   `TableMonitorExampleClient` which inherits from Thread and runs in its own
-   thread. As the client receives notifications it just pushes them into the 
-   shared Queue and the class `TableMonitorExampleClient` consumes them from the
-   shared Queue and displays them in the console. The link to this example is -
-   [table_monitor_example_queued_impl.py - using QueuedGPUdbTableMonitor](./examples/table_monitor_example_queued_impl.py)
+1.  [table_monitor_example.py](examples/table_monitor_example.py)
+    This example uses the class `GPUdbTableMonitorExample` which is derived from
+    the class ``GPUdbTableMonitor.Client`` to demonstrate how to use
+    the client class provided by Kinetica for first-time users. The defined
+    callback methods in `GPUdbTableMonitorExample` just logs the event payloads.
+2.  [table_monitor_example_queued_impl.py](./examples/table_monitor_example_queued_impl.py)
+    This example demonstrates a scenario where the table monitor API is used
+    in an application that runs it's own thread(s).  In such a situation, some
+    communication mechanism will be needed since the table monitor also runs
+    its own separate threads.  To handle this inter-thread communication, a
+    Queue instance is used.  There could be many ways to achieve the inter-thread
+    communication; this is just an example to demonastrate such usage using the
+    Python built-in Queue class.
+    This example defines a class called `QueuedGPUdbTableMonitor` which inherits
+    from `GPUdbTableMonitor.Client` and defins the callback functions.
+    Additionally, this class has a Queue instance which is _shared with_ the
+    client class `TableMonitorExampleClient`.  `TableMonitorExampleClient`
+    inherits from Thread and runs in its own thread.  As the table monitor
+    receives notifications it just pushes them into the shared Queue and then
+    `TableMonitorExampleClient` consumes them from the shared Queue and
+    displays them in the console.
