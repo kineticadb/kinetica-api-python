@@ -2,6 +2,49 @@
 
 ## Version 7.0
 
+### Version 7.0.20.0 - 2020-11-25
+
+#### Added
+-   GPUdb methods for adding custom headers per endpoint call:
+    -   ``add_http_header()``
+    -   ``remove_http_header()``
+    -   ``get_http_headers()``
+
+#### Changed
+    GPUdb Table Monitor API
+-   The GPUdb table monitor API has been refactored to be more user friendly.
+    Here are the following breaking changes (as compared to the initial API
+    released in version 7.0.17.0):
+    -   The only exported class is ``GPUdbTableMonitor`` which acts as a global
+        namespace.  It contains the following nested public classes that the
+        user will use:
+    -   ``GPUdbTableMonitor.Client``
+    -   ``GPUdbTableMonitor.Options``
+    -   ``GPUdbTableMonitor.Callback``
+        -   ``GPUdbTableMonitor.Callback.Options`` (and its derivative
+            ``InsertDecodedOptions``)
+        -   ``GPUdbTableMonitor.Callback.Type``
+    -   The old ``GPUdbTableMonitorBase.Options`` is now
+        ``GPUdbTableMonitor.Options``.  All old options have been replaced
+        with following current option:
+        -   ``inactivity_timeout``
+    -   The following classes have been refactored or removed (users need not
+        use the refactored versions; they exist only for internal purposes):
+        -   ``GPUdbTableMonitorBase``
+        -   ``BaseTask``
+        -   ``InsertWatcherTask``
+        -   ``DeleteWatcherTask``
+        -   ``UpdateWatcherTask``
+        -   ``TableEvent``
+        -   ``NotificationEventType``
+        -   ``NotificationEvent``
+        -   ``TableEventType``
+
+
+#### Note
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
+
+
 ### Version 7.0.19.0 - 2020-08-24
 
 #### Note

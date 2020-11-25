@@ -22,16 +22,7 @@ if (sys.version_info[0] == 3):  # checking the major component
 
     from gpudb.gpudb_multihead_io import GPUdbWorkerList, GPUdbIngestor, InsertionException, RecordRetriever
 
-    from gpudb.gpudb_table_monitor import GPUdbTableMonitorBase
     from gpudb.gpudb_table_monitor import GPUdbTableMonitor
-    from gpudb.gpudb_table_monitor import BaseTask
-    from gpudb.gpudb_table_monitor import InsertWatcherTask
-    from gpudb.gpudb_table_monitor import UpdateWatcherTask
-    from gpudb.gpudb_table_monitor import DeleteWatcherTask
-    from gpudb.gpudb_table_monitor import TableEvent
-    from gpudb.gpudb_table_monitor import TableEventType
-    from gpudb.gpudb_table_monitor import NotificationEvent
-    from gpudb.gpudb_table_monitor import NotificationEventType
 
     from gpudb.gpudb import collections
 else:
@@ -50,15 +41,6 @@ else:
 
     from gpudb_multihead_io import GPUdbWorkerList, GPUdbIngestor, InsertionException, RecordRetriever
 
-    from gpudb_table_monitor import GPUdbTableMonitorBase
     from gpudb_table_monitor import GPUdbTableMonitor
-    from gpudb_table_monitor import BaseTask
-    from gpudb_table_monitor import InsertWatcherTask
-    from gpudb_table_monitor import UpdateWatcherTask
-    from gpudb_table_monitor import DeleteWatcherTask
-    from gpudb_table_monitor import TableEvent
-    from gpudb_table_monitor import TableEventType
-    from gpudb_table_monitor import NotificationEvent
-    from gpudb_table_monitor import NotificationEventType
 
     from gpudb import collections
