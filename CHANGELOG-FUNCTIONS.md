@@ -14,6 +14,8 @@
 -   /create/type
     -   Added "uuid" as a new column property.
     -   Added "init_with_uuid" as a new column property for uuid column.
+-   /create/table endpoint: added "SERIES" to the ``valid_choices`` for the
+    ``partition_type``
 
 
 ##### Breaking Changes
@@ -98,8 +100,45 @@
     -   removed results parameter from response
 
 
+## Version 7.0
 
-### Version 7.0.17.0 - TBD
+### Version 7.0.20.0 - TBD
+
+#### Changed Endpoints
+
+##### Non-breaking Changes
+- Added ``execute_as`` additional_info map key to ``/show/sql/proc`` response.
+
+##### Breaking Changes
+-   xxx
+
+
+### Version 7.0.19.0 - 2020-08-24
+
+#### Changed Endpoints
+
+##### Non-breaking Changes
+-   Added 'output_edge_path' (default=false) and 'output_wkt_path' (default=true)
+    options for turning on and off ability to export out aggregated path lists
+    columns onto the solution table for the path solvers of /solve/graph
+    endpoint for more speed.
+-   /create/table endpoint: added "SERIES" to the ``valid_choices`` for the
+    ``partition_type``
+
+### Version 7.0.18.0 - 2020-07-30
+
+#### Changed Endpoints
+
+##### Non-breaking Changes
+
+- Added ``cb_pointalphas`` option and ``cb_pointalpha_attrs`` and
+  ``cb_pointalpha_vals`` fields to ``visualize/image/classbreak`` to support
+  manipulation of transparency in class-break visualization.
+
+##### Breaking Changes
+
+
+### Version 7.0.17.0 - 2020-07-06
 
 #### Changed Endpoints
 
@@ -130,8 +169,6 @@
 ##### Non-breaking Changes
 -   Added ``datasource_name`` option to ``/create/external/table`` and ``/insert/records/from/files``  
 
-
-## Version 7.0
 
 ### Version 7.0.16.0 - TBD
 

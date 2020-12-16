@@ -2,6 +2,13 @@
 
 ## Version 7.1
 
+### Version 7.1.1.1 - 2020-12-16
+
+#### Performance Enhancements
+-   Increased overall multi-head I/O speed by reducing client-side
+    workload.
+
+
 ### Version 7.1.1.0 - 2020-10-28
 
 #### Added
@@ -11,7 +18,7 @@
     -   ``get_http_headers()``
 -   Add multi-head i/o support for new column type UUID
 -   New log level ``trace`` for GPUdb
-    
+
 #### Changed
 
 -   The GPUdb table monitor API has been refactored to be more user friendly.
@@ -41,7 +48,7 @@
         -   ``NotificationEventType``
         -   ``NotificationEvent``
         -   ``TableEventType``
-        
+
 
 #### Note
 -   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.

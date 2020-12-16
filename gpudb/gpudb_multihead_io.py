@@ -2850,6 +2850,16 @@ class GPUdbIngestor:
     # end __reconstruct_worker_queues_and_requeue_records
 
 
+    def __is_log_level_trace_enabled( self ):
+        """Returns whether the trace log level is enabled.  This is
+        often required when we need to log messages very judiciously.
+        Since string concatenation takes a long time, we don't want to
+        create the log message if trace level is not enabled.
+        """
+        return self.log.isEnabledFor( logging.TRACE )
+    # end __is_log_level_trace_enabled
+
+
     def __log_debug( self, message ):
         # Get calling method's information from the stack
         stack = inspect.stack()
@@ -3076,9 +3086,14 @@ class GPUdbIngestor:
             worker_index = shard_key.route( self.routing_table )
         # end if-else
 
-        # Log which rank this record is going to at the trace level
-        self.__log_trace( "Record {} going to worker rank with index {}"
-                          "".format( str(record), worker_index ) )
+        # Log which rank this record is going to at the trace level.  Note that
+        # since string interpolation takes a demonstrably large time (proved via
+        # benchmarking), we need to first check if the log level is on.  That
+        # way, we only create the interpolated string when it will be used.
+        if self.__is_log_level_trace_enabled():
+            self.__log_trace( "Record {} going to worker rank with index {}"
+                              "".format( str(record), worker_index ) )
+        # end if
 
         # Check that the index is withing bounds
         if (worker_index >= len(self.worker_queues)):
@@ -3653,6 +3668,16 @@ class RecordRetriever:
     # end RecordRetriever __init__
 
 
+    def __is_log_level_trace_enabled( self ):
+        """Returns whether the trace log level is enabled.  This is
+        often required when we need to log messages very judiciously.
+        Since string concatenation takes a long time, we don't want to
+        create the log message if trace level is not enabled.
+        """
+        return self.log.isEnabledFor( logging.TRACE )
+    # end __is_log_level_trace_enabled
+
+
     def __log_debug( self, message ):
         # Get calling method's information from the stack
         stack = inspect.stack()
@@ -4060,10 +4085,19 @@ class RecordRetriever:
             # Get the worker
             worker_queue = self.worker_queues[ worker_index ]
 
-            # Send the /get/records query to the appropriate worker
+            # Find which worker to send the query to
             url = GPUdb.URL( worker_queue.get_url() )
-            self.__log_trace( "Retrieving key values {} from worker at {}"
-                              "".format( key_values, url ) )
+
+            # Log which rank this record is going to at the trace level.  Note that
+            # since string interpolation takes a demonstrably large time (proved via
+            # benchmarking), we need to first check if the log level is on.  That
+            # way, we only create the interpolated string when it will be used.
+            if self.__is_log_level_trace_enabled():
+                self.__log_trace( "Retrieving key values {} from worker at {}"
+                                  "".format( key_values, url ) )
+            # end if
+
+            # Send the /get/records query to the appropriate worker
             gr_rsp = self.__get_records_from_url( url = url,
                                                   options = options )
 

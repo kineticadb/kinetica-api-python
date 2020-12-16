@@ -4299,7 +4299,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.1.0"
+    api_version = "7.1.1.1"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -6925,6 +6925,17 @@ class GPUdb(object):
         self.log.error( "[GPUdb] {} {}".format( self._id, message ) )
     # end __log_error_with_id
 
+
+    def __is_log_level_trace_enabled( self ):
+        """Returns whether the trace log level is enabled.  This is
+        often required when we need to log messages very judiciously.
+        Since string concatenation takes a long time, we don't want to
+        create the log message if trace level is not enabled.
+        """
+        return self.log.isEnabledFor( logging.TRACE )
+    # end __is_log_level_trace_enabled
+
+
     def __log_trace( self, message ):
         try:
             # Get calling method's information from the stack
@@ -7167,9 +7178,13 @@ class GPUdb(object):
             # end try
         # end if
 
-        # Log the request and the endpoint
-        self.__log_trace( "Sending {} request {} to {}"
-                          "".format( endpoint, request_body, str(url) ) )
+        # Log the request and the endpoint at the trace level.  Note that since
+        # string interpolation takes a demonstrably large time (proved via
+        # benchmarking), we need to first check if the log level is on.  That
+        # way, we only create the interpolated string when it will be used.
+        if self.__is_log_level_trace_enabled():
+            self.__log_trace( "Sending {} request {} to {}"
+                              "".format( endpoint, request_body, str(url) ) )
 
         # Encode the request
         encoded_request = self.encode_datum_cext( request_schema, request_body )
@@ -17485,10 +17500,11 @@ class GPUdb(object):
     # begin create_proc
     def create_proc( self, proc_name = None, execution_mode = 'distributed', files =
                      {}, command = '', args = [], options = {} ):
-        """Creates an instance (proc) of the user-defined function (UDF) specified
-        by the given command, options, and files, and makes it available for
-        execution.  For details on UDFs, see: `User-Defined Functions
-        <../../../concepts/udf.html>`_
+        """Creates an instance (proc) of the
+        `user-defined functions <../../../concepts/udf.html>`_ (UDF) specified
+        by the
+        given command, options, and files, and makes it available for
+        execution.
 
         Parameters:
 
@@ -17501,38 +17517,52 @@ class GPUdb(object):
                 Allowed values are:
 
                 * **distributed** --
-                  Input table data will be divided into data segments that are
-                  distributed across all nodes in the cluster, and the proc
+                  Input table data will be divided into data
+                  segments that are distributed across all nodes in the
+                  cluster, and the proc
                   command will be invoked once per data segment in parallel.
-                  Output table data from each invocation will be saved to the
-                  same node as the corresponding input data.
+                  Output table data
+                  from each invocation will be saved to the same node as the
+                  corresponding input
+                  data.
 
                 * **nondistributed** --
-                  The proc command will be invoked only once per execution, and
-                  will not have access to any input or output table data.
+                  The proc command will be invoked only once per
+                  execution, and will not have direct access to any tables
+                  named as input or
+                  output table parameters in the call to :meth:`.execute_proc`.
+                  It will,
+                  however, be able to access the database using native API
+                  calls.
 
                 The default value is 'distributed'.
 
             files (dict of str to str)
-                A map of the files that make up the proc. The keys of the map
-                are file names, and the values are the binary contents of the
-                files. The file names may include subdirectory names (e.g.
-                'subdir/file') but must not resolve to a directory above the
-                root for the proc.  The default value is an empty dict ( {} ).
+                A map of the files that make up the proc. The keys of the
+                map are file names, and the values are the binary contents of
+                the files. The
+                file names may include subdirectory names (e.g. 'subdir/file')
+                but must not
+                resolve to a directory above the root for the proc.  The
+                default value is an empty dict ( {} ).
 
             command (str)
-                The command (excluding arguments) that will be invoked when the
-                proc is executed. It will be invoked from the directory
-                containing the proc input parameter *files* and may be any
-                command that can be resolved from that directory. It need not
-                refer to a file actually in that directory; for example, it
-                could be 'java' if the proc is a Java application; however, any
-                necessary external programs must be preinstalled on every
-                database node. If the command refers to a file in that
-                directory, it must be preceded with './' as per Linux
-                convention. If not specified, and exactly one file is provided
-                in input parameter *files*, that file will be invoked.  The
-                default value is ''.
+                The command (excluding arguments) that will be invoked when
+                the proc is executed. It will be invoked from the directory
+                containing the proc
+                input parameter *files* and may be any command that can be
+                resolved from that directory.
+                It need not refer to a file actually in that directory; for
+                example, it could be
+                'java' if the proc is a Java application; however, any
+                necessary external
+                programs must be preinstalled on every database node. If the
+                command refers to a
+                file in that directory, it must be preceded with './' as per
+                Linux convention.
+                If not specified, and exactly one file is provided in input
+                parameter *files*, that file
+                will be invoked.  The default value is ''.
 
             args (list of str)
                 An array of command-line arguments that will be passed to input
@@ -18103,6 +18133,10 @@ class GPUdb(object):
                     Use `hash partitioning
                     <../../../concepts/tables.html#partitioning-by-hash>`_.
 
+                  * **SERIES** --
+                    Use `series partitioning
+                    <../../../concepts/tables.html#partitioning-by-series>`_.
+
                 * **partition_keys** --
                   Comma-separated list of partition keys, which are the columns
                   or column expressions by which records will be assigned to
@@ -18295,7 +18329,7 @@ class GPUdb(object):
                   `randomly sharded
                   <../../../concepts/tables.html#random-sharding>`_, if no
                   shard key is specified.
-                   Note that a type containing a shard key cannot be used to
+                  Note that a type containing a shard key cannot be used to
                   create a replicated table.
                   Allowed values are:
 
@@ -20028,6 +20062,18 @@ class GPUdb(object):
         """Executes a proc. This endpoint is asynchronous and does not wait for
         the proc to complete before returning.
 
+        If the proc being executed is distributed, input parameter
+        *input_table_names* &
+        input parameter *input_column_names* may be passed to the proc to use
+        for reading data,
+        and input parameter *output_table_names* may be passed to the proc to
+        use for writing
+        data.
+
+        If the proc being executed is non-distributed, these table parameters
+        will be
+        ignored.
+
         Parameters:
 
             proc_name (str)
@@ -20045,40 +20091,53 @@ class GPUdb(object):
                 value.  The default value is an empty dict ( {} ).
 
             input_table_names (list of str)
-                Names of the tables containing data to be passed to the proc.
-                Each name specified must be the name of a currently existing
-                table, in [schema_name.]table_name format, using standard `name
-                resolution rules
-                <../../../concepts/tables.html#table-name-resolution>`_.  If no
-                table names are specified, no data will be passed to the proc.
-                The default value is an empty list ( [] ).  The user can
-                provide a single element (which will be automatically promoted
-                to a list internally) or a list.
+                Names of the tables containing data to be passed to the
+                proc. Each name specified must be the name of a currently
+                existing table, in
+                [schema_name.]table_name format, using standard
+                `name resolution rules
+                <../../../concepts/tables.html#table-name-resolution>`_.
+                If no table names are specified, no data will be passed to the
+                proc.  This
+                parameter is ignored if the proc has a non-distributed
+                execution mode.  The default value is an empty list ( [] ).
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
 
             input_column_names (dict of str to lists of str)
                 Map of table names from input parameter *input_table_names* to
-                lists of names of columns from those tables that will be passed
-                to the proc. Each column name specified must be the name of an
-                existing column in the corresponding table. If a table name
-                from input parameter *input_table_names* is not included, all
-                columns from that table will be passed to the proc.  The
-                default value is an empty dict ( {} ).
+                lists
+                of names of columns from those tables that will be passed to
+                the proc. Each
+                column name specified must be the name of an existing column in
+                the
+                corresponding table. If a table name from input parameter
+                *input_table_names* is not
+                included, all columns from that table will be passed to the
+                proc.  This
+                parameter is ignored if the proc has a non-distributed
+                execution mode.  The default value is an empty dict ( {} ).
 
             output_table_names (list of str)
-                Names of the tables to which output data from the proc will be
-                written, each in [schema_name.]table_name format, using
-                standard `name resolution rules
-                <../../../concepts/tables.html#table-name-resolution>`_ and
-                meeting `table naming criteria
-                <../../../concepts/tables.html#table-naming-criteria>`_. If a
-                specified table does not exist, it will automatically be
-                created with the same schema as the corresponding table (by
-                order) from input parameter *input_table_names*, excluding any
-                primary and shard keys. If a specified table is a
-                non-persistent result table, it must not have primary or shard
-                keys. If no table names are specified, no output data can be
-                returned from the proc.  The default value is an empty list (
-                [] ).  The user can provide a single element (which will be
+                Names of the tables to which output data from the proc will
+                be written, each in [schema_name.]table_name format, using
+                standard
+                `name resolution rules
+                <../../../concepts/tables.html#table-name-resolution>`_
+                and meeting `table naming criteria
+                <../../../concepts/tables.html#table-naming-criteria>`_.
+                If a specified table does not exist, it will automatically be
+                created with the
+                same schema as the corresponding table (by order) from
+                input parameter *input_table_names*, excluding any primary and
+                shard keys. If a specified
+                table is a non-persistent result table, it must not have
+                primary or shard keys.
+                If no table names are specified, no output data can be returned
+                from the proc.
+                This parameter is ignored if the proc has a non-distributed
+                execution mode.  The default value is an empty list ( [] ).
+                The user can provide a single element (which will be
                 automatically promoted to a list internally) or a list.
 
             options (dict of str to str)
