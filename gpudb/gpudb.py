@@ -4299,7 +4299,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.1.1"
+    api_version = "7.1.2.0"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -10233,9 +10233,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/create/graph"
         REQ_SCHEMA_STR = """{"name":"create_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"directed_graph","type":"boolean"},{"name":"nodes","type":{"type":"array","items":"string"}},{"name":"edges","type":{"type":"array","items":"string"}},{"name":"weights","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"create_graph_response","type":"record","fields":[{"name":"num_nodes","type":"long"},{"name":"num_edges","type":"long"},{"name":"edges_ids","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"name":"create_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"num_nodes","type":"long"},{"name":"num_edges","type":"long"},{"name":"edges_ids","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("directed_graph", "boolean"), ("nodes", "array", [("string")]), ("edges", "array", [("string")]), ("weights", "array", [("string")]), ("restrictions", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("num_nodes", "long"), ("num_edges", "long"), ("edges_ids", "array", [("long")]), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("num_nodes", "long"), ("num_edges", "long"), ("edges_ids", "array", [("long")]), ("info", "map", [("string")])] )
         ENDPOINT = "/create/graph"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -10343,9 +10343,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/create/table/external"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_table_external_request","fields":[{"name":"table_name","type":"string"},{"name":"filepaths","type":{"type":"array","items":"string"}},{"name":"modify_columns","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"create_table_options","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"create_table_external_response","fields":[{"name":"table_name","type":"string"},{"name":"type_id","type":"string"},{"name":"type_definition","type":"string"},{"name":"type_label","type":"string"},{"name":"type_properties","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"count_inserted","type":"long"},{"name":"count_skipped","type":"long"},{"name":"count_updated","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_table_external_response","fields":[{"name":"table_name","type":"string"},{"name":"type_id","type":"string"},{"name":"type_definition","type":"string"},{"name":"type_label","type":"string"},{"name":"type_properties","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"count_inserted","type":"long"},{"name":"count_skipped","type":"long"},{"name":"count_updated","type":"long"},{"name":"info","type":{"type":"map","values":"string"}},{"name":"files","type":{"type":"array","items":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("filepaths", "array", [("string")]), ("modify_columns", "map", [("map", [("string")])]), ("create_table_options", "map", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("type_id", "string"), ("type_definition", "string"), ("type_label", "string"), ("type_properties", "map", [("array", [("string")])]), ("count_inserted", "long"), ("count_skipped", "long"), ("count_updated", "long"), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("type_id", "string"), ("type_definition", "string"), ("type_label", "string"), ("type_properties", "map", [("array", [("string")])]), ("count_inserted", "long"), ("count_skipped", "long"), ("count_updated", "long"), ("info", "map", [("string")]), ("files", "array", [("string")])] )
         ENDPOINT = "/create/table/external"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -10883,9 +10883,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/insert/records/fromfiles"
         REQ_SCHEMA_STR = """{"type":"record","name":"insert_records_from_files_request","fields":[{"name":"table_name","type":"string"},{"name":"filepaths","type":{"type":"array","items":"string"}},{"name":"modify_columns","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"create_table_options","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"insert_records_from_files_response","fields":[{"name":"table_name","type":"string"},{"name":"type_id","type":"string"},{"name":"type_definition","type":"string"},{"name":"type_label","type":"string"},{"name":"type_properties","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"count_inserted","type":"long"},{"name":"count_skipped","type":"long"},{"name":"count_updated","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"insert_records_from_files_response","fields":[{"name":"table_name","type":"string"},{"name":"type_id","type":"string"},{"name":"type_definition","type":"string"},{"name":"type_label","type":"string"},{"name":"type_properties","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"count_inserted","type":"long"},{"name":"count_skipped","type":"long"},{"name":"count_updated","type":"long"},{"name":"info","type":{"type":"map","values":"string"}},{"name":"files","type":{"type":"array","items":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("filepaths", "array", [("string")]), ("modify_columns", "map", [("map", [("string")])]), ("create_table_options", "map", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("type_id", "string"), ("type_definition", "string"), ("type_label", "string"), ("type_properties", "map", [("array", [("string")])]), ("count_inserted", "long"), ("count_skipped", "long"), ("count_updated", "long"), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("type_id", "string"), ("type_definition", "string"), ("type_label", "string"), ("type_properties", "map", [("array", [("string")])]), ("count_inserted", "long"), ("count_skipped", "long"), ("count_updated", "long"), ("info", "map", [("string")]), ("files", "array", [("string")])] )
         ENDPOINT = "/insert/records/fromfiles"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -10982,9 +10982,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/modify/graph"
         REQ_SCHEMA_STR = """{"name":"modify_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"nodes","type":{"type":"array","items":"string"}},{"name":"edges","type":{"type":"array","items":"string"}},{"name":"weights","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"modify_graph_response","type":"record","fields":[{"name":"num_nodes","type":"long"},{"name":"num_edges","type":"long"},{"name":"edges_ids","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"name":"modify_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"num_nodes","type":"long"},{"name":"num_edges","type":"long"},{"name":"edges_ids","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("nodes", "array", [("string")]), ("edges", "array", [("string")]), ("weights", "array", [("string")]), ("restrictions", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("num_nodes", "long"), ("num_edges", "long"), ("edges_ids", "array", [("long")]), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("num_nodes", "long"), ("num_edges", "long"), ("edges_ids", "array", [("long")]), ("info", "map", [("string")])] )
         ENDPOINT = "/modify/graph"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -11081,9 +11081,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/graph"
         REQ_SCHEMA_STR = """{"name":"show_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"show_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"graph_names","type":{"type":"array","items":"string"}},{"name":"directed","type":{"type":"array","items":"boolean"}},{"name":"num_nodes","type":{"type":"array","items":"long"}},{"name":"num_edges","type":{"type":"array","items":"long"}},{"name":"is_persisted","type":{"type":"array","items":"boolean"}},{"name":"is_sync_db","type":{"type":"array","items":"boolean"}},{"name":"has_insert_table_monitor","type":{"type":"array","items":"boolean"}},{"name":"original_request","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"name":"show_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"load","type":{"type":"array","items":"int"}},{"name":"memory","type":{"type":"array","items":"long"}},{"name":"graph_names","type":{"type":"array","items":"string"}},{"name":"graph_server_ids","type":{"type":"array","items":"int"}},{"name":"directed","type":{"type":"array","items":"boolean"}},{"name":"num_nodes","type":{"type":"array","items":"long"}},{"name":"num_edges","type":{"type":"array","items":"long"}},{"name":"is_persisted","type":{"type":"array","items":"boolean"}},{"name":"is_sync_db","type":{"type":"array","items":"boolean"}},{"name":"has_insert_table_monitor","type":{"type":"array","items":"boolean"}},{"name":"original_request","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("graph_names", "array", [("string")]), ("directed", "array", [("boolean")]), ("num_nodes", "array", [("long")]), ("num_edges", "array", [("long")]), ("is_persisted", "array", [("boolean")]), ("is_sync_db", "array", [("boolean")]), ("has_insert_table_monitor", "array", [("boolean")]), ("original_request", "array", [("string")]), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("load", "array", [("int")]), ("memory", "array", [("long")]), ("graph_names", "array", [("string")]), ("graph_server_ids", "array", [("int")]), ("directed", "array", [("boolean")]), ("num_nodes", "array", [("long")]), ("num_edges", "array", [("long")]), ("is_persisted", "array", [("boolean")]), ("is_sync_db", "array", [("boolean")]), ("has_insert_table_monitor", "array", [("boolean")]), ("original_request", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/graph"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -11335,9 +11335,9 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/visualize/image/classbreak"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"cb_attr","type":"string"},{"name":"cb_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointcolor_attr","type":"string"},{"name":"cb_pointcolor_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointalpha_attr","type":"string"},{"name":"cb_pointalpha_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointsize_attr","type":"string"},{"name":"cb_pointsize_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointshape_attr","type":"string"},{"name":"cb_pointshape_vals","type":{"type":"array","items":"string"}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}},{"name":"cb_transparency_vec","type":{"type":"array","items":"int"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"symbol_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"cb_attr","type":"string"},{"name":"cb_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointcolor_attr","type":"string"},{"name":"cb_pointcolor_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointalpha_attr","type":"string"},{"name":"cb_pointalpha_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointsize_attr","type":"string"},{"name":"cb_pointsize_vals","type":{"type":"array","items":"string"}},{"name":"cb_pointshape_attr","type":"string"},{"name":"cb_pointshape_vals","type":{"type":"array","items":"string"}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}},{"name":"cb_transparency_vec","type":{"type":"array","items":"int"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_classbreak_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("world_table_names", "array", [("string")]), ("x_column_name", "string"), ("y_column_name", "string"), ("geometry_column_name", "string"), ("track_ids", "array", [("array", [("string")])]), ("cb_attr", "string"), ("cb_vals", "array", [("string")]), ("cb_pointcolor_attr", "string"), ("cb_pointcolor_vals", "array", [("string")]), ("cb_pointalpha_attr", "string"), ("cb_pointalpha_vals", "array", [("string")]), ("cb_pointsize_attr", "string"), ("cb_pointsize_vals", "array", [("string")]), ("cb_pointshape_attr", "string"), ("cb_pointshape_vals", "array", [("string")]), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("projection", "string"), ("bg_color", "long"), ("style_options", "map", [("array", [("string")])]), ("options", "map", [("string")]), ("cb_transparency_vec", "array", [("int")])] )
+        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("world_table_names", "array", [("string")]), ("x_column_name", "string"), ("y_column_name", "string"), ("symbol_column_name", "string"), ("geometry_column_name", "string"), ("track_ids", "array", [("array", [("string")])]), ("cb_attr", "string"), ("cb_vals", "array", [("string")]), ("cb_pointcolor_attr", "string"), ("cb_pointcolor_vals", "array", [("string")]), ("cb_pointalpha_attr", "string"), ("cb_pointalpha_vals", "array", [("string")]), ("cb_pointsize_attr", "string"), ("cb_pointsize_vals", "array", [("string")]), ("cb_pointshape_attr", "string"), ("cb_pointshape_vals", "array", [("string")]), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("projection", "string"), ("bg_color", "long"), ("style_options", "map", [("array", [("string")])]), ("options", "map", [("string")]), ("cb_transparency_vec", "array", [("int")])] )
         RSP_SCHEMA = Schema( "record", [("width", "double"), ("height", "double"), ("bg_color", "long"), ("image_data", "bytes"), ("info", "map", [("string")])] )
         ENDPOINT = "/visualize/image/classbreak"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -11669,6 +11669,9 @@ class GPUdb(object):
         will not be assigned any shards. To rebalance data and shards across
         the cluster, use :meth:`.admin_rebalance`.
 
+        The database must be offline for this operation, see
+        :meth:`.admin_offline`
+
         For example, if attempting to add three new ranks (two ranks on host
         172.123.45.67 and one rank on host 172.123.45.68) to a Kinetica cluster
         with additional configuration parameters:
@@ -11936,6 +11939,9 @@ class GPUdb(object):
         number of records approximately and/or rebalance the shards to be
         equally distributed (as much as possible) across all the ranks.
 
+        The database must be offline for this operation, see
+        :meth:`.admin_offline`
+
         * If :meth:`.admin_rebalance` is invoked after a change is made to the
           cluster, e.g., a host was added or removed,
           `sharded data <../../../concepts/tables.html#sharding>`_ will be
@@ -12011,7 +12017,7 @@ class GPUdb(object):
                   A lower *aggressiveness* will take longer but allow for
                   better interleaving between the rebalance and other queries.
                   Valid values are constants from 1 (lowest) to 10 (highest).
-                  The default value is '1'.
+                  The default value is '10'.
 
                 * **compact_after_rebalance** --
                   Perform compaction of deleted records once the rebalance
@@ -12132,6 +12138,9 @@ class GPUdb(object):
         and/or unsharded data (a.k.a. `randomly-sharded
         <../../../concepts/tables.html#random-sharding>`_) will be deleted.
 
+        The database must be offline for this operation, see
+        :meth:`.admin_offline`
+
         This endpoint's processing time depends on the amount of data in the
         system, thus the API call may time out if run directly.  It is
         recommended to run this endpoint asynchronously via
@@ -12190,7 +12199,7 @@ class GPUdb(object):
                   A lower *aggressiveness* will take longer but allow for
                   better interleaving between the rebalance and other queries.
                   Valid values are constants from 1 (lowest) to 10 (highest).
-                  The default value is '1'.
+                  The default value is '10'.
 
         Returns:
             A dict with the following entries--
@@ -15922,6 +15931,11 @@ class GPUdb(object):
                   specified in input parameter *value*.  Also, sets the refresh
                   method to periodic if not already set.
 
+                * **set_refresh_execute_as** --
+                  Sets the user name to refresh this `materialized view
+                  <../../../concepts/materialized_views.html>`_ to the value
+                  specified in input parameter *value*.
+
                 * **remove_text_search_attributes** --
                   Removes `text search
                   <../../../concepts/full_text_search.html>`_ attribute from
@@ -17124,8 +17138,26 @@ class GPUdb(object):
                   value, the larger the threshold for right and left turns; 0 <
                   turn_angle < 90.  The default value is '60'.
 
+                * **server_id** --
+                  Indicates which graph server(s) to send the request to.
+                  Default is to send to the server with the most available
+                  memory.
+
+                * **use_rtree** --
+                  Use an range tree structure to accelerate and improve the
+                  accuracy of snapping, especially to edges.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
         Returns:
             A dict with the following entries--
+
+            result (bool)
+                Indicates a successful creation on all servers.
 
             num_nodes (long)
                 Total number of nodes created.
@@ -17465,6 +17497,9 @@ class GPUdb(object):
                   When *refresh_method* is *periodic*, specifies the first time
                   at which a refresh is to be done.  Value is a datetime string
                   with format 'YYYY-MM-DD HH:MM:SS'.
+
+                * **execute_as** --
+                  User name to use to run the refresh job
 
         Returns:
             A dict with the following entries--
@@ -18769,6 +18804,20 @@ class GPUdb(object):
                   Optional: number of tasks for reading file per rank. Default
                   will be external_file_reader_num_tasks
 
+                * **type_inference_mode** --
+                  optimize type inference for:.
+                  Allowed values are:
+
+                  * **accuracy** --
+                    scans all data to get exactly-typed & sized columns for all
+                    data present
+
+                  * **speed** --
+                    picks the widest possible column types so that 'all' values
+                    will fit with minimum data scanned
+
+                  The default value is 'accuracy'.
+
         Returns:
             A dict with the following entries--
 
@@ -18804,6 +18853,9 @@ class GPUdb(object):
 
             info (dict of str to str)
                 Additional information.
+
+            files (list of str)
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "create_table_external(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         filepaths = filepaths if isinstance( filepaths, list ) else ( [] if (filepaths is None) else [ filepaths ] )
@@ -19708,6 +19760,10 @@ class GPUdb(object):
                   * false
 
                   The default value is 'true'.
+
+                * **server_id** --
+                  Indicates which graph server(s) to send the request to.
+                  Default is to send to get information about all the servers.
 
         Returns:
             A dict with the following entries--
@@ -25078,6 +25134,20 @@ class GPUdb(object):
                   Optional: number of tasks for reading file per rank. Default
                   will be external_file_reader_num_tasks
 
+                * **type_inference_mode** --
+                  optimize type inference for:.
+                  Allowed values are:
+
+                  * **accuracy** --
+                    scans all data to get exactly-typed & sized columns for all
+                    data present
+
+                  * **speed** --
+                    picks the widest possible column types so that 'all' values
+                    will fit with minimum data scanned
+
+                  The default value is 'accuracy'.
+
         Returns:
             A dict with the following entries--
 
@@ -25112,6 +25182,9 @@ class GPUdb(object):
 
             info (dict of str to str)
                 Additional information.
+
+            files (list of str)
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "insert_records_from_files(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         filepaths = filepaths if isinstance( filepaths, list ) else ( [] if (filepaths is None) else [ filepaths ] )
@@ -25542,6 +25615,20 @@ class GPUdb(object):
                 * **num_tasks_per_rank** --
                   Optional: number of tasks for reading file per rank. Default
                   will be external_file_reader_num_tasks
+
+                * **type_inference_mode** --
+                  optimize type inference for:.
+                  Allowed values are:
+
+                  * **accuracy** --
+                    scans all data to get exactly-typed & sized columns for all
+                    data present
+
+                  * **speed** --
+                    picks the widest possible column types so that 'all' values
+                    will fit with minimum data scanned
+
+                  The default value is 'accuracy'.
 
         Returns:
             A dict with the following entries--
@@ -26236,6 +26323,13 @@ class GPUdb(object):
                   (LINESTRING) towards a particular demand location (store id)
                   with its corresponding cost.  The default value is 'true'.
 
+                * **output_tracks** --
+                  For the *match_supply_demand* solver only. When it is true
+                  (non-default), the output will be in tracks format for all
+                  the round trips of each truck in which the timestamps are
+                  populated directly from the edge weights starting from their
+                  originating depots.  The default value is 'false'.
+
                 * **max_trip_cost** --
                   For the *match_supply_demand* solver only. If this constraint
                   is greater than zero (default) then the trucks will skip
@@ -26278,10 +26372,9 @@ class GPUdb(object):
 
                 * **truck_service_limit** --
                   For the *match_supply_demand* solver only. If specified
-                  (greather than zero), any truck's total service cost
-                  (distance or time) will be limited by the specified value
-                  including multiple rounds (if set).  The default value is
-                  '0.0'.
+                  (greater than zero), any truck's total service cost (distance
+                  or time) will be limited by the specified value including
+                  multiple rounds (if set).  The default value is '0.0'.
 
                 * **enable_truck_reuse** --
                   For the *match_supply_demand* solver only. If specified
@@ -26296,6 +26389,12 @@ class GPUdb(object):
                     Trucks are scheduled only once from their depots.
 
                   The default value is 'false'.
+
+                * **server_id** --
+                  Indicates which graph server(s) to send the request to.
+                  Default is to send to the server, amongst those containing
+                  the corresponding graph, that has the most computational
+                  bandwidth.  The default value is ''.
 
         Returns:
             A dict with the following entries--
@@ -26687,6 +26786,9 @@ class GPUdb(object):
         Returns:
             A dict with the following entries--
 
+            result (bool)
+                Indicates a successful modification on all servers.
+
             num_nodes (long)
                 Total number of nodes in the graph.
 
@@ -26915,6 +27017,23 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                * **export_solve_results** --
+                  Returns solution results inside the output parameter
+                  *adjacency_list_int_array* array in the response if set to
+                  *true*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **server_id** --
+                  Indicates which graph server(s) to send the request to.
+                  Default is to send to the server, amongst those containing
+                  the corresponding graph, that has the most computational
+                  bandwidth.
 
         Returns:
             A dict with the following entries--
@@ -27363,15 +27482,29 @@ class GPUdb(object):
 
                   The default value is 'true'.
 
+                * **server_id** --
+                  Indicates which graph server(s) to send the request to.
+                  Default is to send to get information about all the servers.
+
         Returns:
             A dict with the following entries--
 
             result (bool)
-                Indicates a successf. This call will fails of the graph
+                Indicates a success. This call will fails of the graph
                 specified in the request does not exist.
+
+            load (list of ints)
+                A percentage approximating the current computational load on
+                the server.
+
+            memory (list of longs)
+                Available memory.
 
             graph_names (list of str)
                 Name(s) of the graph(s).
+
+            graph_server_ids (list of ints)
+                Id(s) of the graph(s).
 
             directed (list of bools)
                 Whether or not the edges of the graph have directions
@@ -28542,8 +28675,8 @@ class GPUdb(object):
         `Graph REST Tutorial
         <../../../graph_solver/examples/graph_rest_guide.html>`_,
         and/or some
-        `/solve/graph examples
-        <../../../graph_solver/examples.html#solve-graph>`_
+        `/match/graph examples
+        <../../../graph_solver/examples.html#match-graph>`_
         before using this endpoint.
 
         Parameters:
@@ -28815,11 +28948,18 @@ class GPUdb(object):
 
                   The default value is 'true'.
 
+                * **server_id** --
+                  Indicates which graph server(s) to send the request to.
+                  Default is to send to the server, amongst those containing
+                  the corresponding graph, that has the most computational
+                  bandwidth. For SHORTEST_PATH solver type, the input is split
+                  amongst the server containing the corresponding graph.
+
         Returns:
             A dict with the following entries--
 
             result (bool)
-                Indicates a successful solution.
+                Indicates a successful solution on all servers.
 
             result_per_destination_node (list of floats)
                 Cost or Pagerank (based on solver type) for each destination
@@ -29522,8 +29662,9 @@ class GPUdb(object):
     # begin visualize_image_classbreak
     def visualize_image_classbreak( self, table_names = None, world_table_names =
                                     None, x_column_name = None, y_column_name =
-                                    None, geometry_column_name = None, track_ids
-                                    = None, cb_attr = None, cb_vals = None,
+                                    None, symbol_column_name = None,
+                                    geometry_column_name = None, track_ids =
+                                    None, cb_attr = None, cb_vals = None,
                                     cb_pointcolor_attr = None,
                                     cb_pointcolor_vals = None,
                                     cb_pointalpha_attr = None,
@@ -29541,6 +29682,7 @@ class GPUdb(object):
         world_table_names = world_table_names if isinstance( world_table_names, list ) else ( [] if (world_table_names is None) else [ world_table_names ] )
         assert isinstance( x_column_name, (basestring)), "visualize_image_classbreak(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
         assert isinstance( y_column_name, (basestring)), "visualize_image_classbreak(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
+        assert isinstance( symbol_column_name, (basestring)), "visualize_image_classbreak(): Argument 'symbol_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( symbol_column_name ).__name__
         assert isinstance( geometry_column_name, (basestring)), "visualize_image_classbreak(): Argument 'geometry_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( geometry_column_name ).__name__
         track_ids = track_ids if isinstance( track_ids, list ) else ( [] if (track_ids is None) else [ track_ids ] )
         assert isinstance( cb_attr, (basestring)), "visualize_image_classbreak(): Argument 'cb_attr' must be (one) of type(s) '(basestring)'; given %s" % type( cb_attr ).__name__
@@ -29570,6 +29712,7 @@ class GPUdb(object):
         obj['world_table_names'] = world_table_names
         obj['x_column_name'] = x_column_name
         obj['y_column_name'] = y_column_name
+        obj['symbol_column_name'] = symbol_column_name
         obj['geometry_column_name'] = geometry_column_name
         obj['track_ids'] = track_ids
         obj['cb_attr'] = cb_attr
@@ -34322,6 +34465,11 @@ class GPUdbTable( object ):
                   <../../../concepts/materialized_views.html>`_ to the value
                   specified in input parameter *value*.  Also, sets the refresh
                   method to periodic if not already set.
+
+                * **set_refresh_execute_as** --
+                  Sets the user name to refresh this `materialized view
+                  <../../../concepts/materialized_views.html>`_ to the value
+                  specified in input parameter *value*.
 
                 * **remove_text_search_attributes** --
                   Removes `text search

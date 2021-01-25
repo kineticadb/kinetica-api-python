@@ -12,9 +12,9 @@ versions of the Python API would NOT be compatible with 7.0.a.b versions.
 * [Installation Instructions](#installation-instructions)
 * [Troubleshooting Installation](#troubleshooting-installation)
 * [GPUdb Table Monitor Client API](#gpudb-table-monitor-client-api)
-* [GPUdbTableMonitorBase.Options](#gpudbtablemonitorbaseoptions)
-* [GPUdbTableMonitorBase.Options Examples](#gpudbtablemonitorbaseoptions-examples)
-* [GPUdbTableMonitorBase.Callbacks](#gpudbtablemonitorbasecallbacks)
+* [GPUdbTableMonitor.Options](#gpudbtablemonitoroptions)
+* [GPUdbTableMonitor.Options Examples](#gpudbtablemonitoroptions-examples)
+* [GPUdbTableMonitor.Callbacks](#gpudbtablemonitorcallbacks)
 * [Table Monitor Examples](#examples)
 
 
@@ -233,6 +233,7 @@ for an insert table monitor.
     the class ``GPUdbTableMonitor.Client`` to demonstrate how to use
     the client class provided by Kinetica for first-time users. The defined
     callback methods in `GPUdbTableMonitorExample` just logs the event payloads.
+    
 2.  [table_monitor_example_queued_impl.py](./examples/table_monitor_example_queued_impl.py)
     This example demonstrates a scenario where the table monitor API is used
     in an application that runs it's own thread(s).  In such a situation, some

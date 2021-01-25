@@ -18,6 +18,7 @@ import gpudb
 from gpudb import GPUdbColumnProperty as GCP, GPUdbRecordColumn as GRC, \
     GPUdbTableMonitor
 
+
 """
 This example demonstrates a scenario where the GPUdbTableMonitor.Client class
 might be needed to be used in a code which already runs in it's own thread.
@@ -28,7 +29,7 @@ shared Queue, which this example shows.
 
 The class QueuedGPUdbTableMonitor derives from GPUdbTableMonitor.Client class
 and defines the callback methods.
-
+ 
 The class TableMonitorExampleClient is a class running in its own thread
 and communicating with an instance of QueuedGPUdbTableMonitor class using
 a Queue instance.
@@ -47,7 +48,6 @@ The main method does the following:
 
 """
 
-
 class QueuedGPUdbTableMonitor(GPUdbTableMonitor.Client):
     """ An example implementation which just passes on the received objects
         to a simple Queue which is passed in as an argument to the constructor
@@ -55,20 +55,20 @@ class QueuedGPUdbTableMonitor(GPUdbTableMonitor.Client):
     """
 
     def __init__(self, db, tablename,
-                 record_queue, options=None):
+                 record_queue, options = None):
         """ Constructor for QueuedGPUdbTableMonitor class
 
         Args:
             db (GPUdb):
                 The handle to the GPUdb
-
+            
             tablename (str):
                 Name of the table to create the monitor for
-
+            
             record_queue (queue.Queue):
                 A Queue instance where notifications along with payloads can be
                 passed into for client to consume and act upon
-
+            
             options (GPUdbTableMonitor.Client.Options):
                 Options instance which is passed on to the super class
                 GPUdbTableMonitor constructor
@@ -84,41 +84,36 @@ class QueuedGPUdbTableMonitor(GPUdbTableMonitor.Client):
         # Create the list of callbacks objects which are to be passed to the
         # 'GPUdbTableMonitor.Client' class constructor
         callbacks = [
-            GPUdbTableMonitor.Callback(
-                GPUdbTableMonitor.Callback.Type.INSERT_RAW,
-                self.on_insert_raw,
-                self.on_error),
+            GPUdbTableMonitor.Callback(GPUdbTableMonitor.Callback.Type.INSERT_RAW,
+                                      self.on_insert_raw,
+                                      self.on_error),
 
-            GPUdbTableMonitor.Callback(
-                GPUdbTableMonitor.Callback.Type.INSERT_DECODED,
-                self.on_insert_decoded,
-                self.on_error,
-                GPUdbTableMonitor.Callback.InsertDecodedOptions(
-                    GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode.ABORT)),
+            GPUdbTableMonitor.Callback(GPUdbTableMonitor.Callback.Type.INSERT_DECODED,
+                                      self.on_insert_decoded,
+                                      self.on_error,
+                                      GPUdbTableMonitor.Callback.InsertDecodedOptions( GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode.ABORT )),
 
             GPUdbTableMonitor.Callback(GPUdbTableMonitor.Callback.Type.UPDATED,
-                                       self.on_update,
-                                       self.on_error),
+                                      self.on_update,
+                                      self.on_error),
 
             GPUdbTableMonitor.Callback(GPUdbTableMonitor.Callback.Type.DELETED,
-                                       self.on_delete,
-                                       self.on_error),
+                                      self.on_delete,
+                                      self.on_error),
 
-            GPUdbTableMonitor.Callback(
-                GPUdbTableMonitor.Callback.Type.TABLE_DROPPED,
-                self.on_table_dropped,
-                self.on_error),
+            GPUdbTableMonitor.Callback(GPUdbTableMonitor.Callback.Type.TABLE_DROPPED,
+                                      self.on_table_dropped,
+                                      self.on_error),
 
-            GPUdbTableMonitor.Callback(
-                GPUdbTableMonitor.Callback.Type.TABLE_ALTERED,
-                self.on_table_altered,
-                self.on_error)
+            GPUdbTableMonitor.Callback(GPUdbTableMonitor.Callback.Type.TABLE_ALTERED,
+                                      self.on_table_altered,
+                                      self.on_error)
         ]
 
         # Invoke the base class constructor. This invocation is mandatory for
         # the table monitor to be actually functional.
         super(QueuedGPUdbTableMonitor, self).__init__(
-            db, tablename, callback_list=callbacks,
+            db, tablename,callback_list=callbacks,
             options=options)
 
         self.record_queue = record_queue
@@ -198,6 +193,7 @@ class QueuedGPUdbTableMonitor(GPUdbTableMonitor.Client):
         self.record_queue.put("Error occurred " % message)
 
 
+
 class TableMonitorExampleClient(threading.Thread):
 
     def __init__(self, table_monitor, work_queue):
@@ -207,7 +203,7 @@ class TableMonitorExampleClient(threading.Thread):
         Args:
             table_monitor (GPUdbTableMonitor.Client): An instance of
                 GPUdbTableMonitor.Client class or some derivative of it.
-
+            
             work_queue (Queue): A Queue instance shared by this client and
                 the GPUdbTableMonitor.Client subclass for doing the notification
                 message exchange as they are received by the table monitor
@@ -254,29 +250,23 @@ def load_data(table_name):
         ["Paris", "TX", "USA", -95.547778, 33.6625, 64.6, "UTC-6"],
         ["Memphis", "TN", "USA", -89.971111, 35.1175, 63, "UTC-6"],
         ["Sydney", "Nova Scotia", "Canada", -60.19551, 46.13631, 44.5, "UTC-4"],
-        ["La Paz", "Baja California Sur", "Mexico", -110.310833, 24.142222, 77,
-         "UTC-7"],
+        ["La Paz", "Baja California Sur", "Mexico", -110.310833, 24.142222, 77, "UTC-7"],
         ["St. Petersburg", "FL", "USA", -82.64, 27.773056, 74.5, "UTC-5"],
         ["Oslo", "--", "Norway", 10.75, 59.95, 45.5, "UTC+1"],
         ["Paris", "--", "France", 2.3508, 48.8567, 56.5, "UTC+1"],
         ["Memphis", "--", "Egypt", 31.250833, 29.844722, 73, "UTC+2"],
         ["St. Petersburg", "--", "Russia", 30.3, 59.95, 43.5, "UTC+3"],
         ["Lagos", "Lagos", "Nigeria", 3.384082, 6.455027, 83, "UTC+1"],
-        ["La Paz", "Pedro Domingo Murillo", "Bolivia", -68.15, -16.5, 44,
-         "UTC-4"],
+        ["La Paz", "Pedro Domingo Murillo", "Bolivia", -68.15, -16.5, 44, "UTC-4"],
         ["Sao Paulo", "Sao Paulo", "Brazil", -46.633333, -23.55, 69.5, "UTC-3"],
-        ["Santiago", "Santiago Province", "Chile", -70.666667, -33.45, 62,
-         "UTC-4"],
-        ["Buenos Aires", "--", "Argentina", -58.381667, -34.603333, 65,
-         "UTC-3"],
+        ["Santiago", "Santiago Province", "Chile", -70.666667, -33.45, 62, "UTC-4"],
+        ["Buenos Aires", "--", "Argentina", -58.381667, -34.603333, 65, "UTC-3"],
         ["Manaus", "Amazonas", "Brazil", -60.016667, -3.1, 83.5, "UTC-4"],
-        ["Sydney", "New South Wales", "Australia", 151.209444, -33.865, 63.5,
-         "UTC+10"],
+        ["Sydney", "New South Wales", "Australia", 151.209444, -33.865, 63.5, "UTC+10"],
         ["Auckland", "--", "New Zealand", 174.74, -36.840556, 60.5, "UTC+12"],
         ["Jakarta", "--", "Indonesia", 106.816667, -6.2, 83, "UTC+7"],
         ["Hobart", "--", "Tasmania", 147.325, -42.880556, 56, "UTC+10"],
-        ["Perth", "Western Australia", "Australia", 115.858889, -31.952222, 68,
-         "UTC+8"]
+        ["Perth", "Western Australia", "Australia", 115.858889, -31.952222, 68, "UTC+8"]
     ]
 
     # Grab a handle to the history table for inserting new weather records
@@ -292,8 +282,7 @@ def load_data(table_name):
         city_updates = []
 
         # Grab a random set of cities
-        cities = random.sample(city_data,
-                               k=random.randint(1, int(len(city_data) / 2)))
+        cities = random.sample(city_data, k=random.randint(1, int(len(city_data) / 2)))
 
         # Create a list of weather records to insert
         for city in cities:
@@ -307,8 +296,7 @@ def load_data(table_name):
         # Insert the records into the table and allow time for table monitor to
         #   process them before inserting the next batch
         print
-        print("[Main/Loader]  Inserting <%s> new city temperatures..." % len(
-            city_updates))
+        print("[Main/Loader]  Inserting <%s> new city temperatures..." % len(city_updates))
         history_table.insert_records(city_updates)
 
         time.sleep(2)
@@ -344,6 +332,7 @@ def create_table(table_name):
         options=schema_option,
         db=h_db
     )
+
 
 
 # end create_tables()
@@ -390,16 +379,15 @@ if __name__ == '__main__':
                                                             'run '
                                                             'example against')
     parser.add_argument('--port', default='9191', help='Kinetica port')
-    parser.add_argument('--username',
-                        help='Username of user to run example with')
+    parser.add_argument('--username', help='Username of user to run example with')
     parser.add_argument('--password', help='Password of the given user')
 
     args = parser.parse_args()
 
     # Establish connection with an instance of Kinetica on port 9191
-    h_db = gpudb.GPUdb(encoding="BINARY", host=args.host, port="9191",
+    h_db = gpudb.GPUdb(encoding="BINARY", host=args.host, port="9191", 
                        username=args.username, password=args.password)
-
+    
     # Identify the message queue, running on port 9002
     table_monitor_queue_url = "tcp://" + args.host + ":9002"
     tablename = 'examples.table_monitor_history'
