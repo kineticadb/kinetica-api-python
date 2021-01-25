@@ -4,37 +4,26 @@ import argparse
 import datetime
 import logging
 import random
-import sys
 import time
 
-try:
-    import queue
-    from queue import Queue
-except ImportError:
-    import Queue as queue
-    from queue import Queue
-
-if sys.version_info[0] == 2:
-    from gpudb import GPUdbColumnProperty as GCP, GPUdbRecordColumn as GRC
-    from gpudb import GPUdbTableMonitor
-    from gpudb import gpudb
-else:
-    from gpudb import GPUdbColumnProperty as GCP, GPUdbRecordColumn as GRC
-    from gpudb.gpudb_table_monitor import GPUdbTableMonitor
-    from gpudb import gpudb
+import gpudb
+from gpudb import GPUdbColumnProperty as GCP, GPUdbRecordColumn as GRC, \
+    GPUdbTableMonitor
 
 
 """
-This example demonstrates the usage of the GPUdbTableMonitor class
-which is provided as a default implementation of the GPUdbTableMonitorBase class.
+This example demonstrates the usage of the GPUdbTableMonitor.Client class.
+The class GPUdbTableMonitorExample derives from the class
+GPUdbTableMonitor.Client and defines the callbacks. It is the list of these
+callback objects that is passed to the constructor of the Client class.
 
-This example simply creates an instance of GPUdbTableMonitor class which sets
-up the callbacks internally with default options.
+This example shows a simple way of extending the GPUdbTableMonitor.Client class
+to get notifications about data from the table monitors.
 
 The main methods runs as follows:
 
-    # Create a GPUdbTableMonitor class
-1.  monitor = GPUdbTableMonitor(h_db, tablename)
+    # Create a GPUdbTableMonitorExample class
+1.  monitor = GPUdbTableMonitorExample(h_db, tablename)
 
     # Start the monitor
 2.  monitor.start_monitor()
@@ -64,7 +53,7 @@ The main methods runs as follows:
 """
 
 
-def load_data():
+def load_data(table_name):
     # Base data set, from which cities will be randomly chosen, with a random
     #   new temperature picked for each, per batch loaded
     city_data = [
@@ -92,7 +81,7 @@ def load_data():
     ]
 
     # Grab a handle to the history table for inserting new weather records
-    history_table = gpudb.GPUdbTable(name="examples.table_monitor_history", db=h_db)
+    history_table = gpudb.GPUdbTable(name=table_name, db=h_db)
 
     random.seed(0)
 
@@ -127,9 +116,11 @@ def load_data():
 # end load_data_and_wait()
 
 
+""" Create the city weather "history" & "status" tables used in this example
+"""
 
-def create_table( table_name ):
-    """Create the table used in this example."""
+
+def create_table(table_name):
     # Put both tables into the "examples" schema
     schema_option = {"collection_name": "examples"}
 
@@ -148,34 +139,39 @@ def create_table( table_name ):
     # Create the "history" table using the column list
     gpudb.GPUdbTable(
         columns,
-        name = table_name,
-        options = schema_option,
-        db = h_db
+        name="table_monitor_history",
+        options=schema_option,
+        db=h_db
     )
-# end create_table
 
 
-""" Drop the city weather "history" & "status" tables used in this example
+
+# end create_tables()
+
+
+""" Drop the city weather "history" table used in this example
 """
 
 
-def clear_table( table_name ):
-    """Delete the table used in this example."""
-    h_db.clear_table( table_name )
-# end clear_table
+def clear_table(table_name):
+    # Drop all the tables
+    h_db.clear_table(table_name)
 
 
-def delete_records(h_db):
+# end clear_tables()
+
+def delete_records(h_db, table_name):
     """
 
     Args:
-        h_db:
+        h_db (GPUdb): GPUdb object
+        table_name (str): Name of the table.
 
-    Returns:
+    Returns: Number of records deleted.
 
     """
     print("In delete records ...")
-    history_table = gpudb.GPUdbTable(name="examples.table_monitor_history", db=h_db)
+    history_table = gpudb.GPUdbTable(name=table_name, db=h_db)
     pre_delete_records = history_table.size()
     print("Records before = %s" % pre_delete_records)
     delete_expr = ["state_province = 'Sao Paulo'"]
@@ -184,56 +180,203 @@ def delete_records(h_db):
     print("Records after = %s" % post_delete_records)
 
     return pre_delete_records - post_delete_records
-# end delete_records
 
+
+class GPUdbTableMonitorExample(GPUdbTableMonitor.Client):
+    """ An example implementation which just logs the table monitor events in the
+        call back methods which are defined..
+
+        This class can be used as it is for simple requirements or more
+        involved cases as well where the callback could be used for more complex
+        processing instead of just logging the payloads.
+    """
+
+    def __init__(self, db, table_name, options=None):
+        """ Constructor for GPUdbTableMonitor class
+
+        Args:
+            db (GPUdb):
+                The handle to the GPUdb
+
+            table_name (str):
+                Name of the table to create the monitor for
+
+            options (GPUdbTableMonitor.Options):
+                Options instance which is passed on to the super class
+                GPUdbTableMonitor.Client constructor
+        """
+
+        # Create the list of callbacks objects which are to be passed to the
+        # 'GPUdbTableMonitor.Client' class constructor
+        callbacks = [
+            GPUdbTableMonitor.Callback(GPUdbTableMonitor.Callback.Type.INSERT_RAW,
+                                      self.on_insert_raw,
+                                      self.on_error),
+
+            GPUdbTableMonitor.Callback(GPUdbTableMonitor.Callback.Type.INSERT_DECODED,
+                                      self.on_insert_decoded,
+                                      self.on_error,
+                                      GPUdbTableMonitor.Callback.InsertDecodedOptions( GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode.ABORT )),
+
+            GPUdbTableMonitor.Callback(GPUdbTableMonitor.Callback.Type.UPDATED,
+                                      self.on_update,
+                                      self.on_error),
+
+            GPUdbTableMonitor.Callback(GPUdbTableMonitor.Callback.Type.DELETED,
+                                      self.on_delete,
+                                      self.on_error),
+
+            GPUdbTableMonitor.Callback(GPUdbTableMonitor.Callback.Type.TABLE_DROPPED,
+                                      self.on_table_dropped,
+                                      self.on_error),
+
+            GPUdbTableMonitor.Callback(GPUdbTableMonitor.Callback.Type.TABLE_ALTERED,
+                                      self.on_table_altered,
+                                      self.on_error)
+        ]
+
+        # Invoke the base class constructor and pass in the list of callback
+        # objects created earlier.  This invocation is mandatory for the table
+        # monitor to be actually functional.
+        super(GPUdbTableMonitorExample, self).__init__(db, table_name,
+                                                       callback_list=callbacks,
+                                                       options=options)
+
+    def on_insert_raw(self, record):
+        """Callback method which is invoked with the raw payload bytes
+           received from the table monitor when a new record is inserted
+
+           This callback method is needed for an 'insert' table monitor to be
+           created. Not passing this method or 'on_insert_decoded' will be
+           like declaring that an 'insert' monitor is not needed and that the
+           user is not interested in getting notifications about insertions to
+           the concerned table.
+
+        Args:
+            record (bytes): This is a collection of undecoded bytes. Decoding
+            is left to the user who uses this callback.
+        """
+        # Override the method
+        # Call the base class method , just for example
+
+        self._logger.info("Raw payload received is : %s " % record)
+
+
+    def on_insert_decoded(self, record):
+        """Callback method which is invoked with the decoded payload record
+           received from the table monitor when a new record is inserted
+
+           This callback method is needed for an 'insert' table monitor to be
+           created. Not passing this method or 'on_insert_raw' will be
+           like declaring that an 'insert' monitor is not needed and that the
+           user is not interested in getting notifications about insertions to
+           the concerned table.
+
+        Args:
+            record (dict): This will be a dict in the format given below
+            {u'state_province': u'--', u'city': u'Auckland',
+            u'temperature': 57.5, u'country': u'New Zealand',
+            u'time_zone': u'UTC+12',
+            u'ts': u'2020-09-28 00:28:37.481119', u'y': -36.840556,
+            u'x': 174.74}
+        """
+        # Override the method
+        # Call the base class method , just for example
+
+        self._logger.info("Decoded payload received is : %s " % record)
+
+
+    def on_update(self, count):
+        """Callback method which is invoked with the number of records updated
+           as received from the table monitor when records are updated
+
+        Args:
+            count (int): This is the actual number of records updated.
+        """
+        self._logger.info("Update count : %s " % count)
+
+    def on_delete(self, count):
+        """Callback method which is invoked with the number of records updated
+           as received from the table monitor when records are deleted
+
+        Args:
+            count (int): This is the actual number of records deleted.
+        """
+        self._logger.info("Delete count : %s " % count)
+
+    def on_table_dropped(self, table_name):
+        """Callback method which is invoked with the name of the table which
+           is dropped when the table monitor is in operation.
+        Args:
+            table_name (str): Name of the table dropped
+        """
+        self._logger.error("Table %s dropped " % table_name)
+
+    def on_table_altered(self, table_name):
+        """Callback method which is invoked with the name of the table which
+           is altered when the table monitor is in operation.
+        Args:
+            table_name (str): Name of the table altered
+        """
+        self._logger.error("Table %s altered " % table_name)
+
+    def on_error(self, message):
+        """Callback method which is invoked with the error message
+           when some error has occurred.
+        Args:
+            message (str): The error message; often wrapping an exception
+            raised.
+        """
+        self._logger.error("Error occurred " % message)
+
+
+# End GPUdbTableMonitorExample class
 
 if __name__ == '__main__':
-    # Set up args
+    # Set up args.. see
     parser = argparse.ArgumentParser(description='Run table monitor example.')
     parser.add_argument('command', nargs="?",
                         help='command to execute (currently only "clear" to remove the example tables')
-    parser.add_argument('--host', default='10.0.0.21', help='Kinetica host to '
+    parser.add_argument('--host', default='localhost', help='Kinetica host to '
                                                             'run '
                                                             'example against')
     parser.add_argument('--port', default='9191', help='Kinetica port')
-    parser.add_argument('--username', default='admin', help='Username of user to run example with')
-    parser.add_argument('--password', default='Kinetica1!', help='Password of '
-                                                              'user')
-    parser.add_argument('--tablename', default='examples.table_monitor_history', help='Name of Kinetica table to monitor')
+    parser.add_argument('--username', help='Username of user to run example with')
+    parser.add_argument('--password', help='Password of user')
 
     args = parser.parse_args()
 
     # Establish connection with an instance of Kinetica on port 9191
-    h_db = gpudb.GPUdb(encoding="BINARY", host=args.host, port="9191",
+    h_db = gpudb.GPUdb(encoding="BINARY", host=args.host, port="9191", 
                        username=args.username, password=args.password)
-
+    
     # Identify the message queue, running on port 9002
     table_monitor_queue_url = "tcp://" + args.host + ":9002"
-    table_name = args.tablename
+    tablename = 'examples.table_monitor_history'
 
     # If command line arg is clear, just clear tables and exit
     if (args.command == "clear"):
-        clear_table( table_name )
+        clear_table(tablename)
         quit()
 
-    clear_table( table_name )
+    clear_table(tablename)
 
-    create_table( table_name )
+    create_table(tablename)
 
     # This is the main client code
 
     # Create a GPUdbTableMonitor class
-    monitor = GPUdbTableMonitor(h_db, table_name)
+    monitor = GPUdbTableMonitorExample( h_db, tablename )
     monitor.logging_level = logging.DEBUG
 
     # Start the monitor
     monitor.start_monitor()
 
     # Load some data
-    load_data()
+    load_data(tablename)
 
     # Delete some records
-    delete_records(h_db)
+    delete_records(h_db, tablename)
 
     # Wait for some time and let the monitor work
     time.sleep(5)

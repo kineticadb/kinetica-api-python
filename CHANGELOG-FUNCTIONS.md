@@ -3,10 +3,29 @@
 
 ## Version 7.1
 
-## Version 7.1.1.0 -- TBD
+## Version 7.1.2.0 -- 2021-01-25
 
-#### Added 
--   xxx
+#### Changed Endpoints
+
+##### Non-breaking Changes
+-   The 'output_tracks' option is added for /match/graph's match_supply_demand_solver for timestamped tracks generation directly and accurately.
+-   All graph endpoints except for ``/delete/graph`` and ``/modify/graph`` can now to a 'server_id' as an option.
+-   /admin/reblance and /admin/remove/ranks' aggressiveness option defaults to 10
+-   Added execute_as option to ``/create/materializedview`` and ``/alter/table`` endpoints.
+-   /create/table/external, /insert/records/fromfile and /insert/records/frompayload' new option: 'type_inference_mode' with valid_choices: accurate, speed
+
+##### Breaking Changes
+-   Multiple graph servers support:
+    -   ``/create/graph`` and ``/modify/graph`` response now has a 'result' field indicating success on all graph servers.
+    -   ``/show/graph``
+        -   Response now provide info about which graph server each graph is on.
+        -   Will also provide some extra info about each server (CPU load and memory)
+    -   ``/show/system/properties`` graph parameters are now vectorized and prefixed with 'graph.'
+    -   ``/show/system status`` replaced graph_status by vector of graph status similar to ranks.
+-   /admin/add/ranks, /admin/remove/ranks, and /admin/rebalance now require the database to be offline
+
+
+## Version 7.1.1.0 -- 2020-11-05
 
 #### Changed Endpoints
 
@@ -18,12 +37,9 @@
     ``partition_type``
 
 
-##### Breaking Changes
--   xxx
-
 ## Version 7.1.0.0 -- 2020-08-18
 
-#### Added 
+#### Added
 -   Added the following endpoints to support cluster resiliency:
     -   ``/admin/add/host``
     -   ``/admin/alter/host``
@@ -86,8 +102,8 @@
     -   Added "schema_name" to additional_info map
     -   Added the following table_descriptions: LOGICAL_VIEW, LOGICAL_EXTERNAL_TABLE, MATERIALIZED_EXTERNAL_TABLE, SCHEMA
 
-- Added ``cb_pointalphas`` option and ``cb_pointalpha_attrs`` and 
-  ``cb_pointalpha_vals`` fields to ``visualize/image/classbreak`` to support 
+- Added ``cb_pointalphas`` option and ``cb_pointalpha_attrs`` and
+  ``cb_pointalpha_vals`` fields to ``visualize/image/classbreak`` to support
   manipulation of transparency in class-break visualization.
 
 ##### Breaking Changes
@@ -100,17 +116,16 @@
     -   removed results parameter from response
 
 
+
 ## Version 7.0
 
-### Version 7.0.20.0 - TBD
+
+### Version 7.0.20.0 - 2020-11-18
 
 #### Changed Endpoints
 
 ##### Non-breaking Changes
-- Added ``execute_as`` additional_info map key to ``/show/sql/proc`` response.
-
-##### Breaking Changes
--   xxx
+-   Added ``execute_as`` additional_info map key to ``/show/sql/proc`` response.
 
 
 ### Version 7.0.19.0 - 2020-08-24
@@ -140,7 +155,6 @@
 
 ### Version 7.0.17.0 - 2020-07-06
 
-#### Changed Endpoints
 
 ##### Non-breaking Changes
 -   Added a job_tag option to the following endpoints:
@@ -156,18 +170,18 @@
 - /match/graph solve_method 'incremental_weighted' is removed as it was defunc.
 - /match/graph option 'unit_unloading_cost' added for match_supply_demand_solver type to add unloading time to the optimization.
 - /match/graph option 'filter_folding_paths' added for the markov_chain solver type to filter out the folding paths for more accurate results.
-- /match/graph option 'max_trip_cost' added for match_supply_demand solver type to restrict trips between stops excedding this number except from/to the origin. 
+- /match/graph option 'max_trip_cost' added for match_supply_demand solver type to restrict trips between stops excedding this number except from/to the origin.
 - /solve/graph option 'accurate_snaps' added.
 - /match/graph for solve type 'match_supply_demand' only: the option 'aggregated_output' (default: true) added
 - /create/graph, /modify/graph: newly added option of 'add_turns' (default: false), 'turn_angle' (default: 60)
 - /solve/graph, /match/graph: newly added options of 'left_turn_penaly', 'right_turn_penalty', 'intersection_penalty', 'sharp_turn_penalty' (default: 0.0)
-- /solve/graph Added 'output_edge_path' (default=false) and 'output_wkt_path' (default=true) options for turning on and off ability to export out aggregated path lists columns onto the solutioon table for the path solvers of /solve/graph endpoint for more speed. 
+- /solve/graph Added 'output_edge_path' (default=false) and 'output_wkt_path' (default=true) options for turning on and off ability to export out aggregated path lists columns onto the solutioon table for the path solvers of /solve/graph endpoint for more speed.
 
 ##### Breaking Changes
--   
+-
 
 ##### Non-breaking Changes
--   Added ``datasource_name`` option to ``/create/external/table`` and ``/insert/records/from/files``  
+-   Added ``datasource_name`` option to ``/create/external/table`` and ``/insert/records/from/files``
 
 
 ### Version 7.0.16.0 - TBD

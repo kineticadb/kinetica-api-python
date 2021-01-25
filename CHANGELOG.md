@@ -2,6 +2,12 @@
 
 ## Version 7.1
 
+### Version 7.1.2.0 - 2021-01-25
+
+#### Note
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
+
+
 ### Version 7.1.1.1 - 2020-12-16
 
 #### Performance Enhancements
@@ -48,7 +54,6 @@
         -   ``NotificationEventType``
         -   ``NotificationEvent``
         -   ``TableEventType``
-
 
 #### Note
 -   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
