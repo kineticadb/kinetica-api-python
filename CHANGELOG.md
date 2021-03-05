@@ -2,6 +2,18 @@
 
 ## Version 7.1
 
+### Version 7.1.3.0 - 2021-03-05
+
+#### Added
+-   Added GPUdbTableMonitor to the API docs
+-   Added GPUdbWorkerList to the API docs
+-   Added GPUdbException to the API docs
+
+#### Fixed
+-   Improved class/method linkages in API docs
+-   Issue with parsing a URL with no port
+
+
 ### Version 7.1.2.0 - 2021-01-25
 
 #### Note

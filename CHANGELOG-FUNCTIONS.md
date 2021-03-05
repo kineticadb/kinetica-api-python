@@ -3,7 +3,38 @@
 
 ## Version 7.1
 
-## Version 7.1.2.0 -- 2021-01-25
+
+### Version 7.1.3.0 -- 2021-03-05
+
+#### Changed Endpoints
+
+##### Non-breaking Changes
+-   Added a new 'credential' option to the following endpoints:
+    -   ``/create/datasource`
+    -   ``/alter/datasource`
+
+#### Added Endpoints
+-   Added the following endpoints to support the kifs global file namespace:
+    -  ``/create/directory``
+    -  ``/delete/directory``
+    -  ``/delete/files``
+    -  ``/download/files``
+    -  ``/grant/permission/directory``
+    -  ``/revoke/permission/directory``
+    -  ``/show/directories``
+    -  ``/show/files``
+    -  ``/upload/files``
+
+-   Added the following endpoints to support the credentials:
+    -  ``/alter/credential``
+    -  ``/create/credential``
+    -  ``/drop/credential``
+    -  ``/show/credential``
+    -  ``/grant/permission/credential``
+    -  ``/revoke/permission/credential``
+
+
+### Version 7.1.2.0 -- 2021-01-25
 
 #### Changed Endpoints
 
@@ -13,6 +44,8 @@
 -   /admin/reblance and /admin/remove/ranks' aggressiveness option defaults to 10
 -   Added execute_as option to ``/create/materializedview`` and ``/alter/table`` endpoints.
 -   /create/table/external, /insert/records/fromfile and /insert/records/frompayload' new option: 'type_inference_mode' with valid_choices: accurate, speed
+-   /create/table/external, /insert/records/fromfile and /insert/records/frompayload' new option: 'max_records_to_load' (default=0: load all)
+-   /create/table/external, /insert/records/fromfile and /insert/records/frompayload' new option: 'store_points_as_xy' and 'store_points_as_xyz' (both have same meaning)
 
 ##### Breaking Changes
 -   Multiple graph servers support:
@@ -25,7 +58,7 @@
 -   /admin/add/ranks, /admin/remove/ranks, and /admin/rebalance now require the database to be offline
 
 
-## Version 7.1.1.0 -- 2020-11-05
+### Version 7.1.1.0 -- 2020-11-05
 
 #### Changed Endpoints
 
@@ -37,7 +70,7 @@
     ``partition_type``
 
 
-## Version 7.1.0.0 -- 2020-08-18
+### Version 7.1.0.0 -- 2020-08-18
 
 #### Added
 -   Added the following endpoints to support cluster resiliency:
@@ -116,8 +149,17 @@
     -   removed results parameter from response
 
 
-
 ## Version 7.0
+
+### Version 7.0.21.0 - TBD
+
+#### Changed Endpoints
+
+##### Non-breaking Changes
+-   xxx
+
+##### Breaking Changes
+-   xxx
 
 
 ### Version 7.0.20.0 - 2020-11-18
@@ -125,7 +167,7 @@
 #### Changed Endpoints
 
 ##### Non-breaking Changes
--   Added ``execute_as`` additional_info map key to ``/show/sql/proc`` response.
+- Added ``execute_as`` additional_info map key to ``/show/sql/proc`` response.
 
 
 ### Version 7.0.19.0 - 2020-08-24
@@ -155,6 +197,7 @@
 
 ### Version 7.0.17.0 - 2020-07-06
 
+#### Changed Endpoints
 
 ##### Non-breaking Changes
 -   Added a job_tag option to the following endpoints:

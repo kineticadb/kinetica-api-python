@@ -72,10 +72,6 @@ if IS_PYTHON_27_OR_ABOVE:
 else:
     import ordereddict as collections # a separate package
 
-if IS_PYTHON_3:
-    from urllib.parse import urlparse
-else:
-    from urlparse import urlparse
 
 
 # Handle basestring in python3
@@ -230,8 +226,8 @@ class GPUdbWorkerList:
 
     def __init__( self, gpudb, ip_regex = None,
                   use_head_node_only = False ):
-        """Automatically populates the GPUdbWorkerList object with the worker
-        URLs for the GPUdb server to support multi-head ingest. (If the
+        """Automatically populates the :class:`GPUdbWorkerList` object with the
+        worker URLs for the GPUdb server to support multi-head ingest. (If the
         specified GPUdb instance has multi-head ingest disabled, the worker
         list will have the head node URL only and multi-head ingest will
         not be used.)
@@ -242,14 +238,15 @@ class GPUdbWorkerList:
         worker.
 
         Parameters:
-        gpudb (GPUdb)
-            The GPUdb client handle from which to obtain the worker URLs.
-        ip_regex (str)
-            Optional IP regular expression to match for the worker URLs.
-        use_head_node_only (bool)
-            Optional boolean flag indicating that only head node should be
-            used (for whatever reason), instead of the workers utilizing the
-            multi-head feature.
+            gpudb (:class:`gpudb.GPUdb`)
+                The :class:`gpudb.GPUdb` client handle from which to obtain the
+                worker URLs.
+            ip_regex (str)
+                Optional IP regular expression to match for the worker URLs.
+            use_head_node_only (bool)
+                Optional boolean flag indicating that only head node should be
+                used (for whatever reason), instead of the workers utilizing the
+                multi-head feature.
         """
         # Validate the input parameter 'gpudb'
         assert isinstance(gpudb, GPUdb), ("Parameter 'gpudb' must be of "
@@ -307,8 +304,9 @@ class GPUdbWorkerList:
                 # Check each URL
                 for url_str in url_addresses_for_this_rank:
                     # Parse the URL
-                    url = urlparse( url_str )
-                    if ((not url.scheme) or (not url.hostname) or (not url.port)):
+                    try:
+                        url = GPUdb.URL( url_str )
+                    except Exception as ex:
                         raise GPUdbException("Malformed URL: '{}'".format( url_str ) )
 
                     if not ip_regex: # no regex given
@@ -438,9 +436,10 @@ class GPUdbWorkerList:
     def validate_ip_address( self, ip_address ):
         """Validates the input string as an IP address (accepts IPv4 only).
 
-        @param ip_address  String that needs to be validated.
+        Parameters:
+            ip_address  String that needs to be validated.
 
-        Returns true or false.
+        Returns: true or false.
         """
         try:
             parts = ip_address.split('.')
@@ -2414,31 +2413,32 @@ class GPUdbIngestor:
         """Initializes the GPUdbIngestor instance.
 
         Parameters:
-            gpudb (GPUdb)
+            gpudb (:class:`gpudb.GPUdb`)
                 The client handle through which the ingestion process
                 is to be conducted.
             table_name (str)
                 The name of the table into which records will be ingested.
                 Must be an existing table.
-            record_type (GPUdbRecordType)
+            record_type (:class:`gpudb.GPUdbRecordType`)
                 The type for the records which will be ingested; must match
                 the type of the given table.
             batch_size (int)
-                The size of the queues; when any queue (one per worker rank of the
-                database server) attains the given size, the queued records
+                The size of the queues; when any queue (one per worker rank of
+                the database server) attains the given size, the queued records
                 will be automatically flushed.  Until then, those records will
                 be held client-side and not actually ingested.  (Unless
                 :meth:`.flush` is called, of course.)
             options (dict of str to str)
-                Any insertion options to be passed onto the GPUdb server.  Optional
-                parameter.
-            workers (GPUdbWorkerList)
+                Any insertion options to be passed onto the GPUdb server.
+                Optional parameter.
+            workers (:class:`GPUdbWorkerList`)
                 Optional parameter.  A list of GPUdb worker rank addresses.
             is_table_replicated (bool)
-                Optional boolean flag indicating whether the table is replicated; if
-                True, then multi-head ingestion will not be used (but the head node
-                would be used for ingestion instead).  This is due to GPUdb not
-                supporting multi-head ingestion on replicated tables.
+                Optional boolean flag indicating whether the table is
+                replicated; if True, then multi-head ingestion will not be used
+                (but the head node would be used for ingestion instead).  This
+                is due to GPUdb not supporting multi-head ingestion on
+                replicated tables.
         """
 
         # Validate input parameter 'gpudb'
@@ -2605,18 +2605,19 @@ class GPUdbIngestor:
         """Force a high-availability cluster (inter-cluster) or ring-resiliency
         (intra-cluster) failover over, as appropriate.  Check the health of the
         cluster (either head node only, or head node and worker ranks, based on
-        the retriever configuration), and use it if healthy.  If no healthy cluster
-        is found, then throw an error.  Otherwise, stop at the first healthy cluster.
-
+        the retriever configuration), and use it if healthy.  If no healthy
+        cluster is found, then throw an error.  Otherwise, stop at the first
+        healthy cluster.
 
         Parameters:
-            curr_url (str or GPUdb.URL)
+            curr_url (str or :class:`gpudb.GPUdb.URL`)
                 The head node URL of the currently active cluster.
             curr_count_cluster_switches (int)
                 The number of times the GPUdb client has switched HA clusters so
                 far.
 
-        @throws GPUdbException if a successful failover could not be achieved.
+        Raises:
+            GPUdbException if a successful failover could not be achieved.
         """
         for i in range(0, self.gpudb.ha_ring_size):
             # Try to switch to a new cluster
@@ -2966,7 +2967,7 @@ class GPUdbIngestor:
 
 
     def set_logger_level( self, log_level ):
-        """Set the log level for the GPUdb multi-head i/o module.
+        """Set the log level for the GPUdb multi-head I/O module.
 
         Parameters:
             log_level (int, long, or str)
@@ -2990,8 +2991,8 @@ class GPUdbIngestor:
             record_encoding (str)
                 The encoding to use for the insertion.  Allowed values are:
 
-                * 'binary'
-                * 'json'
+                * ``binary``
+                * ``json``
 
                 The default values is 'binary'.
 
@@ -3018,23 +3019,23 @@ class GPUdbIngestor:
     def insert_record( self, record, record_encoding = "binary",
                        is_data_encoded = True ):
         """Queues a record for insertion into GPUdb. If the queue reaches the
-        {@link #get_batch_size batch size}, all records in the queue will be
+        :meth:`batch size <get_batch_size>`, all records in the queue will be
         inserted into GPUdb before the method returns. If an error occurs while
         inserting the records, the records will no longer be in the queue nor in
-        GPUdb; catch {@link InsertionException} to get the list of records that were
-        being inserted if needed (for example, to retry).
+        GPUdb; catch :class:`InsertionException` to get the list of records that
+        were being inserted if needed (for example, to retry).
 
         Parameters:
-            record (dict, GPUdbRecord, collections.OrderedDict, Record)
+            record (dict, :class:`gpudb.GPUdbRecord`, collections.OrderedDict, Record)
                 The record to insert.
 
             record_encoding (str)
                 The encoding to use for the insertion.  Allowed values are:
 
-                * 'binary'
-                * 'json'
+                * ``binary``
+                * ``json``
 
-                The default values is 'binary'.
+                The default value is ``binary``.
 
 
             is_data_encoded (bool)
@@ -3042,7 +3043,9 @@ class GPUdbIngestor:
                 do double encoding).  Use ONLY if the data has already been
                 encoded.  Default is False.
 
-        @throws InsertionException if an error occurs while inserting.
+        Raises:
+            :class:`InserttionException`
+                If an error occurs while inserting.
         """
         # If a dict is given, convert it into a GPUdbRecord object
         if isinstance( record, dict ):
@@ -3116,34 +3119,36 @@ class GPUdbIngestor:
 
     def insert_records( self, records, record_encoding = "binary",
                         is_data_encoded = True ):
-        """Queues a list of records for insertion into GPUdb. If any queue reaches
-        the {@link #get_batch_size batch size}, all records in that queue will be
-        inserted into GPUdb before the method returns. If an error occurs while
-        inserting the queued records, the records will no longer be in that queue
-        nor in GPUdb; catch {@link InsertionException} to get the list of records
-        that were being inserted (including any from the queue in question and
-        any remaining in the list not yet queued) if needed (for example, to
-        retry). Note that depending on the number of records, multiple calls to
-        GPUdb may occur.
+        """Queues a list of records for insertion into GPUdb. If any queue
+        reaches the :meth:`batch size <get_batch_size>`, all records in that
+        queue will be inserted into GPUdb before the method returns. If an error
+        occurs while inserting the queued records, the records will no longer be
+        in that queue nor in GPUdb; catch :class:`InsertionException` to get the
+        list of records that were being inserted (including any from the queue
+        in question and any remaining in the list not yet queued) if needed (for
+        example, to retry). Note that depending on the number of records,
+        multiple calls to GPUdb may occur.
 
         Parameters:
-            records (GPUdbRecord, collections.OrderedDict, Record)
+            records (:class:`gpudb.GPUdbRecord`, collections.OrderedDict, Record)
                 The records to insert.
 
             record_encoding (str)
                 The encoding to use for the insertion.  Allowed values are:
 
-                * 'binary'
-                * 'json'
+                * ``binary``
+                * ``json``
 
-                The default values is 'binary'.
+                The default values is ``binary``.
 
             is_data_encoded (bool)
                 Indicates if the data has already been encoded (so that we don't
                 do double encoding).  Use ONLY if the data has already been
                 encoded.  Default is False.
 
-        @throws InsertionException if an error occurs while inserting
+        Raises:
+            :class:`InserttionException`
+                If an error occurs while inserting
         """
         if not records:
             return # nothing to do!
@@ -3181,10 +3186,10 @@ class GPUdbIngestor:
     def flush( self, forced_flush = True, is_data_encoded = True ):
         """Ensures that any queued records are inserted into GPUdb. If an error
         occurs while inserting the records from any queue, the records will no
-        longer be in that queue nor in GPUdb; catch {@link InsertionException} to
-        get the list of records that were being inserted if needed (for example,
-        to retry). Other queues may also still contain unflushed records if
-        this occurs.
+        longer be in that queue nor in GPUdb; catch :class:`InsertionException`
+        to get the list of records that were being inserted if needed (for
+        example, to retry). Other queues may also still contain unflushed
+        records if this occurs.
 
         Parameters:
             forced_flush (bool)
@@ -3196,7 +3201,9 @@ class GPUdbIngestor:
                 do double encoding).  Use ONLY if the data has already been
                 encoded.  Default is False.
 
-        @throws InserttionException if an error occurs while inserting records.
+        Raises:
+            :class:`InserttionException`
+                If an error occurs while inserting records.
         """
         for worker in self.worker_queues:
             if not worker:
@@ -3528,23 +3535,23 @@ class RecordRetriever:
         """Initializes the RecordRetriever instance.
 
         Parameters:
-            gpudb (GPUdb)
+            gpudb (:class:`gpudb.GPUdb`)
                 The client handle through which the retrieval process
                 is to be conducted.
             table_name (str)
                 The name of the table from which records will be fetched.
                 Must be an existing table.
-            record_type (GPUdbRecordType)
+            record_type (:class:`gpudb.GPUdbRecordType`)
                 The type for the records which will be retrieved; must match
                 the type of the given table.
-            workers (GPUdbWorkerList)
+            workers (:class:`GPUdbWorkerList`)
                 Optional parameter.  A list of GPUdb worker rank addresses.
             is_table_replicated (bool)
-                Optional boolean flag indicating whether the table is replicated; if
-                True, then multi-head ingestion will not be used (but the head node
-                would be used for ingestion instead).  This is due to GPUdb not
-                supporting multi-head retrieval on replicated tables which are
-                un-sharded by design.
+                Optional boolean flag indicating whether the table is
+                replicated; if True, then multi-head ingestion will not be used
+                (but the head node would be used for ingestion instead).  This
+                is due to GPUdb not supporting multi-head retrieval on
+                replicated tables which are un-sharded by design.
         """
 
         # Validate input parameter 'gpudb'
@@ -3964,7 +3971,7 @@ class RecordRetriever:
 
 
     def set_logger_level( self, log_level ):
-        """Set the log level for the GPUdb multi-head i/o module.
+        """Set the log level for the GPUdb multi-head I/O module.
 
         Parameters:
             log_level (int, long, or str)
@@ -4015,12 +4022,12 @@ class RecordRetriever:
                 sharding/primary column value or any extra column values.
 
             expression (str)
-                Optional parameter.  If given, it is passed to /get/records as
-                a filter expression.
+                Optional parameter.  If given, it is passed to ``/get/records``
+                as a filter expression.
 
             options (dict of str to str or None)
-                Any /get/records options to be passed onto the GPUdb server.  Optional
-                parameter.
+                Any /get/records options to be passed onto the GPUdb server.
+                Optional parameter.
 
         Returns:
             The decoded records.
