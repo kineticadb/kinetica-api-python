@@ -3,7 +3,6 @@
 
 ## Version 7.1
 
-
 ### Version 7.1.3.0 -- 2021-03-05
 
 #### Changed Endpoints
