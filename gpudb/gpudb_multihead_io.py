@@ -115,6 +115,12 @@ mh_io_log.propagate = True
 
 
 def mh_log_debug( message ):
+    if not mh_io_log.isEnabledFor( logging.DEBUG ):
+        # No-op if debug is not enabled.  This is important
+        # because the inspect module is a time killer!
+        return
+    # end if
+
     # Get calling method's information from the stack
     stack = inspect.stack()
     # stack[1] gives the previous/calling function
@@ -2862,6 +2868,12 @@ class GPUdbIngestor:
 
 
     def __log_debug( self, message ):
+        if not self.log.isEnabledFor( logging.DEBUG ):
+            # No-op if debug is not enabled.  This is important
+            # because the inspect module is a time killer!
+            return
+        # end if
+
         # Get calling method's information from the stack
         stack = inspect.stack()
         # stack[1] gives the previous/calling function
@@ -2876,6 +2888,12 @@ class GPUdbIngestor:
     # end __log_debug
 
     def __log_trace( self, message ):
+        if not self.log.isEnabledFor( logging.TRACE ):
+            # No-op if trace is not enabled.  This is important
+            # because the inspect module is a time killer!
+            return
+        # end if
+
         # Get calling method's information from the stack
         stack = inspect.stack()
         # stack[1] gives the previous/calling function
@@ -3686,6 +3704,12 @@ class RecordRetriever:
 
 
     def __log_debug( self, message ):
+        if not self.log.isEnabledFor( logging.DEBUG ):
+            # No-op if debug is not enabled.  This is important
+            # because the inspect module is a time killer!
+            return
+        # end if
+
         # Get calling method's information from the stack
         stack = inspect.stack()
         # stack[1] gives the previous/calling function
@@ -3700,6 +3724,12 @@ class RecordRetriever:
     # end __debug
 
     def __log_trace( self, message ):
+        if not self.log.isEnabledFor( logging.TRACE ):
+            # No-op if trace is not enabled.  This is important
+            # because the inspect module is a time killer!
+            return
+        # end if
+
         # Get calling method's information from the stack
         stack = inspect.stack()
         # stack[1] gives the previous/calling function

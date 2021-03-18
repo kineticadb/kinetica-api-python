@@ -2,6 +2,12 @@
 
 ## Version 7.1
 
+### Version 7.1.3.1 - 2021-03-18
+
+#### Fixed
+-   Improved performance when debug or trace logging is not enabled
+
+
 ### Version 7.1.3.0 - 2021-03-05
 
 #### Added
