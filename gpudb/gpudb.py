@@ -4221,6 +4221,12 @@ class GPUdb(object):
         # -----------------------
 
         def __log_debug( self, message ):
+            if not self.log.isEnabledFor( logging.DEBUG ):
+                # No-op if debug is not enabled.  This is important
+                # because the inspect module is a time killer!
+                return
+            # end if
+
             try:
                 # Get calling method's information from the stack
                 stack = inspect.stack()
@@ -4359,7 +4365,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.3.0"
+    api_version = "7.1.3.1"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -4682,7 +4688,8 @@ class GPUdb(object):
         self.__cluster_indices = []
         self.__curr_cluster_index_pointer = 0
 
-        # Parse the user given URLs
+        # Parse the user given URLs (will throw an error if no connection
+        # can be established)
         self.__log_debug( "Got hosts: {}".format( hosts ) )
         self.__parse_urls( hosts )
 
@@ -7038,6 +7045,12 @@ class GPUdb(object):
     # -----------------------------------------------------------------------
 
     def __log_debug_with_id( self, message ):
+        if not self.log.isEnabledFor( logging.DEBUG ):
+            # No-op if debug is not enabled.  This is important
+            # because the inspect module is a time killer!
+            return
+        # end if
+
         try:
             # Get calling method's information from the stack
             stack = inspect.stack()
@@ -7082,6 +7095,12 @@ class GPUdb(object):
 
 
     def __log_trace( self, message ):
+        if not self.log.isEnabledFor( logging.TRACE ):
+            # No-op if trace is not enabled.  This is important
+            # because the inspect module is a time killer!
+            return
+        # end if
+
         try:
             # Get calling method's information from the stack
             stack = inspect.stack()
@@ -7101,6 +7120,12 @@ class GPUdb(object):
     # end __log_trace
 
     def __log_debug( self, message ):
+        if not self.log.isEnabledFor( logging.DEBUG ):
+            # No-op if debug is not enabled.  This is important
+            # because the inspect module is a time killer!
+            return
+        # end if
+
         try:
             # Get calling method's information from the stack
             stack = inspect.stack()
@@ -17344,10 +17369,8 @@ class GPUdb(object):
         `Network Graphs & Solvers
         <../../../../graph_solver/network_graph_solver/>`_
         concepts documentation, the
-        `Graph REST Tutorial
-        <../../../../graph_solver/examples/graph_rest_guide/>`_,
-        and/or some `graph examples <../../../../graph_solver/examples/>`_
-        before
+        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`_,
+        and/or some `graph examples <../../../../guide-tags/graph/>`_ before
         using this endpoint.
 
         Parameters:
@@ -26815,11 +26838,9 @@ class GPUdb(object):
         `Network Graphs & Solvers
         <../../../../graph_solver/network_graph_solver/>`_
         concepts documentation, the
-        `Graph REST Tutorial
-        <../../../../graph_solver/examples/graph_rest_guide/>`_,
+        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`_,
         and/or some
-        `/match/graph examples
-        <../../../../graph_solver/examples/#match-graph>`_
+        `/match/graph examples <../../../../guide-tags/graph-match/>`_
         before using this endpoint.
 
         Parameters:
@@ -27244,11 +27265,9 @@ class GPUdb(object):
         `Network Graphs & Solvers
         <../../../../graph_solver/network_graph_solver/>`_
         concepts documentation, the
-        `Graph REST Tutorial
-        <../../../../graph_solver/examples/graph_rest_guide/>`_,
+        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`_,
         and/or some
-        `/match/graph examples
-        <../../../../graph_solver/examples/#match-graph>`_
+        `/match/graph examples <../../../../guide-tags/graph-match/>`_
         before using this endpoint.
 
         Parameters:
@@ -27524,11 +27543,9 @@ class GPUdb(object):
         `Network Graphs & Solvers
         <../../../../graph_solver/network_graph_solver/>`_
         concepts documentation, the
-        `Graph REST Tutorial
-        <../../../../graph_solver/examples/graph_rest_guide/>`_,
+        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`_,
         and/or some
-        `/match/graph examples
-        <../../../../graph_solver/examples/#match-graph>`_
+        `/match/graph examples <../../../../guide-tags/graph-query/>`_
         before using this endpoint.
 
         Parameters:
@@ -29484,11 +29501,9 @@ class GPUdb(object):
         `Network Graphs & Solvers
         <../../../../graph_solver/network_graph_solver/>`_
         concepts documentation, the
-        `Graph REST Tutorial
-        <../../../../graph_solver/examples/graph_rest_guide/>`_,
+        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`_,
         and/or some
-        `/match/graph examples
-        <../../../../graph_solver/examples/#match-graph>`_
+        `/match/graph examples <../../../../guide-tags/graph-solve/>`_
         before using this endpoint.
 
         Parameters:
@@ -32113,6 +32128,12 @@ class GPUdbTable( object ):
 
 
     def __log_debug( self, message ):
+        if not self.log.isEnabledFor( logging.DEBUG ):
+            # No-op if debug is not enabled.  This is important
+            # because the inspect module is a time killer!
+            return
+        # end if
+
         try:
             # Get calling method's information from the stack
             stack = inspect.stack()
