@@ -2,6 +2,18 @@
 
 ## Version 7.1
 
+### Version 7.1.3.2 - 2021-04-16
+
+#### Added
+-   Class `GPUdb.Version` that represents Kinetica version (the server's
+    or client's).
+-   `GPUdb` properties:
+    -   ``current_cluster_info``: `GPUdb.ClusterAddressInfo` object containing
+                                  information on the active cluster.
+    -   ``server_version``: `GPUdb.Version` containing the version of the active
+                            server cluster's version, or None if not known.
+
+
 ### Version 7.1.3.1 - 2021-03-18
 
 #### Fixed
