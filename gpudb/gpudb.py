@@ -193,6 +193,7 @@ class C:
     _SYSTEM_PROPERTIES_RESPONSE_USE_HTTPS       = "conf.use_https"
     _SYSTEM_PROPERTIES_RESPONSE_HEAD_NODE_URLS  = "conf.ha_ring_head_nodes_full"
     _SYSTEM_PROPERTIES_RESPONSE_SERVER_URLS     = "conf.worker_http_server_urls"
+    _SYSTEM_PROPERTIES_RESPONSE_SERVER_VERSION  = "version.gpudb_core_version"
     _SYSTEM_PROPERTIES_RESPONSE_TRUE            = "TRUE"
 
     # Other constants
@@ -3548,6 +3549,235 @@ class GPUdb(object):
 
 
 
+    class Version( object ):
+        """An internal class to handle Kinetica Version (client API or server).
+        """
+
+        def __init__(self, version_str ):
+            """Takes in a string containing a Kinetica version and creates a
+            :class:`GPUdb.Version` object from it.
+
+            Parameters:
+                version_str (str)
+                    A string containing the Kinetica version (client or
+                    server).  Expect at least four components separated
+                    by a period (.). There may be additional parts after
+                    the fourth component that will be discarded.
+            """
+            # Handle a Version object
+            if isinstance(version_str, self.__class__):
+                self.__first       = version_str.first
+                self.__second      = version_str.second
+                self.__third       = version_str.third
+                self.__fourth      = version_str.fourth
+                self.__version_str = version_str.__version_str
+                return
+            # Parse the string into four components of the version
+
+            # If not a Version object, must be a string
+            if not isinstance( version_str, (basestring, unicode) ):
+                raise GPUdbException( "Expected a string version; got: '{}', "
+                                      "type {}".format( version_str,
+                                                        str(type(version_str)) ) )
+
+            # Extract the four components from the string
+            components = version_str.split( "." )
+            if len( components ) < 4:
+                # Better have all four components!
+                raise GPUdbException( "Expected four components of the version; "
+                                      "did not get them.  Got str '{}'"
+                                      "".format( version_str ) )
+            # end if
+
+            # Note that we disregard anything beyond the four components
+            major       = components[ 0 ]
+            minor       = components[ 1 ]
+            revision    = components[ 2 ]
+            abi_version = components[ 3 ]
+
+            # Check that all the components are integers
+            try:
+                major = int( major )
+                minor = int( minor )
+                revision = int( revision )
+                abi_version = int( abi_version )
+            except Exception as ex:
+                raise GPUdbException( "Need integers for all four components of "
+                                      "the version; got '{}' (type '{}'), "
+                                      "'{}' (type '{}'), '{}' (type '{}'), "
+                                      "'{}' (type '{}')"
+                                      "".format( major, str(type(major)),
+                                                 minor, str(type(minor)),
+                                                 revision, str(type(revision)),
+                                                 abi_version, str(type(abi_version)) ) )
+            # end try
+
+            # Save the components
+            self.__first  = major
+            self.__second = minor
+            self.__third  = revision
+            self.__fourth = abi_version
+            self.__version_str = "{}.{}.{}.{}".format( major, minor, revision,
+                                                       abi_version )
+        # end __init__
+
+
+        def __eq__( self, other ):
+            if isinstance(other, self.__class__):
+                if ( self.__first != other.__first ):
+                    return False
+                if ( self.__second != other.__second ):
+                    return False
+                if ( self.__third != other.__third ):
+                    return False
+                if ( self.__fourth != other.__fourth ):
+                    return False
+                return True
+            else:
+                return False
+        # end __eq__
+
+
+        def __ne__(self, other):
+            return not self.__eq__(other)
+        # end __ne__
+
+
+        def __gt__( self, other ):
+            """Checks if the this version is greater than the other version
+            (not equal to).
+            """
+            if isinstance(other, self.__class__):
+                if ( self.__first > other.__first ):
+                    # Example: _7_.2.1.0 is newer/greater than _5_.0.0.0
+                    return True
+                if ( (self.__first == other.__first)
+                     and ( self.__second > other.__second ) ):
+                    # Example: 6._2_.0.0 is newer/greater than 6._1_.1.0, but
+                    # 7._2_.0.0 is NOT newer/greater than 8._1_.0.0
+                    return True
+                if ( (self.__first == other.__first)
+                     and ( self.__second == other.__second )
+                     and ( self.__third > other.__third ) ):
+                    # Example: 6.2._2_.0 is newer/greater than 6.2._1_.0, but
+                    # 7.7._3_.0 is NOT newer/greater than 9.9._0_.0
+                    return True
+                if ( (self.__first == other.__first)
+                     and ( self.__second == other.__second )
+                     and ( self.__third == other.__third )
+                     and ( self.__fourth > other.__fourth ) ):
+                    # Example: 6.2.1._3_ is newer than 6.2.1._1_, but
+                    # 7.7.3._1_ is NOT newer than 9.9.0._0_
+                    return True
+                return False
+            else:
+                raise GPUdbException( "Comparing a non-compatible object of "
+                                      "type {} with a Version object."
+                                      "".format( str(type( other )) ) )
+        # end __gt__
+
+
+        def __lt__( self, other ):
+            """Checks if the this version is greater than the other version
+            (not equal to).
+            """
+            if isinstance(other, self.__class__):
+                if ( self.__first < other.__first ):
+                    # Example: _6_.2.1.0 is older than _7_.0.0.0
+                    return True
+                if ( (self.__first == other.__first)
+                     and ( self.__second < other.__second ) ):
+                    # Example: 6._1_.1.0 is older than 6._2_.0.0, but
+                    # 8._1_.0.0 is NOT older than 7._2_.0.0
+                    return True
+                if ( (self.__first == other.__first)
+                     and ( self.__second == other.__second )
+                     and ( self.__third < other.__third ) ):
+                    # Example: 6.2._1_.0 is older than 6.2._2_.0, but
+                    # 9.9._0_.0 is NOT older than 7.7._3_.0
+                    return True
+                if ( (self.__first == other.__first)
+                     and ( self.__second == other.__second )
+                     and ( self.__third == other.__third )
+                     and ( self.__fourth < other.__fourth ) ):
+                    # Example: 6.2.1._1_ is older than 6.2.1._3_, but
+                    # 9.9.0._0_ is NOT older than 7.7.3._1_
+                    return True
+                return False
+            else:
+                raise GPUdbException( "Comparing a non-compatible object of "
+                                      "type {} with a Version object."
+                                      "".format( str(type( other )) ) )
+        # end __lt__
+
+
+        def __str__(self):
+            """String representation of the URL."""
+            return self.__version_str
+        # end __str__
+
+
+        def __hash__(self):
+            """Hash the object."""
+            return self.__version_str.__hash__()
+        # end __hash__
+
+
+        @property
+        def first(self):
+            """Read-only property--first component of the version."""
+            return self.__first
+
+        @property
+        def second(self):
+            """Read-only property--second component of the version."""
+            return self.__second
+
+        @property
+        def third(self):
+            """Read-only property--third component of the version."""
+            return self.__third
+
+        @property
+        def fourth(self):
+            """Read-only property--fourth component of the version."""
+            return self.__fourth
+
+
+        def is_version_compatible( self, other ):
+            """Given another version, are the two compatible based on just the
+            first two components taken into account?  We don't take the 3rd
+            and 4th components into account since the server and the API
+            ought to work as long as the first two components match.
+
+            TODO: Possibly add another optional parameter for taking how many
+                  components to take into account when checking for
+                  compatibility.
+
+            Parameters:
+                other( :class:`GPUdb.Version` )
+                    The other version object.
+
+            Returns:
+                True if the two are compatible, False otherwise.
+            """
+            # Check the other version's type first
+            if not isinstance(other, self.__class__):
+                raise GPUdbException( "Need another GPUdb.Version object for "
+                                      "comparison; got {}"
+                                      "".format( str( type( other ) ) ) )
+            # end if
+
+            # For now, we only care about the first two components matching
+            # exactly.  Anything else is irrelevant as far as compatibility
+            # goes.
+            return ( (self.first == other.first)
+                     and (self.second == other.second) )
+        # end is_version_compatible
+
+    # end class Version
+
+
     class URL( object ):
         """An internal class to handle URLs.  Stores the hostname/IP address,
         port, protocol, path, and the full URL (as a string).
@@ -3811,12 +4041,13 @@ class GPUdb(object):
 
 
         def __init__( self, head_rank_url,
-                      worker_rank_urls = None,
-                      host_names = None,
+                      worker_rank_urls   = None,
+                      host_names         = None,
                       host_manager_url   = None,
                       host_manager_port  = None,
                       is_primary_cluster = None,
-                      is_intra_cluster_failover_enabled = None ):
+                      is_intra_cluster_failover_enabled = None,
+                      server_version     = None ):
             """Creates a :class:`ClusterAddressInfo` object with the given
             information.
 
@@ -3851,6 +4082,11 @@ class GPUdb(object):
                    Optional boolean argument.  Indicates if this cluster has
                    cluster resiliency or intra-cluster failover enabled.  Default
                    is False.
+
+                server_version (str or :class:`GPUdb.Version`)
+                   Optional string containing the server version.  If given,
+                   will be parsed as a :class:`GPUdb.Version` object. Default
+                   is None.
             """
             self.__construct( head_rank_url,
                               worker_rank_urls,
@@ -3858,18 +4094,20 @@ class GPUdb(object):
                               host_manager_url,
                               host_manager_port,
                               is_primary_cluster,
-                              is_intra_cluster_failover_enabled )
+                              is_intra_cluster_failover_enabled,
+                              server_version )
         # end __init__
 
 
 
         def __construct( self, head_rank_url,
-                         worker_rank_urls = None,
-                         host_names = None,
+                         worker_rank_urls   = None,
+                         host_names         = None,
                          host_manager_url   = None,
                          host_manager_port  = None,
                          is_primary_cluster = None,
-                         is_intra_cluster_failover_enabled = None ):
+                         is_intra_cluster_failover_enabled = None,
+                         server_version     = None ):
             """Constructs a :class:`GPUdb.ClusterAddressInfo` object.
 
             Parameters:
@@ -3903,6 +4141,11 @@ class GPUdb(object):
                    Optional boolean argument.  Indicates if this cluster has
                    cluster resiliency or intra-cluster failover enabled.  Default
                    is False.
+
+                server_version (str or :class:`GPUdb.Version`)
+                   Optional string containing the server version.  If given,
+                   will be parsed as a :class:`GPUdb.Version` object. Default
+                   is None.
             """
             # Class level logger so that setting it for ond instance doesn't
             # set it for ALL instances after that change (even if it is
@@ -3928,6 +4171,7 @@ class GPUdb(object):
             self.__host_manager_url                  = None
             self.__is_primary_cluster                = False
             self.__is_intra_cluster_failover_enabled = False
+            self.__server_version                    = None
 
 
             # Validate all the input arguments and save them.
@@ -3986,6 +4230,8 @@ class GPUdb(object):
                 self.is_primary_cluster = is_primary_cluster
             if is_intra_cluster_failover_enabled is not None:
                 self.is_intra_cluster_failover_enabled = is_intra_cluster_failover_enabled
+            if server_version is not None:
+                self.server_version = server_version
 
             # Save the protocol for use
             self.__protocol = self.head_rank_url.protocol
@@ -4011,6 +4257,8 @@ class GPUdb(object):
                 if ( self.is_intra_cluster_failover_enabled
                      != other.is_intra_cluster_failover_enabled ):
                     return False
+                if ( self.server_version != other.server_version ):
+                    return False
                 return True
             else:
                 return False
@@ -4030,13 +4278,15 @@ class GPUdb(object):
                     ", host_manager_url: {hm}"
                     ", is_primary_cluster: {primary}"
                     ", is_intra_cluster_failover_enabled: {np1}"
+                    ", server_version: {version}"
                     " }}"
                     "".format( rank0     = self.head_rank_url,
                                workers   = [str(u) for u in self.worker_rank_urls],
                                hostnames = self.host_names,
                                hm        = self.host_manager_url,
                                primary   = self.is_primary_cluster,
-                               np1       = self.is_intra_cluster_failover_enabled ) )
+                               np1       = self.is_intra_cluster_failover_enabled,
+                               version   = str( self.server_version ) ) )
         # end __str__
 
 
@@ -4217,6 +4467,28 @@ class GPUdb(object):
         # end setter
 
 
+        @property
+        def server_version( self ):
+            """Returns the version of this cluster, if known; None otherwise.
+            """
+            return self.__server_version
+
+
+        @server_version.setter
+        def server_version( self, value ):
+            """Sets the version of this cluster.  Must be either a string or a
+            :class:`GPUdb.Version` object.  The default is None (but cannot set
+            it as None).
+            """
+            try:
+                self.__server_version = GPUdb.Version( value )
+            except Exception as ex:
+                raise GPUdbException( "Could not save given value '{}' as the "
+                                      "cluster's version; error: {}"
+                                      "".format( str(ex) ) )
+        # end setter
+
+
         # Internal Helper Methods
         # -----------------------
 
@@ -4365,7 +4637,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.3.1"
+    api_version = "7.1.3.2"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -4468,6 +4740,9 @@ class GPUdb(object):
 
         # Prevent logging statements from being duplicated
         self.log.propagate = False
+
+        # Keep track of this API's client version
+        self.__client_version = GPUdb.Version( self.api_version )
 
         # Handle constructor arguments in a backward-compatible manner
         port, options = self.__parse_options( options, *args, **kwargs )
@@ -4692,13 +4967,6 @@ class GPUdb(object):
         # can be established)
         self.__log_debug( "Got hosts: {}".format( hosts ) )
         self.__parse_urls( hosts )
-
-        # Make sure that a connection to the server can be established
-        if not self.__disable_auto_discovery:
-            server_status_response = self.show_system_status()
-            if not _Util.is_ok( server_status_response ):
-                raise GPUdbException( _Util.get_error_msg( server_status_response ) )
-        # end if
 
         # Check version compatibility with the server
         # -------------------------------------------
@@ -5800,6 +6068,26 @@ class GPUdb(object):
 
 
 
+    def __get_server_version( self, sys_properties ):
+        """Given system properties, extract the version of Kinetica being run.
+        If not available, return None.
+
+        Parameters:
+            sys_properties (dict)
+                A dict containing system properties.
+
+        Returns
+            The string containing the server version.
+        """
+        # Get the conf param for the server version
+        if C._SYSTEM_PROPERTIES_RESPONSE_SERVER_VERSION not in sys_properties:
+            return None
+
+        return sys_properties[ C._SYSTEM_PROPERTIES_RESPONSE_SERVER_VERSION ]
+    # end __get_server_version
+
+
+
     def __get_rank_urls( self, sys_props, hostname_regex = None ):
         """Given system properties, extrace the head- and worker rank URLs.
 
@@ -6172,6 +6460,9 @@ class GPUdb(object):
         except Exception as ex:
             raise GPUdbException( GPUdbException.stringify_exception( ex ) )
 
+        # Get the version of Kinetica run at this cluster (None if not found)
+        server_version = self.__get_server_version( sys_props )
+
         # Create an object to store all the information about this cluster
         cluster_info = GPUdb.ClusterAddressInfo( head_rank_url,
                                                  rank_urls,
@@ -6179,7 +6470,8 @@ class GPUdb(object):
                                                  host_manager_url,
                                                  None, # no need to give an HM port
                                                  False,
-                                                 is_intra_cluster_failover_enabled )
+                                                 is_intra_cluster_failover_enabled,
+                                                 server_version )
 
         # Check if this cluster is the primary cluster
         self.__log_debug( "Checking if this is the primary cluster; "
@@ -6500,21 +6792,33 @@ class GPUdb(object):
                 If True, print a warning on version mismatch.
 
 
-        @returns True if versions match, False otherwise.
+        @returns True if versions match, False if they don't, and None if
+                 the server version is unknown.
         """
-        error_msg = None
+        # Get the active server's version
+        server_version = self.server_version
 
-        system_props = self.show_system_properties()
-        server_version = system_props[ C._property_map ][ C._gaia_version ]
-
-        # Extract the version for both server and client: major.minor (ignore revision and ABI)
-        server_version = ".".join( server_version.split( "." )[ 0 : 2 ] )
-        client_version = ".".join( self.api_version.split( "." )[ 0 : 2 ] )
-        if (server_version != client_version):
-            error_msg = ("Client version ({0}) does not match that of the server ({1})"
-                         "".format( client_version, server_version ) )
+        # When the server's version is unknown, return None and print a
+        # warning, if applicable
+        if server_version is None:
             if (do_print_warning == True):
-                self.__log_warn( error_msg )
+                msg = ("Server version is unknown; cannot perform a "
+                       "compatibility check with this running client" )
+                self.__log_warn( msg )
+            # end if
+
+            return None
+        # end if
+
+        if not self.__client_version.is_version_compatible( server_version ):
+            # Version available but is not compatible
+            if (do_print_warning == True):
+                msg = ("Client version ({}) does not match that of the "
+                       "server ({})".format( str( self.__client_version ),
+                                             str( self.__server_version ) ) )
+                self.__log_warn( msg )
+            # end if
+
             return False
         # end if
 
@@ -6612,8 +6916,7 @@ class GPUdb(object):
             raise GPUdbException( "No cluster registered with the API yet!" )
 
         # Get the current URL
-        cluster_info = self.__cluster_info[ self.__get_curr_cluster_index() ]
-        url = cluster_info.head_rank_url
+        url = self.current_cluster_info.head_rank_url
 
         if stringified:
             return str(url)
@@ -6636,8 +6939,7 @@ class GPUdb(object):
             The :class:`GPUdb.URL` object or its string representation.
         """
         # Get the current URL
-        cluster_info = self.__cluster_info[ self.__get_curr_cluster_index() ]
-        url = cluster_info.host_manager_url
+        url = self.current_cluster_info.host_manager_url
 
         if stringified:
             return str(url)
@@ -6665,6 +6967,14 @@ class GPUdb(object):
         """
         return self.__num_cluster_switches
     # end get_num_cluster_switches
+
+
+    @property
+    def current_cluster_info( self ):
+        """Return the :class:`GPUdb.ClusterAddressInfo` object
+        containing information on the current/active cluster."""
+        return self.__cluster_info[ self.__get_curr_cluster_index() ]
+    # end all_cluster_info
 
 
     @property
@@ -6769,6 +7079,12 @@ class GPUdb(object):
         """Returns the full URL of the current head rank of the currently
         active cluster."""
         return self.get_url( stringified = False ).url
+
+    @property
+    def server_version(self):
+        """Returns the :class:`GPUdb.Version` object representing the version of
+        the *currently active* cluster of the Kinetica server."""
+        return self.current_cluster_info.server_version
 
     @property
     def connection(self):
