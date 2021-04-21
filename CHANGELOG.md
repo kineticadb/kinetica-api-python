@@ -2,6 +2,13 @@
 
 ## Version 7.1
 
+### Version 7.1.3.3 - 2021-04-21
+
+#### Fixed
+-   Logging format millisecond so that it shows the actual millisecond, and not
+    .333 always.
+
+
 ### Version 7.1.3.2 - 2021-04-16
 
 #### Added

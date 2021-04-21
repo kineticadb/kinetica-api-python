@@ -2543,6 +2543,12 @@ class GPUdbRecord( object ):
 
 class GPUdb(object):
 
+    # Logging related string constants
+    # Note that the millisecond is put in the message format due to a shortcoming
+    # of the python datetime format shortcoming
+    _LOG_MESSAGE_FORMAT  = "%(asctime)s.%(msecs)03d %(levelname)-8s %(message)s"
+    _LOG_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
     # Headers that are protected and cannot be overridden by users
     _protected_headers = [
         C._HEADER_ACCEPT,
@@ -4157,8 +4163,8 @@ class GPUdb(object):
             # Handlers need to be instantiated only ONCE for a given module
             # (i.e. not per class instance)
             handler   = logging.StreamHandler()
-            formatter = logging.Formatter( "%(asctime)s %(levelname)-8s %(message)s",
-                                            "%Y-%m-%d %H:%M:%S.%u%u%u" )
+            formatter = logging.Formatter( fmt     = GPUdb._LOG_MESSAGE_FORMAT,
+                                           datefmt = GPUdb._LOG_DATETIME_FORMAT )
             handler.setFormatter( formatter )
             self.log.addHandler( handler )
 
@@ -4637,7 +4643,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.3.2"
+    api_version = "7.1.3.3"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -4733,8 +4739,8 @@ class GPUdb(object):
         # Handlers need to be instantiated only ONCE for a given module
         # (i.e. not per class instance)
         handler   = logging.StreamHandler()
-        formatter = logging.Formatter( "%(asctime)s %(levelname)-8s %(message)s",
-                                        "%Y-%m-%d %H:%M:%S.%u%u%u" )
+        formatter = logging.Formatter( fmt     = GPUdb._LOG_MESSAGE_FORMAT,
+                                       datefmt = GPUdb._LOG_DATETIME_FORMAT )
         handler.setFormatter( formatter )
         self.log.addHandler( handler )
 
@@ -31787,8 +31793,8 @@ class GPUdbTable( object ):
         # Handlers need to be instantiated only ONCE for a given module
         # (i.e. not per class instance)
         handler   = logging.StreamHandler()
-        formatter = logging.Formatter( "%(asctime)s %(levelname)-8s %(message)s",
-                                        "%Y-%m-%d %H:%M:%S.%u%u%u" )
+        formatter = logging.Formatter( fmt     = GPUdb._LOG_MESSAGE_FORMAT,
+                                       datefmt = GPUdb._LOG_DATETIME_FORMAT )
         handler.setFormatter( formatter )
         self.log.addHandler( handler )
 

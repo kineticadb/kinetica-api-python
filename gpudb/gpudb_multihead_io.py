@@ -104,8 +104,8 @@ logging.Logger.trace = trace
 # -----------------------------------------------
 mh_io_log  = logging.getLogger( "gpudb.MultiHeadIO" )
 handler    = logging.StreamHandler()
-formatter  = logging.Formatter( "%(asctime)s %(levelname)-8s %(message)s",
-                                 "%Y-%m-%d %H:%M:%S" )
+formatter  = logging.Formatter( fmt     = GPUdb._LOG_MESSAGE_FORMAT,
+                                datefmt = GPUdb._LOG_DATETIME_FORMAT )
 handler.setFormatter( formatter )
 mh_io_log.addHandler( handler )
 
@@ -2492,8 +2492,8 @@ class GPUdbIngestor:
         # Handlers need to be instantiated only ONCE for a given module
         # (i.e. not per class instance)
         handler   = logging.StreamHandler()
-        formatter = logging.Formatter( "%(asctime)s %(levelname)-8s %(message)s",
-                                        "%Y-%m-%d %H:%M:%S.%u%u%u" )
+        formatter = logging.Formatter( fmt     = GPUdb._LOG_MESSAGE_FORMAT,
+                                       datefmt = GPUdb._LOG_DATETIME_FORMAT )
         handler.setFormatter( formatter )
         self.log.addHandler( handler )
 
@@ -3608,8 +3608,8 @@ class RecordRetriever:
         # Handlers need to be instantiated only ONCE for a given module
         # (i.e. not per class instance)
         handler   = logging.StreamHandler()
-        formatter = logging.Formatter( "%(asctime)s %(levelname)-8s %(message)s",
-                                        "%Y-%m-%d %H:%M:%S.%u%u%u" )
+        formatter = logging.Formatter( fmt     = GPUdb._LOG_MESSAGE_FORMAT,
+                                       datefmt = GPUdb._LOG_DATETIME_FORMAT )
         handler.setFormatter( formatter )
         self.log.addHandler( handler )
 
