@@ -6821,7 +6821,7 @@ class GPUdb(object):
             if (do_print_warning == True):
                 msg = ("Client version ({}) does not match that of the "
                        "server ({})".format( str( self.__client_version ),
-                                             str( self.__server_version ) ) )
+                                             str( server_version ) ) )
                 self.__log_warn( msg )
             # end if
 

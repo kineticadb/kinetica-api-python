@@ -2,6 +2,13 @@
 
 ## Version 7.1
 
+### Version 7.1.3.4 - 2021-05-10
+
+#### Fixed
+-   Issue when server and client versions are incompatible resulting in
+    an exception being thrown.  Now it prints a warning as expected.
+
+
 ### Version 7.1.3.3 - 2021-04-21
 
 #### Fixed
