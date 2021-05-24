@@ -4643,7 +4643,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.3.3"
+    api_version = "7.1.3.5"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -31920,6 +31920,14 @@ class GPUdbTable( object ):
                                                      options = {"show_children": "false"} )
                 if not _Util.is_ok( show_table_rsp ): # problem creating the table
                     raise GPUdbException( "Problem creating the table: " + _Util.get_error_msg( show_table_rsp ) )
+
+                # Check if the user has access to this table
+                if len(show_table_rsp[ C._table_descriptions ]) == 0:
+                    msg = ( "Table {} does not exist or user does not "
+                            "have access to it".format( self.qualified_name ) )
+                    self.__log_debug( msg )
+                    raise GPUdbException( msg )
+                # end if
 
                 # Check if the table is a collection
                 if ( (show_table_rsp[ C._table_descriptions ] == C._collection)

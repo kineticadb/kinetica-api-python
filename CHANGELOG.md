@@ -2,6 +2,13 @@
 
 ## Version 7.1
 
+### Version 7.1.3.5 - 2021-05-24
+
+#### Fixed
+-   GPUdbTable constructor error when the table exists in the database
+    but the user does not have access to it.
+
+
 ### Version 7.1.3.4 - 2021-05-10
 
 #### Fixed
