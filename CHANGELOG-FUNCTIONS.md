@@ -3,7 +3,7 @@
 
 ## Version 7.1
 
-### Version 7.1.4.0 -- TBD
+### Version 7.1.4.0 -- 2021-07-29
 
 #### Added
 -   Added the following endpoints to support video:
