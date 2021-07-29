@@ -2737,6 +2737,7 @@ static PyObject* get_char_column_small(ColumnValue* column_value)
 }
 
 /* Accessor function for date columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static PyObject* get_date_column(ColumnValue* column_value)
 {
     long date = column_value->value.i;
@@ -2750,8 +2751,10 @@ static PyObject* get_date_column(ColumnValue* column_value)
                            DATE_MONTH(date),
                            DATE_DAY(date));
 }
+*/
 
 /* Accessor function for datetime columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static PyObject* get_datetime_column(ColumnValue* column_value)
 {
     PY_LONG_LONG datetime = column_value->value.l;
@@ -2769,6 +2772,7 @@ static PyObject* get_datetime_column(ColumnValue* column_value)
                                       DT_SEC(datetime),
                                       DT_MSEC(datetime) * 1000);
 }
+*/
 
 /* Accessor function for double columns. */
 static PyObject* get_double_column(ColumnValue* column_value)
@@ -2832,6 +2836,7 @@ static PyObject* get_string_column(ColumnValue* column_value)
 }
 
 /* Accessor function for time columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static PyObject* get_time_column(ColumnValue* column_value)
 {
     long time = column_value->value.i;
@@ -2841,8 +2846,10 @@ static PyObject* get_time_column(ColumnValue* column_value)
                            TIME_SEC(time),
                            TIME_MSEC(time) * 1000);
 }
+*/
 
 /* Accessor function for timestamp columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static PyObject* get_timestamp_column(ColumnValue* column_value)
 {
     PY_LONG_LONG datetime = column_value->value.l;
@@ -2854,6 +2861,7 @@ static PyObject* get_timestamp_column(ColumnValue* column_value)
 
     return PyLong_FromLongLong(datetime_to_epoch_ms(datetime));
 }
+*/
 
 /* Column accessor function dispatch table. */
 static GetColumnFunc get_column[CDT_MAX] =
@@ -3093,6 +3101,7 @@ static int set_char256_column(Record* self, Py_ssize_t index, PyObject* value)
 }
 
 /* Mutator function for date columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static int set_date_column(Record* self, Py_ssize_t index, PyObject* value)
 {
     long date;
@@ -3115,8 +3124,11 @@ static int set_date_column(Record* self, Py_ssize_t index, PyObject* value)
 error:
     return 0;
 }
+*/
+
 
 /* Mutator function for datetime columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static int set_datetime_column(Record* self, Py_ssize_t index, PyObject* value)
 {
     PY_LONG_LONG datetime;
@@ -3143,6 +3155,7 @@ static int set_datetime_column(Record* self, Py_ssize_t index, PyObject* value)
 error:
     return 0;
 }
+*/
 
 /* Mutator function for double columns. */
 static int set_double_column(Record* self, Py_ssize_t index, PyObject* value)
@@ -3323,6 +3336,7 @@ error:
 }
 
 /* Mutator function for time columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static int set_time_column(Record* self, Py_ssize_t index, PyObject* value)
 {
     long time;
@@ -3345,8 +3359,10 @@ static int set_time_column(Record* self, Py_ssize_t index, PyObject* value)
 error:
     return 0;
 }
+*/
 
 /* Mutator function for timestamp columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static int set_timestamp_column(Record* self, Py_ssize_t index, PyObject* value)
 {
     ColumnValue* column_value;
@@ -3369,6 +3385,7 @@ error:
     Py_XDECREF(value);
     return 0;
 }
+*/
 
 /* Column mutator function dispatch table. */
 static SetColumnFunc set_column[CDT_MAX] =
@@ -3636,6 +3653,7 @@ static AvroErrorCode read_char256_column(uint8_t** pos, uint8_t* max, ColumnValu
 }
 
 /* Reading function for date columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static AvroErrorCode read_date_column(uint8_t** pos, uint8_t* max, ColumnValue* column_value)
 {
     Py_ssize_t len;
@@ -3670,8 +3688,10 @@ static AvroErrorCode read_date_column(uint8_t** pos, uint8_t* max, ColumnValue* 
     column_value->len = 0;
     return ERR_NONE;
 }
+*/
 
 /* Reading function for datetime columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static AvroErrorCode read_datetime_column(uint8_t** pos, uint8_t* max, ColumnValue* column_value)
 {
     Py_ssize_t len;
@@ -3771,6 +3791,7 @@ static AvroErrorCode read_datetime_column(uint8_t** pos, uint8_t* max, ColumnVal
     column_value->len = 0;
     return ERR_NONE;
 }
+*/
 
 /* Reading function for double columns. */
 static AvroErrorCode read_double_column(uint8_t** pos, uint8_t* max, ColumnValue* column_value)
@@ -3834,6 +3855,7 @@ static AvroErrorCode read_long_column(uint8_t** pos, uint8_t* max, ColumnValue* 
 }
 
 /* Reading function for time columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static AvroErrorCode read_time_column(uint8_t** pos, uint8_t* max, ColumnValue* column_value)
 {
     Py_ssize_t len;
@@ -3888,8 +3910,10 @@ static AvroErrorCode read_time_column(uint8_t** pos, uint8_t* max, ColumnValue* 
     column_value->len = 0;
     return ERR_NONE;
 }
+*/
 
 /* Reading function for timestamp columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static AvroErrorCode read_timestamp_column(uint8_t** pos, uint8_t* max, ColumnValue* column_value)
 {
     PY_LONG_LONG value;
@@ -3905,6 +3929,7 @@ static AvroErrorCode read_timestamp_column(uint8_t** pos, uint8_t* max, ColumnVa
     column_value->len = 0;
     return ERR_NONE;
 }
+*/
 
 /* Column reading function dispatch table. */
 static ReadColumnFunc read_column[CDT_MAX] =
@@ -4010,16 +4035,20 @@ static Py_ssize_t size_bytes_column(ColumnValue* column_value)
 }
 
 /* Sizing function for date columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static Py_ssize_t size_date_column(ColumnValue* column_value)
 {
     return 11;
 }
+*/
 
 /* Sizing function for datetime columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static Py_ssize_t size_datetime_column(ColumnValue* column_value)
 {
     return 24;
 }
+*/
 
 /* Sizing function for double columns. */
 static Py_ssize_t size_double_column(ColumnValue* column_value)
@@ -4046,16 +4075,20 @@ static Py_ssize_t size_long_column(ColumnValue* column_value)
 }
 
 /* Sizing function for time columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static Py_ssize_t size_time_column(ColumnValue* column_value)
 {
     return 13;
 }
+*/
 
 /* Sizing function for timestamp columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static Py_ssize_t size_timestamp_column(ColumnValue* column_value)
 {
     return size_long(datetime_to_epoch_ms(column_value->value.l));
 }
+*/
 
 /* Column value sizing function dispatch table. */
 static SizeColumnFunc size_column[CDT_MAX] =
@@ -4161,6 +4194,7 @@ static int write_char_column_small(uint8_t** pos, uint8_t* max, ColumnValue* col
 }
 
 /* Writing function for date columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static int write_date_column(uint8_t** pos, uint8_t* max, ColumnValue* column_value)
 {
     long date;
@@ -4179,8 +4213,10 @@ static int write_date_column(uint8_t** pos, uint8_t* max, ColumnValue* column_va
     AVRO_RETURN_ERROR(write_char(pos, max, '-'))
     return write_digits(pos, max, 2, DATE_DAY(date));
 }
+*/
 
 /* Writing function for datetime columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static int write_datetime_column(uint8_t** pos, uint8_t* max, ColumnValue* column_value)
 {
     PY_LONG_LONG datetime;
@@ -4207,6 +4243,7 @@ static int write_datetime_column(uint8_t** pos, uint8_t* max, ColumnValue* colum
     AVRO_RETURN_ERROR(write_char(pos, max, '.'))
     return write_digits(pos, max, 3, DT_MSEC(datetime));
 }
+*/
 
 /* Writing function for double columns. */
 static int write_double_column(uint8_t** pos, uint8_t* max, ColumnValue* column_value)
@@ -4233,6 +4270,7 @@ static int write_long_column(uint8_t** pos, uint8_t* max, ColumnValue* column_va
 }
 
 /* Writing function for time columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static int write_time_column(uint8_t** pos, uint8_t* max, ColumnValue* column_value)
 {
     long time;
@@ -4247,8 +4285,10 @@ static int write_time_column(uint8_t** pos, uint8_t* max, ColumnValue* column_va
     AVRO_RETURN_ERROR(write_char(pos, max, '.'))
     return write_digits(pos, max, 3, TIME_MSEC(time));
 }
+*/
 
 /* Writing function for timestamp columns. */
+/* Not used anymore; but keeping it around in case we need to revive it later.
 static int write_timestamp_column(uint8_t** pos, uint8_t* max, ColumnValue* column_value)
 {
     PY_LONG_LONG datetime = column_value->value.l;
@@ -4260,6 +4300,7 @@ static int write_timestamp_column(uint8_t** pos, uint8_t* max, ColumnValue* colu
 
     return write_long(pos, max, datetime_to_epoch_ms(datetime));
 }
+*/
 
 /* Column writing function dispatch table. */
 static WriteColumnFunc write_column[CDT_MAX] =

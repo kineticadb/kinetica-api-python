@@ -2,6 +2,21 @@
 
 ## Version 7.1
 
+### Version 7.1.4.0 - TBD
+
+#### Added
+-   xxx
+
+#### Changed
+-   xxx
+
+#### Fixed
+-   xxx
+
+#### Notes
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
+
+
 ### Version 7.1.3.5 - 2021-05-24
 
 #### Fixed
@@ -52,6 +67,10 @@
 -   Improved class/method linkages in API docs
 -   Issue with parsing a URL with no port
 
+#### Notes
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
+
+
 
 ### Version 7.1.2.0 - 2021-01-25
 
@@ -59,11 +78,13 @@
 -   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
 
 
+
 ### Version 7.1.1.1 - 2020-12-16
 
 #### Performance Enhancements
 -   Increased overall multi-head I/O speed by reducing client-side
     workload.
+
 
 
 ### Version 7.1.1.0 - 2020-10-28

@@ -2469,7 +2469,7 @@ class GPUdbIngestor:
         # Validate input parameter 'options'
         if not isinstance( options, (dict, type(None)) ):
             raise GPUdbException( "Parameter 'options' must be a"
-                                  "dicitonary, if given; given %s"
+                                  "dictionary, if given; given %s"
                                   % str( type( options ) ) )
         # Validate input parameter 'workers'
         if (workers and not isinstance(workers, GPUdbWorkerList)):
@@ -2616,7 +2616,7 @@ class GPUdbIngestor:
         healthy cluster.
 
         Parameters:
-            curr_url (str or :class:`gpudb.GPUdb.URL`)
+            curr_url (str or :class:`GPUdb.URL`)
                 The head node URL of the currently active cluster.
             curr_count_cluster_switches (int)
                 The number of times the GPUdb client has switched HA clusters so
@@ -3157,7 +3157,7 @@ class GPUdbIngestor:
                 * ``binary``
                 * ``json``
 
-                The default values is ``binary``.
+                The default value is ``binary``.
 
             is_data_encoded (bool)
                 Indicates if the data has already been encoded (so that we don't
@@ -4056,7 +4056,7 @@ class RecordRetriever:
                 as a filter expression.
 
             options (dict of str to str or None)
-                Any /get/records options to be passed onto the GPUdb server.
+                Any ``/get/records`` options to be passed onto the GPUdb server.
                 Optional parameter.
 
         Returns:

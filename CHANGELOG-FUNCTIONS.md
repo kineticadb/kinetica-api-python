@@ -3,6 +3,72 @@
 
 ## Version 7.1
 
+### Version 7.1.4.0 -- TBD
+
+#### Added
+-   Added the following endpoints to support video:
+    -  ``/alter/video``
+    -  ``/create/video``
+    -  ``/get/video``
+    -  ``/show/video``
+
+-   Added the following endpoints to support the kifs global file namespace:
+    -  ``/create/directory``
+    -  ``/delete/directory``
+    -  ``/delete/files``
+    -  ``/download/files``
+    -  ``/grant/permission/directory``
+    -  ``/revoke/permission/directory``
+    -  ``/show/directories``
+    -  ``/show/files``
+    -  ``/upload/files``
+
+-   New endpoints to support database backup:
+    -  ``/admin/backup/begin``
+    -  ``/admin/backup/end``
+
+-   Other new endpoints:
+    -  ``/has/permission``
+
+#### Changed Endpoints
+-   Added a new option 'inverse_solve' for the match_batch_solves solver of /match/graph.
+-   Added two solvers to the solve/graph endpoint, namely, STATS_ALL, and CLOSENESS for centrality.
+-   Added a new solve method 'match_loops' for /match/graph with
+    two additional options 'min_loop_level' and 'max_loop_level'.
+-   Added new match graph options for 'match_loops' solve to improve performance:
+    -   `output_batch_size`
+    -   `search_limit`
+-   Added new solve graph options for 'page_rank' solve to improve performance:
+    -   `convergence_limit`
+    -   `max_iterations`
+-   Changed default type_inference_mode to 'speed' - for 3 external files endpoints: create_table_external, insert_records_fromfiles, insert_records_frompayload
+-   New options to create_table_external, insert_records_fromfiles, insert_records_frompayload: text_search_columns, text_search_min_column_length.
+
+##### Non-breaking Changes
+-   Added new options to ``/alter/system/properties``
+    -   ``kafka_batch_size``
+    -   ``kafka_wait_time``
+    -   ``kafka_timeout``
+-   Added new actions to ``/alter/table``
+    -  ``cancel_datasource_subscription``
+    -  ``pause_datasource_subscription``
+    -  ``resume_datasource_subscription``
+-   Removed ``kafka_group_id`` option from ``/create/datasource``
+-   Added ``kafka_group_id`` option to
+    -  ``/create/table/external``
+    -  ``/insert/records/fromfiles``
+-  Added ``datasource_subscriptions`` additional info option to ``/show/table`` response
+-   KGEO-937: The /match/graph endpoint has a new option added for MSDO solver option. The new opton name is 'max_truck_stops'. If specified (greater than zero), a truck can at most have this many stops (demand locations) in one round trip. Otherwise, it is unlimited. If 'enable_truck_reuse' is on, this condition will be applied separately at each round trip use of the same truck.
+-   /create/table/external, /insert/records/fromfile new option: 'table_insert_mode' with valid_choices: table_per_file, single (default0)
+-   /create/table/external, /insert/records/fromfile and /insert/records/frompayload' new value for option: 'file_type':'shapefile'
+-   Added ``max_output_lines`` option to ``/execute/proc`` to limit captured stdout and stderr output
+
+##### Breaking Changes
+-    ``/solve/graph`` internal option for distributed solves
+-    ``/show/graph`` added info about partitioned graphs as well as graph memory
+-    ``/admin/show/jobs`` Added 'flags' field to response to provide additional job metadata
+-    ``/show/proc/status`` added 'output' field to response to return captured stdout and stderr output
+
 
 ### Version 7.1.3.0 -- 2021-03-05
 
@@ -10,8 +76,8 @@
 
 ##### Non-breaking Changes
 -   Added a new 'credential' option to the following endpoints:
-    -   ``/create/datasource`
-    -   ``/alter/datasource`
+    -   ``/create/datasource``
+    -   ``/alter/datasource``
 
 #### Added Endpoints
 -   Added the following endpoints to support the kifs global file namespace:
@@ -135,6 +201,10 @@
     -   Added "schema_name" to additional_info map
     -   Added the following table_descriptions: LOGICAL_VIEW, LOGICAL_EXTERNAL_TABLE, MATERIALIZED_EXTERNAL_TABLE, SCHEMA
 
+-   /create/type
+    -   Added "uuid" as a new column property.
+    -   Added "init_with_uuid" as a new column property for uuid column.
+
 - Added ``cb_pointalphas`` option and ``cb_pointalpha_attrs`` and
   ``cb_pointalpha_vals`` fields to ``visualize/image/classbreak`` to support
   manipulation of transparency in class-break visualization.
@@ -167,7 +237,7 @@
 #### Changed Endpoints
 
 ##### Non-breaking Changes
-- Added ``execute_as`` additional_info map key to ``/show/sql/proc`` response.
+-   Added ``execute_as`` additional_info map key to ``/show/sql/proc`` response.
 
 
 ### Version 7.0.19.0 - 2020-08-24
@@ -196,8 +266,6 @@
 
 
 ### Version 7.0.17.0 - 2020-07-06
-
-#### Changed Endpoints
 
 ##### Non-breaking Changes
 -   Added a job_tag option to the following endpoints:
