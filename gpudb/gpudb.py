@@ -1136,8 +1136,10 @@ class GPUdbColumnProperty(object):
 
 
     TEXT_SEARCH = "text_search"
-    """str: Valid only for 'string' columns. Enables full text search for string
-    columns. Can be set independently of *data* and *store_only*.
+    """str: Valid only for select 'string' columns. Enables full text search--see
+    `Full Text Search <../../../../concepts/full_text_search/>`__ for details
+    and applicable string column types. Can be set independently of *data* and
+    *store_only*.
     """
 
 
@@ -1307,13 +1309,13 @@ class GPUdbColumnProperty(object):
 
     PRIMARY_KEY = "primary_key"
     """str: This property indicates that this column will be part of (or the
-    entire) `primary key <../../../../concepts/tables/#primary-keys>`_.
+    entire) `primary key <../../../../concepts/tables/#primary-keys>`__.
     """
 
 
     SHARD_KEY = "shard_key"
     """str: This property indicates that this column will be part of (or the
-    entire) `shard key <../../../../concepts/tables/#shard-keys>`_.
+    entire) `shard key <../../../../concepts/tables/#shard-keys>`__.
     """
 
 
@@ -1335,7 +1337,7 @@ class GPUdbColumnProperty(object):
 
     DICT = "dict"
     """str: This property indicates that this column should be `dictionary encoded
-    <../../../../concepts/dictionary_encoding/>`_. It can only be used in
+    <../../../../concepts/dictionary_encoding/>`__. It can only be used in
     conjunction with restricted string (charN), int, long or date columns.
     Dictionary encoding is best for columns where the cardinality (the number
     of unique values) is expected to be low. This property can save a large
@@ -1895,7 +1897,7 @@ class GPUdbRecordType(object):
 
 
     def get_column( self, column_id ):
-        """Return the desired columnd; fetch by name or index.
+        """Return the desired column; fetch by name or index.
 
         Parameters:
             column_id (str or int)
@@ -2039,7 +2041,7 @@ class GPUdbRecord( object ):
 
         Parameters:
             json_string_data (str)
-                The stringified json encoded data.  Could be
+                The stringified JSON encoded data.  Could be
                 a single object or a list of data.
 
         Returns:
@@ -2561,13 +2563,15 @@ class GPUdb(object):
         """Inner enumeration class to represent the high-availability
         synchronicity override mode that is applied to each endpoint call.
         Available enumerations are:
+
         * DEFAULT  --  No override; defer to the HA process for synchronizing
-                       endpoints (which has different logic for different
-                       endpoints).  This is the default mode.
+          endpoints (which has different logic for different
+          endpoints).  This is the default mode.
         * NONE     --  Do not replicate the endpoint calls to the backup cluster.
         * SYNCHRONOUS  -- Synchronize all endpoint calls
         * ASYNCHRONOUS -- Do NOT synchronize any endpoint call
         """
+
         # No override; defer to the HA process for synchronizing
         # endpoints (which has different logic for different endpoints)
         # For this default mode, we don't put any header in the endpoint call
@@ -2586,14 +2590,15 @@ class GPUdb(object):
         failover order that is applied to ring resiliency or inter-cluster
         failover.  The order dictates in which pattern backup clusters will
         be chosen when a failover needs to happen in the client API.
-
         Available enumerations are:
+
         * RANDOM  --  Randomly choose the backup cluster from the available
-                      clusters.  This is the default mode.
+          clusters.  This is the default mode.
         * SEQUENTIAL -- Choose the cluster sequentially from the list of
-                        clusters (the union of the user given clsuters and
-                        auto-discovered clusters).
+          clusters (the union of the user given clusters and
+          auto-discovered clusters).
         """
+
         # Randomly choose the backup cluster from the available
         # clusters.  This is the default mode.
         RANDOM     = "RANDOM"
@@ -2613,8 +2618,9 @@ class GPUdb(object):
 
         For backward compatibility, we will support the following options from the
         7.0 GPUdb keyword arguments and map them to the following properties:
-         * connection -> protocol
-         * no_init_db_contact -> disable_auto_discovery
+
+        * connection -> protocol
+        * no_init_db_contact -> disable_auto_discovery
 
         ::
 
@@ -3002,6 +3008,7 @@ class GPUdb(object):
         @property
         def encoding(self):
             """Gets the encoding used by the client.  Supported values are:
+
             * **binary**
             * **snappy**
             * **json**
@@ -3012,6 +3019,7 @@ class GPUdb(object):
         @encoding.setter
         def encoding(self, value):
             """Sets the encoding used by the client.  Supported values are:
+
             * **binary**
             * **snappy**
             * **json**
@@ -4569,11 +4577,11 @@ class GPUdb(object):
             """Checks if the given hostname (or IP address) is part of this
             cluster.
 
-            Parameters
+            Parameters:
                 host_name (str)
                     String containing a hostname or an IP address.
 
-            Returns
+            Returns:
                 True if this cluster contains a machine with the given
                 hostname or IP address, False otherwise.
             """
@@ -4643,7 +4651,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.3.5"
+    api_version = "7.1.4.0"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -4655,11 +4663,11 @@ class GPUdb(object):
         certain error conditions, this class will try to establish connection
         with one of the backup processes of the database to continue service.
         There are several options related to how to control that in the
-        :class:`GPUdb.Options` class that can be controlled via :param:`options`.
+        :class:`GPUdb.Options` class that can be controlled via `options`.
 
         .. note::
 
-            Please read the docstring of :param:`options` about backward-
+            Please read the docstring of `options` about backward-
             compatibility related notes.
 
         Parameters:
@@ -4679,7 +4687,7 @@ class GPUdb(object):
                 deprecated.  For now, anything in the hostname separated
                 by the @ symbol will be discarded.  (But the constructor
                 will still function).  Please use the appropriate properties
-                of the :param:`options` argument to set the username and
+                of the `options` argument to set the username and
                 password.
 
             options (GPUdb.Options or dict)
@@ -5167,7 +5175,7 @@ class GPUdb(object):
         of which stores all pertinent information on a given cluster.
 
         If the first attempt fails, do this for a set period of initial
-        connecttion attempt timeout, as many times as is possible.
+        connection attempt timeout, as many times as is possible.
 
         ***This method should be called from the constructor initialization
         method only!***
@@ -5729,16 +5737,16 @@ class GPUdb(object):
         """Given a hostname or IP address, check if the known clusters
         have/contain it.
 
-        Parameters
+        Parameters:
             hostname (str)
                 The hostname or IP address to search for.
 
-        Returns
+        Returns:
             The index of the cluster that contains this node; -1
             if not found in the system.
         """
         if ( not self.__cluster_info ):
-            self.__log_debug( "host addressses are empty; returning -1");
+            self.__log_debug( "host addresses are empty; returning -1");
             return -1
         # end if
 
@@ -5766,8 +5774,8 @@ class GPUdb(object):
         """Given a URL, return the system status information.
 
         Parameters:
-           url (:class:`GPUdb.URL`)
-              The URL of the server to get information from.
+            url (:class:`GPUdb.URL`)
+                The URL of the server to get information from.
 
         Returns:
             A dict containing the system status
@@ -5912,8 +5920,8 @@ class GPUdb(object):
         """Given a URL, return whether the server is running at that address.
 
         Parameters:
-           url (:class:`GPUdb.URL`)
-              The URL of the server to get information from.
+            url (:class:`GPUdb.URL`)
+                The URL of the server to get information from.
 
         Returns:
             True if the server is running, False otherwise.
@@ -5929,7 +5937,7 @@ class GPUdb(object):
             # If the URL is not given, then system status information must be
             # given
             if sys_status_info is None:
-                raise GPUdbException( "Parameter 'url' is not given; therfore, "
+                raise GPUdbException( "Parameter 'url' is not given; therefore, "
                                       "parameter 'sys_status_info' must be "
                                       "given; but it is not!")
         # end
@@ -5978,8 +5986,8 @@ class GPUdb(object):
         """Given a URL, return the system properties information.
 
         Parameters:
-           url (:class:`GPUdb.URL`)
-              The URL of the server to get information from.
+            url (:class:`GPUdb.URL`)
+                The URL of the server to get information from.
 
         Returns:
             The properties map, a dict object.
@@ -6037,7 +6045,7 @@ class GPUdb(object):
             sys_properties (dict)
                 A dict containing system properties.
 
-        Returns
+        Returns:
             True if the cluster has N+1 or intra-cluster failover enabled.
             False otherwise.
         """
@@ -6099,14 +6107,14 @@ class GPUdb(object):
 
         Parameters:
             sys_props (dict)
-               A dictionary containing all relevant system properties.
+                A dictionary containing all relevant system properties.
 
             hostname_regex (str)
                 The regex to match the URLs against; if None, then in case the
                 system properties has multiple URLs for a given rank, choose the
                 first one.
 
-        Returns
+        Returns:
             A list of :class:`GPUdb.URL` objects, where the first entry is the
             rank-0 URL.
         """
@@ -6204,7 +6212,7 @@ class GPUdb(object):
                 # end if
             # end for
         else:
-            self.__log_debug( "No entry for '{}' in {} response; retruning "
+            self.__log_debug( "No entry for '{}' in {} response; returning "
                               "empty list"
                               "".format( C._SYSTEM_PROPERTIES_RESPONSE_SERVER_URLS,
                                          C._ENDPOINT_SHOW_SYSTEM_PROPERTIES ) )
@@ -6222,20 +6230,16 @@ class GPUdb(object):
         and the hostname or the IP address, e.g. "http://abcd.com",
         "https://123.4.5.6".
 
-        Parameters
+        Parameters:
             sys_props (dict)
-               A dictionary containing all relevant system properties.
+                A dictionary containing all relevant system properties.
 
             hostname_regex (str)
                 The regex to match the URLs against; if None, then in case the
                 system properties has multiple URLs for a given rank, choose the
                 first one.
 
-        Returns
-            A list of :class:`GPUdb.URL` objects, where the first entry is the
-            rank-0 URL.
-
-        Returns
+        Returns:
             A list of strings containing hostnames or IP addresses along with
             the protocol.  These are not full URLs.
         """
@@ -6502,11 +6506,11 @@ class GPUdb(object):
         """Given system properties, extract the head node URLs for the
         high-availability cluster.
 
-        Parameters
+        Parameters:
             sys_props (dict)
                 A dictionary containing system properties for some cluster.
 
-        Returns
+        Returns:
             A list of full URLs for each of the head nodes in the
             high availability cluster, if any is set up.
         """
@@ -6797,7 +6801,6 @@ class GPUdb(object):
             do_print_warning (bool)
                 If True, print a warning on version mismatch.
 
-
         @returns True if versions match, False if they don't, and None if
                  the server version is unknown.
         """
@@ -6908,7 +6911,7 @@ class GPUdb(object):
         """Return the GPUdb.URL or its string representation that points to the
         current head node of the current cluster in use.
 
-        Parameter:
+        Parameters:
             stringified (bool)
                 Optional argument.  If True, return the string representation,
                 otherwise return the :class:`GPUdb.URL` object.  Default is
@@ -6935,7 +6938,7 @@ class GPUdb(object):
         """Return the GPUdb.URL or its string representation that points to the
         current host manager of the current cluster in use.
 
-        Parameter:
+        Parameters:
             stringified (bool)
                 Optional argument.  If True, return the string representation,
                 otherwise return the :class:`GPUdb.URL` object.  Default is
@@ -7021,7 +7024,7 @@ class GPUdb(object):
             functional.  This method will be a no-op, not changing host.
             The method will be removed in version 7.2.0.0.  The only
             way to set the host at `GPUdb` initialization.  It cannot be
-            hanged after that.
+            changed after that.
         """
         pass
     # end host setter
@@ -7039,7 +7042,7 @@ class GPUdb(object):
             functional.  This method will be a no-op, not changing port.
             The method will be removed in version 7.2.0.0.  The only
             way to set the port at `GPUdb` initialization.  It cannot be
-            hanged after that.
+            changed after that.
         """
         pass
     # end port setter
@@ -7231,7 +7234,7 @@ class GPUdb(object):
         representation that points to the current head node of each of the
         clusters in the ring.
 
-        Parameter:
+        Parameters:
             stringified (bool)
                 Optional argument.  If True, return the string representation,
                 otherwise return the :class:`GPUdb.URL` object.  Default is
@@ -7253,6 +7256,7 @@ class GPUdb(object):
         the server with each request.  If the header is already in the map, its
         value is replaced with the specified value.  The user is not allowed
         to modify the following headers:
+
         *  ``Accept``
         *  ``Authorization``
         *  ``ha_sync_mode``
@@ -7282,6 +7286,7 @@ class GPUdb(object):
         """Removes the given HTTP header from the map of additional HTTP headers
         to send to GPUdb with each request. The user is not allowed to remove
         the following headers:
+
         *  ``Accept``
         *  ``Authorization``
         *  ``ha_sync_mode``
@@ -8276,11 +8281,12 @@ class GPUdb(object):
         if needed.
 
         Parameters:
-            body_data : The body of the data, already avro or json encoded
+            body_data
+                The body of the data, already avro or json encoded
 
         Returns:
             A tuple where the first element is the header and the second
-        element is the body data (either unprocessed or processed).
+            element is the body data (either unprocessed or processed).
         """
         headers = {}
 
@@ -8803,7 +8809,7 @@ class GPUdb(object):
 
         This method is not thread safe.
 
-        Parameters
+        Parameters:
             cluster_index (int)
                 The index of the cluster whose addresses we need to update.
 
@@ -9371,7 +9377,7 @@ class GPUdb(object):
             body_data (bytes)
                 Data to POST to GPUdb server.
             endpoint (str)
-                Server path to POST to, e.g. "/add".
+                Server path to POST to, e.g. "/insert/records".
         """
         # NOTE: Creating a new httplib.HTTPConnection is suprisingly just as
         #       fast as reusing a persistent one and has the advantage of
@@ -9455,10 +9461,13 @@ class GPUdb(object):
         Decode the binary or JSON encoded datum using the avro schema and return a dict.
 
         Parameters:
-            SCHEMA        : A parsed schema from avro.schema.parse().
-            encoded_datum : Binary or JSON encoded data.
-            encoding      : Type of avro encoding, either "BINARY" or "JSON",
-                            None uses the encoding this class was initialized with.
+            SCHEMA
+                A parsed schema from avro.schema.parse().
+            encoded_datum
+                Binary or JSON encoded data.
+            encoding
+                Type of avro encoding, either "BINARY" or "JSON";
+                None uses the encoding this class was initialized with.
         """
         if encoding == None:
             encoding = self.encoding
@@ -9476,8 +9485,11 @@ class GPUdb(object):
         Decode a gpudb_response and decode the contained message too.
 
         Parameters:
-            SCHEMA : The parsed schema from avro.schema.parse() that the gpudb_response contains.
-            encoded_datum : A BINARY or JSON encoded gpudb_response message.
+            SCHEMA
+                The parsed schema from avro.schema.parse() that the gpudb_response contains.
+            encoded_datum
+                A BINARY or JSON encoded gpudb_response message.
+
         Returns:
             An OrderedDict of the decoded gpudb_response message's data with the
             gpudb_response put into the "status_info" field.
@@ -9515,10 +9527,13 @@ class GPUdb(object):
         Decode the binary or JSON encoded datum using the avro schema and return a dict.
 
         Parameters:
-            SCHEMA        : A parsed schema from avro.schema.parse().
-            encoded_datum : Binary or JSON encoded data.
-            encoding      : Type of avro encoding, either "BINARY" or "JSON",
-                            None uses the encoding this class was initialized with.
+            SCHEMA
+                A parsed schema from avro.schema.parse().
+            encoded_datum
+                Binary or JSON encoded data.
+            encoding
+                Type of avro encoding, either "BINARY" or "JSON";
+                None uses the encoding this class was initialized with.
         """
         if encoding == None:
             encoding = self.encoding
@@ -9548,8 +9563,11 @@ class GPUdb(object):
         Decode a gpudb_response and decode the contained message too.
 
         Parameters:
-            SCHEMA : The parsed schema from .protocol.Schema() that the gpudb_response contains.
-            encoded_datum : A BINARY or JSON encoded gpudb_response message.
+            SCHEMA
+                The parsed schema from .protocol.Schema() that the gpudb_response contains.
+            encoded_datum
+                A BINARY or JSON encoded gpudb_response message.
+
         Returns:
             An OrderedDict of the decoded gpudb_response message's data with the
             gpudb_response put into the "status_info" field.
@@ -9615,17 +9633,18 @@ class GPUdb(object):
         Get a tuple of parsed and cached request and reply schemas.
 
         Parameters:
-            base_name : Schema name, e.g. "base_name"+"_request.json" or "_response.json"
+            base_name
+                Schema name, e.g. "base_name"+"_request.json" or "_response.json"
 
             get_req_cext (bool)
-               If True, then try to return the c-extension version
-               of the request schema.  If none found, raise exception.
-               Default is False.
+                If True, then try to return the c-extension version
+                of the request schema.  If none found, raise exception.
+                Default is False.
 
             get_rsp_cext (bool)
-               If True, then try to return the c-extension version
-               of the response schema.  If none found, raise exception.
-               Default is False.
+                If True, then try to return the c-extension version
+                of the response schema.  If none found, raise exception.
+                Default is False.
         """
         if get_req_cext:
             if "REQ_SCHEMA_CEXT" not in self.gpudb_schemas[base_name]:
@@ -9659,7 +9678,8 @@ class GPUdb(object):
         Get the endpoint for a given query.
 
         Parameters:
-            base_name : Schema name, e.g. "func_name"+"_request.json" or "_response.json"
+            base_name
+                Schema name, e.g. "func_name"+"_request.json" or "_response.json"
         """
         return self.gpudb_func_to_endpoint_map[ func_name ]
     # end __get_endpoint
@@ -9773,12 +9793,13 @@ class GPUdb(object):
     def logger(self, ranks, log_levels, options = {}):
         """Convenience function to change log levels of some
         or all GPUdb ranks.
+
         Parameters:
             ranks (list of ints)
                 A list containing the ranks to which to apply the new log levels.
 
             log_levels (dict of str to str)
-                A map where the keys dictacte which log's levels to change, and the
+                A map where the keys dictate which log's levels to change, and the
                 values dictate what the new log levels will be.
 
             options (dict of str to str)
@@ -9791,6 +9812,7 @@ class GPUdb(object):
                 The status of the endpoint ('OK' or 'ERROR').
 
             log_levels (map of str to str)
+                A map of each log level to its respective value
         """
         REQ_SCHEMA = self.logger_request_schema
         RSP_SCHEMA = self.logger_response_schema
@@ -9813,12 +9835,13 @@ class GPUdb(object):
     def set_server_logger_level(self, ranks, log_levels, options = {}):
         """Convenience function to change log levels of some
         or all GPUdb ranks.
+
         Parameters:
             ranks (list of ints)
                 A list containing the ranks to which to apply the new log levels.
 
             log_levels (dict of str to str)
-                A map where the keys dictacte which log's levels to change, and the
+                A map where the keys dictate which log's levels to change, and the
                 values dictate what the new log levels will be.
 
             options (dict of str to str)
@@ -9831,6 +9854,7 @@ class GPUdb(object):
                 The status of the endpoint ('OK' or 'ERROR').
 
             log_levels (map of str to str)
+                A map of each log level to its respective value
         """
         self.logger(ranks, log_levels, options)
     # end set_server_logger_level
@@ -9967,7 +9991,7 @@ class GPUdb(object):
     def wms( self, wms_params, url = None ):
         """Submits a WMS call to the server.
 
-        Parameter:
+        Parameters:
             wms_params (str)
                 A string containing the WMS endpoint parameters, not containing
                 the '/wms' endpoint itself.
@@ -9976,12 +10000,12 @@ class GPUdb(object):
                 An optional URL to which we submit the /wms endpoint.  If None
                 given, use the currel URL for this :class:`GPUdb` object.
 
-        Returns
+        Returns:
             A dict with the following entries--
 
-            * **data**
+            data
                 The /wms content.
-            * **status_info (dict)**
+            status_info (dict)
                 A dict containing more information regarding the request.  Keys:
 
                 * **status**
@@ -10061,11 +10085,11 @@ class GPUdb(object):
         """Pings the given URL and returns the response.  If no response,
         returns an empty string.
 
-        Parameter:
+        Parameters:
             url (GPUdb.URL)
                 The URL which we are supposed to ping.
 
-        Returns
+        Returns:
             The ping response, or an empty string if it fails.
         """
         # Validate the input arguments
@@ -10146,11 +10170,11 @@ class GPUdb(object):
         """Gets the database debug information from the given URL and returns
         the response.
 
-        Parameter:
+        Parameters:
             url (GPUdb.URL)
                 The URL which we are supposed to get information from.
 
-        Returns
+        Returns:
             The debug response.
         """
         # Validate the input arguments
@@ -10277,6 +10301,28 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/admin/backup/begin"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_backup_begin_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_backup_begin_response","fields":[{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("info", "map", [("string")])] )
+        ENDPOINT = "/admin/backup/begin"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/admin/backup/end"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_backup_end_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_backup_end_response","fields":[{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("info", "map", [("string")])] )
+        ENDPOINT = "/admin/backup/end"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/admin/offline"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_offline_request","fields":[{"name":"offline","type":"boolean"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"admin_offline_response","fields":[{"name":"is_offline","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -10356,9 +10402,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/admin/show/jobs"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_show_jobs_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_show_jobs_response","fields":[{"name":"job_id","type":{"type":"array","items":"long"}},{"name":"status","type":{"type":"array","items":"string"}},{"name":"endpoint_name","type":{"type":"array","items":"string"}},{"name":"time_received","type":{"type":"array","items":"long"}},{"name":"auth_id","type":{"type":"array","items":"string"}},{"name":"source_ip","type":{"type":"array","items":"string"}},{"name":"user_data","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_show_jobs_response","fields":[{"name":"job_id","type":{"type":"array","items":"long"}},{"name":"status","type":{"type":"array","items":"string"}},{"name":"endpoint_name","type":{"type":"array","items":"string"}},{"name":"time_received","type":{"type":"array","items":"long"}},{"name":"auth_id","type":{"type":"array","items":"string"}},{"name":"source_ip","type":{"type":"array","items":"string"}},{"name":"user_data","type":{"type":"array","items":"string"}},{"name":"flags","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("job_id", "array", [("long")]), ("status", "array", [("string")]), ("endpoint_name", "array", [("string")]), ("time_received", "array", [("long")]), ("auth_id", "array", [("string")]), ("source_ip", "array", [("string")]), ("user_data", "array", [("string")]), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("job_id", "array", [("long")]), ("status", "array", [("string")]), ("endpoint_name", "array", [("string")]), ("time_received", "array", [("long")]), ("auth_id", "array", [("string")]), ("source_ip", "array", [("string")]), ("user_data", "array", [("string")]), ("flags", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/show/jobs"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -10668,6 +10714,28 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/alter/user/reveal"
+        REQ_SCHEMA_STR = """{"type":"record","name":"alter_user_reveal_request","fields":[{"name":"user_name","type":"string"},{"name":"password","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_user_reveal_response","fields":[{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("user_name", "string"), ("password", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("info", "map", [("string")])] )
+        ENDPOINT = "/alter/user/reveal"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/alter/video"
+        REQ_SCHEMA_STR = """{"type":"record","name":"alter_video_request","fields":[{"name":"path","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"name":"alter_video_response","type":"record","fields":[{"name":"path","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("path", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("path", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/alter/video"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/append/records"
         REQ_SCHEMA_STR = """{"type":"record","name":"append_records_request","fields":[{"name":"table_name","type":"string"},{"name":"source_table_name","type":"string"},{"name":"field_map","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"append_records_response","fields":[{"name":"table_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -10767,6 +10835,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/create/directory"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_directory_request","fields":[{"name":"directory_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_directory_response","fields":[{"name":"directory_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("directory_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("directory_name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/create/directory"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/create/graph"
         REQ_SCHEMA_STR = """{"name":"create_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"directed_graph","type":"boolean"},{"name":"nodes","type":{"type":"array","items":"string"}},{"name":"edges","type":{"type":"array","items":"string"}},{"name":"weights","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"name":"create_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"num_nodes","type":"long"},{"name":"num_edges","type":"long"},{"name":"edges_ids","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -10806,6 +10885,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("view_id", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/materializedview"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/create/monitortable"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_monitor_table_request","fields":[{"name":"monitor_table_name","type":"string"},{"name":"table_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_monitor_table_response","fields":[{"name":"monitor_table_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("monitor_table_name", "string"), ("table_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("monitor_table_name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/create/monitortable"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -10861,6 +10951,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("schema_name", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("schema_name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/schema"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/create/statetable"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_state_table_request","fields":[{"name":"table_name","type":"string"},{"name":"input_table_name","type":"string"},{"name":"init_table_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_state_table_response","fields":[{"name":"table_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("input_table_name", "string"), ("init_table_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/create/statetable"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -10965,6 +11066,50 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/create/user/reveal"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_user_reveal_request","fields":[{"name":"user_name","type":"string"},{"name":"password","type":"string"},{"name":"first_name","type":"string"},{"name":"last_name","type":"string"},{"name":"email","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_user_reveal_response","fields":[{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("user_name", "string"), ("password", "string"), ("first_name", "string"), ("last_name", "string"), ("email", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("info", "map", [("string")])] )
+        ENDPOINT = "/create/user/reveal"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/create/video"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_video_request","fields":[{"name":"attribute","type":"string"},{"name":"begin","type":"string"},{"name":"duration_seconds","type":"double"},{"name":"end","type":"string"},{"name":"frames_per_second","type":"double"},{"name":"style","type":"string"},{"name":"path","type":"string"},{"name":"style_parameters","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"name":"create_video_response","type":"record","fields":[{"name":"job_id","type":"long"},{"name":"path","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("attribute", "string"), ("begin", "string"), ("duration_seconds", "double"), ("end", "string"), ("frames_per_second", "double"), ("style", "string"), ("path", "string"), ("style_parameters", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("job_id", "long"), ("path", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/create/video"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/delete/directory"
+        REQ_SCHEMA_STR = """{"type":"record","name":"delete_directory_request","fields":[{"name":"directory_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"delete_directory_response","fields":[{"name":"directory_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("directory_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("directory_name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/delete/directory"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/delete/files"
+        REQ_SCHEMA_STR = """{"type":"record","name":"delete_files_request","fields":[{"name":"file_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"delete_files_response","fields":[{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("file_names", "array", [("string")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("info", "map", [("string")])] )
+        ENDPOINT = "/delete/files"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/delete/graph"
         REQ_SCHEMA_STR = """{"name":"delete_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"name":"delete_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -11026,6 +11171,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("name", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/delete/user"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/download/files"
+        REQ_SCHEMA_STR = """{"type":"record","name":"download_files_request","fields":[{"name":"file_names","type":{"type":"array","items":"string"}},{"name":"read_offsets","type":{"type":"array","items":"long"}},{"name":"read_lengths","type":{"type":"array","items":"long"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"download_files_response","fields":[{"name":"file_names","type":{"type":"array","items":"string"}},{"name":"file_data","type":{"type":"array","items":"bytes"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("file_names", "array", [("string")]), ("read_offsets", "array", [("long")]), ("read_lengths", "array", [("long")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("file_names", "array", [("string")]), ("file_data", "array", [("bytes")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/download/files"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -11371,6 +11527,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/grant/permission/directory"
+        REQ_SCHEMA_STR = """{"type":"record","name":"grant_permission_directory_request","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"directory_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"grant_permission_directory_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"directory_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("directory_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("directory_name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/grant/permission/directory"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/grant/permission/proc"
         REQ_SCHEMA_STR = """{"type":"record","name":"grant_permission_proc_request","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"proc_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"grant_permission_proc_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"proc_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -11410,6 +11577,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("role", "string"), ("member", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("role", "string"), ("member", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/grant/role"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/has/permission"
+        REQ_SCHEMA_STR = """{"type":"record","name":"has_permission_request","fields":[{"name":"name","type":"string"},{"name":"target","type":"string"},{"name":"permission","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"has_permission_response","fields":[{"name":"name","type":"string"},{"name":"target","type":"string"},{"name":"permission","type":"string"},{"name":"has_permission","type":"boolean"},{"name":"filters","type":{"type":"map","values":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("name", "string"), ("target", "string"), ("permission", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("target", "string"), ("permission", "string"), ("has_permission", "boolean"), ("filters", "map", [("string")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/has/permission"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -11604,6 +11782,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/reserve/resource"
+        REQ_SCHEMA_STR = """{"type":"record","name":"reserve_resource_request","fields":[{"name":"component","type":"string"},{"name":"bytes_requested","type":"long"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"reserve_resource_response","fields":[{"name":"component","type":"string"},{"name":"reservation","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("component", "string"), ("bytes_requested", "long"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("component", "string"), ("reservation", "long"), ("info", "map", [("string")])] )
+        ENDPOINT = "/reserve/resource"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/revoke/permission/credential"
         REQ_SCHEMA_STR = """{"type":"record","name":"revoke_permission_credential_request","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"credential_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"revoke_permission_credential_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"credential_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -11621,6 +11810,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("datasource_name", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("datasource_name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/revoke/permission/datasource"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/revoke/permission/directory"
+        REQ_SCHEMA_STR = """{"type":"record","name":"revoke_permission_directory_request","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"directory_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"revoke_permission_directory_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"directory_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("directory_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("permission", "string"), ("directory_name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/revoke/permission/directory"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -11703,6 +11903,28 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/show/directories"
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_directories_request","fields":[{"name":"directory_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_directories_response","fields":[{"name":"directories","type":{"type":"array","items":"string"}},{"name":"users","type":{"type":"array","items":"string"}},{"name":"creation_times","type":{"type":"array","items":"long"}},{"name":"permissions","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("directory_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("directories", "array", [("string")]), ("users", "array", [("string")]), ("creation_times", "array", [("long")]), ("permissions", "array", [("string")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/show/directories"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/show/files"
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_files_request","fields":[{"name":"paths","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_files_response","fields":[{"name":"file_names","type":{"type":"array","items":"string"}},{"name":"sizes","type":{"type":"array","items":"long"}},{"name":"users","type":{"type":"array","items":"string"}},{"name":"creation_times","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("paths", "array", [("string")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("file_names", "array", [("string")]), ("sizes", "array", [("long")]), ("users", "array", [("string")]), ("creation_times", "array", [("long")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/show/files"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/show/functions"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_functions_request","fields":[{"name":"names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"show_functions_response","fields":[{"name":"function_names","type":{"type":"array","items":"string"}},{"name":"return_types","type":{"type":"array","items":"string"}},{"name":"parameters","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"optional_parameter_count","type":{"type":"array","items":"int"}},{"name":"flags","type":{"type":"array","items":"int"}},{"name":"type_schemas","type":{"type":"array","items":"string"}},{"name":"properties","type":{"type":"array","items":{"type":"map","values":{"type":"array","items":"string"}}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -11716,9 +11938,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/graph"
         REQ_SCHEMA_STR = """{"name":"show_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"show_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"load","type":{"type":"array","items":"int"}},{"name":"memory","type":{"type":"array","items":"long"}},{"name":"graph_names","type":{"type":"array","items":"string"}},{"name":"graph_server_ids","type":{"type":"array","items":"int"}},{"name":"directed","type":{"type":"array","items":"boolean"}},{"name":"num_nodes","type":{"type":"array","items":"long"}},{"name":"num_edges","type":{"type":"array","items":"long"}},{"name":"is_persisted","type":{"type":"array","items":"boolean"}},{"name":"is_sync_db","type":{"type":"array","items":"boolean"}},{"name":"has_insert_table_monitor","type":{"type":"array","items":"boolean"}},{"name":"original_request","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"name":"show_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"load","type":{"type":"array","items":"int"}},{"name":"memory","type":{"type":"array","items":"long"}},{"name":"graph_names","type":{"type":"array","items":"string"}},{"name":"graph_server_ids","type":{"type":"array","items":"int"}},{"name":"directed","type":{"type":"array","items":"boolean"}},{"name":"num_nodes","type":{"type":"array","items":"long"}},{"name":"num_edges","type":{"type":"array","items":"long"}},{"name":"num_bytes","type":{"type":"array","items":"long"}},{"name":"is_persisted","type":{"type":"array","items":"boolean"}},{"name":"is_partitioned","type":{"type":"array","items":"boolean"}},{"name":"is_sync_db","type":{"type":"array","items":"boolean"}},{"name":"has_insert_table_monitor","type":{"type":"array","items":"boolean"}},{"name":"original_request","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("load", "array", [("int")]), ("memory", "array", [("long")]), ("graph_names", "array", [("string")]), ("graph_server_ids", "array", [("int")]), ("directed", "array", [("boolean")]), ("num_nodes", "array", [("long")]), ("num_edges", "array", [("long")]), ("is_persisted", "array", [("boolean")]), ("is_sync_db", "array", [("boolean")]), ("has_insert_table_monitor", "array", [("boolean")]), ("original_request", "array", [("string")]), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("load", "array", [("int")]), ("memory", "array", [("long")]), ("graph_names", "array", [("string")]), ("graph_server_ids", "array", [("int")]), ("directed", "array", [("boolean")]), ("num_nodes", "array", [("long")]), ("num_edges", "array", [("long")]), ("num_bytes", "array", [("long")]), ("is_persisted", "array", [("boolean")]), ("is_partitioned", "array", [("boolean")]), ("is_sync_db", "array", [("boolean")]), ("has_insert_table_monitor", "array", [("boolean")]), ("original_request", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/graph"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -11760,9 +11982,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/proc/status"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_proc_status_request","fields":[{"name":"run_id","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_proc_status_response","fields":[{"name":"proc_names","type":{"type":"map","values":"string"}},{"name":"params","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"bin_params","type":{"type":"map","values":{"type":"map","values":"bytes"}}},{"name":"input_table_names","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"input_column_names","type":{"type":"map","values":{"type":"map","values":{"type":"array","items":"string"}}}},{"name":"output_table_names","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"overall_statuses","type":{"type":"map","values":"string"}},{"name":"statuses","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"messages","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"results","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":"string"}}}},{"name":"bin_results","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":"bytes"}}}},{"name":"timings","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":"long"}}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_proc_status_response","fields":[{"name":"proc_names","type":{"type":"map","values":"string"}},{"name":"params","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"bin_params","type":{"type":"map","values":{"type":"map","values":"bytes"}}},{"name":"input_table_names","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"input_column_names","type":{"type":"map","values":{"type":"map","values":{"type":"array","items":"string"}}}},{"name":"output_table_names","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"overall_statuses","type":{"type":"map","values":"string"}},{"name":"statuses","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"messages","type":{"type":"map","values":{"type":"map","values":"string"}}},{"name":"results","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":"string"}}}},{"name":"bin_results","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":"bytes"}}}},{"name":"output","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":{"type":"array","items":"string"}}}}},{"name":"timings","type":{"type":"map","values":{"type":"map","values":{"type":"map","values":"long"}}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("run_id", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("proc_names", "map", [("string")]), ("params", "map", [("map", [("string")])]), ("bin_params", "map", [("map", [("bytes")])]), ("input_table_names", "map", [("array", [("string")])]), ("input_column_names", "map", [("map", [("array", [("string")])])]), ("output_table_names", "map", [("array", [("string")])]), ("options", "map", [("map", [("string")])]), ("overall_statuses", "map", [("string")]), ("statuses", "map", [("map", [("string")])]), ("messages", "map", [("map", [("string")])]), ("results", "map", [("map", [("map", [("string")])])]), ("bin_results", "map", [("map", [("map", [("bytes")])])]), ("timings", "map", [("map", [("map", [("long")])])]), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("proc_names", "map", [("string")]), ("params", "map", [("map", [("string")])]), ("bin_params", "map", [("map", [("bytes")])]), ("input_table_names", "map", [("array", [("string")])]), ("input_column_names", "map", [("map", [("array", [("string")])])]), ("output_table_names", "map", [("array", [("string")])]), ("options", "map", [("map", [("string")])]), ("overall_statuses", "map", [("string")]), ("statuses", "map", [("map", [("string")])]), ("messages", "map", [("map", [("string")])]), ("results", "map", [("map", [("map", [("string")])])]), ("bin_results", "map", [("map", [("map", [("bytes")])])]), ("output", "map", [("map", [("map", [("array", [("string")])])])]), ("timings", "map", [("map", [("map", [("long")])])]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/proc/status"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -11923,6 +12145,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/show/video"
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_video_request","fields":[{"name":"paths","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"name":"show_video_response","type":"record","fields":[{"name":"creation_times","type":{"type":"array","items":"string"}},{"name":"elapsed_render_time_seconds","type":{"type":"array","items":"long"}},{"name":"job_ids","type":{"type":"array","items":"long"}},{"name":"paths","type":{"type":"array","items":"string"}},{"name":"rendered_bytes","type":{"type":"array","items":"long"}},{"name":"rendered_frames","type":{"type":"array","items":"long"}},{"name":"rendered_percents","type":{"type":"array","items":"long"}},{"name":"requests","type":{"type":"array","items":"string"}},{"name":"status","type":{"type":"array","items":"string"}},{"name":"ttls","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("paths", "array", [("string")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("creation_times", "array", [("string")]), ("elapsed_render_time_seconds", "array", [("long")]), ("job_ids", "array", [("long")]), ("paths", "array", [("string")]), ("rendered_bytes", "array", [("long")]), ("rendered_frames", "array", [("long")]), ("rendered_percents", "array", [("long")]), ("requests", "array", [("string")]), ("status", "array", [("string")]), ("ttls", "array", [("long")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/show/video"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/solve/graph"
         REQ_SCHEMA_STR = """{"name":"solve_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"weights_on_edges","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"solver_type","type":"string"},{"name":"source_nodes","type":{"type":"array","items":"string"}},{"name":"destination_nodes","type":{"type":"array","items":"string"}},{"name":"solution_table","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"name":"solve_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"result_per_destination_node","type":{"type":"array","items":"float"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -11953,6 +12186,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("world_table_name", "string"), ("view_name", "string"), ("reserved", "array", [("string")]), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("count", "int"), ("info", "map", [("string")])] )
         ENDPOINT = "/update/records/byseries"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/upload/files"
+        REQ_SCHEMA_STR = """{"type":"record","name":"upload_files_request","fields":[{"name":"file_names","type":{"type":"array","items":"string"}},{"name":"file_data","type":{"type":"array","items":"bytes"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"upload_files_response","fields":[{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("file_names", "array", [("string")]), ("file_data", "array", [("bytes")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("info", "map", [("string")])] )
+        ENDPOINT = "/upload/files"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -12035,28 +12279,6 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
-        name = "/visualize/video"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_video_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"time_intervals","type":{"type":"array","items":{"type":"array","items":"double"}}},{"name":"video_style","type":"string"},{"name":"session_key","type":"string"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_video_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"num_frames","type":"int"},{"name":"session_key","type":"string"},{"name":"data","type":{"type":"array","items":"bytes"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("world_table_names", "array", [("string")]), ("track_ids", "array", [("array", [("string")])]), ("x_column_name", "string"), ("y_column_name", "string"), ("geometry_column_name", "string"), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("projection", "string"), ("bg_color", "long"), ("time_intervals", "array", [("array", [("double")])]), ("video_style", "string"), ("session_key", "string"), ("style_options", "map", [("array", [("string")])]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("width", "double"), ("height", "double"), ("bg_color", "long"), ("num_frames", "int"), ("session_key", "string"), ("data", "array", [("bytes")]), ("info", "map", [("string")])] )
-        ENDPOINT = "/visualize/video"
-        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
-                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
-                                       "REQ_SCHEMA" : REQ_SCHEMA,
-                                       "RSP_SCHEMA" : RSP_SCHEMA,
-                                       "ENDPOINT" : ENDPOINT }
-        name = "/visualize/video/heatmap"
-        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_video_heatmap_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"time_intervals","type":{"type":"array","items":{"type":"array","items":"double"}}},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"video_style","type":"string"},{"name":"session_key","type":"string"},{"name":"style_options","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_video_heatmap_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"num_frames","type":"int"},{"name":"session_key","type":"string"},{"name":"data","type":{"type":"array","items":"bytes"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("x_column_name", "string"), ("y_column_name", "string"), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("time_intervals", "array", [("array", [("double")])]), ("width", "int"), ("height", "int"), ("projection", "string"), ("video_style", "string"), ("session_key", "string"), ("style_options", "map", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("width", "double"), ("height", "double"), ("bg_color", "long"), ("num_frames", "int"), ("session_key", "string"), ("data", "array", [("bytes")]), ("info", "map", [("string")])] )
-        ENDPOINT = "/visualize/video/heatmap"
-        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
-                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
-                                       "REQ_SCHEMA" : REQ_SCHEMA,
-                                       "RSP_SCHEMA" : RSP_SCHEMA,
-                                       "ENDPOINT" : ENDPOINT }
     # end load_gpudb_schemas
 
     def load_gpudb_func_to_endpoint_map( self ):
@@ -12070,6 +12292,8 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["admin_alter_host"] = "/admin/alter/host"
         self.gpudb_func_to_endpoint_map["admin_alter_jobs"] = "/admin/alter/jobs"
         self.gpudb_func_to_endpoint_map["admin_alter_shards"] = "/admin/alter/shards"
+        self.gpudb_func_to_endpoint_map["admin_backup_begin"] = "/admin/backup/begin"
+        self.gpudb_func_to_endpoint_map["admin_backup_end"] = "/admin/backup/end"
         self.gpudb_func_to_endpoint_map["admin_offline"] = "/admin/offline"
         self.gpudb_func_to_endpoint_map["admin_rebalance"] = "/admin/rebalance"
         self.gpudb_func_to_endpoint_map["admin_remove_host"] = "/admin/remove/host"
@@ -12105,6 +12329,8 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["alter_table_metadata"] = "/alter/table/metadata"
         self.gpudb_func_to_endpoint_map["alter_tier"] = "/alter/tier"
         self.gpudb_func_to_endpoint_map["alter_user"] = "/alter/user"
+        self.gpudb_func_to_endpoint_map["alter_user_reveal"] = "/alter/user/reveal"
+        self.gpudb_func_to_endpoint_map["alter_video"] = "/alter/video"
         self.gpudb_func_to_endpoint_map["append_records"] = "/append/records"
         self.gpudb_func_to_endpoint_map["clear_statistics"] = "/clear/statistics"
         self.gpudb_func_to_endpoint_map["clear_table"] = "/clear/table"
@@ -12114,15 +12340,18 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["create_container_registry"] = "/create/container/registry"
         self.gpudb_func_to_endpoint_map["create_credential"] = "/create/credential"
         self.gpudb_func_to_endpoint_map["create_datasource"] = "/create/datasource"
+        self.gpudb_func_to_endpoint_map["create_directory"] = "/create/directory"
         self.gpudb_func_to_endpoint_map["create_graph"] = "/create/graph"
         self.gpudb_func_to_endpoint_map["create_job"] = "/create/job"
         self.gpudb_func_to_endpoint_map["create_join_table"] = "/create/jointable"
         self.gpudb_func_to_endpoint_map["create_materialized_view"] = "/create/materializedview"
+        self.gpudb_func_to_endpoint_map["create_monitor_table"] = "/create/monitortable"
         self.gpudb_func_to_endpoint_map["create_proc"] = "/create/proc"
         self.gpudb_func_to_endpoint_map["create_projection"] = "/create/projection"
         self.gpudb_func_to_endpoint_map["create_resource_group"] = "/create/resourcegroup"
         self.gpudb_func_to_endpoint_map["create_role"] = "/create/role"
         self.gpudb_func_to_endpoint_map["create_schema"] = "/create/schema"
+        self.gpudb_func_to_endpoint_map["create_state_table"] = "/create/statetable"
         self.gpudb_func_to_endpoint_map["create_table"] = "/create/table"
         self.gpudb_func_to_endpoint_map["create_table_external"] = "/create/table/external"
         self.gpudb_func_to_endpoint_map["create_table_monitor"] = "/create/tablemonitor"
@@ -12132,12 +12361,17 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["create_union"] = "/create/union"
         self.gpudb_func_to_endpoint_map["create_user_external"] = "/create/user/external"
         self.gpudb_func_to_endpoint_map["create_user_internal"] = "/create/user/internal"
+        self.gpudb_func_to_endpoint_map["create_user_reveal"] = "/create/user/reveal"
+        self.gpudb_func_to_endpoint_map["create_video"] = "/create/video"
+        self.gpudb_func_to_endpoint_map["delete_directory"] = "/delete/directory"
+        self.gpudb_func_to_endpoint_map["delete_files"] = "/delete/files"
         self.gpudb_func_to_endpoint_map["delete_graph"] = "/delete/graph"
         self.gpudb_func_to_endpoint_map["delete_proc"] = "/delete/proc"
         self.gpudb_func_to_endpoint_map["delete_records"] = "/delete/records"
         self.gpudb_func_to_endpoint_map["delete_resource_group"] = "/delete/resourcegroup"
         self.gpudb_func_to_endpoint_map["delete_role"] = "/delete/role"
         self.gpudb_func_to_endpoint_map["delete_user"] = "/delete/user"
+        self.gpudb_func_to_endpoint_map["download_files"] = "/download/files"
         self.gpudb_func_to_endpoint_map["drop_container_registry"] = "/drop/container/registry"
         self.gpudb_func_to_endpoint_map["drop_credential"] = "/drop/credential"
         self.gpudb_func_to_endpoint_map["drop_datasource"] = "/drop/datasource"
@@ -12168,10 +12402,12 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["get_vectortile"] = "/get/vectortile"
         self.gpudb_func_to_endpoint_map["grant_permission_credential"] = "/grant/permission/credential"
         self.gpudb_func_to_endpoint_map["grant_permission_datasource"] = "/grant/permission/datasource"
+        self.gpudb_func_to_endpoint_map["grant_permission_directory"] = "/grant/permission/directory"
         self.gpudb_func_to_endpoint_map["grant_permission_proc"] = "/grant/permission/proc"
         self.gpudb_func_to_endpoint_map["grant_permission_system"] = "/grant/permission/system"
         self.gpudb_func_to_endpoint_map["grant_permission_table"] = "/grant/permission/table"
         self.gpudb_func_to_endpoint_map["grant_role"] = "/grant/role"
+        self.gpudb_func_to_endpoint_map["has_permission"] = "/has/permission"
         self.gpudb_func_to_endpoint_map["has_proc"] = "/has/proc"
         self.gpudb_func_to_endpoint_map["has_schema"] = "/has/schema"
         self.gpudb_func_to_endpoint_map["has_table"] = "/has/table"
@@ -12189,8 +12425,10 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["merge_records"] = "/merge/records"
         self.gpudb_func_to_endpoint_map["modify_graph"] = "/modify/graph"
         self.gpudb_func_to_endpoint_map["query_graph"] = "/query/graph"
+        self.gpudb_func_to_endpoint_map["reserve_resource"] = "/reserve/resource"
         self.gpudb_func_to_endpoint_map["revoke_permission_credential"] = "/revoke/permission/credential"
         self.gpudb_func_to_endpoint_map["revoke_permission_datasource"] = "/revoke/permission/datasource"
+        self.gpudb_func_to_endpoint_map["revoke_permission_directory"] = "/revoke/permission/directory"
         self.gpudb_func_to_endpoint_map["revoke_permission_proc"] = "/revoke/permission/proc"
         self.gpudb_func_to_endpoint_map["revoke_permission_system"] = "/revoke/permission/system"
         self.gpudb_func_to_endpoint_map["revoke_permission_table"] = "/revoke/permission/table"
@@ -12198,6 +12436,8 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["show_container_registry"] = "/show/container/registry"
         self.gpudb_func_to_endpoint_map["show_credential"] = "/show/credential"
         self.gpudb_func_to_endpoint_map["show_datasource"] = "/show/datasource"
+        self.gpudb_func_to_endpoint_map["show_directories"] = "/show/directories"
+        self.gpudb_func_to_endpoint_map["show_files"] = "/show/files"
         self.gpudb_func_to_endpoint_map["show_functions"] = "/show/functions"
         self.gpudb_func_to_endpoint_map["show_graph"] = "/show/graph"
         self.gpudb_func_to_endpoint_map["show_graph_grammar"] = "/show/graph/grammar"
@@ -12218,9 +12458,11 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["show_tables_by_type"] = "/show/tables/bytype"
         self.gpudb_func_to_endpoint_map["show_triggers"] = "/show/triggers"
         self.gpudb_func_to_endpoint_map["show_types"] = "/show/types"
+        self.gpudb_func_to_endpoint_map["show_video"] = "/show/video"
         self.gpudb_func_to_endpoint_map["solve_graph"] = "/solve/graph"
         self.gpudb_func_to_endpoint_map["update_records"] = "/update/records"
         self.gpudb_func_to_endpoint_map["update_records_by_series"] = "/update/records/byseries"
+        self.gpudb_func_to_endpoint_map["upload_files"] = "/upload/files"
         self.gpudb_func_to_endpoint_map["visualize_image"] = "/visualize/image"
         self.gpudb_func_to_endpoint_map["visualize_image_chart"] = "/visualize/image/chart"
         self.gpudb_func_to_endpoint_map["visualize_image_classbreak"] = "/visualize/image/classbreak"
@@ -12228,13 +12470,14 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["visualize_image_heatmap"] = "/visualize/image/heatmap"
         self.gpudb_func_to_endpoint_map["visualize_image_labels"] = "/visualize/image/labels"
         self.gpudb_func_to_endpoint_map["visualize_isochrone"] = "/visualize/isochrone"
-        self.gpudb_func_to_endpoint_map["visualize_video"] = "/visualize/video"
-        self.gpudb_func_to_endpoint_map["visualize_video_heatmap"] = "/visualize/video/heatmap"
     # end load_gpudb_func_to_endpoint_map
 
     # begin admin_add_host
     def admin_add_host( self, host_address = None, options = {} ):
         """Adds a host to an existing cluster.
+
+        .. note::
+                This method should be used for on-premise deployments only.
 
         Parameters:
 
@@ -12262,7 +12505,7 @@ class GPUdb(object):
                   If set to *true*, the host will accept processes (ranks,
                   graph server, etc.) in the event of a failover on another
                   node in the cluster. See `Cluster Resilience
-                  <../../../../n_plus_1/>`_ for more information.
+                  <../../../../n_plus_1/>`__ for more information.
                   Allowed values are:
 
                   * true
@@ -12280,7 +12523,7 @@ class GPUdb(object):
                   The publicly-accessible full path URL to the host manager on
                   the host being added, e.g., 'http://172.123.45.67:9300'. The
                   default host manager port can be found in the `list of ports
-                  <../../../../install/shared/ports/>`_ used by Kinetica.
+                  <../../../../install/shared/ports/>`__ used by Kinetica.
 
                 * **ram_limit** --
                   The desired RAM limit for the host being added, i.e. the sum
@@ -12352,6 +12595,9 @@ class GPUdb(object):
         may time out if run directly.  It is recommended to run this endpoint
         asynchronously via :meth:`.create_job`.
 
+        .. note::
+                This method should be used for on-premise deployments only.
+
         Parameters:
 
             hosts (list of str)
@@ -12375,10 +12621,10 @@ class GPUdb(object):
                 the new ranks found in input parameter *hosts*. For example,
                 '{"rank.gpu":"2", "tier.ram.rank.limit":"10000000000"}'.
                 Currently, the available parameters are rank-specific
-                parameters in the `Network <../../../../config/#network>`_,
-                `Hardware <../../../../config/#hardware>`_, `Text Search
-                <../../../../config/#text-search>`_, and `RAM Tiered Storage
-                <../../../../config/#ram-tier>`_ sections in the gpudb.conf
+                parameters in the `Network <../../../../config/#network>`__,
+                `Hardware <../../../../config/#hardware>`__, `Text Search
+                <../../../../config/#text-search>`__, and `RAM Tiered Storage
+                <../../../../config/#ram-tier>`__ sections in the gpudb.conf
                 file, with the key exception of the 'rankN.host' settings in
                 the Network section that will be determined by input parameter
                 *hosts* instead. Though many of these configuration parameters
@@ -12458,7 +12704,7 @@ class GPUdb(object):
                   If set to *true*, the host will accept processes (ranks,
                   graph server, etc.) in the event of a failover on another
                   node in the cluster. See `Cluster Resilience
-                  <../../../../n_plus_1/>`_ for more information.
+                  <../../../../n_plus_1/>`__ for more information.
                   Allowed values are:
 
                   * true
@@ -12487,11 +12733,13 @@ class GPUdb(object):
 
     # begin admin_alter_jobs
     def admin_alter_jobs( self, job_ids = None, action = None, options = {} ):
-        """Perform the requested action on a list of one or more job(s). Based on
-        the type of job and the current state of execution, the action may not
-        be successfully executed. The final result of the attempted actions for
-        each specified job is returned in the status array of the response. See
-        `Job Manager <../../../../admin/job_manager/>`_ for more information.
+        """Perform the requested action on a list of one or more job(s). Based
+        on the type of job and the current state of execution, the action may
+        not be
+        successfully executed. The final result of the attempted actions for
+        each
+        specified job is returned in the status array of the response. See
+        `Job Manager <../../../../admin/job_manager/>`__ for more information.
 
         Parameters:
 
@@ -12542,6 +12790,65 @@ class GPUdb(object):
 
         return response
     # end admin_alter_jobs
+
+
+    # begin admin_backup_begin
+    def admin_backup_begin( self, options = {} ):
+        """Prepares the system for a backup by closing all open file handles after
+        allowing current active jobs to complete. When the database is in
+        backup mode, queries that result in a disk write operation will be
+        blocked until backup mode has been completed by using
+        :meth:`.admin_backup_end`.
+
+        Parameters:
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+
+        Returns:
+            A dict with the following entries--
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( options, (dict)), "admin_backup_begin(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/admin/backup/begin', obj, convert_to_attr_dict = True )
+
+        return response
+    # end admin_backup_begin
+
+
+    # begin admin_backup_end
+    def admin_backup_end( self, options = {} ):
+        """Restores the system to normal operating mode after a backup has
+        completed, allowing any queries that were blocked to complete.
+
+        Parameters:
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+
+        Returns:
+            A dict with the following entries--
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( options, (dict)), "admin_backup_end(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/admin/backup/end', obj, convert_to_attr_dict = True )
+
+        return response
+    # end admin_backup_end
 
 
     # begin admin_offline
@@ -12596,20 +12903,21 @@ class GPUdb(object):
     def admin_rebalance( self, options = {} ):
         """Rebalance the data in the cluster so that all nodes contain an equal
         number of records approximately and/or rebalance the shards to be
-        equally distributed (as much as possible) across all the ranks.
+        equally
+        distributed (as much as possible) across all the ranks.
 
         The database must be offline for this operation, see
         :meth:`.admin_offline`
 
         * If :meth:`.admin_rebalance` is invoked after a change is made to the
           cluster, e.g., a host was added or removed,
-          `sharded data <../../../../concepts/tables/#sharding>`_ will be
+          `sharded data <../../../../concepts/tables/#sharding>`__ will be
           evenly redistributed across the cluster by number of shards per rank
           while unsharded data will be redistributed across the cluster by data
           size per rank
         * If :meth:`.admin_rebalance` is invoked at some point when unsharded
           data (a.k.a.
-          `randomly-sharded <../../../../concepts/tables/#random-sharding>`_)
+          `randomly-sharded <../../../../concepts/tables/#random-sharding>`__)
           in the cluster is unevenly distributed over time, sharded data will
           not move while unsharded data will be redistributed across the
           cluster by data size per rank
@@ -12617,9 +12925,10 @@ class GPUdb(object):
         NOTE: Replicated data will not move as a result of this call
 
         This endpoint's processing time depends on the amount of data in the
-        system, thus the API call may time out if run directly.  It is
-        recommended to run this endpoint asynchronously via
-        :meth:`.create_job`.
+        system,
+        thus the API call may time out if run directly.  It is recommended to
+        run this
+        endpoint asynchronously via :meth:`.create_job`.
 
         Parameters:
 
@@ -12630,7 +12939,7 @@ class GPUdb(object):
 
                 * **rebalance_sharded_data** --
                   If *true*, `sharded data
-                  <../../../../concepts/tables/#sharding>`_ will be rebalanced
+                  <../../../../concepts/tables/#sharding>`__ will be rebalanced
                   approximately equally across the cluster. Note that for
                   clusters with large amounts of sharded data, this data
                   transfer could be time consuming and result in delayed query
@@ -12644,7 +12953,7 @@ class GPUdb(object):
 
                 * **rebalance_unsharded_data** --
                   If *true*, unsharded data (a.k.a. `randomly-sharded
-                  <../../../../concepts/tables/#random-sharding>`_) will be
+                  <../../../../concepts/tables/#random-sharding>`__) will be
                   rebalanced approximately equally across the cluster. Note
                   that for clusters with large amounts of unsharded data, this
                   data transfer could be time consuming and result in delayed
@@ -12746,6 +13055,9 @@ class GPUdb(object):
         must be manually switched over to a new host using
         :meth:`.admin_switchover`.
 
+        .. note::
+                This method should be used for on-premise deployments only.
+
         Parameters:
 
             host (str)
@@ -12791,19 +13103,27 @@ class GPUdb(object):
     def admin_remove_ranks( self, ranks = None, options = {} ):
         """Remove one or more ranks from an existing Kinetica cluster. All data
         will be rebalanced to other ranks before the rank(s) is removed unless
-        the *rebalance_sharded_data* or *rebalance_unsharded_data* parameters
-        are set to *false* in the input parameter *options*, in which case the
-        corresponding `sharded data <../../../../concepts/tables/#sharding>`_
-        and/or unsharded data (a.k.a. `randomly-sharded
-        <../../../../concepts/tables/#random-sharding>`_) will be deleted.
+        the
+        *rebalance_sharded_data* or
+        *rebalance_unsharded_data* parameters are set to
+        *false* in the
+        input parameter *options*, in which case the corresponding
+        `sharded data <../../../../concepts/tables/#sharding>`__ and/or
+        unsharded data (a.k.a.
+        `randomly-sharded <../../../../concepts/tables/#random-sharding>`__)
+        will be deleted.
 
         The database must be offline for this operation, see
         :meth:`.admin_offline`
 
         This endpoint's processing time depends on the amount of data in the
-        system, thus the API call may time out if run directly.  It is
-        recommended to run this endpoint asynchronously via
-        :meth:`.create_job`.
+        system,
+        thus the API call may time out if run directly.  It is recommended to
+        run this
+        endpoint asynchronously via :meth:`.create_job`.
+
+        .. note::
+                This method should be used for on-premise deployments only.
 
         Parameters:
 
@@ -12826,7 +13146,7 @@ class GPUdb(object):
 
                 * **rebalance_sharded_data** --
                   If *true*, `sharded data
-                  <../../../../concepts/tables/#sharding>`_ will be rebalanced
+                  <../../../../concepts/tables/#sharding>`__ will be rebalanced
                   approximately equally across the cluster. Note that for
                   clusters with large amounts of sharded data, this data
                   transfer could be time consuming and result in delayed query
@@ -12840,7 +13160,7 @@ class GPUdb(object):
 
                 * **rebalance_unsharded_data** --
                   If *true*, unsharded data (a.k.a. `randomly-sharded
-                  <../../../../concepts/tables/#random-sharding>`_) will be
+                  <../../../../concepts/tables/#random-sharding>`__) will be
                   rebalanced approximately equally across the cluster. Note
                   that for clusters with large amounts of unsharded data, this
                   data transfer could be time consuming and result in delayed
@@ -13195,6 +13515,9 @@ class GPUdb(object):
             user_data (list of str)
 
 
+            flags (list of str)
+
+
             info (dict of str to str)
                 Additional information.  The default value is an empty dict (
                 {} ).
@@ -13301,14 +13624,17 @@ class GPUdb(object):
         """Manually switchover one or more processes to another host. Individual
         ranks or entire hosts may be moved to another host.
 
+        .. note::
+                This method should be used for on-premise deployments only.
+
         Parameters:
 
             processes (list of str)
                 Indicates the process identifier to switchover to another host.
                 Options are 'hostN' and 'rankN' where 'N' corresponds to the
                 number associated with a host or rank in the `Network
-                <../../../../config/#network>`_ section of the gpudb.conf file,
-                e.g., 'host[N].address' or 'rank[N].host'. If 'hostN' is
+                <../../../../config/#network>`__ section of the gpudb.conf
+                file, e.g., 'host[N].address' or 'rank[N].host'. If 'hostN' is
                 provided, all processes on that host will be moved to another
                 host. Each entry in this array will be switched over to the
                 corresponding host entry at the same index in input parameter
@@ -13320,12 +13646,12 @@ class GPUdb(object):
                 process given in input parameter *processes*. Each index must
                 be specified as 'hostN' where 'N' corresponds to the number
                 associated with a host or rank in the `Network
-                <../../../../config/#network>`_ section of the gpudb.conf file,
-                e.g., 'host[N].address'. Each entry in this array will receive
-                the corresponding process entry at the same index in input
-                parameter *processes*.    The user can provide a single element
-                (which will be automatically promoted to a list internally) or
-                a list.
+                <../../../../config/#network>`__ section of the gpudb.conf
+                file, e.g., 'host[N].address'. Each entry in this array will
+                receive the corresponding process entry at the same index in
+                input parameter *processes*.    The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -13443,7 +13769,7 @@ class GPUdb(object):
                 Name of table on which the operation will be performed. Must be
                 an existing table, in [schema_name.]table_name format, using
                 standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             x_column_name (str)
                 Name of the column containing the x coordinates of the points
@@ -13502,14 +13828,14 @@ class GPUdb(object):
         BY.
 
         For aggregation details and examples, see `Aggregation
-        <../../../../concepts/aggregation/>`_.  For limitations, see
+        <../../../../concepts/aggregation/>`__.  For limitations, see
         `Aggregation Limitations
-        <../../../../concepts/aggregation/#limitations>`_.
+        <../../../../concepts/aggregation/#limitations>`__.
 
         Any column(s) can be grouped on, and all column types except
         unrestricted-length strings may be used for computing applicable
         aggregates; columns marked as `store-only
-        <../../../../concepts/types/#data-handling>`_ are unable to be used in
+        <../../../../concepts/types/#data-handling>`__ are unable to be used in
         grouping or aggregation.
 
         The results can be paged via the input parameter *offset* and input
@@ -13527,31 +13853,32 @@ class GPUdb(object):
         column_names=['x','y','count(*)','sum(z)'].
 
         Available `aggregation functions
-        <../../../../concepts/expressions/#aggregate-expressions>`_ are:
+        <../../../../concepts/expressions/#aggregate-expressions>`__ are:
         count(*), sum, min, max, avg, mean, stddev, stddev_pop, stddev_samp,
         var, var_pop, var_samp, arg_min, arg_max and count_distinct.
 
         Available grouping functions are `Rollup
-        <../../../../concepts/rollup/>`_, `Cube <../../../../concepts/cube/>`_,
-        and `Grouping Sets <../../../../concepts/grouping_sets/>`_
+        <../../../../concepts/rollup/>`__, `Cube
+        <../../../../concepts/cube/>`__, and `Grouping Sets
+        <../../../../concepts/grouping_sets/>`__
 
         This service also provides support for `Pivot
-        <../../../../concepts/pivot/>`_ operations.
+        <../../../../concepts/pivot/>`__ operations.
 
         Filtering on aggregates is supported via expressions using `aggregation
-        functions <../../../../concepts/expressions/#aggregate-expressions>`_
+        functions <../../../../concepts/expressions/#aggregate-expressions>`__
         supplied to *having*.
 
         The response is returned as a dynamic schema. For details see: `dynamic
-        schemas documentation <../../../../api/#dynamic-schemas>`_.
+        schemas documentation <../../../../api/#dynamic-schemas>`__.
 
         If a *result_table* name is specified in the input parameter *options*,
         the results are stored in a new table with that name--no results are
         returned in the response.  Both the table name and resulting column
         names must adhere to `standard naming conventions
-        <../../../../concepts/tables/#table>`_; column/aggregation expressions
+        <../../../../concepts/tables/#table>`__; column/aggregation expressions
         will need to be aliased.  If the source table's `shard key
-        <../../../../concepts/tables/#shard-keys>`_ is used as the grouping
+        <../../../../concepts/tables/#shard-keys>`__ is used as the grouping
         column(s) and all result records are selected (input parameter *offset*
         is 0 and input parameter *limit* is -9999), the result table will be
         sharded, in all other cases it will be replicated.  Sorting will
@@ -13566,7 +13893,7 @@ class GPUdb(object):
                 Name of an existing table or view on which the operation will
                 be performed, in [schema_name.]table_name format, using
                 standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             column_names (list of str)
                 List of one or more column names, expressions, and aggregate
@@ -13584,7 +13911,7 @@ class GPUdb(object):
                 be returned, or END_OF_SET (-9999) to indicate that the max
                 number of results should be returned.  The number of records
                 returned will never exceed the server's own limit, defined by
-                the `max_get_records_size <../../../../config/#general>`_
+                the `max_get_records_size <../../../../config/#general>`__
                 parameter in the server configuration.  Use output parameter
                 *has_more_records* to see if more records exist in the result
                 to be fetched, and input parameter *offset* & input parameter
@@ -13661,9 +13988,9 @@ class GPUdb(object):
                   The name of a table used to store the results, in
                   [schema_name.]table_name format, using standard `name
                   resolution rules
-                  <../../../../concepts/tables/#table-name-resolution>`_ and
+                  <../../../../concepts/tables/#table-name-resolution>`__ and
                   meeting `table naming criteria
-                  <../../../../concepts/tables/#table-naming-criteria>`_.
+                  <../../../../concepts/tables/#table-naming-criteria>`__.
                   Column names (group-by and aggregate fields) need to be given
                   aliases e.g. ["FChar256 as fchar256", "sum(FDouble) as sfd"].
                   If present, no results are returned in the response.  This
@@ -13705,7 +14032,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the table
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in *result_table*.
 
                 * **chunk_size** --
@@ -13721,21 +14048,6 @@ class GPUdb(object):
                 * **view_id** --
                   ID of view of which the result table will be a member.  The
                   default value is ''.
-
-                * **materialize_on_gpu** --
-                  No longer used.  See `Resource Management Concepts
-                  <../../../../rm/concepts/>`_ for information about how
-                  resources are managed, `Tier Strategy Concepts
-                  <../../../../rm/concepts/>`_ for how resources are targeted
-                  for VRAM, and `Tier Strategy Usage
-                  <../../../../rm/usage/#tier-strategies>`_ for how to specify
-                  a table's priority in VRAM.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
 
                 * **pivot** --
                   pivot column
@@ -13839,14 +14151,14 @@ class GPUdb(object):
         BY.
 
         For aggregation details and examples, see `Aggregation
-        <../../../../concepts/aggregation/>`_.  For limitations, see
+        <../../../../concepts/aggregation/>`__.  For limitations, see
         `Aggregation Limitations
-        <../../../../concepts/aggregation/#limitations>`_.
+        <../../../../concepts/aggregation/#limitations>`__.
 
         Any column(s) can be grouped on, and all column types except
         unrestricted-length strings may be used for computing applicable
         aggregates; columns marked as `store-only
-        <../../../../concepts/types/#data-handling>`_ are unable to be used in
+        <../../../../concepts/types/#data-handling>`__ are unable to be used in
         grouping or aggregation.
 
         The results can be paged via the input parameter *offset* and input
@@ -13864,31 +14176,32 @@ class GPUdb(object):
         column_names=['x','y','count(*)','sum(z)'].
 
         Available `aggregation functions
-        <../../../../concepts/expressions/#aggregate-expressions>`_ are:
+        <../../../../concepts/expressions/#aggregate-expressions>`__ are:
         count(*), sum, min, max, avg, mean, stddev, stddev_pop, stddev_samp,
         var, var_pop, var_samp, arg_min, arg_max and count_distinct.
 
         Available grouping functions are `Rollup
-        <../../../../concepts/rollup/>`_, `Cube <../../../../concepts/cube/>`_,
-        and `Grouping Sets <../../../../concepts/grouping_sets/>`_
+        <../../../../concepts/rollup/>`__, `Cube
+        <../../../../concepts/cube/>`__, and `Grouping Sets
+        <../../../../concepts/grouping_sets/>`__
 
         This service also provides support for `Pivot
-        <../../../../concepts/pivot/>`_ operations.
+        <../../../../concepts/pivot/>`__ operations.
 
         Filtering on aggregates is supported via expressions using `aggregation
-        functions <../../../../concepts/expressions/#aggregate-expressions>`_
+        functions <../../../../concepts/expressions/#aggregate-expressions>`__
         supplied to *having*.
 
         The response is returned as a dynamic schema. For details see: `dynamic
-        schemas documentation <../../../../api/#dynamic-schemas>`_.
+        schemas documentation <../../../../api/#dynamic-schemas>`__.
 
         If a *result_table* name is specified in the input parameter *options*,
         the results are stored in a new table with that name--no results are
         returned in the response.  Both the table name and resulting column
         names must adhere to `standard naming conventions
-        <../../../../concepts/tables/#table>`_; column/aggregation expressions
+        <../../../../concepts/tables/#table>`__; column/aggregation expressions
         will need to be aliased.  If the source table's `shard key
-        <../../../../concepts/tables/#shard-keys>`_ is used as the grouping
+        <../../../../concepts/tables/#shard-keys>`__ is used as the grouping
         column(s) and all result records are selected (input parameter *offset*
         is 0 and input parameter *limit* is -9999), the result table will be
         sharded, in all other cases it will be replicated.  Sorting will
@@ -13903,7 +14216,7 @@ class GPUdb(object):
                 Name of an existing table or view on which the operation will
                 be performed, in [schema_name.]table_name format, using
                 standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             column_names (list of str)
                 List of one or more column names, expressions, and aggregate
@@ -13921,7 +14234,7 @@ class GPUdb(object):
                 be returned, or END_OF_SET (-9999) to indicate that the max
                 number of results should be returned.  The number of records
                 returned will never exceed the server's own limit, defined by
-                the `max_get_records_size <../../../../config/#general>`_
+                the `max_get_records_size <../../../../config/#general>`__
                 parameter in the server configuration.  Use output parameter
                 *has_more_records* to see if more records exist in the result
                 to be fetched, and input parameter *offset* & input parameter
@@ -13998,9 +14311,9 @@ class GPUdb(object):
                   The name of a table used to store the results, in
                   [schema_name.]table_name format, using standard `name
                   resolution rules
-                  <../../../../concepts/tables/#table-name-resolution>`_ and
+                  <../../../../concepts/tables/#table-name-resolution>`__ and
                   meeting `table naming criteria
-                  <../../../../concepts/tables/#table-naming-criteria>`_.
+                  <../../../../concepts/tables/#table-naming-criteria>`__.
                   Column names (group-by and aggregate fields) need to be given
                   aliases e.g. ["FChar256 as fchar256", "sum(FDouble) as sfd"].
                   If present, no results are returned in the response.  This
@@ -14042,7 +14355,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the table
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in *result_table*.
 
                 * **chunk_size** --
@@ -14058,21 +14371,6 @@ class GPUdb(object):
                 * **view_id** --
                   ID of view of which the result table will be a member.  The
                   default value is ''.
-
-                * **materialize_on_gpu** --
-                  No longer used.  See `Resource Management Concepts
-                  <../../../../rm/concepts/>`_ for information about how
-                  resources are managed, `Tier Strategy Concepts
-                  <../../../../rm/concepts/>`_ for how resources are targeted
-                  for VRAM, and `Tier Strategy Usage
-                  <../../../../rm/usage/#tier-strategies>`_ for how to specify
-                  a table's priority in VRAM.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
 
                 * **pivot** --
                   pivot column
@@ -14235,7 +14533,7 @@ class GPUdb(object):
                 Name of the table on which the operation will be performed.
                 Must be an existing table, in [schema_name.]table_name format,
                 using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             column_name (str)
                 Name of a column or an expression of one or more column names
@@ -14325,7 +14623,7 @@ class GPUdb(object):
                 Name of the table on which the operation will be performed.
                 Must be an existing table, in [schema_name.]table_name format,
                 using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             column_names (list of str)
                 List of column names on which the operation would be performed.
@@ -14422,7 +14720,7 @@ class GPUdb(object):
                 Name of the table on which the operation will be performed.
                 Must be an existing table, in [schema_name.]table_name format,
                 using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             column_name (str)
                 Name of a column or an expression of one or more column on
@@ -14471,7 +14769,7 @@ class GPUdb(object):
                 Name of the table on which the operation will be performed.
                 Must be an existing table, in [schema_name.]table_name format,
                 using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             column_name (str)
                 Name of a geospatial geometry column on which the min-max will
@@ -14588,7 +14886,7 @@ class GPUdb(object):
                 Name of the table on which the statistics operation will be
                 performed, in [schema_name.]table_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             column_name (str)
                 Name of the primary column for which the statistics are to be
@@ -14742,7 +15040,7 @@ class GPUdb(object):
                 Name of the table on which the ranged-statistics operation will
                 be performed, in [schema_name.]table_name format, using
                 standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             select_expression (str)
                 For a non-empty expression statistics are calculated for those
@@ -14849,7 +15147,7 @@ class GPUdb(object):
         and input parameter *limit* parameters.
 
         Columns marked as `store-only
-        <../../../../concepts/types/#data-handling>`_
+        <../../../../concepts/types/#data-handling>`__
         are unable to be used with this function.
 
         To get the first 10 unique values sorted in descending order input
@@ -14859,7 +15157,7 @@ class GPUdb(object):
         {"limit":"10","sort_order":"descending"}.
 
         The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`_.
+        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`__.
 
         If a *result_table* name is specified in the
         input parameter *options*, the results are stored in a new table with
@@ -14867,9 +15165,9 @@ class GPUdb(object):
         results are returned in the response.  Both the table name and
         resulting column
         name must adhere to
-        `standard naming conventions <../../../../concepts/tables/#table>`_;
+        `standard naming conventions <../../../../concepts/tables/#table>`__;
         any column expression will need to be aliased.  If the source table's
-        `shard key <../../../../concepts/tables/#shard-keys>`_ is used as the
+        `shard key <../../../../concepts/tables/#shard-keys>`__ is used as the
         input parameter *column_name*, the result table will be sharded, in all
         other cases it
         will be replicated.  Sorting will properly function only if the result
@@ -14886,7 +15184,7 @@ class GPUdb(object):
                 Name of an existing table or view on which the operation will
                 be performed, in [schema_name.]table_name format, using
                 standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             column_name (str)
                 Name of the column or an expression containing one or more
@@ -14903,7 +15201,7 @@ class GPUdb(object):
                 be returned. Or END_OF_SET (-9999) to indicate that the max
                 number of results should be returned.  The number of records
                 returned will never exceed the server's own limit, defined by
-                the `max_get_records_size <../../../../config/#general>`_
+                the `max_get_records_size <../../../../config/#general>`__
                 parameter in the server configuration.  Use output parameter
                 *has_more_records* to see if more records exist in the result
                 to be fetched, and input parameter *offset* & input parameter
@@ -14950,9 +15248,9 @@ class GPUdb(object):
                   The name of the table used to store the results, in
                   [schema_name.]table_name format, using standard `name
                   resolution rules
-                  <../../../../concepts/tables/#table-name-resolution>`_ and
+                  <../../../../concepts/tables/#table-name-resolution>`__ and
                   meeting `table naming criteria
-                  <../../../../concepts/tables/#table-naming-criteria>`_.  If
+                  <../../../../concepts/tables/#table-naming-criteria>`__.  If
                   present, no results are returned in the response.  Not
                   available if input parameter *column_name* is an
                   unrestricted-length string.
@@ -14992,7 +15290,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the table
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in *result_table*.
 
                 * **chunk_size** --
@@ -15092,7 +15390,7 @@ class GPUdb(object):
         and input parameter *limit* parameters.
 
         Columns marked as `store-only
-        <../../../../concepts/types/#data-handling>`_
+        <../../../../concepts/types/#data-handling>`__
         are unable to be used with this function.
 
         To get the first 10 unique values sorted in descending order input
@@ -15102,7 +15400,7 @@ class GPUdb(object):
         {"limit":"10","sort_order":"descending"}.
 
         The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`_.
+        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`__.
 
         If a *result_table* name is specified in the
         input parameter *options*, the results are stored in a new table with
@@ -15110,9 +15408,9 @@ class GPUdb(object):
         results are returned in the response.  Both the table name and
         resulting column
         name must adhere to
-        `standard naming conventions <../../../../concepts/tables/#table>`_;
+        `standard naming conventions <../../../../concepts/tables/#table>`__;
         any column expression will need to be aliased.  If the source table's
-        `shard key <../../../../concepts/tables/#shard-keys>`_ is used as the
+        `shard key <../../../../concepts/tables/#shard-keys>`__ is used as the
         input parameter *column_name*, the result table will be sharded, in all
         other cases it
         will be replicated.  Sorting will properly function only if the result
@@ -15129,7 +15427,7 @@ class GPUdb(object):
                 Name of an existing table or view on which the operation will
                 be performed, in [schema_name.]table_name format, using
                 standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             column_name (str)
                 Name of the column or an expression containing one or more
@@ -15146,7 +15444,7 @@ class GPUdb(object):
                 be returned. Or END_OF_SET (-9999) to indicate that the max
                 number of results should be returned.  The number of records
                 returned will never exceed the server's own limit, defined by
-                the `max_get_records_size <../../../../config/#general>`_
+                the `max_get_records_size <../../../../config/#general>`__
                 parameter in the server configuration.  Use output parameter
                 *has_more_records* to see if more records exist in the result
                 to be fetched, and input parameter *offset* & input parameter
@@ -15193,9 +15491,9 @@ class GPUdb(object):
                   The name of the table used to store the results, in
                   [schema_name.]table_name format, using standard `name
                   resolution rules
-                  <../../../../concepts/tables/#table-name-resolution>`_ and
+                  <../../../../concepts/tables/#table-name-resolution>`__ and
                   meeting `table naming criteria
-                  <../../../../concepts/tables/#table-naming-criteria>`_.  If
+                  <../../../../concepts/tables/#table-naming-criteria>`__.  If
                   present, no results are returned in the response.  Not
                   available if input parameter *column_name* is an
                   unrestricted-length string.
@@ -15235,7 +15533,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the table
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in *result_table*.
 
                 * **chunk_size** --
@@ -15367,8 +15665,8 @@ class GPUdb(object):
         """Rotate the column values into rows values.
 
         For unpivot details and examples, see
-        `Unpivot <../../../../concepts/unpivot/>`_.  For limitations, see
-        `Unpivot Limitations <../../../../concepts/unpivot/#limitations>`_.
+        `Unpivot <../../../../concepts/unpivot/>`__.  For limitations, see
+        `Unpivot Limitations <../../../../concepts/unpivot/#limitations>`__.
 
         Unpivot is used to normalize tables that are built for cross tabular
         reporting
@@ -15383,7 +15681,7 @@ class GPUdb(object):
         and values respectively.
 
         The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`_.
+        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`__.
 
         Parameters:
 
@@ -15391,7 +15689,7 @@ class GPUdb(object):
                 Name of the table on which the operation will be performed.
                 Must be an existing table/view, in [schema_name.]table_name
                 format, using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             column_names (list of str)
                 List of column names or expressions. A wildcard '*' can be used
@@ -15440,9 +15738,9 @@ class GPUdb(object):
                   The name of a table used to store the results, in
                   [schema_name.]table_name format, using standard `name
                   resolution rules
-                  <../../../../concepts/tables/#table-name-resolution>`_ and
+                  <../../../../concepts/tables/#table-name-resolution>`__ and
                   meeting `table naming criteria
-                  <../../../../concepts/tables/#table-naming-criteria>`_. If
+                  <../../../../concepts/tables/#table-naming-criteria>`__. If
                   present, no results are returned in the response.
 
                 * **result_table_persist** --
@@ -15478,26 +15776,11 @@ class GPUdb(object):
                   The number of records to keep.  The default value is ''.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the table
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in *result_table*.
 
                 * **view_id** --
                   view this result table is part of.  The default value is ''.
-
-                * **materialize_on_gpu** --
-                  No longer used.  See `Resource Management Concepts
-                  <../../../../rm/concepts/>`_ for information about how
-                  resources are managed, `Tier Strategy Concepts
-                  <../../../../rm/concepts/>`_ for how resources are targeted
-                  for VRAM, and `Tier Strategy Usage
-                  <../../../../rm/usage/#tier-strategies>`_ for how to specify
-                  a table's priority in VRAM.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
 
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
@@ -15603,8 +15886,8 @@ class GPUdb(object):
         """Rotate the column values into rows values.
 
         For unpivot details and examples, see
-        `Unpivot <../../../../concepts/unpivot/>`_.  For limitations, see
-        `Unpivot Limitations <../../../../concepts/unpivot/#limitations>`_.
+        `Unpivot <../../../../concepts/unpivot/>`__.  For limitations, see
+        `Unpivot Limitations <../../../../concepts/unpivot/#limitations>`__.
 
         Unpivot is used to normalize tables that are built for cross tabular
         reporting
@@ -15619,7 +15902,7 @@ class GPUdb(object):
         and values respectively.
 
         The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`_.
+        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`__.
 
         Parameters:
 
@@ -15627,7 +15910,7 @@ class GPUdb(object):
                 Name of the table on which the operation will be performed.
                 Must be an existing table/view, in [schema_name.]table_name
                 format, using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             column_names (list of str)
                 List of column names or expressions. A wildcard '*' can be used
@@ -15676,9 +15959,9 @@ class GPUdb(object):
                   The name of a table used to store the results, in
                   [schema_name.]table_name format, using standard `name
                   resolution rules
-                  <../../../../concepts/tables/#table-name-resolution>`_ and
+                  <../../../../concepts/tables/#table-name-resolution>`__ and
                   meeting `table naming criteria
-                  <../../../../concepts/tables/#table-naming-criteria>`_. If
+                  <../../../../concepts/tables/#table-naming-criteria>`__. If
                   present, no results are returned in the response.
 
                 * **result_table_persist** --
@@ -15714,26 +15997,11 @@ class GPUdb(object):
                   The number of records to keep.  The default value is ''.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the table
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in *result_table*.
 
                 * **view_id** --
                   view this result table is part of.  The default value is ''.
-
-                * **materialize_on_gpu** --
-                  No longer used.  See `Resource Management Concepts
-                  <../../../../rm/concepts/>`_ for information about how
-                  resources are managed, `Tier Strategy Concepts
-                  <../../../../rm/concepts/>`_ for how resources are targeted
-                  for VRAM, and `Tier Strategy Usage
-                  <../../../../rm/usage/#tier-strategies>`_ for how to specify
-                  a table's priority in VRAM.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
 
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
@@ -15875,7 +16143,7 @@ class GPUdb(object):
     def alter_credential( self, credential_name = None, credential_updates_map =
                           None, options = None ):
         """Alter the properties of an existing `credential
-        <../../../../concepts/credentials/>`_.
+        <../../../../concepts/credentials/>`__.
 
         Parameters:
 
@@ -15939,7 +16207,7 @@ class GPUdb(object):
     def alter_datasource( self, name = None, datasource_updates_map = None, options
                           = None ):
         """Alters the properties of an existing `data source
-        <../../../../concepts/data_sources/>`_
+        <../../../../concepts/data_sources/>`__
 
         Parameters:
 
@@ -15989,6 +16257,10 @@ class GPUdb(object):
                   Name of the Amazon S3 region where the given bucket is
                   located
 
+                * **s3_aws_role_arn** --
+                  Amazon IAM Role ARN which has required S3 permissions that
+                  can be assumed for the given S3 IAM user
+
                 * **hdfs_kerberos_keytab** --
                   Kerberos keytab file location for the given HDFS user
 
@@ -16020,6 +16292,13 @@ class GPUdb(object):
 
                 * **azure_oauth_token** --
                   Oauth token to access given storage container
+
+                * **kafka_url** --
+                  The publicly-accessible full path URL to the kafka broker,
+                  e.g., 'http://172.123.45.67:9300'.
+
+                * **kafka_topic_name** --
+                  Name of the Kafka topic to use as the data source
 
             options (dict of str to str)
                 Optional parameters.
@@ -16229,7 +16508,7 @@ class GPUdb(object):
     def alter_schema( self, schema_name = None, action = None, value = None, options
                       = {} ):
         """Used to change the name of a SQL-style `schema
-        <../../../../concepts/schemas/>`_, specified in input parameter
+        <../../../../concepts/schemas/>`__, specified in input parameter
         *schema_name*.
 
         Parameters:
@@ -16244,7 +16523,7 @@ class GPUdb(object):
                 * **rename_schema** --
                   Renames a schema to input parameter *value*. Has the same
                   naming restrictions as `tables
-                  <../../../../concepts/tables/>`_.
+                  <../../../../concepts/tables/>`__.
 
             value (str)
                 The value of the modification, depending on input parameter
@@ -16422,6 +16701,18 @@ class GPUdb(object):
                   Enable overlapped-equi-join filter.  The default value is
                   'true'.
 
+                * **kafka_batch_size** --
+                  Maximum number of records to be read in a single kafka
+                  batched request.  The default value is '1000'.
+
+                * **kafka_wait_time** --
+                  Maximum number of seconds to wait in a single kafka batched
+                  request.  The default value is '30'.
+
+                * **kafka_timeout** --
+                  Number of seconds after which kakfa poll will timeout if
+                  datasource has no records.  The default value is '5'.
+
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
                 ).
@@ -16456,14 +16747,15 @@ class GPUdb(object):
         available modifications include the following:
 
         Manage a table's columns--a column can be added, removed, or have its
-        `type and properties <../../../../concepts/types/>`_ modified,
+        `type and properties <../../../../concepts/types/>`__ modified,
         including
-        whether it is `compressed <../../../../concepts/compression/>`_ or not.
+        whether it is `compressed <../../../../concepts/compression/>`__ or
+        not.
 
         External tables cannot be modified except for their refresh method.
 
         Create or delete an `index
-        <../../../../concepts/indexes/#column-index>`_ on a
+        <../../../../concepts/indexes/#column-index>`__ on a
         particular column. This can speed up certain operations when using
         expressions
         containing equality or relational operators on indexed columns. This
@@ -16471,25 +16763,25 @@ class GPUdb(object):
         applies to tables.
 
         Create or delete a `foreign key
-        <../../../../concepts/tables/#foreign-key>`_
+        <../../../../concepts/tables/#foreign-key>`__
         on a particular column.
 
         Manage a
         `range-partitioned
-        <../../../../concepts/tables/#partitioning-by-range>`_ or a
+        <../../../../concepts/tables/#partitioning-by-range>`__ or a
         `manual list-partitioned
-        <../../../../concepts/tables/#partitioning-by-list-manual>`_
+        <../../../../concepts/tables/#partitioning-by-list-manual>`__
         table's partitions.
 
         Set (or reset) the `tier strategy
-        <../../../../rm/concepts/#tier-strategies>`_
+        <../../../../rm/concepts/#tier-strategies>`__
         of a table or view.
 
         Refresh and manage the refresh mode of a
-        `materialized view <../../../../concepts/materialized_views/>`_ or an
-        `external table <../../../../concepts/external_tables/>`_.
+        `materialized view <../../../../concepts/materialized_views/>`__ or an
+        `external table <../../../../concepts/external_tables/>`__.
 
-        Set the `time-to-live (TTL) <../../../../concepts/ttl/>`_. This can be
+        Set the `time-to-live (TTL) <../../../../concepts/ttl/>`__. This can be
         applied
         to tables or views.
 
@@ -16507,7 +16799,7 @@ class GPUdb(object):
                 Table on which the operation will be performed, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing table or view.
 
             action (str)
@@ -16519,16 +16811,18 @@ class GPUdb(object):
 
                 * **create_index** --
                   Creates either a `column (attribute) index
-                  <../../../../concepts/indexes/#column-index>`_ or `chunk skip
-                  index <../../../../concepts/indexes/#chunk-skip-index>`_,
+                  <../../../../concepts/indexes/#column-index>`__ or `chunk
+                  skip index
+                  <../../../../concepts/indexes/#chunk-skip-index>`__,
                   depending on the specified *index_type*, on the column name
                   specified in input parameter *value*. If this column already
                   has the specified index, an error will be returned.
 
                 * **delete_index** --
                   Deletes either a `column (attribute) index
-                  <../../../../concepts/indexes/#column-index>`_ or `chunk skip
-                  index <../../../../concepts/indexes/#chunk-skip-index>`_,
+                  <../../../../concepts/indexes/#column-index>`__ or `chunk
+                  skip index
+                  <../../../../concepts/indexes/#chunk-skip-index>`__,
                   depending on the specified *index_type*, on the column name
                   specified in input parameter *value*. If this column does not
                   have the specified index, an error will be returned.
@@ -16554,10 +16848,10 @@ class GPUdb(object):
                 * **rename_table** --
                   Renames a table or view within its current schema to input
                   parameter *value*. Has the same naming restrictions as
-                  `tables <../../../../concepts/tables/>`_.
+                  `tables <../../../../concepts/tables/>`__.
 
                 * **ttl** --
-                  Sets the `time-to-live <../../../../concepts/ttl/>`_ in
+                  Sets the `time-to-live <../../../../concepts/ttl/>`__ in
                   minutes of the table or view specified in input parameter
                   *table_name*.
 
@@ -16581,7 +16875,7 @@ class GPUdb(object):
 
                 * **set_column_compression** --
                   Modifies the `compression
-                  <../../../../concepts/compression/>`_ setting on the column
+                  <../../../../concepts/compression/>`__ setting on the column
                   specified in input parameter *value* to the compression type
                   specified in *compression_type*.
 
@@ -16591,14 +16885,14 @@ class GPUdb(object):
 
                 * **create_foreign_key** --
                   Creates a `foreign key
-                  <../../../../concepts/tables/#foreign-key>`_ specified in
+                  <../../../../concepts/tables/#foreign-key>`__ specified in
                   input parameter *value* using the format '(source_column_name
                   [, ...]) references target_table_name(primary_key_column_name
                   [, ...]) [as foreign_key_name]'.
 
                 * **delete_foreign_key** --
                   Deletes a `foreign key
-                  <../../../../concepts/tables/#foreign-key>`_.  The input
+                  <../../../../concepts/tables/#foreign-key>`__.  The input
                   parameter *value* should be the foreign_key_name specified
                   when creating the key or the complete string used to define
                   it.
@@ -16606,26 +16900,26 @@ class GPUdb(object):
                 * **add_partition** --
                   Adds the partition specified in input parameter *value*, to
                   either a `range-partitioned
-                  <../../../../concepts/tables/#partitioning-by-range>`_ or
+                  <../../../../concepts/tables/#partitioning-by-range>`__ or
                   `manual list-partitioned
-                  <../../../../concepts/tables/#partitioning-by-list-manual>`_
+                  <../../../../concepts/tables/#partitioning-by-list-manual>`__
                   table.
 
                 * **remove_partition** --
                   Removes the partition specified in input parameter *value*
                   (and relocates all of its data to the default partition) from
                   either a `range-partitioned
-                  <../../../../concepts/tables/#partitioning-by-range>`_ or
+                  <../../../../concepts/tables/#partitioning-by-range>`__ or
                   `manual list-partitioned
-                  <../../../../concepts/tables/#partitioning-by-list-manual>`_
+                  <../../../../concepts/tables/#partitioning-by-list-manual>`__
                   table.
 
                 * **delete_partition** --
                   Deletes the partition specified in input parameter *value*
                   (and all of its data) from either a `range-partitioned
-                  <../../../../concepts/tables/#partitioning-by-range>`_ or
+                  <../../../../concepts/tables/#partitioning-by-range>`__ or
                   `manual list-partitioned
-                  <../../../../concepts/tables/#partitioning-by-list-manual>`_
+                  <../../../../concepts/tables/#partitioning-by-list-manual>`__
                   table.
 
                 * **set_global_access_mode** --
@@ -16636,26 +16930,27 @@ class GPUdb(object):
 
                 * **refresh** --
                   For a `materialized view
-                  <../../../../concepts/materialized_views/>`_, replays all the
-                  table creation commands required to create the view.  For an
-                  `external table <../../../../concepts/external_tables/>`_,
-                  reloads all data in the table from its associated source
-                  files or `data source <../../../../concepts/data_sources/>`_.
+                  <../../../../concepts/materialized_views/>`__, replays all
+                  the table creation commands required to create the view.  For
+                  an `external table
+                  <../../../../concepts/external_tables/>`__, reloads all data
+                  in the table from its associated source files or `data source
+                  <../../../../concepts/data_sources/>`__.
 
                 * **set_refresh_method** --
                   For a `materialized view
-                  <../../../../concepts/materialized_views/>`_, sets the method
-                  by which the view is refreshed to the method specified in
-                  input parameter *value* - one of 'manual', 'periodic', or
+                  <../../../../concepts/materialized_views/>`__, sets the
+                  method by which the view is refreshed to the method specified
+                  in input parameter *value* - one of 'manual', 'periodic', or
                   'on_change'.  For an `external table
-                  <../../../../concepts/external_tables/>`_, sets the method by
-                  which the table is refreshed to the method specified in input
-                  parameter *value* - either 'manual' or 'on_start'.
+                  <../../../../concepts/external_tables/>`__, sets the method
+                  by which the table is refreshed to the method specified in
+                  input parameter *value* - either 'manual' or 'on_start'.
 
                 * **set_refresh_start_time** --
                   Sets the time to start periodic refreshes of this
                   `materialized view
-                  <../../../../concepts/materialized_views/>`_ to the datetime
+                  <../../../../concepts/materialized_views/>`__ to the datetime
                   string specified in input parameter *value* with format
                   'YYYY-MM-DD HH:MM:SS'.  Subsequent refreshes occur at the
                   specified time + N * the refresh period.
@@ -16663,29 +16958,40 @@ class GPUdb(object):
                 * **set_refresh_period** --
                   Sets the time interval in seconds at which to refresh this
                   `materialized view
-                  <../../../../concepts/materialized_views/>`_ to the value
+                  <../../../../concepts/materialized_views/>`__ to the value
                   specified in input parameter *value*.  Also, sets the refresh
                   method to periodic if not already set.
 
                 * **set_refresh_execute_as** --
                   Sets the user name to refresh this `materialized view
-                  <../../../../concepts/materialized_views/>`_ to the value
+                  <../../../../concepts/materialized_views/>`__ to the value
                   specified in input parameter *value*.
 
                 * **remove_text_search_attributes** --
                   Removes `text search
-                  <../../../../concepts/full_text_search/>`_ attribute from all
-                  columns.
+                  <../../../../concepts/full_text_search/>`__ attribute from
+                  all columns.
 
                 * **set_strategy_definition** --
                   Sets the `tier strategy
-                  <../../../../rm/concepts/#tier-strategies>`_ for the table
+                  <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns to the one specified in input parameter
                   *value*, replacing the existing tier strategy in its
-                  entirety. See `tier strategy usage
-                  <../../../../rm/concepts/#tier-strategies>`_ for format and
-                  `tier strategy examples
-                  <../../../../rm/usage/#tier-strategies>`_ for examples.
+                  entirety.
+
+                * **cancel_datasource_subscription** --
+                  Permanently unsubscribe a data source that is loading
+                  continuously as a stream. The data source can be kafka / S3 /
+                  Azure.
+
+                * **pause_datasource_subscription** --
+                  Temporarily unsubscribe a data source that is loading
+                  continuously as a stream. The data source can be kafka / S3 /
+                  Azure.
+
+                * **resume_datasource_subscription** --
+                  Resubscribe to a paused data source subscription. The data
+                  source can be kafka / S3 / Azure.
 
             value (str)
                 The value of the modification, depending on input parameter
@@ -16753,7 +17059,7 @@ class GPUdb(object):
 
                 * **update_last_access_time** --
                   Indicates whether the `time-to-live
-                  <../../../../concepts/ttl/>`_ (TTL) expiration countdown
+                  <../../../../concepts/ttl/>`__ (TTL) expiration countdown
                   timer should be reset to the table's TTL.
                   Allowed values are:
 
@@ -16775,15 +17081,10 @@ class GPUdb(object):
 
                 * **strategy_definition** --
                   Optional parameter for specifying the `tier strategy
-                  <../../../../rm/concepts/#tier-strategies>`_ for the table
+                  <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns when input parameter *action* is
                   *set_strategy_definition*, replacing the existing tier
-                  strategy in its entirety. See `tier strategy usage
-                  <../../../../rm/concepts/#tier-strategies>`_ for format and
-                  `tier strategy examples
-                  <../../../../rm/usage/#tier-strategies>`_ for examples.  This
-                  option will be ignored if input parameter *value* is also
-                  specified.
+                  strategy in its entirety.
 
                 * **index_type** --
                   Type of index to create, when input parameter *action* is
@@ -16793,11 +17094,11 @@ class GPUdb(object):
 
                   * **column** --
                     Create or delete a `column (attribute) index
-                    <../../../../concepts/indexes/#column-index>`_.
+                    <../../../../concepts/indexes/#column-index>`__.
 
                   * **chunk_skip** --
                     Create or delete a `chunk skip index
-                    <../../../../concepts/indexes/#chunk-skip-index>`_.
+                    <../../../../concepts/indexes/#chunk-skip-index>`__.
 
                   The default value is 'column'.
 
@@ -16856,7 +17157,7 @@ class GPUdb(object):
         modifications include the following:
 
         Create or delete an `index
-        <../../../../concepts/indexes/#column-index>`_ on a
+        <../../../../concepts/indexes/#column-index>`__ on a
         particular column. This can speed up certain operations when using
         expressions
         containing equality or relational operators on indexed columns. This
@@ -16864,9 +17165,9 @@ class GPUdb(object):
         applies to tables.
 
         Manage a table's columns--a column can be added, removed, or have its
-        `type and properties <../../../../concepts/types/>`_ modified.
+        `type and properties <../../../../concepts/types/>`__ modified.
 
-        Set or unset `compression <../../../../concepts/compression/>`_ for a
+        Set or unset `compression <../../../../concepts/compression/>`__ for a
         column.
 
         Parameters:
@@ -16875,7 +17176,7 @@ class GPUdb(object):
                 Table on which the operation will be performed. Must be an
                 existing table or view, in [schema_name.]table_name format,
                 using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             column_alterations (list of dicts of str to str)
                 List of alter table add/delete/change column requests - all for
@@ -16958,7 +17259,7 @@ class GPUdb(object):
                 Names of the tables whose metadata will be updated, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  All
+                <../../../../concepts/tables/#table-name-resolution>`__.  All
                 specified tables must exist, or an error will be returned.
                 The user can provide a single element (which will be
                 automatically promoted to a list internally) or a list.
@@ -17004,12 +17305,12 @@ class GPUdb(object):
     # begin alter_tier
     def alter_tier( self, name = None, options = {} ):
         """Alters properties of an exisiting
-        `tier <../../../../rm/concepts/#storage-tiers>`_ to facilitate
-        `resource management <../../../../rm/concepts/>`_.
+        `tier <../../../../rm/concepts/#storage-tiers>`__ to facilitate
+        `resource management <../../../../rm/concepts/>`__.
 
         To disable
         `watermark-based eviction
-        <../../../../rm/concepts/#watermark-based-eviction>`_,
+        <../../../../rm/concepts/#watermark-based-eviction>`__,
         set both *high_watermark* and
         *low_watermark* to 100.
 
@@ -17119,6 +17420,46 @@ class GPUdb(object):
     # end alter_user
 
 
+    # begin alter_video
+    def alter_video( self, path = None, options = {} ):
+        """Alters a video.
+
+        Parameters:
+
+            path (str)
+                Fully-qualified `KiFS <../../../../tools/kifs/>`__ path to the
+                video to be altered.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **ttl** --
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the video.
+
+        Returns:
+            A dict with the following entries--
+
+            path (str)
+                Fully qualified KIFS path to the video file.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( path, (basestring)), "alter_video(): Argument 'path' must be (one) of type(s) '(basestring)'; given %s" % type( path ).__name__
+        assert isinstance( options, (dict)), "alter_video(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['path'] = path
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/alter/video', obj, convert_to_attr_dict = True )
+
+        return response
+    # end alter_video
+
+
     # begin append_records
     def append_records( self, table_name = None, source_table_name = None, field_map
                         = None, options = {} ):
@@ -17136,14 +17477,14 @@ class GPUdb(object):
                 The table name for the records to be appended, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing table.
 
             source_table_name (str)
                 The source table name to get records from, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing table name.
 
             field_map (dict of str to str)
@@ -17154,7 +17495,7 @@ class GPUdb(object):
                 *source_table_name*). Must be existing column names in source
                 table and target table, and their types must be matched. For
                 details on using expressions, see `Expressions
-                <../../../../concepts/expressions/>`_.
+                <../../../../concepts/expressions/>`__.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -17189,7 +17530,7 @@ class GPUdb(object):
                   source table records (specified by input parameter
                   *source_table_name*) into the target table (specified by
                   input parameter *table_name*) table with a `primary key
-                  <../../../../concepts/tables/#primary-keys>`_.  If set to
+                  <../../../../concepts/tables/#primary-keys>`__.  If set to
                   *true*, any existing target table record with primary key
                   values that match those of a source table record being
                   inserted will be replaced by that new record.  If set to
@@ -17252,8 +17593,8 @@ class GPUdb(object):
             table_name (str)
                 Name of a table, in [schema_name.]table_name format, using
                 standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_. Must be
-                an existing table.  The default value is ''.
+                <../../../../concepts/tables/#table-name-resolution>`__. Must
+                be an existing table.  The default value is ''.
 
             column_name (str)
                 Name of the column in input parameter *table_name* for which to
@@ -17306,8 +17647,8 @@ class GPUdb(object):
             table_name (str)
                 Name of the table to be cleared, in [schema_name.]table_name
                 format, using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_. Must be
-                an existing table. Empty string clears all available tables,
+                <../../../../concepts/tables/#table-name-resolution>`__. Must
+                be an existing table. Empty string clears all available tables,
                 though this behavior is be prevented by default via gpudb.conf
                 parameter 'disable_clear_all'.  The default value is ''.
 
@@ -17440,7 +17781,7 @@ class GPUdb(object):
             table_name (str)
                 Name of a table, in [schema_name.]table_name format, using
                 standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing table.
 
             column_names (list of str)
@@ -17504,7 +17845,7 @@ class GPUdb(object):
     # begin create_credential
     def create_credential( self, credential_name = None, type = None, identity =
                            None, secret = None, options = {} ):
-        """Create a new `credential <../../../../concepts/credentials/>`_.
+        """Create a new `credential <../../../../concepts/credentials/>`__.
 
         Parameters:
 
@@ -17568,7 +17909,7 @@ class GPUdb(object):
     # begin create_datasource
     def create_datasource( self, name = None, location = None, user_name = None,
                            password = None, options = {} ):
-        """Creates a `data source <../../../../concepts/data_sources/>`_, which
+        """Creates a `data source <../../../../concepts/data_sources/>`__, which
         contains the
         location and connection information for a data store that is external
         to the database.
@@ -17620,6 +17961,10 @@ class GPUdb(object):
                   Name of the Amazon S3 region where the given bucket is
                   located
 
+                * **s3_aws_role_arn** --
+                  Amazon IAM Role ARN which has required S3 permissions that
+                  can be assumed for the given S3 IAM user
+
                 * **hdfs_kerberos_keytab** --
                   Kerberos keytab file location for the given HDFS user
 
@@ -17652,6 +17997,18 @@ class GPUdb(object):
                 * **azure_oauth_token** --
                   Oauth token to access given storage container
 
+                * **is_stream** --
+                  To load from S3/Azure as a stream continuously.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **kafka_topic_name** --
+                  Name of the Kafka topic to use as the data source
+
         Returns:
             A dict with the following entries--
 
@@ -17680,6 +18037,54 @@ class GPUdb(object):
     # end create_datasource
 
 
+    # begin create_directory
+    def create_directory( self, directory_name = None, options = {} ):
+        """Creates a new directory in `KiFS <../../../../tools/kifs/>`__. The new
+        directory serves as a location in which the user can upload files using
+        :meth:`.upload_files`.
+
+        Parameters:
+
+            directory_name (str)
+                Name of the directory in KiFS to be created.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **no_error_if_exists** --
+                  If *true*, does not return an error if the directory already
+                  exists.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            directory_name (str)
+                Value of input parameter *directory_name*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( directory_name, (basestring)), "create_directory(): Argument 'directory_name' must be (one) of type(s) '(basestring)'; given %s" % type( directory_name ).__name__
+        assert isinstance( options, (dict)), "create_directory(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['directory_name'] = directory_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/create/directory', obj, convert_to_attr_dict = True )
+
+        return response
+    # end create_directory
+
+
     # begin create_graph
     def create_graph( self, graph_name = None, directed_graph = True, nodes = None,
                       edges = None, weights = None, restrictions = None, options
@@ -17689,10 +18094,10 @@ class GPUdb(object):
 
         IMPORTANT: It's highly recommended that you review the
         `Network Graphs & Solvers
-        <../../../../graph_solver/network_graph_solver/>`_
+        <../../../../graph_solver/network_graph_solver/>`__
         concepts documentation, the
-        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`_,
-        and/or some `graph examples <../../../../guide-tags/graph/>`_ before
+        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`__,
+        and/or some `graph examples <../../../../guide-tags/graph/>`__ before
         using this endpoint.
 
         Parameters:
@@ -17704,7 +18109,7 @@ class GPUdb(object):
                 If set to *true*, the graph will be directed. If set to
                 *false*, the graph will not be directed. Consult `Directed
                 Graphs
-                <../../../../graph_solver/network_graph_solver/#directed-graphs>`_
+                <../../../../graph_solver/network_graph_solver/#directed-graphs>`__
                 for more details.
                 Allowed values are:
 
@@ -17717,10 +18122,10 @@ class GPUdb(object):
                 Nodes represent fundamental topological units of a graph.
                 Nodes must be specified using
                 `identifiers
-                <../../../../graph_solver/network_graph_solver/#identifiers>`_;
+                <../../../../graph_solver/network_graph_solver/#identifiers>`__;
                 identifiers are grouped as
                 `combinations
-                <../../../../graph_solver/network_graph_solver/#id-combos>`_.
+                <../../../../graph_solver/network_graph_solver/#id-combos>`__.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS NODE_ID', expressions, e.g.,
                 'ST_MAKEPOINT(column1, column2) AS NODE_WKTPOINT', or constant
@@ -17737,10 +18142,10 @@ class GPUdb(object):
                 a graph that typically connect nodes. Edges must be specified
                 using
                 `identifiers
-                <../../../../graph_solver/network_graph_solver/#identifiers>`_;
+                <../../../../graph_solver/network_graph_solver/#identifiers>`__;
                 identifiers are grouped as
                 `combinations
-                <../../../../graph_solver/network_graph_solver/#id-combos>`_.
+                <../../../../graph_solver/network_graph_solver/#id-combos>`__.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS EDGE_ID', expressions, e.g.,
                 'SUBSTR(column, 1, 6) AS EDGE_NODE1_NAME', or constant values,
@@ -17758,10 +18163,10 @@ class GPUdb(object):
                 be specified
                 using
                 `identifiers
-                <../../../../graph_solver/network_graph_solver/#identifiers>`_;
+                <../../../../graph_solver/network_graph_solver/#identifiers>`__;
                 identifiers are grouped as
                 `combinations
-                <../../../../graph_solver/network_graph_solver/#id-combos>`_.
+                <../../../../graph_solver/network_graph_solver/#id-combos>`__.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS WEIGHTS_EDGE_ID', expressions, e.g.,
                 'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED', or constant values,
@@ -17779,10 +18184,10 @@ class GPUdb(object):
                 solution. Restrictions
                 must be specified using
                 `identifiers
-                <../../../../graph_solver/network_graph_solver/#identifiers>`_;
+                <../../../../graph_solver/network_graph_solver/#identifiers>`__;
                 identifiers are grouped as
                 `combinations
-                <../../../../graph_solver/network_graph_solver/#id-combos>`_.
+                <../../../../graph_solver/network_graph_solver/#id-combos>`__.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS RESTRICTIONS_EDGE_ID', expressions, e.g.,
                 'column/2 AS RESTRICTIONS_VALUECOMPARED', or constant values,
@@ -17876,9 +18281,10 @@ class GPUdb(object):
 
                 * **save_persist** --
                   If set to *true*, the graph will be saved in the persist
-                  directory (see the `config reference <../../../../config/>`_
-                  for more information). If set to *false*, the graph will be
-                  removed when the graph server is shutdown.
+                  directory (see the `config reference
+                  <../../../../config/#config-main-persistence>`__ for more
+                  information). If set to *false*, the graph will be removed
+                  when the graph server is shutdown.
                   Allowed values are:
 
                   * true
@@ -17919,9 +18325,9 @@ class GPUdb(object):
                   If specified, the created graph is also created as a table
                   with the given name, in [schema_name.]table_name format,
                   using standard `name resolution rules
-                  <../../../../concepts/tables/#table-name-resolution>`_ and
+                  <../../../../concepts/tables/#table-name-resolution>`__ and
                   meeting `table naming criteria
-                  <../../../../concepts/tables/#table-naming-criteria>`_.  The
+                  <../../../../concepts/tables/#table-naming-criteria>`__.  The
                   table will have the following identifier columns: 'EDGE_ID',
                   'EDGE_NODE1_ID', 'EDGE_NODE2_ID'. If left blank, no table is
                   created.  The default value is ''.
@@ -18111,9 +18517,9 @@ class GPUdb(object):
         """Creates a table that is the result of a SQL JOIN.
 
         For join details and examples see: `Joins
-        <../../../../concepts/joins/>`_.  For limitations, see `Join
+        <../../../../concepts/joins/>`__.  For limitations, see `Join
         Limitations and Cautions
-        <../../../../concepts/joins/#limitations-cautions>`_.
+        <../../../../concepts/joins/#limitations-cautions>`__.
 
         Parameters:
 
@@ -18121,15 +18527,15 @@ class GPUdb(object):
                 Name of the join table to be created, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.
+                <../../../../concepts/tables/#table-naming-criteria>`__.
 
             table_names (list of str)
                 The list of table names composing the join, each in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
                 Corresponds to a SQL statement FROM clause.    The user can
                 provide a single element (which will be automatically promoted
                 to a list internally) or a list.
@@ -18151,8 +18557,8 @@ class GPUdb(object):
                 An optional list of expressions to combine and filter the
                 joined tables.  Corresponds to a SQL statement WHERE clause.
                 For details see: `expressions
-                <../../../../concepts/expressions/>`_.  The default value is an
-                empty list ( [] ).  The user can provide a single element
+                <../../../../concepts/expressions/>`__.  The default value is
+                an empty list ( [] ).  The user can provide a single element
                 (which will be automatically promoted to a list internally) or
                 a list.
 
@@ -18181,8 +18587,8 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the join table
-                  specified in input parameter *join_table_name*.
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the join
+                  table specified in input parameter *join_table_name*.
 
                 * **view_id** --
                   view this projection is part of.  The default value is ''.
@@ -18241,7 +18647,7 @@ class GPUdb(object):
         that name.
 
         For materialized view details and examples, see
-        `Materialized Views <../../../../concepts/materialized_views/>`_.
+        `Materialized Views <../../../../concepts/materialized_views/>`__.
 
         The response contains output parameter *view_id*, which is used to tag
         each subsequent
@@ -18255,9 +18661,9 @@ class GPUdb(object):
                 Name of the table to be created that is the top-level table of
                 the materialized view, in [schema_name.]table_name format,
                 using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.
+                <../../../../concepts/tables/#table-naming-criteria>`__.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -18273,7 +18679,7 @@ class GPUdb(object):
                   be automatically created.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the table
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in input parameter *table_name*.
 
                 * **persist** --
@@ -18356,11 +18762,30 @@ class GPUdb(object):
     # end create_materialized_view
 
 
+    # begin create_monitor_table
+    def create_monitor_table( self, monitor_table_name = None, table_name = None,
+                              options = {} ):
+
+        assert isinstance( monitor_table_name, (basestring)), "create_monitor_table(): Argument 'monitor_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( monitor_table_name ).__name__
+        assert isinstance( table_name, (basestring)), "create_monitor_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( options, (dict)), "create_monitor_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['monitor_table_name'] = monitor_table_name
+        obj['table_name'] = table_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/create/monitortable', obj, convert_to_attr_dict = True )
+
+        return response
+    # end create_monitor_table
+
+
     # begin create_proc
     def create_proc( self, proc_name = None, execution_mode = 'distributed', files =
                      {}, command = '', args = [], options = {} ):
         """Creates an instance (proc) of the
-        `user-defined functions <../../../../concepts/udf/>`_ (UDF) specified
+        `user-defined functions <../../../../concepts/udf/>`__ (UDF) specified
         by the
         given command, options, and files, and makes it available for
         execution.
@@ -18402,8 +18827,12 @@ class GPUdb(object):
                 the files. The
                 file names may include subdirectory names (e.g. 'subdir/file')
                 but must not
-                resolve to a directory above the root for the proc.  The
-                default value is an empty dict ( {} ).
+                resolve to a directory above the root for the proc.
+
+                Files may be loaded from existing files in KiFS. Those file
+                names should be
+                prefixed with the uri kifs:// and the values in the map should
+                be empty.  The default value is an empty dict ( {} ).
 
             command (str)
                 The command (excluding arguments) that will be invoked when
@@ -18473,24 +18902,24 @@ class GPUdb(object):
     # begin create_projection
     def create_projection( self, table_name = None, projection_name = None,
                            column_names = None, options = {} ):
-        """Creates a new `projection <../../../../concepts/projections/>`_ of
+        """Creates a new `projection <../../../../concepts/projections/>`__ of
         an existing table. A projection represents a subset of the columns
         (potentially
         including derived columns) of a table.
 
         For projection details and examples, see
-        `Projections <../../../../concepts/projections/>`_.  For limitations,
+        `Projections <../../../../concepts/projections/>`__.  For limitations,
         see
         `Projection Limitations and Cautions
-        <../../../../concepts/projections/#limitations-and-cautions>`_.
+        <../../../../concepts/projections/#limitations-and-cautions>`__.
 
-        `Window functions <../../../../concepts/window/>`_, which can perform
+        `Window functions <../../../../concepts/window/>`__, which can perform
         operations like moving averages, are available through this endpoint as
         well as
         :meth:`.get_records_by_column`.
 
         A projection can be created with a different
-        `shard key <../../../../concepts/tables/#shard-keys>`_ than the source
+        `shard key <../../../../concepts/tables/#shard-keys>`__ than the source
         table.
         By specifying *shard_key*, the projection will be sharded
         according to the specified columns, regardless of how the source table
@@ -18500,13 +18929,13 @@ class GPUdb(object):
         If input parameter *table_name* is empty, selection is performed
         against a single-row
         virtual table.  This can be useful in executing temporal
-        (`NOW() <../../../../concepts/expressions/#date-time-functions>`_),
+        (`NOW() <../../../../concepts/expressions/#date-time-functions>`__),
         identity
         (`USER()
-        <../../../../concepts/expressions/#user-security-functions>`_), or
+        <../../../../concepts/expressions/#user-security-functions>`__), or
         constant-based functions
         (`GEODIST(-77.11, 38.88, -71.06, 42.36)
-        <../../../../concepts/expressions/#scalar-functions>`_).
+        <../../../../concepts/expressions/#scalar-functions>`__).
 
         Parameters:
 
@@ -18514,7 +18943,7 @@ class GPUdb(object):
                 Name of the existing table on which the projection is to be
                 applied, in [schema_name.]table_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  An
+                <../../../../concepts/tables/#table-name-resolution>`__.  An
                 empty table name creates a projection from a single-row virtual
                 table, where columns specified should be constants or constant
                 expressions.
@@ -18523,9 +18952,9 @@ class GPUdb(object):
                 Name of the projection to be created, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.
+                <../../../../concepts/tables/#table-naming-criteria>`__.
 
             column_names (list of str)
                 List of columns from input parameter *table_name* to be
@@ -18549,7 +18978,7 @@ class GPUdb(object):
 
                 * **expression** --
                   An optional filter `expression
-                  <../../../../concepts/expressions/>`_ to be applied to the
+                  <../../../../concepts/expressions/>`__ to be applied to the
                   source table prior to the projection.  The default value is
                   ''.
 
@@ -18573,21 +19002,6 @@ class GPUdb(object):
                   given for any column name, the alias must be used, rather
                   than the original column name.  The default value is ''.
 
-                * **materialize_on_gpu** --
-                  No longer used.  See `Resource Management Concepts
-                  <../../../../rm/concepts/>`_ for information about how
-                  resources are managed, `Tier Strategy Concepts
-                  <../../../../rm/concepts/>`_ for how resources are targeted
-                  for VRAM, and `Tier Strategy Usage
-                  <../../../../rm/usage/#tier-strategies>`_ for how to specify
-                  a table's priority in VRAM.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
                 * **chunk_size** --
                   Indicates the number of records per chunk to be used for this
                   projection.
@@ -18600,8 +19014,8 @@ class GPUdb(object):
                   original column name.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the projection
-                  specified in input parameter *projection_name*.
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the
+                  projection specified in input parameter *projection_name*.
 
                 * **shard_key** --
                   Comma-separated list of the columns to be sharded on; e.g.
@@ -18776,6 +19190,9 @@ class GPUdb(object):
     def create_role( self, name = None, options = {} ):
         """Creates a new role.
 
+        .. note::
+                This method should be used for on-premise deployments only.
+
         Parameters:
 
             name (str)
@@ -18816,7 +19233,7 @@ class GPUdb(object):
 
     # begin create_schema
     def create_schema( self, schema_name = None, options = {} ):
-        """Creates a SQL-style `schema <../../../../concepts/schemas/>`_. Schemas
+        """Creates a SQL-style `schema <../../../../concepts/schemas/>`__. Schemas
         are containers for tables and views.  Multiple tables and views can be
         defined with the same name in different schemas.
 
@@ -18824,7 +19241,7 @@ class GPUdb(object):
 
             schema_name (str)
                 Name of the schema to be created.  Has the same naming
-                restrictions as `tables <../../../../concepts/tables/>`_.
+                restrictions as `tables <../../../../concepts/tables/>`__.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -18863,6 +19280,27 @@ class GPUdb(object):
     # end create_schema
 
 
+    # begin create_state_table
+    def create_state_table( self, table_name = None, input_table_name = None,
+                            init_table_name = None, options = {} ):
+
+        assert isinstance( table_name, (basestring)), "create_state_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( input_table_name, (basestring)), "create_state_table(): Argument 'input_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( input_table_name ).__name__
+        assert isinstance( init_table_name, (basestring)), "create_state_table(): Argument 'init_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( init_table_name ).__name__
+        assert isinstance( options, (dict)), "create_state_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['table_name'] = table_name
+        obj['input_table_name'] = input_table_name
+        obj['init_table_name'] = init_table_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/create/statetable', obj, convert_to_attr_dict = True )
+
+        return response
+    # end create_state_table
+
+
     # begin create_table
     def create_table( self, table_name = None, type_id = None, options = {} ):
         """Creates a new table. If a new table is being created,
@@ -18872,23 +19310,23 @@ class GPUdb(object):
         :meth:`.create_type`).
 
         A table may optionally be designated to use a
-        `replicated <../../../../concepts/tables/#replication>`_ distribution
+        `replicated <../../../../concepts/tables/#replication>`__ distribution
         scheme,
         or be assigned: `foreign keys
-        <../../../../concepts/tables/#foreign-keys>`_ to
+        <../../../../concepts/tables/#foreign-keys>`__ to
         other tables, a `partitioning
-        <../../../../concepts/tables/#partitioning>`_
+        <../../../../concepts/tables/#partitioning>`__
         scheme, and/or a `tier strategy
-        <../../../../rm/concepts/#tier-strategies>`_.
+        <../../../../rm/concepts/#tier-strategies>`__.
 
         Parameters:
 
             table_name (str)
                 Name of the table to be created, in [schema_name.]table_name
                 format, using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_. Error
+                <../../../../concepts/tables/#table-naming-criteria>`__. Error
                 for requests with existing table of the same name and type ID
                 may be suppressed by using the *no_error_if_exists* option.
 
@@ -18941,18 +19379,18 @@ class GPUdb(object):
 
                 * **is_replicated** --
                   Affects the `distribution scheme
-                  <../../../../concepts/tables/#distribution>`_ for the table's
-                  data.  If *true* and the given type has no explicit `shard
-                  key <../../../../concepts/tables/#shard-key>`_ defined, the
-                  table will be `replicated
-                  <../../../../concepts/tables/#replication>`_.  If *false*,
+                  <../../../../concepts/tables/#distribution>`__ for the
+                  table's data.  If *true* and the given type has no explicit
+                  `shard key <../../../../concepts/tables/#shard-key>`__
+                  defined, the table will be `replicated
+                  <../../../../concepts/tables/#replication>`__.  If *false*,
                   the table will be `sharded
-                  <../../../../concepts/tables/#sharding>`_ according to the
+                  <../../../../concepts/tables/#sharding>`__ according to the
                   shard key specified in the given input parameter *type_id*,
                   or `randomly sharded
-                  <../../../../concepts/tables/#random-sharding>`_, if no shard
-                  key is specified.  Note that a type containing a shard key
-                  cannot be used to create a replicated table.
+                  <../../../../concepts/tables/#random-sharding>`__, if no
+                  shard key is specified.  Note that a type containing a shard
+                  key cannot be used to create a replicated table.
                   Allowed values are:
 
                   * true
@@ -18962,7 +19400,7 @@ class GPUdb(object):
 
                 * **foreign_keys** --
                   Semicolon-separated list of `foreign keys
-                  <../../../../concepts/tables/#foreign-keys>`_, of the format
+                  <../../../../concepts/tables/#foreign-keys>`__, of the format
                   '(source_column_name [, ...]) references
                   target_table_name(primary_key_column_name [, ...]) [as
                   foreign_key_name]'.
@@ -18972,29 +19410,29 @@ class GPUdb(object):
                   shard_by_column from target_table(primary_key_column)'.
 
                 * **partition_type** --
-                  `Partitioning <../../../../concepts/tables/#partitioning>`_
+                  `Partitioning <../../../../concepts/tables/#partitioning>`__
                   scheme to use.
                   Allowed values are:
 
                   * **RANGE** --
                     Use `range partitioning
-                    <../../../../concepts/tables/#partitioning-by-range>`_.
+                    <../../../../concepts/tables/#partitioning-by-range>`__.
 
                   * **INTERVAL** --
                     Use `interval partitioning
-                    <../../../../concepts/tables/#partitioning-by-interval>`_.
+                    <../../../../concepts/tables/#partitioning-by-interval>`__.
 
                   * **LIST** --
                     Use `list partitioning
-                    <../../../../concepts/tables/#partitioning-by-list>`_.
+                    <../../../../concepts/tables/#partitioning-by-list>`__.
 
                   * **HASH** --
                     Use `hash partitioning
-                    <../../../../concepts/tables/#partitioning-by-hash>`_.
+                    <../../../../concepts/tables/#partitioning-by-hash>`__.
 
                   * **SERIES** --
                     Use `series partitioning
-                    <../../../../concepts/tables/#partitioning-by-series>`_.
+                    <../../../../concepts/tables/#partitioning-by-series>`__.
 
                 * **partition_keys** --
                   Comma-separated list of partition keys, which are the columns
@@ -19005,20 +19443,22 @@ class GPUdb(object):
                   Comma-separated list of partition definitions, whose format
                   depends on the choice of *partition_type*.  See `range
                   partitioning
-                  <../../../../concepts/tables/#partitioning-by-range>`_,
+                  <../../../../concepts/tables/#partitioning-by-range>`__,
                   `interval partitioning
-                  <../../../../concepts/tables/#partitioning-by-interval>`_,
+                  <../../../../concepts/tables/#partitioning-by-interval>`__,
                   `list partitioning
-                  <../../../../concepts/tables/#partitioning-by-list>`_, or
-                  `hash partitioning
-                  <../../../../concepts/tables/#partitioning-by-hash>`_ for
+                  <../../../../concepts/tables/#partitioning-by-list>`__, `hash
+                  partitioning
+                  <../../../../concepts/tables/#partitioning-by-hash>`__, or
+                  `series partitioning
+                  <../../../../concepts/tables/#partitioning-by-series>`__ for
                   example formats.
 
                 * **is_automatic_partition** --
                   If *true*, a new partition will be created for values which
                   don't fall into an existing partition.  Currently only
                   supported for `list partitions
-                  <../../../../concepts/tables/#partitioning-by-list>`_.
+                  <../../../../concepts/tables/#partitioning-by-list>`__.
                   Allowed values are:
 
                   * true
@@ -19027,7 +19467,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the table
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in input parameter *table_name*.
 
                 * **chunk_size** --
@@ -19036,11 +19476,11 @@ class GPUdb(object):
 
                 * **is_result_table** --
                   Indicates whether the table is a `memory-only table
-                  <../../../../concepts/tables_memory_only/>`_. A result table
+                  <../../../../concepts/tables_memory_only/>`__. A result table
                   cannot contain columns with store_only or text_search
-                  `data-handling <../../../../concepts/types/#data-handling>`_
+                  `data-handling <../../../../concepts/types/#data-handling>`__
                   or that are `non-charN strings
-                  <../../../../concepts/types/#primitive-types>`_, and it will
+                  <../../../../concepts/types/#primitive-types>`__, and it will
                   not be retained if the server is restarted.
                   Allowed values are:
 
@@ -19051,11 +19491,11 @@ class GPUdb(object):
 
                 * **strategy_definition** --
                   The `tier strategy
-                  <../../../../rm/concepts/#tier-strategies>`_ for the table
-                  and its columns. See `tier strategy usage
-                  <../../../../rm/concepts/#tier-strategies>`_ for format and
-                  `tier strategy examples
-                  <../../../../rm/usage/#tier-strategies>`_ for examples.
+                  <../../../../rm/concepts/#tier-strategies>`__ for the table
+                  and its columns.
+
+                * **is_virtual_union** --
+                  <DEVELOPER>
 
         Returns:
             A dict with the following entries--
@@ -19099,13 +19539,13 @@ class GPUdb(object):
                                modify_columns = {}, create_table_options = {},
                                options = {} ):
         """Creates a new `external table
-        <../../../../concepts/external_tables/>`_, which is a
+        <../../../../concepts/external_tables/>`__, which is a
         local database object whose source data is located externally to the
         database.  The source data can
         be located either on the cluster, accessible to the database; or
         remotely, accessible via a
         pre-defined external `data source
-        <../../../../concepts/data_sources/>`_.
+        <../../../../concepts/data_sources/>`__.
 
         The external table can have its structure defined explicitly, via input
         parameter *create_table_options*,
@@ -19119,15 +19559,18 @@ class GPUdb(object):
                 Name of the table to be created, in [schema_name.]table_name
                 format, using
                 standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting
                 `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.
+                <../../../../concepts/tables/#table-naming-criteria>`__.
 
             filepaths (list of str)
                 A list of file paths from which data will be sourced; wildcards
                 (*) can be used
                 to specify a group of files.
+
+                For paths in KiFS, use the uri prefix of kifs:// followed by
+                the full path to a file or directory.
 
                 If an external data source is specified in *datasource_name*,
                 these file
@@ -19140,7 +19583,7 @@ class GPUdb(object):
                 accessible to the gpudb user, residing on the path (or relative
                 to the path) specified by the
                 external files directory in the Kinetica
-                `configuration file <../../../../config/#external-files>`_.
+                `configuration file <../../../../config/#external-files>`__.
                 The user can provide a single element (which will be
                 automatically promoted to a list internally) or a list.
 
@@ -19157,7 +19600,7 @@ class GPUdb(object):
 
                 * **type_id** --
                   ID of a currently registered `type
-                  <../../../../concepts/types/>`_.  The default value is ''.
+                  <../../../../concepts/types/>`__.  The default value is ''.
 
                 * **no_error_if_exists** --
                   If *true*,
@@ -19174,19 +19617,19 @@ class GPUdb(object):
 
                 * **is_replicated** --
                   Affects the `distribution scheme
-                  <../../../../concepts/tables/#distribution>`_
+                  <../../../../concepts/tables/#distribution>`__
                   for the table's data.  If *true* and the
                   given table has no explicit `shard key
-                  <../../../../concepts/tables/#shard-key>`_ defined, the
+                  <../../../../concepts/tables/#shard-key>`__ defined, the
                   table will be `replicated
-                  <../../../../concepts/tables/#replication>`_.  If
+                  <../../../../concepts/tables/#replication>`__.  If
                   *false*, the table will be
-                  `sharded <../../../../concepts/tables/#sharding>`_ according
+                  `sharded <../../../../concepts/tables/#sharding>`__ according
                   to the shard key specified in the
                   given *type_id*, or
                   `randomly sharded
-                  <../../../../concepts/tables/#random-sharding>`_, if no shard
-                  key is specified.
+                  <../../../../concepts/tables/#random-sharding>`__, if no
+                  shard key is specified.
                   Note that a type containing a shard key cannot be used to
                   create a replicated table.
                   Allowed values are:
@@ -19198,7 +19641,7 @@ class GPUdb(object):
 
                 * **foreign_keys** --
                   Semicolon-separated list of
-                  `foreign keys <../../../../concepts/tables/#foreign-keys>`_,
+                  `foreign keys <../../../../concepts/tables/#foreign-keys>`__,
                   of the format
                   '(source_column_name [, ...]) references
                   target_table_name(primary_key_column_name [, ...]) [as
@@ -19210,25 +19653,29 @@ class GPUdb(object):
                   target_table(primary_key_column)'.
 
                 * **partition_type** --
-                  `Partitioning <../../../../concepts/tables/#partitioning>`_
+                  `Partitioning <../../../../concepts/tables/#partitioning>`__
                   scheme to use.
                   Allowed values are:
 
                   * **RANGE** --
                     Use `range partitioning
-                    <../../../../concepts/tables/#partitioning-by-range>`_.
+                    <../../../../concepts/tables/#partitioning-by-range>`__.
 
                   * **INTERVAL** --
                     Use `interval partitioning
-                    <../../../../concepts/tables/#partitioning-by-interval>`_.
+                    <../../../../concepts/tables/#partitioning-by-interval>`__.
 
                   * **LIST** --
                     Use `list partitioning
-                    <../../../../concepts/tables/#partitioning-by-list>`_.
+                    <../../../../concepts/tables/#partitioning-by-list>`__.
 
                   * **HASH** --
                     Use `hash partitioning
-                    <../../../../concepts/tables/#partitioning-by-hash>`_.
+                    <../../../../concepts/tables/#partitioning-by-hash>`__.
+
+                  * **SERIES** --
+                    Use `series partitioning
+                    <../../../../concepts/tables/#partitioning-by-series>`__.
 
                 * **partition_keys** --
                   Comma-separated list of partition keys, which are the columns
@@ -19242,13 +19689,13 @@ class GPUdb(object):
                   depends
                   on the choice of *partition_type*.  See
                   `range partitioning
-                  <../../../../concepts/tables/#partitioning-by-range>`_,
+                  <../../../../concepts/tables/#partitioning-by-range>`__,
                   `interval partitioning
-                  <../../../../concepts/tables/#partitioning-by-interval>`_,
+                  <../../../../concepts/tables/#partitioning-by-interval>`__,
                   `list partitioning
-                  <../../../../concepts/tables/#partitioning-by-list>`_, or
+                  <../../../../concepts/tables/#partitioning-by-list>`__, or
                   `hash partitioning
-                  <../../../../concepts/tables/#partitioning-by-hash>`_ for
+                  <../../../../concepts/tables/#partitioning-by-hash>`__ for
                   example formats.
 
                 * **is_automatic_partition** --
@@ -19256,7 +19703,7 @@ class GPUdb(object):
                   a new partition will be created for values which don't fall
                   into an existing partition.  Currently
                   only supported for `list partitions
-                  <../../../../concepts/tables/#partitioning-by-list>`_.
+                  <../../../../concepts/tables/#partitioning-by-list>`__.
                   Allowed values are:
 
                   * true
@@ -19265,7 +19712,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the table
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in input parameter *table_name*.
 
                 * **chunk_size** --
@@ -19275,13 +19722,13 @@ class GPUdb(object):
                 * **is_result_table** --
                   Indicates whether the table is a
                   `memory-only table
-                  <../../../../concepts/tables_memory_only/>`_. A result table
+                  <../../../../concepts/tables_memory_only/>`__. A result table
                   cannot contain
                   columns with store_only or text_search
-                  `data-handling <../../../../concepts/types/#data-handling>`_
+                  `data-handling <../../../../concepts/types/#data-handling>`__
                   or that are
                   `non-charN strings
-                  <../../../../concepts/types/#primitive-types>`_, and it will
+                  <../../../../concepts/types/#primitive-types>`__, and it will
                   not be retained if
                   the server is restarted.
                   Allowed values are:
@@ -19293,12 +19740,8 @@ class GPUdb(object):
 
                 * **strategy_definition** --
                   The `tier strategy
-                  <../../../../rm/concepts/#tier-strategies>`_
-                  for the table and its columns. See
-                  `tier strategy usage
-                  <../../../../rm/concepts/#tier-strategies>`_ for format and
-                  `tier strategy examples
-                  <../../../../rm/usage/#tier-strategies>`_ for examples.
+                  <../../../../rm/concepts/#tier-strategies>`__
+                  for the table and its columns.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -19457,6 +19900,9 @@ class GPUdb(object):
                   * **json** --
                     Json file format
 
+                  * **shapefile** --
+                    ShapeFile file format
+
                   The default value is 'delimited_text'.
 
                 * **ingestion_mode** --
@@ -19554,6 +20000,21 @@ class GPUdb(object):
 
                   The default value is 'manual'.
 
+                * **subscribe** --
+                  Continuously poll the data source to check for new data and
+                  load it into the table.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **poll_interval** --
+                  If *true*, the number of seconds between attempts to load
+                  external files into the table. If zero, polling will be
+                  continuous.
+
                 * **text_comment_string** --
                   Specifies the character string that should be interpreted as
                   a comment line
@@ -19599,7 +20060,7 @@ class GPUdb(object):
                 * **text_header_property_delimiter** --
                   Specifies the delimiter for
                   `column properties
-                  <../../../../concepts/types/#column-properties>`_ in the
+                  <../../../../concepts/types/#column-properties>`__ in the
                   header row (if
                   present).  Cannot be set to same value as *text_delimiter*.
                   For *delimited_text* *file_type* only.  The default value is
@@ -19642,7 +20103,33 @@ class GPUdb(object):
                     picks the widest possible column types so that 'all' values
                     will fit with minimum data scanned
 
-                  The default value is 'accuracy'.
+                  The default value is 'speed'.
+
+                * **table_insert_mode** --
+                  Optional: table_insert_mode. When inserting records from
+                  multiple files: if table_per_file then insert from each file
+                  into a new table. Currently supported only for shapefiles.
+                  Allowed values are:
+
+                  * single
+                  * table_per_file
+
+                  The default value is 'single'.
+
+                * **kafka_group_id** --
+                  The group id to be used consuming data from a kakfa topic
+                  (valid only for kafka datasource subscriptions).
+
+                * **text_search_columns** --
+                  Add 'text_search' property to internally inferenced string
+                  columns. Comma seperated list of column names or '*' for all
+                  columns. To add text_search property only to string columns
+                  of minimum size, set also the option
+                  'text_search_min_column_length'
+
+                * **text_search_min_column_length** --
+                  Set minimum column size. Used only when 'text_search_columns'
+                  has a value.
 
         Returns:
             A dict with the following entries--
@@ -19652,7 +20139,7 @@ class GPUdb(object):
 
             type_id (str)
                 ID of the currently registered table structure `type
-                <../../../../concepts/types/>`_ for this external table
+                <../../../../concepts/types/>`__ for this external table
 
             type_definition (str)
                 A JSON string describing the columns of the created external
@@ -19724,14 +20211,14 @@ class GPUdb(object):
         :meth:`.clear_table_monitor`.
 
         For more information on table monitors, see
-        `Table Monitors <../../../../concepts/table_monitors/>`_.
+        `Table Monitors <../../../../concepts/table_monitors/>`__.
 
         Parameters:
 
             table_name (str)
                 Name of the table to monitor, in [schema_name.]table_name
                 format, using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -19821,7 +20308,7 @@ class GPUdb(object):
                 Names of the tables on which the trigger will be activated and
                 maintained, each in [schema_name.]table_name format, using
                 standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.    The
+                <../../../../concepts/tables/#table-name-resolution>`__.    The
                 user can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
 
@@ -19916,7 +20403,7 @@ class GPUdb(object):
                 Tables on which the trigger will be active, each in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.    The
+                <../../../../concepts/tables/#table-name-resolution>`__.    The
                 user can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
 
@@ -19977,8 +20464,8 @@ class GPUdb(object):
         any given column simultaneously.  One example of mutually exclusive
         properties are *data* and *store_only*.
 
-        A single `primary key <../../../../concepts/tables/#primary-keys>`_
-        and/or single `shard key <../../../../concepts/tables/#shard-keys>`_
+        A single `primary key <../../../../concepts/tables/#primary-keys>`__
+        and/or single `shard key <../../../../concepts/tables/#shard-keys>`__
         can be set across one or more columns. If a primary key is specified,
         then a uniqueness constraint is enforced, in that only a single object
         can exist with a given primary key column value (or set of values for
@@ -20032,9 +20519,11 @@ class GPUdb(object):
                   makes the column available for GPU queries.
 
                 * **text_search** --
-                  Valid only for 'string' columns. Enables full text search for
-                  string columns. Can be set independently of *data* and
-                  *store_only*.
+                  Valid only for select 'string' columns. Enables full text
+                  search--see `Full Text Search
+                  <../../../../concepts/full_text_search/>`__ for details and
+                  applicable string column types. Can be set independently of
+                  *data* and *store_only*.
 
                 * **store_only** --
                   Persist the column value but do not make it available to
@@ -20167,12 +20656,12 @@ class GPUdb(object):
                 * **primary_key** --
                   This property indicates that this column will be part of (or
                   the entire) `primary key
-                  <../../../../concepts/tables/#primary-keys>`_.
+                  <../../../../concepts/tables/#primary-keys>`__.
 
                 * **shard_key** --
                   This property indicates that this column will be part of (or
                   the entire) `shard key
-                  <../../../../concepts/tables/#shard-keys>`_.
+                  <../../../../concepts/tables/#shard-keys>`__.
 
                 * **nullable** --
                   This property indicates that this column is nullable.
@@ -20191,9 +20680,9 @@ class GPUdb(object):
                 * **dict** --
                   This property indicates that this column should be
                   `dictionary encoded
-                  <../../../../concepts/dictionary_encoding/>`_. It can only be
-                  used in conjunction with restricted string (charN), int, long
-                  or date columns. Dictionary encoding is best for columns
+                  <../../../../concepts/dictionary_encoding/>`__. It can only
+                  be used in conjunction with restricted string (charN), int,
+                  long or date columns. Dictionary encoding is best for columns
                   where the cardinality (the number of unique values) is
                   expected to be low. This property can save a large amount of
                   memory.
@@ -20266,41 +20755,41 @@ class GPUdb(object):
         The following merges are supported:
 
         UNION (DISTINCT/ALL) - For data set union details and examples, see
-        `Union <../../../../concepts/unions/>`_.  For limitations, see `Union
+        `Union <../../../../concepts/unions/>`__.  For limitations, see `Union
         Limitations and Cautions
-        <../../../../concepts/unions/#limitations-and-cautions>`_.
+        <../../../../concepts/unions/#limitations-and-cautions>`__.
 
         INTERSECT (DISTINCT/ALL) - For data set intersection details and
-        examples, see `Intersect <../../../../concepts/intersect/>`_.  For
+        examples, see `Intersect <../../../../concepts/intersect/>`__.  For
         limitations, see `Intersect Limitations
-        <../../../../concepts/intersect/#limitations>`_.
+        <../../../../concepts/intersect/#limitations>`__.
 
         EXCEPT (DISTINCT/ALL) - For data set subtraction details and examples,
-        see `Except <../../../../concepts/except/>`_.  For limitations, see
-        `Except Limitations <../../../../concepts/except/#limitations>`_.
+        see `Except <../../../../concepts/except/>`__.  For limitations, see
+        `Except Limitations <../../../../concepts/except/#limitations>`__.
 
         MERGE VIEWS - For a given set of `filtered views
-        <../../../../concepts/filtered_views/>`_ on a single table, creates a
+        <../../../../concepts/filtered_views/>`__ on a single table, creates a
         single filtered view containing all of the unique records across all of
         the given filtered data sets.
 
         Non-charN 'string' and 'bytes' column types cannot be merged, nor can
         columns marked as `store-only
-        <../../../../concepts/types/#data-handling>`_.
+        <../../../../concepts/types/#data-handling>`__.
 
         Parameters:
 
             table_name (str)
                 Name of the table to be created, in [schema_name.]table_name
                 format, using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.
+                <../../../../concepts/tables/#table-naming-criteria>`__.
 
             table_names (list of str)
                 The list of table names to merge, in [schema_name.]table_name
                 format, using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 contain the names of one or more existing tables.    The user
                 can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
@@ -20327,21 +20816,6 @@ class GPUdb(object):
                   Name of the schema for the output table. If the schema
                   provided is non-existent, it will be automatically created.
                   The default value is ''.
-
-                * **materialize_on_gpu** --
-                  No longer used.  See `Resource Management Concepts
-                  <../../../../rm/concepts/>`_ for information about how
-                  resources are managed, `Tier Strategy Concepts
-                  <../../../../rm/concepts/>`_ for how resources are targeted
-                  for VRAM, and `Tier Strategy Usage
-                  <../../../../rm/usage/#tier-strategies>`_ for how to specify
-                  a table's priority in VRAM.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
 
                 * **mode** --
                   If *merge_views*, then this operation will merge the provided
@@ -20399,7 +20873,7 @@ class GPUdb(object):
                   input parameter *output_column_names*.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the output
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the output
                   table specified in input parameter *table_name*.
 
                 * **persist** --
@@ -20471,6 +20945,9 @@ class GPUdb(object):
     def create_user_external( self, name = None, options = {} ):
         """Creates a new external user (a user whose credentials are managed by an
         external LDAP).
+
+        .. note::
+                This method should be used for on-premise deployments only.
 
         Parameters:
 
@@ -20559,6 +21036,237 @@ class GPUdb(object):
 
         return response
     # end create_user_internal
+
+
+    # begin create_video
+    def create_video( self, attribute = None, begin = None, duration_seconds = None,
+                      end = None, frames_per_second = None, style = None, path =
+                      None, style_parameters = None, options = {} ):
+        """Creates a job to generate a sequence of raster images that visualize
+        data over a specified time.
+
+        Parameters:
+
+            attribute (str)
+                The animated attribute to map to the video's frames. Must be
+                present in the LAYERS specified for the visualization. This is
+                often a time-related field but may be any numeric type.
+
+            begin (str)
+                The start point for the video. Accepts an expression evaluable
+                over the input parameter *attribute*.
+
+            duration_seconds (float)
+                Seconds of video to produce
+
+            end (str)
+                The end point for the video. Accepts an expression evaluable
+                over the input parameter *attribute*.
+
+            frames_per_second (float)
+                The presentation frame rate of the encoded video in frames per
+                second.
+
+            style (str)
+                The name of the visualize mode; should correspond to the schema
+                used for the input parameter *style_parameters* field.
+                Allowed values are:
+
+                * chart
+                * raster
+                * classbreak
+                * contour
+                * heatmap
+                * labels
+
+            path (str)
+                Fully-qualified `KiFS <../../../../tools/kifs/>`__ path.  Write
+                access is required. A file must not exist at that path, unless
+                *replace_if_exists* is *true*.
+
+            style_parameters (str)
+                A string containing the JSON-encoded visualize request.  Must
+                correspond to the visualize mode specified in the input
+                parameter *style* field.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **ttl** --
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the video.
+
+                * **window** --
+                  Specified using the data-type corresponding to the input
+                  parameter *attribute*. For a window of size W, a video frame
+                  rendered for time t will visualize data in the interval
+                  [t-W,t]. The minimum window size is the interval between
+                  successive frames.  The minimum value is the default.  If a
+                  value less than the minimum value is specified, it is
+                  replaced with the minimum window size.  Larger values will
+                  make changes throughout the video appear more smooth while
+                  smaller values will capture fast variations in the data.
+
+                * **no_error_if_exists** --
+                  If *true*, does not return an error if the video already
+                  exists.  Ignored if *replace_if_exists* is *true*.
+                  Allowed values are:
+
+                  * false
+                  * true
+
+                  The default value is 'false'.
+
+                * **replace_if_exists** --
+                  If *true*, deletes any existing video with the same path
+                  before creating a new video.
+                  Allowed values are:
+
+                  * false
+                  * true
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            job_id (long)
+                An identifier for the created job.
+
+            path (str)
+                Fully qualified KIFS path to the video file.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( attribute, (basestring)), "create_video(): Argument 'attribute' must be (one) of type(s) '(basestring)'; given %s" % type( attribute ).__name__
+        assert isinstance( begin, (basestring)), "create_video(): Argument 'begin' must be (one) of type(s) '(basestring)'; given %s" % type( begin ).__name__
+        assert isinstance( duration_seconds, (int, long, float)), "create_video(): Argument 'duration_seconds' must be (one) of type(s) '(int, long, float)'; given %s" % type( duration_seconds ).__name__
+        assert isinstance( end, (basestring)), "create_video(): Argument 'end' must be (one) of type(s) '(basestring)'; given %s" % type( end ).__name__
+        assert isinstance( frames_per_second, (int, long, float)), "create_video(): Argument 'frames_per_second' must be (one) of type(s) '(int, long, float)'; given %s" % type( frames_per_second ).__name__
+        assert isinstance( style, (basestring)), "create_video(): Argument 'style' must be (one) of type(s) '(basestring)'; given %s" % type( style ).__name__
+        assert isinstance( path, (basestring)), "create_video(): Argument 'path' must be (one) of type(s) '(basestring)'; given %s" % type( path ).__name__
+        assert isinstance( style_parameters, (basestring)), "create_video(): Argument 'style_parameters' must be (one) of type(s) '(basestring)'; given %s" % type( style_parameters ).__name__
+        assert isinstance( options, (dict)), "create_video(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['attribute'] = attribute
+        obj['begin'] = begin
+        obj['duration_seconds'] = duration_seconds
+        obj['end'] = end
+        obj['frames_per_second'] = frames_per_second
+        obj['style'] = style
+        obj['path'] = path
+        obj['style_parameters'] = style_parameters
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/create/video', obj, convert_to_attr_dict = True )
+
+        return response
+    # end create_video
+
+
+    # begin delete_directory
+    def delete_directory( self, directory_name = None, options = {} ):
+        """Deletes a directory from `KiFS <../../../../tools/kifs/>`__.
+
+        Parameters:
+
+            directory_name (str)
+                Name of the directory in KiFS to be deleted. The directory must
+                contain no files, unless *recursive* is *true*
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **recursive** --
+                  If *true*, will delete directory and all files residing in
+                  it. If false, directory must be empty for deletion.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **no_error_if_not_exists** --
+                  If *true*, no error is returned if specified directory does
+                  not exist.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            directory_name (str)
+                Value of input parameter *directory_name*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( directory_name, (basestring)), "delete_directory(): Argument 'directory_name' must be (one) of type(s) '(basestring)'; given %s" % type( directory_name ).__name__
+        assert isinstance( options, (dict)), "delete_directory(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['directory_name'] = directory_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/delete/directory', obj, convert_to_attr_dict = True )
+
+        return response
+    # end delete_directory
+
+
+    # begin delete_files
+    def delete_files( self, file_names = None, options = {} ):
+        """Deletes one or more files from `KiFS <../../../../tools/kifs/>`__.
+
+        Parameters:
+
+            file_names (list of str)
+                An array of names of files to be deleted.    The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **no_error_if_not_exists** --
+                  If *true*, no error is returned if a specified file does not
+                  exist.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            info (dict of str to str)
+                Additional information.
+        """
+        file_names = file_names if isinstance( file_names, list ) else ( [] if (file_names is None) else [ file_names ] )
+        assert isinstance( options, (dict)), "delete_files(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['file_names'] = file_names
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/delete/files', obj, convert_to_attr_dict = True )
+
+        return response
+    # end delete_files
 
 
     # begin delete_graph
@@ -20668,13 +21376,13 @@ class GPUdb(object):
                 Name of the table from which to delete records, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_. Must
+                <../../../../concepts/tables/#table-name-resolution>`__. Must
                 contain the name of an existing table; not applicable to views.
 
             expressions (list of str)
                 A list of the actual predicates, one for each select; format
                 should follow the guidelines provided `here
-                <../../../../concepts/expressions/>`_. Specifying one or more
+                <../../../../concepts/expressions/>`__. Specifying one or more
                 input parameter *expressions* is mutually exclusive to
                 specifying *record_id* in the input parameter *options*.    The
                 user can provide a single element (which will be automatically
@@ -20695,7 +21403,7 @@ class GPUdb(object):
                   calling :meth:`.get_records_from_collection` with the
                   *return_record_ids* option. This option cannot be used to
                   delete records from `replicated
-                  <../../../../concepts/tables/#replication>`_ tables.
+                  <../../../../concepts/tables/#replication>`__ tables.
 
                 * **delete_all_records** --
                   If set to *true*, all records in the table will be deleted.
@@ -20773,6 +21481,9 @@ class GPUdb(object):
     def delete_role( self, name = None, options = {} ):
         """Deletes an existing role.
 
+        .. note::
+                This method should be used for on-premise deployments only.
+
         Parameters:
 
             name (str)
@@ -20808,6 +21519,9 @@ class GPUdb(object):
     def delete_user( self, name = None, options = {} ):
         """Deletes an existing user.
 
+        .. note::
+                This method should be used for on-premise deployments only.
+
         Parameters:
 
             name (str)
@@ -20839,6 +21553,88 @@ class GPUdb(object):
     # end delete_user
 
 
+    # begin download_files
+    def download_files( self, file_names = None, read_offsets = None, read_lengths =
+                        None, options = {} ):
+        """Downloads one or more files from `KiFS <../../../../tools/kifs/>`__.
+
+        Parameters:
+
+            file_names (list of str)
+                An array of the file names to download from KiFS. The full path
+                must be provided.    The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
+
+            read_offsets (list of longs)
+                An array of starting byte offsets from which to read each
+                respective file in input parameter *file_names*. Must either be
+                empty or the same length
+                as input parameter *file_names*. If empty, files are downloaded
+                in their entirety. If not
+                empty, input parameter *read_lengths* must also not be empty.
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+
+            read_lengths (list of longs)
+                Array of number of bytes to read from each respective file
+                in input parameter *file_names*. Must either be empty or the
+                same length as
+                input parameter *file_names*. If empty, files are downloaded in
+                their entirety. If not
+                empty, input parameter *read_offsets* must also not be empty.
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **file_encoding** --
+                  Encoding to be applied to the output file data. When using
+                  JSON serialization it is recommended to specify this as
+                  *base64*.
+                  Allowed values are:
+
+                  * **base64** --
+                    Apply base64 encoding to the output file data.
+
+                  * **none** --
+                    Do not apply any encoding to the output file data.
+
+                  The default value is 'none'.
+
+        Returns:
+            A dict with the following entries--
+
+            file_names (list of str)
+                Names of the files downloaded from KiFS
+
+            file_data (list of str)
+                Data for the respective downloaded files listed in output
+                parameter *file_names*
+
+            info (dict of str to str)
+                Additional information.
+        """
+        file_names = file_names if isinstance( file_names, list ) else ( [] if (file_names is None) else [ file_names ] )
+        read_offsets = read_offsets if isinstance( read_offsets, list ) else ( [] if (read_offsets is None) else [ read_offsets ] )
+        read_lengths = read_lengths if isinstance( read_lengths, list ) else ( [] if (read_lengths is None) else [ read_lengths ] )
+        assert isinstance( options, (dict)), "download_files(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['file_names'] = file_names
+        obj['read_offsets'] = read_offsets
+        obj['read_lengths'] = read_lengths
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/download/files', obj, convert_to_attr_dict = True )
+
+        return response
+    # end download_files
+
+
     # begin drop_container_registry
     def drop_container_registry( self, registry_name = None, options = {} ):
 
@@ -20857,7 +21653,7 @@ class GPUdb(object):
 
     # begin drop_credential
     def drop_credential( self, credential_name = None, options = {} ):
-        """Drop an existing `credential <../../../../concepts/credentials/>`_.
+        """Drop an existing `credential <../../../../concepts/credentials/>`__.
 
         Parameters:
 
@@ -20893,7 +21689,7 @@ class GPUdb(object):
 
     # begin drop_datasource
     def drop_datasource( self, name = None, options = {} ):
-        """Drops an existing `data source <../../../../concepts/data_sources/>`_.
+        """Drops an existing `data source <../../../../concepts/data_sources/>`__.
         Any external
         tables that depend on the data source must be dropped before it can be
         dropped.
@@ -20948,7 +21744,7 @@ class GPUdb(object):
 
     # begin drop_schema
     def drop_schema( self, schema_name = None, options = {} ):
-        """Drops an existing SQL-style `schema <../../../../concepts/schemas/>`_,
+        """Drops an existing SQL-style `schema <../../../../concepts/schemas/>`__,
         specified in input parameter *schema_name*.
 
         Parameters:
@@ -21072,7 +21868,7 @@ class GPUdb(object):
                 existing table, in
                 [schema_name.]table_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
                 If no table names are specified, no data will be passed to the
                 proc.  This
                 parameter is ignored if the proc has a non-distributed
@@ -21099,9 +21895,9 @@ class GPUdb(object):
                 be written, each in [schema_name.]table_name format, using
                 standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_
+                <../../../../concepts/tables/#table-name-resolution>`__
                 and meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.
+                <../../../../concepts/tables/#table-naming-criteria>`__.
                 If a specified table does not exist, it will automatically be
                 created with the
                 same schema as the corresponding table (by order) from
@@ -21143,18 +21939,16 @@ class GPUdb(object):
                   cached data from the first run ID specified in the list that
                   includes that table will be used.  The default value is ''.
 
-                * **kifs_input_dirs** --
-                  A comma-delimited list of KiFS directories whose local files
-                  will be made directly accessible to the proc through the API.
-                  (All KiFS files, local or not, are also accessible through
-                  the file system below the KiFS mount point.) Each name
-                  specified must the name of an existing KiFS directory.  The
-                  default value is ''.
-
                 * **run_tag** --
                   A string that, if not empty, can be used in subsequent calls
                   to :meth:`.show_proc_status` or :meth:`.kill_proc` to
                   identify the proc instance.  The default value is ''.
+
+                * **max_output_lines** --
+                  The maximum number of lines of output from stdout and stderr
+                  to return via :meth:`.show_proc_status`. If the number of
+                  lines output exceeds the maximum, earlier lines are
+                  discarded.  The default value is '100'.
 
         Returns:
             A dict with the following entries--
@@ -21196,7 +21990,7 @@ class GPUdb(object):
                      ):
         """Execute a SQL statement (query, DML, or DDL).
 
-        See `SQL Support <../../../../concepts/sql/>`_ for the complete set of
+        See `SQL Support <../../../../concepts/sql/>`__ for the complete set of
         supported SQL commands.
 
         Parameters:
@@ -21216,7 +22010,7 @@ class GPUdb(object):
                 number of results allowed by the server should be returned.
                 The number of records returned will never exceed the server's
                 own limit, defined by the `max_get_records_size
-                <../../../../config/#general>`_ parameter in the server
+                <../../../../config/#general>`__ parameter in the server
                 configuration.  Use output parameter *has_more_records* to see
                 if more records exist in the result to be fetched, and input
                 parameter *offset* & input parameter *limit* to request
@@ -21304,7 +22098,7 @@ class GPUdb(object):
                   are returned without evaluating the query.
 
                 * **paging_table_ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the paging
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the paging
                   table.
 
                 * **distributed_joins** --
@@ -21353,7 +22147,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the
                   intermediate result tables used in query execution.
 
                 * **update_on_existing_pk** --
@@ -21491,7 +22285,7 @@ class GPUdb(object):
                                 get_column_major = True ):
         """Execute a SQL statement (query, DML, or DDL).
 
-        See `SQL Support <../../../../concepts/sql/>`_ for the complete set of
+        See `SQL Support <../../../../concepts/sql/>`__ for the complete set of
         supported SQL commands.
 
         Parameters:
@@ -21511,7 +22305,7 @@ class GPUdb(object):
                 number of results allowed by the server should be returned.
                 The number of records returned will never exceed the server's
                 own limit, defined by the `max_get_records_size
-                <../../../../config/#general>`_ parameter in the server
+                <../../../../config/#general>`__ parameter in the server
                 configuration.  Use output parameter *has_more_records* to see
                 if more records exist in the result to be fetched, and input
                 parameter *offset* & input parameter *limit* to request
@@ -21599,7 +22393,7 @@ class GPUdb(object):
                   are returned without evaluating the query.
 
                 * **paging_table_ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the paging
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the paging
                   table.
 
                 * **distributed_joins** --
@@ -21648,7 +22442,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the
                   intermediate result tables used in query execution.
 
                 * **update_on_existing_pk** --
@@ -21825,11 +22619,11 @@ class GPUdb(object):
     def filter( self, table_name = None, view_name = '', expression = None, options
                 = {} ):
         """Filters data based on the specified expression.  The results are
-        stored in a `result set <../../../../concepts/filtered_views/>`_ with
+        stored in a `result set <../../../../concepts/filtered_views/>`__ with
         the
         given input parameter *view_name*.
 
-        For details see `Expressions <../../../../concepts/expressions/>`_.
+        For details see `Expressions <../../../../concepts/expressions/>`__.
 
         The response message contains the number of points for which the
         expression
@@ -21841,22 +22635,23 @@ class GPUdb(object):
             table_name (str)
                 Name of the table to filter, in [schema_name.]table_name
                 format, using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  This
+                <../../../../concepts/tables/#table-name-resolution>`__.  This
                 may be the name of a table or a view (when chaining queries).
 
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
             expression (str)
                 The select expression to filter the specified table.  For
-                details see `Expressions <../../../../concepts/expressions/>`_.
+                details see `Expressions
+                <../../../../concepts/expressions/>`__.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -21874,7 +22669,7 @@ class GPUdb(object):
                   view this filtered-view is part of.  The default value is ''.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the view
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the view
                   specified in input parameter *view_name*.
 
         Returns:
@@ -21929,16 +22724,16 @@ class GPUdb(object):
             table_name (str)
                 Name of the table to filter, in [schema_name.]table_name
                 format, using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  This
+                <../../../../concepts/tables/#table-name-resolution>`__.  This
                 may be the name of a table or a view (when chaining queries).
 
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -22031,16 +22826,16 @@ class GPUdb(object):
             table_name (str)
                 Name of the table to filter, in [schema_name.]table_name
                 format, using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  This
+                <../../../../concepts/tables/#table-name-resolution>`__.  This
                 may be the name of a table or a view (when chaining queries).
 
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -22128,16 +22923,16 @@ class GPUdb(object):
                 Name of the table on which the bounding box operation will be
                 performed, in [schema_name.]table_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing table.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -22241,16 +23036,16 @@ class GPUdb(object):
                 Name of the table on which the bounding box operation will be
                 performed, in [schema_name.]table_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_. Must be
-                an existing table.
+                <../../../../concepts/tables/#table-name-resolution>`__. Must
+                be an existing table.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -22339,7 +23134,7 @@ class GPUdb(object):
                 Name of the table on which the filter by geometry will be
                 performed, in [schema_name.]table_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing table or view containing a geospatial geometry
                 column.
 
@@ -22347,9 +23142,9 @@ class GPUdb(object):
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -22472,16 +23267,16 @@ class GPUdb(object):
             table_name (str)
                 Name of the table to filter, in [schema_name.]table_name
                 format, using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  This
+                <../../../../concepts/tables/#table-name-resolution>`__.  This
                 may be the name of a table or a view (when chaining queries).
 
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -22575,16 +23370,16 @@ class GPUdb(object):
                 Name of the table on which the filter by radius operation will
                 be performed, in [schema_name.]table_name format, using
                 standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing table.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -22688,16 +23483,16 @@ class GPUdb(object):
                 Name of the table on which the filter by radius operation will
                 be performed, in [schema_name.]table_name format, using
                 standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing table.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -22796,16 +23591,16 @@ class GPUdb(object):
                 Name of the table on which the filter by range operation will
                 be performed, in [schema_name.]table_name format, using
                 standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing table.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -22898,17 +23693,17 @@ class GPUdb(object):
                 Name of the table on which the filter by track operation will
                 be performed, in [schema_name.]table_name format, using
                 standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_. Must be
-                a currently existing table with a `track
-                <../../../../geospatial/geo_objects/>`_ present.
+                <../../../../concepts/tables/#table-name-resolution>`__. Must
+                be a currently existing table with a `track
+                <../../../../geospatial/geo_objects/>`__ present.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -22999,7 +23794,7 @@ class GPUdb(object):
         *case_sensitive* can modify case sensitivity in matching
         for all modes except *search*. For
         *search* mode details and limitations, see
-        `Full Text Search <../../../../concepts/full_text_search/>`_.
+        `Full Text Search <../../../../concepts/full_text_search/>`__.
 
         Parameters:
 
@@ -23007,16 +23802,16 @@ class GPUdb(object):
                 Name of the table on which the filter operation will be
                 performed, in [schema_name.]table_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing table or view.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -23139,16 +23934,16 @@ class GPUdb(object):
                 Name of the table whose data will be filtered, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing table.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -23161,7 +23956,7 @@ class GPUdb(object):
                 table called input parameter *table_name*, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing table.
 
             source_table_column_name (str)
@@ -23298,15 +24093,15 @@ class GPUdb(object):
                 Name of an existing table on which to perform the calculation,
                 in [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -23504,7 +24299,7 @@ class GPUdb(object):
                 Name of the table or view from which the records will be
                 fetched, in [schema_name.]table_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             offset (long)
                 A positive integer indicating the number of initial results to
@@ -23517,7 +24312,7 @@ class GPUdb(object):
                 be returned. Or END_OF_SET (-9999) to indicate that the max
                 number of results should be returned.  The number of records
                 returned will never exceed the server's own limit, defined by
-                the `max_get_records_size <../../../../config/#general>`_
+                the `max_get_records_size <../../../../config/#general>`__
                 parameter in the server configuration.  Use output parameter
                 *has_more_records* to see if more records exist in the result
                 to be fetched, and input parameter *offset* & input parameter
@@ -23672,7 +24467,7 @@ class GPUdb(object):
                 Name of the table or view from which the records will be
                 fetched, in [schema_name.]table_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             offset (long)
                 A positive integer indicating the number of initial results to
@@ -23685,7 +24480,7 @@ class GPUdb(object):
                 be returned. Or END_OF_SET (-9999) to indicate that the max
                 number of results should be returned.  The number of records
                 returned will never exceed the server's own limit, defined by
-                the `max_get_records_size <../../../../config/#general>`_
+                the `max_get_records_size <../../../../config/#general>`__
                 parameter in the server configuration.  Use output parameter
                 *has_more_records* to see if more records exist in the result
                 to be fetched, and input parameter *offset* & input parameter
@@ -23842,7 +24637,7 @@ class GPUdb(object):
         parameter *offset*
         and input parameter *limit* parameters.
 
-        `Window functions <../../../../concepts/window/>`_, which can perform
+        `Window functions <../../../../concepts/window/>`__, which can perform
         operations like moving averages, are available through this endpoint as
         well as
         :meth:`.create_projection`.
@@ -23859,16 +24654,16 @@ class GPUdb(object):
         If input parameter *table_name* is empty, selection is performed
         against a single-row
         virtual table.  This can be useful in executing temporal
-        (`NOW() <../../../../concepts/expressions/#date-time-functions>`_),
+        (`NOW() <../../../../concepts/expressions/#date-time-functions>`__),
         identity
         (`USER()
-        <../../../../concepts/expressions/#user-security-functions>`_), or
+        <../../../../concepts/expressions/#user-security-functions>`__), or
         constant-based functions
         (`GEODIST(-77.11, 38.88, -71.06, 42.36)
-        <../../../../concepts/expressions/#scalar-functions>`_).
+        <../../../../concepts/expressions/#scalar-functions>`__).
 
         The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`_.
+        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`__.
 
         Parameters:
 
@@ -23876,7 +24671,7 @@ class GPUdb(object):
                 Name of the table or view on which this operation will be
                 performed, in [schema_name.]table_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  An
+                <../../../../concepts/tables/#table-name-resolution>`__.  An
                 empty table name retrieves one record from a single-row virtual
                 table, where columns specified should be constants or constant
                 expressions.
@@ -23898,7 +24693,7 @@ class GPUdb(object):
                 number of results allowed by the server should be returned.
                 The number of records returned will never exceed the server's
                 own limit, defined by the `max_get_records_size
-                <../../../../config/#general>`_ parameter in the server
+                <../../../../config/#general>`__ parameter in the server
                 configuration.  Use output parameter *has_more_records* to see
                 if more records exist in the result to be fetched, and input
                 parameter *offset* & input parameter *limit* to request
@@ -24033,7 +24828,7 @@ class GPUdb(object):
         parameter *offset*
         and input parameter *limit* parameters.
 
-        `Window functions <../../../../concepts/window/>`_, which can perform
+        `Window functions <../../../../concepts/window/>`__, which can perform
         operations like moving averages, are available through this endpoint as
         well as
         :meth:`.create_projection`.
@@ -24050,16 +24845,16 @@ class GPUdb(object):
         If input parameter *table_name* is empty, selection is performed
         against a single-row
         virtual table.  This can be useful in executing temporal
-        (`NOW() <../../../../concepts/expressions/#date-time-functions>`_),
+        (`NOW() <../../../../concepts/expressions/#date-time-functions>`__),
         identity
         (`USER()
-        <../../../../concepts/expressions/#user-security-functions>`_), or
+        <../../../../concepts/expressions/#user-security-functions>`__), or
         constant-based functions
         (`GEODIST(-77.11, 38.88, -71.06, 42.36)
-        <../../../../concepts/expressions/#scalar-functions>`_).
+        <../../../../concepts/expressions/#scalar-functions>`__).
 
         The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`_.
+        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`__.
 
         Parameters:
 
@@ -24067,7 +24862,7 @@ class GPUdb(object):
                 Name of the table or view on which this operation will be
                 performed, in [schema_name.]table_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  An
+                <../../../../concepts/tables/#table-name-resolution>`__.  An
                 empty table name retrieves one record from a single-row virtual
                 table, where columns specified should be constants or constant
                 expressions.
@@ -24089,7 +24884,7 @@ class GPUdb(object):
                 number of results allowed by the server should be returned.
                 The number of records returned will never exceed the server's
                 own limit, defined by the `max_get_records_size
-                <../../../../config/#general>`_ parameter in the server
+                <../../../../config/#general>`__ parameter in the server
                 configuration.  Use output parameter *has_more_records* to see
                 if more records exist in the result to be fetched, and input
                 parameter *offset* & input parameter *limit* to request
@@ -24279,14 +25074,14 @@ class GPUdb(object):
                 Name of the table or view for which series/tracks will be
                 fetched, in [schema_name.]table_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             world_table_name (str)
                 Name of the table containing the complete series/track
                 information to be returned for the tracks present in the input
                 parameter *table_name*, in [schema_name.]table_name format,
                 using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
                 Typically this is used when retrieving series/tracks from a
                 view (which contains partial series/tracks) but the user wants
                 to retrieve the entire original series/tracks. Can be blank.
@@ -24412,14 +25207,14 @@ class GPUdb(object):
                 Name of the table or view for which series/tracks will be
                 fetched, in [schema_name.]table_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             world_table_name (str)
                 Name of the table containing the complete series/track
                 information to be returned for the tracks present in the input
                 parameter *table_name*, in [schema_name.]table_name format,
                 using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
                 Typically this is used when retrieving series/tracks from a
                 view (which contains partial series/tracks) but the user wants
                 to retrieve the entire original series/tracks. Can be blank.
@@ -24557,7 +25352,7 @@ class GPUdb(object):
                 Name of the collection or table from which records are to be
                 retrieved, in [schema_name.]table_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing collection or table.
 
             offset (long)
@@ -24571,7 +25366,7 @@ class GPUdb(object):
                 be returned, or END_OF_SET (-9999) to indicate that the max
                 number of results should be returned.  The number of records
                 returned will never exceed the server's own limit, defined by
-                the `max_get_records_size <../../../../config/#general>`_
+                the `max_get_records_size <../../../../config/#general>`__
                 parameter in the server configuration.  Use input parameter
                 *offset* & input parameter *limit* to request subsequent pages
                 of results.  The default value is -9999.
@@ -24703,7 +25498,7 @@ class GPUdb(object):
                 Name of the collection or table from which records are to be
                 retrieved, in [schema_name.]table_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing collection or table.
 
             offset (long)
@@ -24717,7 +25512,7 @@ class GPUdb(object):
                 be returned, or END_OF_SET (-9999) to indicate that the max
                 number of results should be returned.  The number of records
                 returned will never exceed the server's own limit, defined by
-                the `max_get_records_size <../../../../config/#general>`_
+                the `max_get_records_size <../../../../config/#general>`__
                 parameter in the server configuration.  Use input parameter
                 *offset* & input parameter *limit* to request subsequent pages
                 of results.  The default value is -9999.
@@ -24874,7 +25669,7 @@ class GPUdb(object):
     def grant_permission_credential( self, name = None, permission = None,
                                      credential_name = None, options = {} ):
         """Grants a `credential-level permission
-        <../../../../security/sec_concepts/#security-concepts-permissions-credential>`_
+        <../../../../security/sec_concepts/#security-concepts-permissions-credential>`__
         to a user or role.
 
         Parameters:
@@ -24937,8 +25732,8 @@ class GPUdb(object):
     # begin grant_permission_datasource
     def grant_permission_datasource( self, name = None, permission = None,
                                      datasource_name = None, options = {} ):
-        """Grants a `data source <../../../../concepts/data_sources/>`_ permission
-        to a user or role.
+        """Grants a `data source <../../../../concepts/data_sources/>`__
+        permission to a user or role.
 
         Parameters:
 
@@ -24992,6 +25787,72 @@ class GPUdb(object):
 
         return response
     # end grant_permission_datasource
+
+
+    # begin grant_permission_directory
+    def grant_permission_directory( self, name = None, permission = None,
+                                    directory_name = None, options = {} ):
+        """Grants a `KiFS <../../../../tools/kifs/>`__ directory-level permission
+        to a user or role.
+
+        Parameters:
+
+            name (str)
+                Name of the user or role to which the permission will be
+                granted. Must be an existing user or role.
+
+            permission (str)
+                Permission to grant to the user or role.
+                Allowed values are:
+
+                * **directory_read** --
+                  For files in the directory, access to list files, download
+                  files, or use files in server side functions
+
+                * **directory_write** --
+                  Access to upload files to, or delete files from, the
+                  directory. A user or role with write access automatically has
+                  read access
+
+            directory_name (str)
+                Name of the KiFS directory to which the permission grants
+                access. An empty directory name grants access to all KiFS
+                directories
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+
+            permission (str)
+                Value of input parameter *permission*.
+
+            directory_name (str)
+                Value of input parameter *directory_name*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( name, (basestring)), "grant_permission_directory(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( permission, (basestring)), "grant_permission_directory(): Argument 'permission' must be (one) of type(s) '(basestring)'; given %s" % type( permission ).__name__
+        assert isinstance( directory_name, (basestring)), "grant_permission_directory(): Argument 'directory_name' must be (one) of type(s) '(basestring)'; given %s" % type( directory_name ).__name__
+        assert isinstance( options, (dict)), "grant_permission_directory(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['name'] = name
+        obj['permission'] = permission
+        obj['directory_name'] = directory_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/grant/permission/directory', obj, convert_to_attr_dict = True )
+
+        return response
+    # end grant_permission_directory
 
 
     # begin grant_permission_proc
@@ -25146,7 +26007,7 @@ class GPUdb(object):
                 Name of the table to which the permission grants access, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing table, view, or schema. If a schema, the
                 permission also applies to tables and views in the schema.
 
@@ -25246,6 +26107,144 @@ class GPUdb(object):
     # end grant_role
 
 
+    # begin has_permission
+    def has_permission( self, name = '', target = None, permission = None, options =
+                        {} ):
+        """Checks if the specified user has the specified permission on the
+        specified object.
+
+        Parameters:
+
+            name (str)
+                Name of the user for which the permission is being checked.
+                Must be an existing user. If blank, will use the current user.
+                The default value is ''.
+
+            target (str)
+                Name of object to check for the requested permission.  It is
+                recommended to use a fully-qualified name when possible.
+
+            permission (str)
+                Permission to check for.
+                Allowed values are:
+
+                * **connect** --
+                  Connect access on the given data source
+
+                * **credential_admin** --
+                  Full read/write and administrative access on the credential.
+
+                * **credential_read** --
+                  Ability to read and use the credential.
+
+                * **directory_read** --
+                  For files in the directory, access to list files, download
+                  files, or use files in server side functions
+
+                * **directory_write** --
+                  Access to upload files to, or delete files from, the
+                  directory. A user with write access automatically has read
+                  access
+
+                * **proc_execute** --
+                  Execute access to the UDF.
+
+                * **role** --
+                  User is a member of this role (including indirectly).
+
+                * **sql_proc_execute** --
+                  Execute access to the SQL proc.
+
+                * **system_admin** --
+                  Full access to all data and system functions.
+
+                * **system_read** --
+                  Read-only access to all tables.
+
+                * **system_user_admin** --
+                  Access to administer users and roles that do not have
+                  system_admin permission.
+
+                * **system_write** --
+                  Read and write access to all tables.
+
+                * **table_admin** --
+                  Full read/write and administrative access to the table.
+
+                * **table_delete** --
+                  Delete access to the table.
+
+                * **table_insert** --
+                  Insert access to the table.
+
+                * **table_read** --
+                  Read access to the table.
+
+                * **table_update** --
+                  Update access to the table.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **no_error_if_not_exists** --
+                  If *false* will return an error if the provided input
+                  parameter *target* does not exist or is blank. If *true* then
+                  it will return *false* for output parameter *has_permission*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*
+
+            target (str)
+                Fully-qualified value of input parameter *target*
+
+            permission (str)
+                Value of input parameter *permission*
+
+            has_permission (bool)
+                Indicates whether the specified user has the specified
+                permission on the specified target.
+                Allowed values are:
+
+                * **true** --
+                  User has the effective queried permission
+
+                * **false** --
+                  User does not have the queried permission
+
+            filters (dict of str to str)
+                Map of column/filters that have been granted.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( name, (basestring)), "has_permission(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( target, (basestring)), "has_permission(): Argument 'target' must be (one) of type(s) '(basestring)'; given %s" % type( target ).__name__
+        assert isinstance( permission, (basestring)), "has_permission(): Argument 'permission' must be (one) of type(s) '(basestring)'; given %s" % type( permission ).__name__
+        assert isinstance( options, (dict)), "has_permission(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['name'] = name
+        obj['target'] = target
+        obj['permission'] = permission
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/has/permission', obj, convert_to_attr_dict = True )
+
+        return response
+    # end has_permission
+
+
     # begin has_proc
     def has_proc( self, proc_name = None, options = {} ):
         """Checks the existence of a proc with the given name.
@@ -25297,7 +26296,7 @@ class GPUdb(object):
             schema_name (str)
                 Name of the schema to check for existence, in root, using
                 standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -25342,7 +26341,7 @@ class GPUdb(object):
                 Name of the table to check for existence, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -25464,7 +26463,7 @@ class GPUdb(object):
 
         The *update_on_existing_pk* option specifies the record
         collision policy for inserting into a table with a
-        `primary key <../../../../concepts/tables/#primary-keys>`_, but is
+        `primary key <../../../../concepts/tables/#primary-keys>`__, but is
         ignored if
         no primary key exists.
 
@@ -25477,7 +26476,7 @@ class GPUdb(object):
                 Name of table to which the records are to be added, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing table.
 
             data (list of Records)
@@ -25505,7 +26504,7 @@ class GPUdb(object):
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting into a
                   table with a `primary key
-                  <../../../../concepts/tables/#primary-keys>`_.  If set to
+                  <../../../../concepts/tables/#primary-keys>`__.  If set to
                   *true*, any existing table record with primary key values
                   that match those of a record being inserted will be replaced
                   by that new record.  If set to *false*, any existing table
@@ -25678,25 +26677,28 @@ class GPUdb(object):
                 Name of the table into which the data will be inserted, in
                 [schema_name.]table_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
                 If the table does not exist, the table will be created using
                 either an existing
                 *type_id* or the type inferred from the
                 file, and the new table name will have to meet standard
                 `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.
+                <../../../../concepts/tables/#table-naming-criteria>`__.
 
             filepaths (list of str)
                 Absolute or relative filepath(s) from where files will be
                 loaded. Relative filepaths are relative to the defined
                 `external_files_directory
-                <../../../../config/#external-files>`_ parameter in the server
+                <../../../../config/#external-files>`__ parameter in the server
                 configuration. The filepaths may include wildcards (*). If the
                 first path ends in .tsv, the text delimiter will be defaulted
                 to a tab character. If the first path ends in .psv, the text
-                delimiter will be defaulted to a pipe character (|).    The
-                user can provide a single element (which will be automatically
-                promoted to a list internally) or a list.
+                delimiter will be defaulted to a pipe character (|).
+
+                For paths in `KiFS <../../../../tools/kifs/>`__, use the uri
+                prefix of kifs:// followed by the full path to a file or
+                directory    The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
 
             modify_columns (dict of str to dicts of str to str)
                 Not implemented yet.  The default value is an empty dict ( {}
@@ -25709,7 +26711,7 @@ class GPUdb(object):
 
                 * **type_id** --
                   ID of a currently registered `type
-                  <../../../../concepts/types/>`_.  The default value is ''.
+                  <../../../../concepts/types/>`__.  The default value is ''.
 
                 * **no_error_if_exists** --
                   If *true*, prevents an error from occurring if the table
@@ -25724,15 +26726,15 @@ class GPUdb(object):
 
                 * **is_replicated** --
                   Affects the `distribution scheme
-                  <../../../../concepts/tables/#distribution>`_ for the table's
-                  data.  If *true* and the given type has no explicit `shard
-                  key <../../../../concepts/tables/#shard-key>`_ defined, the
-                  table will be `replicated
-                  <../../../../concepts/tables/#replication>`_.  If *false*,
+                  <../../../../concepts/tables/#distribution>`__ for the
+                  table's data.  If *true* and the given type has no explicit
+                  `shard key <../../../../concepts/tables/#shard-key>`__
+                  defined, the table will be `replicated
+                  <../../../../concepts/tables/#replication>`__.  If *false*,
                   the table will be `sharded
-                  <../../../../concepts/tables/#sharding>`_ according to the
+                  <../../../../concepts/tables/#sharding>`__ according to the
                   shard key specified in the given *type_id*, or `randomly
-                  sharded <../../../../concepts/tables/#random-sharding>`_, if
+                  sharded <../../../../concepts/tables/#random-sharding>`__, if
                   no shard key is specified.  Note that a type containing a
                   shard key cannot be used to create a replicated table.
                   Allowed values are:
@@ -25744,7 +26746,7 @@ class GPUdb(object):
 
                 * **foreign_keys** --
                   Semicolon-separated list of `foreign keys
-                  <../../../../concepts/tables/#foreign-keys>`_, of the format
+                  <../../../../concepts/tables/#foreign-keys>`__, of the format
                   '(source_column_name [, ...]) references
                   target_table_name(primary_key_column_name [, ...]) [as
                   foreign_key_name]'.
@@ -25754,25 +26756,29 @@ class GPUdb(object):
                   shard_by_column from target_table(primary_key_column)'.
 
                 * **partition_type** --
-                  `Partitioning <../../../../concepts/tables/#partitioning>`_
+                  `Partitioning <../../../../concepts/tables/#partitioning>`__
                   scheme to use.
                   Allowed values are:
 
                   * **RANGE** --
                     Use `range partitioning
-                    <../../../../concepts/tables/#partitioning-by-range>`_.
+                    <../../../../concepts/tables/#partitioning-by-range>`__.
 
                   * **INTERVAL** --
                     Use `interval partitioning
-                    <../../../../concepts/tables/#partitioning-by-interval>`_.
+                    <../../../../concepts/tables/#partitioning-by-interval>`__.
 
                   * **LIST** --
                     Use `list partitioning
-                    <../../../../concepts/tables/#partitioning-by-list>`_.
+                    <../../../../concepts/tables/#partitioning-by-list>`__.
 
                   * **HASH** --
                     Use `hash partitioning
-                    <../../../../concepts/tables/#partitioning-by-hash>`_.
+                    <../../../../concepts/tables/#partitioning-by-hash>`__.
+
+                  * **SERIES** --
+                    Use `series partitioning
+                    <../../../../concepts/tables/#partitioning-by-series>`__.
 
                 * **partition_keys** --
                   Comma-separated list of partition keys, which are the columns
@@ -25783,20 +26789,22 @@ class GPUdb(object):
                   Comma-separated list of partition definitions, whose format
                   depends on the choice of *partition_type*.  See `range
                   partitioning
-                  <../../../../concepts/tables/#partitioning-by-range>`_,
+                  <../../../../concepts/tables/#partitioning-by-range>`__,
                   `interval partitioning
-                  <../../../../concepts/tables/#partitioning-by-interval>`_,
+                  <../../../../concepts/tables/#partitioning-by-interval>`__,
                   `list partitioning
-                  <../../../../concepts/tables/#partitioning-by-list>`_, or
-                  `hash partitioning
-                  <../../../../concepts/tables/#partitioning-by-hash>`_ for
+                  <../../../../concepts/tables/#partitioning-by-list>`__, `hash
+                  partitioning
+                  <../../../../concepts/tables/#partitioning-by-hash>`__, or
+                  `series partitioning
+                  <../../../../concepts/tables/#partitioning-by-series>`__ for
                   example formats.
 
                 * **is_automatic_partition** --
                   If *true*, a new partition will be created for values which
                   don't fall into an existing partition.  Currently only
                   supported for `list partitions
-                  <../../../../concepts/tables/#partitioning-by-list>`_.
+                  <../../../../concepts/tables/#partitioning-by-list>`__.
                   Allowed values are:
 
                   * true
@@ -25805,7 +26813,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the table
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in input parameter *table_name*.
 
                 * **chunk_size** --
@@ -25814,11 +26822,11 @@ class GPUdb(object):
 
                 * **is_result_table** --
                   Indicates whether the table is a `memory-only table
-                  <../../../../concepts/tables_memory_only/>`_. A result table
+                  <../../../../concepts/tables_memory_only/>`__. A result table
                   cannot contain columns with store_only or text_search
-                  `data-handling <../../../../concepts/types/#data-handling>`_
+                  `data-handling <../../../../concepts/types/#data-handling>`__
                   or that are `non-charN strings
-                  <../../../../concepts/types/#primitive-types>`_, and it will
+                  <../../../../concepts/types/#primitive-types>`__, and it will
                   not be retained if the server is restarted.
                   Allowed values are:
 
@@ -25829,11 +26837,8 @@ class GPUdb(object):
 
                 * **strategy_definition** --
                   The `tier strategy
-                  <../../../../rm/concepts/#tier-strategies>`_ for the table
-                  and its columns. See `tier strategy usage
-                  <../../../../rm/concepts/#tier-strategies>`_ for format and
-                  `tier strategy examples
-                  <../../../../rm/usage/#tier-strategies>`_ for examples.
+                  <../../../../rm/concepts/#tier-strategies>`__ for the table
+                  and its columns.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -25975,6 +26980,9 @@ class GPUdb(object):
                   * **json** --
                     Json file format
 
+                  * **shapefile** --
+                    ShapeFile file format
+
                   The default value is 'delimited_text'.
 
                 * **ingestion_mode** --
@@ -26055,6 +27063,23 @@ class GPUdb(object):
                   primary keys, when not specified in the type.  The default
                   value is ''.
 
+                * **subscribe** --
+                  Continuously poll the data source to check for new data and
+                  load it into the table.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **poll_interval** --
+                  If *true*, the number of seconds between attempts to load
+                  external files into the table.  If zero, polling will be
+                  continuous as long as data is found.  If no data is found,
+                  the interval will steadily increase to a maximum of 60
+                  seconds.
+
                 * **text_comment_string** --
                   Specifies the character string that should be interpreted as
                   a comment line
@@ -26100,7 +27125,7 @@ class GPUdb(object):
                 * **text_header_property_delimiter** --
                   Specifies the delimiter for
                   `column properties
-                  <../../../../concepts/types/#column-properties>`_ in the
+                  <../../../../concepts/types/#column-properties>`__ in the
                   header row (if
                   present).  Cannot be set to same value as *text_delimiter*.
                   For *delimited_text* *file_type* only.  The default value is
@@ -26153,7 +27178,33 @@ class GPUdb(object):
                     picks the widest possible column types so that 'all' values
                     will fit with minimum data scanned
 
-                  The default value is 'accuracy'.
+                  The default value is 'speed'.
+
+                * **table_insert_mode** --
+                  Optional: table_insert_mode. When inserting records from
+                  multiple files: if table_per_file then insert from each file
+                  into a new table. Currently supported only for shapefiles.
+                  Allowed values are:
+
+                  * single
+                  * table_per_file
+
+                  The default value is 'single'.
+
+                * **kafka_group_id** --
+                  The group id to be used consuming data from a kakfa topic
+                  (valid only for kafka datasource subscriptions).
+
+                * **text_search_columns** --
+                  Add 'text_search' property to internally inferenced string
+                  columns. Comma seperated list of column names or '*' for all
+                  columns. To add text_search property only to string columns
+                  of minimum size, set also the option
+                  'text_search_min_column_length'
+
+                * **text_search_min_column_length** --
+                  Set minimum column size. Used only when 'text_search_columns'
+                  has a value.
 
         Returns:
             A dict with the following entries--
@@ -26163,7 +27214,7 @@ class GPUdb(object):
 
             type_id (str)
                 ID of the currently registered table structure `type
-                <../../../../concepts/types/>`_ for the target table
+                <../../../../concepts/types/>`__ for the target table
 
             type_definition (str)
                 A JSON string describing the columns of the target table
@@ -26229,13 +27280,13 @@ class GPUdb(object):
                 Name of the table into which the data will be inserted, in
                 [schema_name.]table_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
                 If the table does not exist, the table will be created using
                 either an existing
                 *type_id* or the type inferred from the
                 payload, and the new table name will have to meet standard
                 `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.
+                <../../../../concepts/tables/#table-naming-criteria>`__.
 
             data_text (str)
                 Records formatted as delimited text
@@ -26255,7 +27306,7 @@ class GPUdb(object):
 
                 * **type_id** --
                   ID of a currently registered `type
-                  <../../../../concepts/types/>`_.  The default value is ''.
+                  <../../../../concepts/types/>`__.  The default value is ''.
 
                 * **no_error_if_exists** --
                   If *true*, prevents an error from occurring if the table
@@ -26270,15 +27321,15 @@ class GPUdb(object):
 
                 * **is_replicated** --
                   Affects the `distribution scheme
-                  <../../../../concepts/tables/#distribution>`_ for the table's
-                  data.  If *true* and the given type has no explicit `shard
-                  key <../../../../concepts/tables/#shard-key>`_ defined, the
-                  table will be `replicated
-                  <../../../../concepts/tables/#replication>`_.  If *false*,
+                  <../../../../concepts/tables/#distribution>`__ for the
+                  table's data.  If *true* and the given type has no explicit
+                  `shard key <../../../../concepts/tables/#shard-key>`__
+                  defined, the table will be `replicated
+                  <../../../../concepts/tables/#replication>`__.  If *false*,
                   the table will be `sharded
-                  <../../../../concepts/tables/#sharding>`_ according to the
+                  <../../../../concepts/tables/#sharding>`__ according to the
                   shard key specified in the given *type_id*, or `randomly
-                  sharded <../../../../concepts/tables/#random-sharding>`_, if
+                  sharded <../../../../concepts/tables/#random-sharding>`__, if
                   no shard key is specified.  Note that a type containing a
                   shard key cannot be used to create a replicated table.
                   Allowed values are:
@@ -26290,7 +27341,7 @@ class GPUdb(object):
 
                 * **foreign_keys** --
                   Semicolon-separated list of `foreign keys
-                  <../../../../concepts/tables/#foreign-keys>`_, of the format
+                  <../../../../concepts/tables/#foreign-keys>`__, of the format
                   '(source_column_name [, ...]) references
                   target_table_name(primary_key_column_name [, ...]) [as
                   foreign_key_name]'.
@@ -26300,25 +27351,29 @@ class GPUdb(object):
                   shard_by_column from target_table(primary_key_column)'.
 
                 * **partition_type** --
-                  `Partitioning <../../../../concepts/tables/#partitioning>`_
+                  `Partitioning <../../../../concepts/tables/#partitioning>`__
                   scheme to use.
                   Allowed values are:
 
                   * **RANGE** --
                     Use `range partitioning
-                    <../../../../concepts/tables/#partitioning-by-range>`_.
+                    <../../../../concepts/tables/#partitioning-by-range>`__.
 
                   * **INTERVAL** --
                     Use `interval partitioning
-                    <../../../../concepts/tables/#partitioning-by-interval>`_.
+                    <../../../../concepts/tables/#partitioning-by-interval>`__.
 
                   * **LIST** --
                     Use `list partitioning
-                    <../../../../concepts/tables/#partitioning-by-list>`_.
+                    <../../../../concepts/tables/#partitioning-by-list>`__.
 
                   * **HASH** --
                     Use `hash partitioning
-                    <../../../../concepts/tables/#partitioning-by-hash>`_.
+                    <../../../../concepts/tables/#partitioning-by-hash>`__.
+
+                  * **SERIES** --
+                    Use `series partitioning
+                    <../../../../concepts/tables/#partitioning-by-series>`__.
 
                 * **partition_keys** --
                   Comma-separated list of partition keys, which are the columns
@@ -26329,20 +27384,22 @@ class GPUdb(object):
                   Comma-separated list of partition definitions, whose format
                   depends on the choice of *partition_type*.  See `range
                   partitioning
-                  <../../../../concepts/tables/#partitioning-by-range>`_,
+                  <../../../../concepts/tables/#partitioning-by-range>`__,
                   `interval partitioning
-                  <../../../../concepts/tables/#partitioning-by-interval>`_,
+                  <../../../../concepts/tables/#partitioning-by-interval>`__,
                   `list partitioning
-                  <../../../../concepts/tables/#partitioning-by-list>`_, or
-                  `hash partitioning
-                  <../../../../concepts/tables/#partitioning-by-hash>`_ for
+                  <../../../../concepts/tables/#partitioning-by-list>`__, `hash
+                  partitioning
+                  <../../../../concepts/tables/#partitioning-by-hash>`__, or
+                  `series partitioning
+                  <../../../../concepts/tables/#partitioning-by-series>`__ for
                   example formats.
 
                 * **is_automatic_partition** --
                   If *true*, a new partition will be created for values which
                   don't fall into an existing partition.  Currently only
                   supported for `list partitions
-                  <../../../../concepts/tables/#partitioning-by-list>`_.
+                  <../../../../concepts/tables/#partitioning-by-list>`__.
                   Allowed values are:
 
                   * true
@@ -26351,7 +27408,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the table
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in input parameter *table_name*.
 
                 * **chunk_size** --
@@ -26360,11 +27417,11 @@ class GPUdb(object):
 
                 * **is_result_table** --
                   Indicates whether the table is a `memory-only table
-                  <../../../../concepts/tables_memory_only/>`_. A result table
+                  <../../../../concepts/tables_memory_only/>`__. A result table
                   cannot contain columns with store_only or text_search
-                  `data-handling <../../../../concepts/types/#data-handling>`_
+                  `data-handling <../../../../concepts/types/#data-handling>`__
                   or that are `non-charN strings
-                  <../../../../concepts/types/#primitive-types>`_, and it will
+                  <../../../../concepts/types/#primitive-types>`__, and it will
                   not be retained if the server is restarted.
                   Allowed values are:
 
@@ -26375,11 +27432,8 @@ class GPUdb(object):
 
                 * **strategy_definition** --
                   The `tier strategy
-                  <../../../../rm/concepts/#tier-strategies>`_ for the table
-                  and its columns. See `tier strategy usage
-                  <../../../../rm/concepts/#tier-strategies>`_ for format and
-                  `tier strategy examples
-                  <../../../../rm/usage/#tier-strategies>`_ for examples.
+                  <../../../../rm/concepts/#tier-strategies>`__ for the table
+                  and its columns.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -26516,6 +27570,9 @@ class GPUdb(object):
                   * **json** --
                     Json file format
 
+                  * **shapefile** --
+                    ShapeFile file format
+
                   The default value is 'delimited_text'.
 
                 * **ingestion_mode** --
@@ -26594,7 +27651,7 @@ class GPUdb(object):
                 * **text_header_property_delimiter** --
                   Specifies the delimiter for
                   `column properties
-                  <../../../../concepts/types/#column-properties>`_ in the
+                  <../../../../concepts/types/#column-properties>`__ in the
                   header row (if
                   present).  Cannot be set to same value as *text_delimiter*.
                   For *delimited_text* *file_type* only.  The default value is
@@ -26637,7 +27694,18 @@ class GPUdb(object):
                     picks the widest possible column types so that 'all' values
                     will fit with minimum data scanned
 
-                  The default value is 'accuracy'.
+                  The default value is 'speed'.
+
+                * **text_search_columns** --
+                  Add 'text_search' property to internally inferenced string
+                  columns. Comma seperated list of column names or '*' for all
+                  columns. To add text_search property only to string columns
+                  of minimum size, set also the option
+                  'text_search_min_column_length'
+
+                * **text_search_min_column_length** --
+                  Set minimum column size. Used only when 'text_search_columns'
+                  has a value.
 
         Returns:
             A dict with the following entries--
@@ -26647,7 +27715,7 @@ class GPUdb(object):
 
             type_id (str)
                 ID of the currently registered table structure `type
-                <../../../../concepts/types/>`_ for the target table
+                <../../../../concepts/types/>`__ for the target table
 
             type_definition (str)
                 A JSON string describing the columns of the target table
@@ -26718,7 +27786,7 @@ class GPUdb(object):
                 Table to which random records will be added, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing table, not a view.
 
             count (long)
@@ -26949,7 +28017,7 @@ class GPUdb(object):
         color). To have a symbol used for rendering create a table with a
         string column named 'SYMBOLCODE' (along with 'x' or 'y' for example).
         Then when the table is rendered (via `WMS
-        <../../../../api/rest/wms_rest/>`_) if the 'dosymbology' parameter is
+        <../../../../api/rest/wms_rest/>`__) if the 'dosymbology' parameter is
         'true' then the value of the 'SYMBOLCODE' column is used to pick the
         symbol displayed for each point.
 
@@ -27094,7 +28162,7 @@ class GPUdb(object):
             table_name (str)
                 Name of the table to be locked, in [schema_name.]table_name
                 format, using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  It
+                <../../../../concepts/tables/#table-name-resolution>`__.  It
                 must be a currently existing table or view.
 
             lock_type (str)
@@ -27158,11 +28226,11 @@ class GPUdb(object):
 
         IMPORTANT: It's highly recommended that you review the
         `Network Graphs & Solvers
-        <../../../../graph_solver/network_graph_solver/>`_
+        <../../../../graph_solver/network_graph_solver/>`__
         concepts documentation, the
-        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`_,
+        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`__,
         and/or some
-        `/match/graph examples <../../../../guide-tags/graph-match/>`_
+        `/match/graph examples <../../../../guide-tags/graph-match/>`__
         before using this endpoint.
 
         Parameters:
@@ -27175,10 +28243,10 @@ class GPUdb(object):
                 Sample points used to match to an underlying geospatial
                 graph. Sample points must be specified using
                 `identifiers
-                <../../../../graph_solver/network_graph_solver/#match-identifiers>`_;
+                <../../../../graph_solver/network_graph_solver/#match-identifiers>`__;
                 identifiers are grouped as
                 `combinations
-                <../../../../graph_solver/network_graph_solver/#match-combinations>`_.
+                <../../../../graph_solver/network_graph_solver/#match-combinations>`__.
                 Identifiers can be used with: existing column names, e.g.,
                 'table.column AS SAMPLE_X'; expressions, e.g.,
                 'ST_MAKEPOINT(table.x, table.y) AS SAMPLE_WKTPOINT'; or
@@ -27218,17 +28286,21 @@ class GPUdb(object):
                   Matches input parameter *sample_points* source and
                   destination pairs for the shortest path solves in batch mode.
 
+                * **match_loops** --
+                  Matches closed loops (Eulerian paths) originating and ending
+                  at each graph node within min and max hops (levels).
+
                 The default value is 'markov_chain'.
 
             solution_table (str)
                 The name of the table used to store the results, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  This
+                <../../../../concepts/tables/#table-naming-criteria>`__.  This
                 table contains a `track
-                <../../../../geospatial/geo_objects/#geospatial-tracks>`_ of
+                <../../../../geospatial/geo_objects/#geospatial-tracks>`__ of
                 geospatial points for the matched portion of the graph, a track
                 ID, and a score value. Also outputs a details table containing
                 a trip ID (that matches the track ID), the latitude/longitude
@@ -27397,11 +28469,52 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **max_truck_stops** --
+                  For the *match_supply_demand* solver only. If specified
+                  (greater than zero), a truck can at most have this many stops
+                  (demand locations) in one round trip. Otherwise, it is
+                  unlimited. If 'enable_truck_reuse' is on, this condition will
+                  be applied separately at each round trip use of the same
+                  truck.  The default value is '0'.
+
                 * **server_id** --
                   Indicates which graph server(s) to send the request to.
                   Default is to send to the server, amongst those containing
                   the corresponding graph, that has the most computational
                   bandwidth.  The default value is ''.
+
+                * **inverse_solve** --
+                  For the *match_batch_solves* solver only. Solves
+                  source-destination pairs using inverse shortest path solver.
+                  Allowed values are:
+
+                  * **true** --
+                    Solves using inverse shortest path solver.
+
+                  * **false** --
+                    Solves using direct shortest path solver.
+
+                  The default value is 'false'.
+
+                * **min_loop_level** --
+                  For the *match_loops* solver only. Finds closed loops around
+                  each node deducible not less than this minimal hop (level)
+                  deep.  The default value is '0'.
+
+                * **max_loop_level** --
+                  For the *match_loops* solver only. Finds closed loops around
+                  each node deducible not more than this maximal hop (level)
+                  deep.  The default value is '5'.
+
+                * **search_limit** --
+                  For the *match_loops* solver only. Searches within this limit
+                  of nodes per vertex to detect loops. The value zero means
+                  there is no limit.  The default value is '10000'.
+
+                * **output_batch_size** --
+                  For the *match_loops* solver only. Uses this value as the
+                  batch size of the number of loops in flushing(inserting) to
+                  the output table.  The default value is '1000'.
 
         Returns:
             A dict with the following entries--
@@ -27446,10 +28559,10 @@ class GPUdb(object):
         information (specified by input parameter *field_maps*).
 
         For merge records details and examples, see
-        `Merge Records <../../../../concepts/merge_records/>`_.  For
+        `Merge Records <../../../../concepts/merge_records/>`__.  For
         limitations, see
         `Merge Records Limitations and Cautions
-        <../../../../concepts/merge_records/#limitations-and-cautions>`_.
+        <../../../../concepts/merge_records/#limitations-and-cautions>`__.
 
         The field map (specified by input parameter *field_maps*) holds the
         user-specified maps
@@ -27466,16 +28579,16 @@ class GPUdb(object):
                 The name of the new result table for the records to be merged
                 into, in [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 NOT be an existing table.
 
             source_table_names (list of str)
                 The list of names of source tables to get the records from,
                 each in [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be existing table names.    The user can provide a single
                 element (which will be automatically promoted to a list
                 internally) or a list.
@@ -27487,7 +28600,7 @@ class GPUdb(object):
                 specified by input parameter *table_name*.  Each mapping
                 contains the target column names (as keys) that the data in the
                 mapped source columns or column `expressions
-                <../../../../concepts/expressions/>`_ (as values) will be
+                <../../../../concepts/expressions/>`__ (as values) will be
                 merged into.  All of the source columns being merged into a
                 given target column must match in type, as that type will
                 determine the type of the new target column.    The user can
@@ -27508,12 +28621,12 @@ class GPUdb(object):
 
                 * **is_replicated** --
                   Indicates the `distribution scheme
-                  <../../../../concepts/tables/#distribution>`_ for the data of
-                  the merged table specified in input parameter *table_name*.
-                  If true, the table will be `replicated
-                  <../../../../concepts/tables/#replication>`_.  If false, the
+                  <../../../../concepts/tables/#distribution>`__ for the data
+                  of the merged table specified in input parameter
+                  *table_name*.  If true, the table will be `replicated
+                  <../../../../concepts/tables/#replication>`__.  If false, the
                   table will be `randomly sharded
-                  <../../../../concepts/tables/#random-sharding>`_.
+                  <../../../../concepts/tables/#random-sharding>`__.
                   Allowed values are:
 
                   * true
@@ -27522,7 +28635,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the merged
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the merged
                   table specified in input parameter *table_name*.
 
                 * **persist** --
@@ -27585,11 +28698,9 @@ class GPUdb(object):
 
         IMPORTANT: It's highly recommended that you review the
         `Network Graphs & Solvers
-        <../../../../graph_solver/network_graph_solver/>`_
-        concepts documentation, the
-        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`_,
-        and/or some
-        `/match/graph examples <../../../../guide-tags/graph-match/>`_
+        <../../../../graph_solver/network_graph_solver/>`__
+        concepts documentation and
+        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`__
         before using this endpoint.
 
         Parameters:
@@ -27600,11 +28711,11 @@ class GPUdb(object):
             nodes (list of str)
                 Nodes with which to update existing input parameter *nodes* in
                 graph specified by input parameter *graph_name*. Review `Nodes
-                <../../../../graph_solver/network_graph_solver/#nodes>`_ for
+                <../../../../graph_solver/network_graph_solver/#nodes>`__ for
                 more information. Nodes must be specified using `identifiers
-                <../../../../graph_solver/network_graph_solver/#identifiers>`_;
+                <../../../../graph_solver/network_graph_solver/#identifiers>`__;
                 identifiers are grouped as `combinations
-                <../../../../graph_solver/network_graph_solver/#id-combos>`_.
+                <../../../../graph_solver/network_graph_solver/#id-combos>`__.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS NODE_ID', expressions, e.g.,
                 'ST_MAKEPOINT(column1, column2) AS NODE_WKTPOINT', or raw
@@ -27620,11 +28731,11 @@ class GPUdb(object):
             edges (list of str)
                 Edges with which to update existing input parameter *edges* in
                 graph specified by input parameter *graph_name*. Review `Edges
-                <../../../../graph_solver/network_graph_solver/#edges>`_ for
+                <../../../../graph_solver/network_graph_solver/#edges>`__ for
                 more information. Edges must be specified using `identifiers
-                <../../../../graph_solver/network_graph_solver/#identifiers>`_;
+                <../../../../graph_solver/network_graph_solver/#identifiers>`__;
                 identifiers are grouped as `combinations
-                <../../../../graph_solver/network_graph_solver/#id-combos>`_.
+                <../../../../graph_solver/network_graph_solver/#id-combos>`__.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS EDGE_ID', expressions, e.g., 'SUBSTR(column,
                 1, 6) AS EDGE_NODE1_NAME', or raw values, e.g., "{'family',
@@ -27641,12 +28752,12 @@ class GPUdb(object):
                 Weights with which to update existing input parameter *weights*
                 in graph specified by input parameter *graph_name*. Review
                 `Weights
-                <../../../../graph_solver/network_graph_solver/#graph-weights>`_
+                <../../../../graph_solver/network_graph_solver/#graph-weights>`__
                 for more information. Weights must be specified using
                 `identifiers
-                <../../../../graph_solver/network_graph_solver/#identifiers>`_;
+                <../../../../graph_solver/network_graph_solver/#identifiers>`__;
                 identifiers are grouped as `combinations
-                <../../../../graph_solver/network_graph_solver/#id-combos>`_.
+                <../../../../graph_solver/network_graph_solver/#id-combos>`__.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS WEIGHTS_EDGE_ID', expressions, e.g.,
                 'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED', or raw values,
@@ -27663,12 +28774,12 @@ class GPUdb(object):
                 Restrictions with which to update existing input parameter
                 *restrictions* in graph specified by input parameter
                 *graph_name*. Review `Restrictions
-                <../../../../graph_solver/network_graph_solver/#graph-restrictions>`_
+                <../../../../graph_solver/network_graph_solver/#graph-restrictions>`__
                 for more information. Restrictions must be specified using
                 `identifiers
-                <../../../../graph_solver/network_graph_solver/#identifiers>`_;
+                <../../../../graph_solver/network_graph_solver/#identifiers>`__;
                 identifiers are grouped as `combinations
-                <../../../../graph_solver/network_graph_solver/#id-combos>`_.
+                <../../../../graph_solver/network_graph_solver/#id-combos>`__.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS RESTRICTIONS_EDGE_ID', expressions, e.g.,
                 'column/2 AS RESTRICTIONS_VALUECOMPARED', or raw values, e.g.,
@@ -27718,7 +28829,7 @@ class GPUdb(object):
 
                 * **save_persist** --
                   If set to *true*, the graph will be saved in the persist
-                  directory (see the `config reference <../../../../config/>`_
+                  directory (see the `config reference <../../../../config/>`__
                   for more information). If set to *false*, the graph will be
                   removed when the graph server is shutdown.
                   Allowed values are:
@@ -27747,12 +28858,12 @@ class GPUdb(object):
                   If specified, the created graph is also created as a table
                   with the given name, in [schema_name.]table_name format,
                   using standard `name resolution rules
-                  <../../../../concepts/tables/#table-name-resolution>`_ and
+                  <../../../../concepts/tables/#table-name-resolution>`__ and
                   meeting `table naming criteria
-                  <../../../../concepts/tables/#table-naming-criteria>`_.  This
-                  table will have the following identifier columns: 'EDGE_ID',
-                  'EDGE_NODE1_ID', 'EDGE_NODE2_ID'. If left blank, no table is
-                  created.  The default value is ''.
+                  <../../../../concepts/tables/#table-naming-criteria>`__.
+                  This table will have the following identifier columns:
+                  'EDGE_ID', 'EDGE_NODE1_ID', 'EDGE_NODE2_ID'. If left blank,
+                  no table is created.  The default value is ''.
 
                 * **remove_label_only** --
                   When RESTRICTIONS on labeled entities requested, if set to
@@ -27847,7 +28958,7 @@ class GPUdb(object):
         given
         identifier. See
         `Query Identifiers
-        <../../../../graph_solver/network_graph_solver/#query-identifiers>`_
+        <../../../../graph_solver/network_graph_solver/#query-identifiers>`__
         for more information.
 
         To return the adjacency list in the response, leave input parameter
@@ -27863,11 +28974,11 @@ class GPUdb(object):
 
         IMPORTANT: It's highly recommended that you review the
         `Network Graphs & Solvers
-        <../../../../graph_solver/network_graph_solver/>`_
+        <../../../../graph_solver/network_graph_solver/>`__
         concepts documentation, the
-        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`_,
+        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`__,
         and/or some
-        `/match/graph examples <../../../../guide-tags/graph-query/>`_
+        `/match/graph examples <../../../../guide-tags/graph-query>`__
         before using this endpoint.
 
         Parameters:
@@ -27877,7 +28988,7 @@ class GPUdb(object):
 
             queries (list of str)
                 Nodes or edges to be queried specified using `query identifiers
-                <../../../../graph_solver/network_graph_solver/#query-identifiers>`_.
+                <../../../../graph_solver/network_graph_solver/#query-identifiers>`__.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS QUERY_NODE_ID', raw values, e.g., '{0, 2} AS
                 QUERY_NODE_ID', or expressions, e.g., 'ST_MAKEPOINT(table.x,
@@ -27892,9 +29003,9 @@ class GPUdb(object):
                 Additional restrictions to apply to the nodes/edges of an
                 existing graph. Restrictions must be specified using
                 `identifiers
-                <../../../../graph_solver/network_graph_solver/#identifiers>`_;
+                <../../../../graph_solver/network_graph_solver/#identifiers>`__;
                 identifiers are grouped as `combinations
-                <../../../../graph_solver/network_graph_solver/#id-combos>`_.
+                <../../../../graph_solver/network_graph_solver/#id-combos>`__.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS RESTRICTIONS_EDGE_ID', expressions, e.g.,
                 'column/2 AS RESTRICTIONS_VALUECOMPARED', or raw values, e.g.,
@@ -27909,17 +29020,17 @@ class GPUdb(object):
                 Name of the table to store the resulting adjacencies, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  If
+                <../../../../concepts/tables/#table-naming-criteria>`__.  If
                 left blank, the query results are instead returned in the
                 response even if *export_query_results* is set to *false*. If
                 the 'QUERY_TARGET_NODE_LABEL' `query identifier
-                <../../../../graph_solver/network_graph_solver/#query-identifiers>`_
+                <../../../../graph_solver/network_graph_solver/#query-identifiers>`__
                 is used in input parameter *queries*, then two additional
                 columns will be available: 'PATH_ID' and 'RING_ID'. See `Using
                 Labels
-                <../../../../graph_solver/network_graph_solver/#using-labels>`_
+                <../../../../graph_solver/network_graph_solver/#using-labels>`__
                 for more information.  The default value is ''.
 
             rings (int)
@@ -27947,7 +29058,7 @@ class GPUdb(object):
                   This parameter is only applicable if the queried graph input
                   parameter *graph_name* is directed and when querying nodes.
                   Consult `Directed Graphs
-                  <../../../../graph_solver/network_graph_solver/#directed-graphs>`_
+                  <../../../../graph_solver/network_graph_solver/#directed-graphs>`__
                   for more details.
                   Allowed values are:
 
@@ -27966,9 +29077,9 @@ class GPUdb(object):
                   Name of the table to store the list of the final nodes
                   reached during the traversal, in [schema_name.]table_name
                   format, using standard `name resolution rules
-                  <../../../../concepts/tables/#table-name-resolution>`_ and
+                  <../../../../concepts/tables/#table-name-resolution>`__ and
                   meeting `table naming criteria
-                  <../../../../concepts/tables/#table-naming-criteria>`_.  If
+                  <../../../../concepts/tables/#table-naming-criteria>`__.  If
                   this value is left as the default, the table name will
                   default to the input parameter *adjacency_table* value plus a
                   '_nodes' suffix, e.g., '<adjacency_table_name>_nodes'.  The
@@ -28001,8 +29112,8 @@ class GPUdb(object):
                   *adjacency_table* and inputs WKT values from the source graph
                   (if available) or auto-generated WKT values (if there are no
                   WKT values in the source graph). A subsequent call to the
-                  `/wms <../../../../api/rest/wms_rest/>`_ endpoint can then be
-                  made to display the query results on a map.
+                  `/wms <../../../../api/rest/wms_rest/>`__ endpoint can then
+                  be made to display the query results on a map.
                   Allowed values are:
 
                   * true
@@ -28013,17 +29124,6 @@ class GPUdb(object):
                 * **and_labels** --
                   If set to *true*, the result of the query has entities that
                   satisfy all of the target labels, instead of any.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
-                * **export_solve_results** --
-                  Returns solution results inside the output parameter
-                  *adjacency_list_int_array* array in the response if set to
-                  *true*.
                   Allowed values are:
 
                   * true
@@ -28086,11 +29186,30 @@ class GPUdb(object):
     # end query_graph
 
 
+    # begin reserve_resource
+    def reserve_resource( self, component = None, bytes_requested = None, options =
+                          {} ):
+
+        assert isinstance( component, (basestring)), "reserve_resource(): Argument 'component' must be (one) of type(s) '(basestring)'; given %s" % type( component ).__name__
+        assert isinstance( bytes_requested, (int, long, float)), "reserve_resource(): Argument 'bytes_requested' must be (one) of type(s) '(int, long, float)'; given %s" % type( bytes_requested ).__name__
+        assert isinstance( options, (dict)), "reserve_resource(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['component'] = component
+        obj['bytes_requested'] = bytes_requested
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/reserve/resource', obj, convert_to_attr_dict = True )
+
+        return response
+    # end reserve_resource
+
+
     # begin revoke_permission_credential
     def revoke_permission_credential( self, name = None, permission = None,
                                       credential_name = None, options = {} ):
         """Revokes a `credential-level permission
-        <../../../../security/sec_concepts/#security-concepts-permissions-credential>`_
+        <../../../../security/sec_concepts/#security-concepts-permissions-credential>`__
         from a user or role.
 
         Parameters:
@@ -28153,7 +29272,7 @@ class GPUdb(object):
     # begin revoke_permission_datasource
     def revoke_permission_datasource( self, name = None, permission = None,
                                       datasource_name = None, options = {} ):
-        """Revokes a `data source <../../../../concepts/data_sources/>`_
+        """Revokes a `data source <../../../../concepts/data_sources/>`__
         permission from a user or role.
 
         Parameters:
@@ -28208,6 +29327,71 @@ class GPUdb(object):
 
         return response
     # end revoke_permission_datasource
+
+
+    # begin revoke_permission_directory
+    def revoke_permission_directory( self, name = None, permission = None,
+                                     directory_name = None, options = {} ):
+        """Revokes a `KiFS <../../../../tools/kifs/>`__ directory-level permission
+        from a user or role.
+
+        Parameters:
+
+            name (str)
+                Name of the user or role from which the permission will be
+                revoked. Must be an existing user or role.
+
+            permission (str)
+                Permission to revoke from the user or role.
+                Allowed values are:
+
+                * **directory_read** --
+                  For files in the directory, access to list files, download
+                  files, or use files in server side functions
+
+                * **directory_write** --
+                  Access to upload files to, or delete files from, the
+                  directory. A user or role with write access automatically has
+                  read acceess
+
+            directory_name (str)
+                Name of the KiFS directory to which the permission revokes
+                access
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+
+            permission (str)
+                Value of input parameter *permission*.
+
+            directory_name (str)
+                Value of input parameter *directory_name*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( name, (basestring)), "revoke_permission_directory(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( permission, (basestring)), "revoke_permission_directory(): Argument 'permission' must be (one) of type(s) '(basestring)'; given %s" % type( permission ).__name__
+        assert isinstance( directory_name, (basestring)), "revoke_permission_directory(): Argument 'directory_name' must be (one) of type(s) '(basestring)'; given %s" % type( directory_name ).__name__
+        assert isinstance( options, (dict)), "revoke_permission_directory(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['name'] = name
+        obj['permission'] = permission
+        obj['directory_name'] = directory_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/revoke/permission/directory', obj, convert_to_attr_dict = True )
+
+        return response
+    # end revoke_permission_directory
 
 
     # begin revoke_permission_proc
@@ -28362,7 +29546,7 @@ class GPUdb(object):
                 Name of the table to which the permission grants access, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing table, view or schema.
 
             options (dict of str to str)
@@ -28470,7 +29654,7 @@ class GPUdb(object):
     # begin show_credential
     def show_credential( self, credential_name = None, options = {} ):
         """Shows information about a specified `credential
-        <../../../../concepts/credentials/>`_ or all credentials.
+        <../../../../concepts/credentials/>`__ or all credentials.
 
         Parameters:
 
@@ -28522,7 +29706,7 @@ class GPUdb(object):
     # begin show_datasource
     def show_datasource( self, name = None, options = {} ):
         """Shows information about a specified `data source
-        <../../../../concepts/data_sources/>`_ or all data sources.
+        <../../../../concepts/data_sources/>`__ or all data sources.
 
         Parameters:
 
@@ -28573,6 +29757,113 @@ class GPUdb(object):
 
         return response
     # end show_datasource
+
+
+    # begin show_directories
+    def show_directories( self, directory_name = '', options = {} ):
+        """Shows information about directories in `KiFS
+        <../../../../tools/kifs/>`__. Can be used to show a single directory,
+        or all directories.
+
+        Parameters:
+
+            directory_name (str)
+                The KiFS directory name to show. If empty, shows all
+                directories.  The default value is ''.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+
+        Returns:
+            A dict with the following entries--
+
+            directories (list of str)
+                KiFS directory names
+
+            users (list of str)
+                User that created each directory for the respective directories
+                in output parameter *directories*
+
+            creation_times (list of longs)
+                The creation time for each directory in seconds since epoch,
+                for the respective directories in output parameter
+                *directories*
+
+            permissions (list of str)
+                Highest level of permission the calling user has for the
+                respective directories in output parameter *directories*.
+                Will be empty if no permissions. If a user has been granted
+                both read and write permissions, 'directory_write' will be
+                listed.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( directory_name, (basestring)), "show_directories(): Argument 'directory_name' must be (one) of type(s) '(basestring)'; given %s" % type( directory_name ).__name__
+        assert isinstance( options, (dict)), "show_directories(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['directory_name'] = directory_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/show/directories', obj, convert_to_attr_dict = True )
+
+        return response
+    # end show_directories
+
+
+    # begin show_files
+    def show_files( self, paths = None, options = {} ):
+        """Shows information about files in `KiFS <../../../../tools/kifs/>`__.
+        Can be used for individual files, or to show all files in a given
+        directory.
+
+        Parameters:
+
+            paths (list of str)
+                File paths to show. Each path can be a KiFS directory name, or
+                a full path to a KiFS file.    The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+
+        Returns:
+            A dict with the following entries--
+
+            file_names (list of str)
+                A listing of files in the paths specified
+
+            sizes (list of longs)
+                Size of each file, in bytes
+
+            users (list of str)
+                User that created the file
+
+            creation_times (list of longs)
+                Timestamp at creation time for each file
+
+            info (dict of str to str)
+                Additional information.
+                Allowed keys are:
+
+                * **multipart_uploads** --
+                  JSON-encoded information about multipart uploads in progress
+        """
+        paths = paths if isinstance( paths, list ) else ( [] if (paths is None) else [ paths ] )
+        assert isinstance( options, (dict)), "show_files(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['paths'] = paths
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/show/files', obj, convert_to_attr_dict = True )
+
+        return response
+    # end show_files
 
 
     # begin show_functions
@@ -28646,7 +29937,7 @@ class GPUdb(object):
                 Whether or not the edges of the graph have directions
                 (bi-directional edges can still exist in directed graphs).
                 Consult `Directed Graphs
-                <../../../../graph_solver/network_graph_solver/#directed-graphs>`_
+                <../../../../graph_solver/network_graph_solver/#directed-graphs>`__
                 for more details.
 
             num_nodes (list of longs)
@@ -28655,9 +29946,16 @@ class GPUdb(object):
             num_edges (list of longs)
                 Total number of edges in the graph.
 
+            num_bytes (list of longs)
+                Memory this graph uses in bytes.
+
             is_persisted (list of bools)
                 Shows whether or not the graph is persisted (saved and loaded
                 on launch).
+
+            is_partitioned (list of bools)
+                Indicated if the graph data data is distributed across all
+                available servers.
 
             is_sync_db (list of bools)
                 Shows whether or not the graph is linked to the original tables
@@ -28669,8 +29967,8 @@ class GPUdb(object):
                 attached to it.
 
             original_request (list of str)
-                The orignal client request used to create the graph (before any
-                expression evaluation or separator processing).
+                The original client request used to create the graph (before
+                any expression evaluation or separator processing).
 
             info (dict of str to str)
                 Additional information.
@@ -28896,6 +30194,10 @@ class GPUdb(object):
                 Binary results for the returned run IDs, grouped by data
                 segment ID.
 
+            output (dict of str to dicts of str to dicts of str to lists of str)
+                Output lines for the returned run IDs, grouped by data segment
+                ID.
+
             timings (dict of str to dicts of str to dicts of str to longs)
                 Timing information for the returned run IDs, grouped by data
                 segment ID.
@@ -29009,8 +30311,9 @@ class GPUdb(object):
 
     # begin show_schema
     def show_schema( self, schema_name = None, options = {} ):
-        """Retrieves information about a `schema <../../../../concepts/schemas/>`_
-        (or all schemas), as specified in input parameter *schema_name*.
+        """Retrieves information about a `schema
+        <../../../../concepts/schemas/>`__ (or all schemas), as specified in
+        input parameter *schema_name*.
 
         Parameters:
 
@@ -29200,7 +30503,7 @@ class GPUdb(object):
                 Names of tables whose metadata will be fetched, each in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  All
+                <../../../../concepts/tables/#table-name-resolution>`__.  All
                 provided tables must exist, or an error is returned.    The
                 user can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
@@ -29415,7 +30718,7 @@ class GPUdb(object):
                 Name of the table for which to retrieve the information, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  If
+                <../../../../concepts/tables/#table-name-resolution>`__.  If
                 blank, then returns information about all tables and views.
 
             options (dict of str to str)
@@ -29603,7 +30906,7 @@ class GPUdb(object):
                 Names of tables whose metadata will be fetched, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  All
+                <../../../../concepts/tables/#table-name-resolution>`__.  All
                 provided tables must exist, or an error is returned.    The
                 user can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
@@ -29809,6 +31112,75 @@ class GPUdb(object):
     # end show_types
 
 
+    # begin show_video
+    def show_video( self, paths = None, options = {} ):
+        """Retrieves information about rendered videos.
+
+        Parameters:
+
+            paths (list of str)
+                The fully-qualified `KiFS <../../../../tools/kifs/>`__ paths
+                for the videos to show. If empty, shows all videos.    The user
+                can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+
+        Returns:
+            A dict with the following entries--
+
+            creation_times (list of str)
+                Creation time for each video as an ISO-8601 datetime.
+
+            elapsed_render_time_seconds (list of longs)
+                The elapsed time spent rendering each video in seconds.
+
+            job_ids (list of longs)
+                The job id of the rendering process, for each video that is
+                still being rendered.
+
+            paths (list of str)
+                KIFS path to each video.
+
+            rendered_bytes (list of longs)
+                The number of bytes emitted by the encoder for each video.
+
+            rendered_frames (list of longs)
+                The number of frames rendered for each video.
+
+            rendered_percents (list of longs)
+                Percent completion of each video's rendering process (0-100)
+
+            requests (list of str)
+                JSON-string reflecting each video's creation parameters.
+
+            status (list of str)
+                The status of the last rendered frame for each video.  Either
+                OK or Error with a message indicating the nature of the error.
+
+            ttls (list of longs)
+                The remaining `TTL <../../../../concepts/ttl/>`__, in minutes,
+                before the respective video expires (-1 if it will never
+                expire).
+
+            info (dict of str to str)
+                Additional information.
+        """
+        paths = paths if isinstance( paths, list ) else ( [] if (paths is None) else [ paths ] )
+        assert isinstance( options, (dict)), "show_video(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['paths'] = paths
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/show/video', obj, convert_to_attr_dict = True )
+
+        return response
+    # end show_video
+
+
     # begin solve_graph
     def solve_graph( self, graph_name = None, weights_on_edges = [], restrictions =
                      [], solver_type = 'SHORTEST_PATH', source_nodes = [],
@@ -29821,11 +31193,11 @@ class GPUdb(object):
 
         IMPORTANT: It's highly recommended that you review the
         `Network Graphs & Solvers
-        <../../../../graph_solver/network_graph_solver/>`_
+        <../../../../graph_solver/network_graph_solver/>`__
         concepts documentation, the
-        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`_,
+        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`__,
         and/or some
-        `/match/graph examples <../../../../guide-tags/graph-solve/>`_
+        `/solve/graph examples <../../../../guide-tags/graph-solve>`__
         before using this endpoint.
 
         Parameters:
@@ -29837,10 +31209,10 @@ class GPUdb(object):
                 Additional weights to apply to the edges of an existing
                 graph. Weights must be specified using
                 `identifiers
-                <../../../../graph_solver/network_graph_solver/#identifiers>`_;
+                <../../../../graph_solver/network_graph_solver/#identifiers>`__;
                 identifiers are grouped as
                 `combinations
-                <../../../../graph_solver/network_graph_solver/#id-combos>`_.
+                <../../../../graph_solver/network_graph_solver/#id-combos>`__.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS WEIGHTS_EDGE_ID', expressions, e.g.,
                 'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED', or constant values,
@@ -29861,10 +31233,10 @@ class GPUdb(object):
                 Additional restrictions to apply to the nodes/edges of an
                 existing graph. Restrictions must be specified using
                 `identifiers
-                <../../../../graph_solver/network_graph_solver/#identifiers>`_;
+                <../../../../graph_solver/network_graph_solver/#identifiers>`__;
                 identifiers are grouped as
                 `combinations
-                <../../../../graph_solver/network_graph_solver/#id-combos>`_.
+                <../../../../graph_solver/network_graph_solver/#id-combos>`__.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS RESTRICTIONS_EDGE_ID', expressions, e.g.,
                 'column/2 AS RESTRICTIONS_VALUECOMPARED', or constant values,
@@ -29932,6 +31304,15 @@ class GPUdb(object):
                   'max_solution_targets' option. Min cost shoudl be >=
                   shortest_path cost.
 
+                * **STATS_ALL** --
+                  Solves for graph statistics such as graph diameter, longest
+                  pairs, vertex valences, topology numbers, average and max
+                  cluster sizes, etc.
+
+                * **CLOSENESS** --
+                  Solves for the centrality closeness score per node as the sum
+                  of the inverse shortest path costs to all nodes in the graph.
+
                 The default value is 'SHORTEST_PATH'.
 
             source_nodes (list of str)
@@ -29952,7 +31333,7 @@ class GPUdb(object):
                 Name of the table to store the solution, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  The
+                <../../../../concepts/tables/#table-name-resolution>`__.  The
                 default value is 'graph_solutions'.
 
             options (dict of str to str)
@@ -29961,28 +31342,29 @@ class GPUdb(object):
                 Allowed keys are:
 
                 * **max_solution_radius** --
-                  For *SHORTEST_PATH* and *INVERSE_SHORTEST_PATH* solvers only.
-                  Sets the maximum solution cost radius, which ignores the
+                  For *ALLPATHS*, *SHORTEST_PATH* and *INVERSE_SHORTEST_PATH*
+                  solvers only. Sets the maximum solution cost radius, which
+                  ignores the input parameter *destination_nodes* list and
+                  instead outputs the nodes within the radius sorted by
+                  ascending cost. If set to '0.0', the setting is ignored.  The
+                  default value is '0.0'.
+
+                * **min_solution_radius** --
+                  For *ALLPATHS*, *SHORTEST_PATH* and *INVERSE_SHORTEST_PATH*
+                  solvers only. Applicable only when *max_solution_radius* is
+                  set. Sets the minimum solution cost radius, which ignores the
                   input parameter *destination_nodes* list and instead outputs
                   the nodes within the radius sorted by ascending cost. If set
                   to '0.0', the setting is ignored.  The default value is
                   '0.0'.
 
-                * **min_solution_radius** --
-                  For *SHORTEST_PATH* and *INVERSE_SHORTEST_PATH* solvers only.
-                  Applicable only when *max_solution_radius* is set. Sets the
-                  minimum solution cost radius, which ignores the input
-                  parameter *destination_nodes* list and instead outputs the
-                  nodes within the radius sorted by ascending cost. If set to
-                  '0.0', the setting is ignored.  The default value is '0.0'.
-
                 * **max_solution_targets** --
-                  For *SHORTEST_PATH* and *INVERSE_SHORTEST_PATH* solvers only.
-                  Sets the maximum number of solution targets, which ignores
-                  the input parameter *destination_nodes* list and instead
-                  outputs no more than n number of nodes sorted by ascending
-                  cost where n is equal to the setting value. If set to 0, the
-                  setting is ignored.  The default value is '0'.
+                  For *ALLPATHS*, *SHORTEST_PATH* and *INVERSE_SHORTEST_PATH*
+                  solvers only. Sets the maximum number of solution targets,
+                  which ignores the input parameter *destination_nodes* list
+                  and instead outputs no more than n number of nodes sorted by
+                  ascending cost where n is equal to the setting value. If set
+                  to 0, the setting is ignored.  The default value is '1000'.
 
                 * **export_solve_results** --
                   Returns solution results inside the output parameter
@@ -30104,6 +31486,37 @@ class GPUdb(object):
                   bandwidth. For SHORTEST_PATH solver type, the input is split
                   amongst the server containing the corresponding graph.
 
+                * **convergence_limit** --
+                  For *PAGE_RANK* solvers only; Maximum percent relative
+                  threshold on the pagerank scores of each node between
+                  consecutive iterations to satisfy convergence. Default value
+                  is 1 (one) percent.  The default value is '1.0'.
+
+                * **max_iterations** --
+                  For *PAGE_RANK* solvers only; Maximum number of pagerank
+                  iterations for satisfying convergence. Default value is 100.
+                  The default value is '100'.
+
+                * **max_runs** --
+                  For all *CENTRALITY* solvers only; Sets the maximum number of
+                  shortest path runs; maximum possible value is the number of
+                  nodes in the graph. Default value of 0 enables this value to
+                  be auto computed by the solver.  The default value is '0'.
+
+                * **output_clusters** --
+                  For *STATS_ALL* solvers only; the cluster index for each node
+                  will be inserted as an additional column in the output.
+                  Allowed values are:
+
+                  * **true** --
+                    An additional column 'CLUSTER' will be added for each node
+
+                  * **false** --
+                    No extra cluster info per node will be available in the
+                    output
+
+                  The default value is 'false'.
+
         Returns:
             A dict with the following entries--
 
@@ -30182,7 +31595,7 @@ class GPUdb(object):
 
         The *update_on_existing_pk* option specifies the record
         collision policy for tables with a `primary key
-        <../../../../concepts/tables/#primary-keys>`_, and
+        <../../../../concepts/tables/#primary-keys>`__, and
         is ignored on tables with no primary key.
 
         Parameters:
@@ -30190,7 +31603,7 @@ class GPUdb(object):
             table_name (str)
                 Name of table to be updated, in [schema_name.]table_name
                 format, using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be a currently existing table and not a view.
 
             expressions (list of str)
@@ -30269,9 +31682,9 @@ class GPUdb(object):
 
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for tables with a
-                  `primary key <../../../../concepts/tables/#primary-keys>`_
+                  `primary key <../../../../concepts/tables/#primary-keys>`__
                   when updating columns of the `primary key
-                  <../../../../concepts/tables/#primary-keys>`_ or inserting
+                  <../../../../concepts/tables/#primary-keys>`__ or inserting
                   new records.  If *true*, existing records with primary key
                   values that match those of a record being updated or inserted
                   will be replaced by the updated and new records.  If *false*,
@@ -30418,20 +31831,20 @@ class GPUdb(object):
                 Name of the view on which the update operation will be
                 performed, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing view.
 
             world_table_name (str)
                 Name of the table containing the complete series (track)
                 information, in [schema_name.]table_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             view_name (str)
                 Name of the view containing the series (tracks) which have to
                 be updated, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  The
+                <../../../../concepts/tables/#table-name-resolution>`__.  The
                 default value is ''.
 
             reserved (list of str)
@@ -30469,6 +31882,167 @@ class GPUdb(object):
 
         return response
     # end update_records_by_series
+
+
+    # begin upload_files
+    def upload_files( self, file_names = None, file_data = None, options = {} ):
+        """Uploads one or more files to `KiFS <../../../../tools/kifs/>`__. There
+        are
+        two methods for uploading files: load files in their entirety, or load
+        files in
+        parts. The latter is recommeded for files of approximately 60 MB or
+        larger.
+
+        To upload files in their entirety, populate input parameter
+        *file_names* with the file
+        names to upload into on KiFS, and their respective byte content in
+        input parameter *file_data*.
+
+        Multiple steps are involved when uploading in multiple parts. Only one
+        file at a
+        time can be uploaded in this manner. A user-provided UUID is utilized
+        to tie all
+        the upload steps together for a given file.  To upload a file in
+        multiple parts:
+
+        1. Provide the file name in input parameter *file_names*, the UUID in
+           the *multipart_upload_uuid* key in input parameter *options*, and
+           a *multipart_operation* value of
+           *init*.
+        2. Upload one or more parts by providing the file name, the part data
+           in input parameter *file_data*, the UUID, a *multipart_operation*
+           value of *upload_part*, and
+           the part number in the *multipart_upload_part_number*.
+           The part numbers must start at 1 and increase incrementally.
+           Parts may not be uploaded out of order.
+        3. Complete the upload by providing the file name, the UUID, and a
+           *multipart_operation* value of
+           *complete*.
+
+        Multipart uploads in progress may be canceled by providing the file
+        name, the
+        UUID, and a *multipart_operation* value of
+        *cancel*.  If an new upload is
+        initialized with a different UUID for an existing upload in progress,
+        the
+        pre-existing upload is automatically canceled in favor of the new
+        upload.
+
+        The multipart upload must be completed for the file to be usable in
+        KiFS.
+        Information about multipart uploads in progress is available in
+        :meth:`.show_files`.
+
+        File data may be pre-encoded using base64 encoding. This should be
+        indicated
+        using the *file_encoding* option, and is recommended when
+        using JSON serialization.
+
+        Each file path must reside in a top-level KiFS directory, i.e. one of
+        the
+        directories listed in :meth:`.show_directories`. The user must have
+        write
+        permission on the directory. Nested directories are permitted in file
+        name
+        paths. Directories are deliniated with the directory separator of '/'.
+        For
+        example, given the file path '/a/b/c/d.txt', 'a' must be a KiFS
+        directory.
+
+        These characters are allowed in file name paths: letters, numbers,
+        spaces, the
+        path delimiter of '/', and the characters: '.' '-' ':' '[' ']' '(' ')'
+        '#' '='.
+
+        Parameters:
+
+            file_names (list of str)
+                An array of full file name paths to be used for the files
+                uploaded to KiFS. File names may have any number of nested
+                directories in their
+                paths, but the top-level directory must be an existing KiFS
+                directory. Each file
+                must reside in or under a top-level directory. A full file name
+                path cannot be
+                larger than 1024 characters.    The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
+
+            file_data (list of str)
+                File data for the files being uploaded, for the respective
+                files in input parameter *file_names*.    The user can provide
+                a single element (which will be automatically promoted to a
+                list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **file_encoding** --
+                  Encoding that has been applied to the uploaded
+                  file data. When using JSON serialization it is recommended to
+                  utilize
+                  *base64*. The caller is responsible
+                  for encoding the data provided in this payload.
+                  Allowed values are:
+
+                  * **base64** --
+                    Specifies that the file data being uploaded has been base64
+                    encoded.
+
+                  * **none** --
+                    The uploaded file data has not been encoded.
+
+                  The default value is 'none'.
+
+                * **multipart_operation** --
+                  Multipart upload operation to perform.
+                  Allowed values are:
+
+                  * **init** --
+                    Initialize a multipart file upload
+
+                  * **upload_part** --
+                    Upload one or more parts of the specified multipart file
+                    upload
+
+                  * **complete** --
+                    Complete the specified multipart file upload
+
+                  * **cancel** --
+                    Cancel the specified multipart file upload
+
+                  The default value is 'none'.
+
+                * **multipart_upload_uuid** --
+                  UUID to uniquely identify a multipart upload
+
+                * **multipart_upload_part_number** --
+                  Incremental part number for each part in a
+                  multipart upload. Part numbers start at 1, increment by 1,
+                  and must be uploaded
+                  sequentially
+
+        Returns:
+            A dict with the following entries--
+
+            info (dict of str to str)
+                Additional information.
+        """
+        file_names = file_names if isinstance( file_names, list ) else ( [] if (file_names is None) else [ file_names ] )
+        file_data = file_data if isinstance( file_data, list ) else ( [] if (file_data is None) else [ file_data ] )
+        assert isinstance( options, (dict)), "upload_files(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['file_names'] = file_names
+        obj['file_data'] = file_data
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/upload/files', obj, convert_to_attr_dict = True )
+
+        return response
+    # end upload_files
 
 
     # begin visualize_image
@@ -30541,7 +32115,7 @@ class GPUdb(object):
                 Name of the table containing the data to be drawn as a chart,
                 in [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             x_column_names (list of str)
                 Names of the columns containing the data mapped to the x axis
@@ -31069,7 +32643,7 @@ class GPUdb(object):
         underlying
         graph. See
         `Network Graphs & Solvers
-        <../../../../graph_solver/network_graph_solver/>`_
+        <../../../../graph_solver/network_graph_solver/>`__
         for more information on graphs.
         .
 
@@ -31090,9 +32664,9 @@ class GPUdb(object):
             weights_on_edges (list of str)
                 Additional weights to apply to the edges of an existing graph.
                 Weights must be specified using `identifiers
-                <../../../../graph_solver/network_graph_solver/#identifiers>`_;
+                <../../../../graph_solver/network_graph_solver/#identifiers>`__;
                 identifiers are grouped as `combinations
-                <../../../../graph_solver/network_graph_solver/#id-combos>`_.
+                <../../../../graph_solver/network_graph_solver/#id-combos>`__.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS WEIGHTS_EDGE_ID', or expressions, e.g.,
                 'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED'. Any provided
@@ -31107,9 +32681,9 @@ class GPUdb(object):
                 Additional restrictions to apply to the nodes/edges of an
                 existing graph. Restrictions must be specified using
                 `identifiers
-                <../../../../graph_solver/network_graph_solver/#identifiers>`_;
+                <../../../../graph_solver/network_graph_solver/#identifiers>`__;
                 identifiers are grouped as `combinations
-                <../../../../graph_solver/network_graph_solver/#id-combos>`_.
+                <../../../../graph_solver/network_graph_solver/#id-combos>`__.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS RESTRICTIONS_EDGE_ID', or expressions, e.g.,
                 'column/2 AS RESTRICTIONS_VALUECOMPARED'. If
@@ -31140,9 +32714,9 @@ class GPUdb(object):
                 Name of the table to output the isochrones to, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  The
+                <../../../../concepts/tables/#table-naming-criteria>`__.  The
                 table will contain levels and their corresponding WKT geometry.
                 If no value is provided, the table is not generated.  The
                 default value is ''.
@@ -31387,12 +32961,12 @@ class GPUdb(object):
                   Name of the table to host intermediate solve results, in
                   [schema_name.]table_name format, using standard `name
                   resolution rules
-                  <../../../../concepts/tables/#table-name-resolution>`_ and
+                  <../../../../concepts/tables/#table-name-resolution>`__ and
                   meeting `table naming criteria
-                  <../../../../concepts/tables/#table-naming-criteria>`_.  This
-                  table will contain the position and cost for each vertex in
-                  the graph. If the default value is used, a temporary table is
-                  created and deleted once the solution is calculated.  The
+                  <../../../../concepts/tables/#table-naming-criteria>`__.
+                  This table will contain the position and cost for each vertex
+                  in the graph. If the default value is used, a temporary table
+                  is created and deleted once the solution is calculated.  The
                   default value is ''.
 
                 * **is_replicated** --
@@ -31508,111 +33082,6 @@ class GPUdb(object):
 
         return response
     # end visualize_isochrone
-
-
-    # begin visualize_video
-    def visualize_video( self, table_names = None, world_table_names = None,
-                         track_ids = None, x_column_name = None, y_column_name =
-                         None, geometry_column_name = None, min_x = None, max_x
-                         = None, min_y = None, max_y = None, width = None,
-                         height = None, projection = 'PLATE_CARREE', bg_color =
-                         None, time_intervals = None, video_style = None,
-                         session_key = None, style_options = None, options = {}
-                         ):
-
-        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
-        world_table_names = world_table_names if isinstance( world_table_names, list ) else ( [] if (world_table_names is None) else [ world_table_names ] )
-        track_ids = track_ids if isinstance( track_ids, list ) else ( [] if (track_ids is None) else [ track_ids ] )
-        assert isinstance( x_column_name, (basestring)), "visualize_video(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
-        assert isinstance( y_column_name, (basestring)), "visualize_video(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
-        assert isinstance( geometry_column_name, (basestring)), "visualize_video(): Argument 'geometry_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( geometry_column_name ).__name__
-        assert isinstance( min_x, (int, long, float)), "visualize_video(): Argument 'min_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_x ).__name__
-        assert isinstance( max_x, (int, long, float)), "visualize_video(): Argument 'max_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_x ).__name__
-        assert isinstance( min_y, (int, long, float)), "visualize_video(): Argument 'min_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_y ).__name__
-        assert isinstance( max_y, (int, long, float)), "visualize_video(): Argument 'max_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_y ).__name__
-        assert isinstance( width, (int, long, float)), "visualize_video(): Argument 'width' must be (one) of type(s) '(int, long, float)'; given %s" % type( width ).__name__
-        assert isinstance( height, (int, long, float)), "visualize_video(): Argument 'height' must be (one) of type(s) '(int, long, float)'; given %s" % type( height ).__name__
-        assert isinstance( projection, (basestring)), "visualize_video(): Argument 'projection' must be (one) of type(s) '(basestring)'; given %s" % type( projection ).__name__
-        assert isinstance( bg_color, (int, long, float)), "visualize_video(): Argument 'bg_color' must be (one) of type(s) '(int, long, float)'; given %s" % type( bg_color ).__name__
-        time_intervals = time_intervals if isinstance( time_intervals, list ) else ( [] if (time_intervals is None) else [ time_intervals ] )
-        assert isinstance( video_style, (basestring)), "visualize_video(): Argument 'video_style' must be (one) of type(s) '(basestring)'; given %s" % type( video_style ).__name__
-        assert isinstance( session_key, (basestring)), "visualize_video(): Argument 'session_key' must be (one) of type(s) '(basestring)'; given %s" % type( session_key ).__name__
-        assert isinstance( style_options, (dict)), "visualize_video(): Argument 'style_options' must be (one) of type(s) '(dict)'; given %s" % type( style_options ).__name__
-        assert isinstance( options, (dict)), "visualize_video(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        obj = {}
-        obj['table_names'] = table_names
-        obj['world_table_names'] = world_table_names
-        obj['track_ids'] = track_ids
-        obj['x_column_name'] = x_column_name
-        obj['y_column_name'] = y_column_name
-        obj['geometry_column_name'] = geometry_column_name
-        obj['min_x'] = min_x
-        obj['max_x'] = max_x
-        obj['min_y'] = min_y
-        obj['max_y'] = max_y
-        obj['width'] = width
-        obj['height'] = height
-        obj['projection'] = projection
-        obj['bg_color'] = bg_color
-        obj['time_intervals'] = time_intervals
-        obj['video_style'] = video_style
-        obj['session_key'] = session_key
-        obj['style_options'] = self.__sanitize_dicts( style_options )
-        obj['options'] = self.__sanitize_dicts( options )
-
-        response = self.__submit_request( '/visualize/video', obj, convert_to_attr_dict = True )
-
-        return response
-    # end visualize_video
-
-
-    # begin visualize_video_heatmap
-    def visualize_video_heatmap( self, table_names = None, x_column_name = None,
-                                 y_column_name = None, min_x = None, max_x =
-                                 None, min_y = None, max_y = None,
-                                 time_intervals = None, width = None, height =
-                                 None, projection = 'PLATE_CARREE', video_style
-                                 = None, session_key = None, style_options =
-                                 None, options = {} ):
-
-        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
-        assert isinstance( x_column_name, (basestring)), "visualize_video_heatmap(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
-        assert isinstance( y_column_name, (basestring)), "visualize_video_heatmap(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
-        assert isinstance( min_x, (int, long, float)), "visualize_video_heatmap(): Argument 'min_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_x ).__name__
-        assert isinstance( max_x, (int, long, float)), "visualize_video_heatmap(): Argument 'max_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_x ).__name__
-        assert isinstance( min_y, (int, long, float)), "visualize_video_heatmap(): Argument 'min_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_y ).__name__
-        assert isinstance( max_y, (int, long, float)), "visualize_video_heatmap(): Argument 'max_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_y ).__name__
-        time_intervals = time_intervals if isinstance( time_intervals, list ) else ( [] if (time_intervals is None) else [ time_intervals ] )
-        assert isinstance( width, (int, long, float)), "visualize_video_heatmap(): Argument 'width' must be (one) of type(s) '(int, long, float)'; given %s" % type( width ).__name__
-        assert isinstance( height, (int, long, float)), "visualize_video_heatmap(): Argument 'height' must be (one) of type(s) '(int, long, float)'; given %s" % type( height ).__name__
-        assert isinstance( projection, (basestring)), "visualize_video_heatmap(): Argument 'projection' must be (one) of type(s) '(basestring)'; given %s" % type( projection ).__name__
-        assert isinstance( video_style, (basestring)), "visualize_video_heatmap(): Argument 'video_style' must be (one) of type(s) '(basestring)'; given %s" % type( video_style ).__name__
-        assert isinstance( session_key, (basestring)), "visualize_video_heatmap(): Argument 'session_key' must be (one) of type(s) '(basestring)'; given %s" % type( session_key ).__name__
-        assert isinstance( style_options, (dict)), "visualize_video_heatmap(): Argument 'style_options' must be (one) of type(s) '(dict)'; given %s" % type( style_options ).__name__
-        assert isinstance( options, (dict)), "visualize_video_heatmap(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        obj = {}
-        obj['table_names'] = table_names
-        obj['x_column_name'] = x_column_name
-        obj['y_column_name'] = y_column_name
-        obj['min_x'] = min_x
-        obj['max_x'] = max_x
-        obj['min_y'] = min_y
-        obj['max_y'] = max_y
-        obj['time_intervals'] = time_intervals
-        obj['width'] = width
-        obj['height'] = height
-        obj['projection'] = projection
-        obj['video_style'] = video_style
-        obj['session_key'] = session_key
-        obj['style_options'] = self.__sanitize_dicts( style_options )
-        obj['options'] = self.__sanitize_dicts( options )
-
-        response = self.__submit_request( '/visualize/video/heatmap', obj, convert_to_attr_dict = True )
-
-        return response
-    # end visualize_video_heatmap
 
 
 
@@ -32799,7 +34268,7 @@ class GPUdbTable( object ):
                     with the given interval value. If a max value is specified
                     for a given column the data is randomly generated between
                     min and max and decimated down to the interval. If no max
-                    is provided the data is linerally generated starting at the
+                    is provided the data is linearly generated starting at the
                     minimum value (instead of generating random data). For
                     non-decimated string-type columns the interval value is
                     ignored. Instead the values are generated following the
@@ -32871,7 +34340,7 @@ class GPUdbTable( object ):
                     with the given interval value. If a max value is specified
                     for a given column the data is randomly generated between
                     min and max and decimated down to the interval. If no max
-                    is provided the data is linerally generated starting at the
+                    is provided the data is linearly generated starting at the
                     minimum value (instead of generating random data). For
                     non-decimated string-type columns the interval value is
                     ignored. Instead the values are generated following the
@@ -32915,7 +34384,7 @@ class GPUdbTable( object ):
 
 
         Returns:
-            A :class:`.GPUdbTable` object with the the insert_records() response
+            A :class:`GPUdbTable` object with the insert_records() response
             fields converted to attributes (and stored within) with the
             following entries:
 
@@ -33103,7 +34572,7 @@ class GPUdbTable( object ):
         calls (discontiguous or overlap) based on the type of the update.
 
         The response is returned as a dynamic schema. For details see: `dynamic
-        schemas documentation <../../../../concepts/dynamic_schemas/>`_.
+        schemas documentation <../../../../api/#dynamic-schemas>`_.
 
         Parameters:
 
@@ -33495,9 +34964,9 @@ class GPUdbTable( object ):
         """Creates a table that is the result of a SQL JOIN.
 
         For join details and examples see: `Joins
-        <../../../../concepts/joins/>`_.  For limitations, see `Join
+        <../../../../concepts/joins/>`__.  For limitations, see `Join
         Limitations and Cautions
-        <../../../../concepts/joins/#limitations-cautions>`_.
+        <../../../../concepts/joins/#limitations-cautions>`__.
 
         Parameters:
 
@@ -33505,15 +34974,15 @@ class GPUdbTable( object ):
                 Name of the join table to be created, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.
+                <../../../../concepts/tables/#table-naming-criteria>`__.
 
             table_names (list of str)
                 The list of table names composing the join, each in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
                 Corresponds to a SQL statement FROM clause.    The user can
                 provide a single element (which will be automatically promoted
                 to a list internally) or a list.
@@ -33535,8 +35004,8 @@ class GPUdbTable( object ):
                 An optional list of expressions to combine and filter the
                 joined tables.  Corresponds to a SQL statement WHERE clause.
                 For details see: `expressions
-                <../../../../concepts/expressions/>`_.  The default value is an
-                empty list ( [] ).  The user can provide a single element
+                <../../../../concepts/expressions/>`__.  The default value is
+                an empty list ( [] ).  The user can provide a single element
                 (which will be automatically promoted to a list internally) or
                 a list.
 
@@ -33565,8 +35034,8 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the join table
-                  specified in input parameter *join_table_name*.
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the join
+                  table specified in input parameter *join_table_name*.
 
                 * **view_id** --
                   view this projection is part of.  The default value is ''.
@@ -33623,41 +35092,41 @@ class GPUdbTable( object ):
         The following merges are supported:
 
         UNION (DISTINCT/ALL) - For data set union details and examples, see
-        `Union <../../../../concepts/unions/>`_.  For limitations, see `Union
+        `Union <../../../../concepts/unions/>`__.  For limitations, see `Union
         Limitations and Cautions
-        <../../../../concepts/unions/#limitations-and-cautions>`_.
+        <../../../../concepts/unions/#limitations-and-cautions>`__.
 
         INTERSECT (DISTINCT/ALL) - For data set intersection details and
-        examples, see `Intersect <../../../../concepts/intersect/>`_.  For
+        examples, see `Intersect <../../../../concepts/intersect/>`__.  For
         limitations, see `Intersect Limitations
-        <../../../../concepts/intersect/#limitations>`_.
+        <../../../../concepts/intersect/#limitations>`__.
 
         EXCEPT (DISTINCT/ALL) - For data set subtraction details and examples,
-        see `Except <../../../../concepts/except/>`_.  For limitations, see
-        `Except Limitations <../../../../concepts/except/#limitations>`_.
+        see `Except <../../../../concepts/except/>`__.  For limitations, see
+        `Except Limitations <../../../../concepts/except/#limitations>`__.
 
         MERGE VIEWS - For a given set of `filtered views
-        <../../../../concepts/filtered_views/>`_ on a single table, creates a
+        <../../../../concepts/filtered_views/>`__ on a single table, creates a
         single filtered view containing all of the unique records across all of
         the given filtered data sets.
 
         Non-charN 'string' and 'bytes' column types cannot be merged, nor can
         columns marked as `store-only
-        <../../../../concepts/types/#data-handling>`_.
+        <../../../../concepts/types/#data-handling>`__.
 
         Parameters:
 
             table_name (str)
                 Name of the table to be created, in [schema_name.]table_name
                 format, using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.
+                <../../../../concepts/tables/#table-naming-criteria>`__.
 
             table_names (list of str)
                 The list of table names to merge, in [schema_name.]table_name
                 format, using standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 contain the names of one or more existing tables.    The user
                 can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
@@ -33684,21 +35153,6 @@ class GPUdbTable( object ):
                   Name of the schema for the output table. If the schema
                   provided is non-existent, it will be automatically created.
                   The default value is ''.
-
-                * **materialize_on_gpu** --
-                  No longer used.  See `Resource Management Concepts
-                  <../../../../rm/concepts/>`_ for information about how
-                  resources are managed, `Tier Strategy Concepts
-                  <../../../../rm/concepts/>`_ for how resources are targeted
-                  for VRAM, and `Tier Strategy Usage
-                  <../../../../rm/usage/#tier-strategies>`_ for how to specify
-                  a table's priority in VRAM.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
 
                 * **mode** --
                   If *merge_views*, then this operation will merge the provided
@@ -33756,7 +35210,7 @@ class GPUdbTable( object ):
                   input parameter *output_column_names*.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the output
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the output
                   table specified in input parameter *table_name*.
 
                 * **persist** --
@@ -33831,10 +35285,10 @@ class GPUdbTable( object ):
         information (specified by input parameter *field_maps*).
 
         For merge records details and examples, see
-        `Merge Records <../../../../concepts/merge_records/>`_.  For
+        `Merge Records <../../../../concepts/merge_records/>`__.  For
         limitations, see
         `Merge Records Limitations and Cautions
-        <../../../../concepts/merge_records/#limitations-and-cautions>`_.
+        <../../../../concepts/merge_records/#limitations-and-cautions>`__.
 
         The field map (specified by input parameter *field_maps*) holds the
         user-specified maps
@@ -33851,16 +35305,16 @@ class GPUdbTable( object ):
                 The name of the new result table for the records to be merged
                 into, in [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 NOT be an existing table.
 
             source_table_names (list of str)
                 The list of names of source tables to get the records from,
                 each in [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be existing table names.    The user can provide a single
                 element (which will be automatically promoted to a list
                 internally) or a list.
@@ -33872,7 +35326,7 @@ class GPUdbTable( object ):
                 specified by input parameter *table_name*.  Each mapping
                 contains the target column names (as keys) that the data in the
                 mapped source columns or column `expressions
-                <../../../../concepts/expressions/>`_ (as values) will be
+                <../../../../concepts/expressions/>`__ (as values) will be
                 merged into.  All of the source columns being merged into a
                 given target column must match in type, as that type will
                 determine the type of the new target column.    The user can
@@ -33893,12 +35347,12 @@ class GPUdbTable( object ):
 
                 * **is_replicated** --
                   Indicates the `distribution scheme
-                  <../../../../concepts/tables/#distribution>`_ for the data of
-                  the merged table specified in input parameter *table_name*.
-                  If true, the table will be `replicated
-                  <../../../../concepts/tables/#replication>`_.  If false, the
+                  <../../../../concepts/tables/#distribution>`__ for the data
+                  of the merged table specified in input parameter
+                  *table_name*.  If true, the table will be `replicated
+                  <../../../../concepts/tables/#replication>`__.  If false, the
                   table will be `randomly sharded
-                  <../../../../concepts/tables/#random-sharding>`_.
+                  <../../../../concepts/tables/#random-sharding>`__.
                   Allowed values are:
 
                   * true
@@ -33907,7 +35361,7 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the merged
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the merged
                   table specified in input parameter *table_name*.
 
                 * **persist** --
@@ -34028,14 +35482,14 @@ class GPUdbTable( object ):
         BY.
 
         For aggregation details and examples, see `Aggregation
-        <../../../../concepts/aggregation/>`_.  For limitations, see
+        <../../../../concepts/aggregation/>`__.  For limitations, see
         `Aggregation Limitations
-        <../../../../concepts/aggregation/#limitations>`_.
+        <../../../../concepts/aggregation/#limitations>`__.
 
         Any column(s) can be grouped on, and all column types except
         unrestricted-length strings may be used for computing applicable
         aggregates; columns marked as `store-only
-        <../../../../concepts/types/#data-handling>`_ are unable to be used in
+        <../../../../concepts/types/#data-handling>`__ are unable to be used in
         grouping or aggregation.
 
         The results can be paged via the input parameter *offset* and input
@@ -34053,31 +35507,32 @@ class GPUdbTable( object ):
         column_names=['x','y','count(*)','sum(z)'].
 
         Available `aggregation functions
-        <../../../../concepts/expressions/#aggregate-expressions>`_ are:
+        <../../../../concepts/expressions/#aggregate-expressions>`__ are:
         count(*), sum, min, max, avg, mean, stddev, stddev_pop, stddev_samp,
         var, var_pop, var_samp, arg_min, arg_max and count_distinct.
 
         Available grouping functions are `Rollup
-        <../../../../concepts/rollup/>`_, `Cube <../../../../concepts/cube/>`_,
-        and `Grouping Sets <../../../../concepts/grouping_sets/>`_
+        <../../../../concepts/rollup/>`__, `Cube
+        <../../../../concepts/cube/>`__, and `Grouping Sets
+        <../../../../concepts/grouping_sets/>`__
 
         This service also provides support for `Pivot
-        <../../../../concepts/pivot/>`_ operations.
+        <../../../../concepts/pivot/>`__ operations.
 
         Filtering on aggregates is supported via expressions using `aggregation
-        functions <../../../../concepts/expressions/#aggregate-expressions>`_
+        functions <../../../../concepts/expressions/#aggregate-expressions>`__
         supplied to *having*.
 
         The response is returned as a dynamic schema. For details see: `dynamic
-        schemas documentation <../../../../api/#dynamic-schemas>`_.
+        schemas documentation <../../../../api/#dynamic-schemas>`__.
 
         If a *result_table* name is specified in the input parameter *options*,
         the results are stored in a new table with that name--no results are
         returned in the response.  Both the table name and resulting column
         names must adhere to `standard naming conventions
-        <../../../../concepts/tables/#table>`_; column/aggregation expressions
+        <../../../../concepts/tables/#table>`__; column/aggregation expressions
         will need to be aliased.  If the source table's `shard key
-        <../../../../concepts/tables/#shard-keys>`_ is used as the grouping
+        <../../../../concepts/tables/#shard-keys>`__ is used as the grouping
         column(s) and all result records are selected (input parameter *offset*
         is 0 and input parameter *limit* is -9999), the result table will be
         sharded, in all other cases it will be replicated.  Sorting will
@@ -34103,7 +35558,7 @@ class GPUdbTable( object ):
                 be returned, or END_OF_SET (-9999) to indicate that the max
                 number of results should be returned.  The number of records
                 returned will never exceed the server's own limit, defined by
-                the `max_get_records_size <../../../../config/#general>`_
+                the `max_get_records_size <../../../../config/#general>`__
                 parameter in the server configuration.  Use output parameter
                 *has_more_records* to see if more records exist in the result
                 to be fetched, and input parameter *offset* & input parameter
@@ -34180,9 +35635,9 @@ class GPUdbTable( object ):
                   The name of a table used to store the results, in
                   [schema_name.]table_name format, using standard `name
                   resolution rules
-                  <../../../../concepts/tables/#table-name-resolution>`_ and
+                  <../../../../concepts/tables/#table-name-resolution>`__ and
                   meeting `table naming criteria
-                  <../../../../concepts/tables/#table-naming-criteria>`_.
+                  <../../../../concepts/tables/#table-naming-criteria>`__.
                   Column names (group-by and aggregate fields) need to be given
                   aliases e.g. ["FChar256 as fchar256", "sum(FDouble) as sfd"].
                   If present, no results are returned in the response.  This
@@ -34224,7 +35679,7 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the table
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in *result_table*.
 
                 * **chunk_size** --
@@ -34240,21 +35695,6 @@ class GPUdbTable( object ):
                 * **view_id** --
                   ID of view of which the result table will be a member.  The
                   default value is ''.
-
-                * **materialize_on_gpu** --
-                  No longer used.  See `Resource Management Concepts
-                  <../../../../rm/concepts/>`_ for information about how
-                  resources are managed, `Tier Strategy Concepts
-                  <../../../../rm/concepts/>`_ for how resources are targeted
-                  for VRAM, and `Tier Strategy Usage
-                  <../../../../rm/usage/#tier-strategies>`_ for how to specify
-                  a table's priority in VRAM.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
 
                 * **pivot** --
                   pivot column
@@ -34941,7 +36381,7 @@ class GPUdbTable( object ):
         and input parameter *limit* parameters.
 
         Columns marked as `store-only
-        <../../../../concepts/types/#data-handling>`_
+        <../../../../concepts/types/#data-handling>`__
         are unable to be used with this function.
 
         To get the first 10 unique values sorted in descending order input
@@ -34951,7 +36391,7 @@ class GPUdbTable( object ):
         {"limit":"10","sort_order":"descending"}.
 
         The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`_.
+        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`__.
 
         If a *result_table* name is specified in the
         input parameter *options*, the results are stored in a new table with
@@ -34959,9 +36399,9 @@ class GPUdbTable( object ):
         results are returned in the response.  Both the table name and
         resulting column
         name must adhere to
-        `standard naming conventions <../../../../concepts/tables/#table>`_;
+        `standard naming conventions <../../../../concepts/tables/#table>`__;
         any column expression will need to be aliased.  If the source table's
-        `shard key <../../../../concepts/tables/#shard-keys>`_ is used as the
+        `shard key <../../../../concepts/tables/#shard-keys>`__ is used as the
         input parameter *column_name*, the result table will be sharded, in all
         other cases it
         will be replicated.  Sorting will properly function only if the result
@@ -34989,7 +36429,7 @@ class GPUdbTable( object ):
                 be returned. Or END_OF_SET (-9999) to indicate that the max
                 number of results should be returned.  The number of records
                 returned will never exceed the server's own limit, defined by
-                the `max_get_records_size <../../../../config/#general>`_
+                the `max_get_records_size <../../../../config/#general>`__
                 parameter in the server configuration.  Use output parameter
                 *has_more_records* to see if more records exist in the result
                 to be fetched, and input parameter *offset* & input parameter
@@ -35036,9 +36476,9 @@ class GPUdbTable( object ):
                   The name of the table used to store the results, in
                   [schema_name.]table_name format, using standard `name
                   resolution rules
-                  <../../../../concepts/tables/#table-name-resolution>`_ and
+                  <../../../../concepts/tables/#table-name-resolution>`__ and
                   meeting `table naming criteria
-                  <../../../../concepts/tables/#table-naming-criteria>`_.  If
+                  <../../../../concepts/tables/#table-naming-criteria>`__.  If
                   present, no results are returned in the response.  Not
                   available if input parameter *column_name* is an
                   unrestricted-length string.
@@ -35078,7 +36518,7 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the table
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in *result_table*.
 
                 * **chunk_size** --
@@ -35182,8 +36622,8 @@ class GPUdbTable( object ):
         """Rotate the column values into rows values.
 
         For unpivot details and examples, see
-        `Unpivot <../../../../concepts/unpivot/>`_.  For limitations, see
-        `Unpivot Limitations <../../../../concepts/unpivot/#limitations>`_.
+        `Unpivot <../../../../concepts/unpivot/>`__.  For limitations, see
+        `Unpivot Limitations <../../../../concepts/unpivot/#limitations>`__.
 
         Unpivot is used to normalize tables that are built for cross tabular
         reporting
@@ -35198,7 +36638,7 @@ class GPUdbTable( object ):
         and values respectively.
 
         The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`_.
+        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`__.
 
         Parameters:
 
@@ -35246,9 +36686,9 @@ class GPUdbTable( object ):
                   The name of a table used to store the results, in
                   [schema_name.]table_name format, using standard `name
                   resolution rules
-                  <../../../../concepts/tables/#table-name-resolution>`_ and
+                  <../../../../concepts/tables/#table-name-resolution>`__ and
                   meeting `table naming criteria
-                  <../../../../concepts/tables/#table-naming-criteria>`_. If
+                  <../../../../concepts/tables/#table-naming-criteria>`__. If
                   present, no results are returned in the response.
 
                 * **result_table_persist** --
@@ -35284,26 +36724,11 @@ class GPUdbTable( object ):
                   The number of records to keep.  The default value is ''.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the table
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in *result_table*.
 
                 * **view_id** --
                   view this result table is part of.  The default value is ''.
-
-                * **materialize_on_gpu** --
-                  No longer used.  See `Resource Management Concepts
-                  <../../../../rm/concepts/>`_ for information about how
-                  resources are managed, `Tier Strategy Concepts
-                  <../../../../rm/concepts/>`_ for how resources are targeted
-                  for VRAM, and `Tier Strategy Usage
-                  <../../../../rm/usage/#tier-strategies>`_ for how to specify
-                  a table's priority in VRAM.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
 
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
@@ -35418,14 +36843,15 @@ class GPUdbTable( object ):
         available modifications include the following:
 
         Manage a table's columns--a column can be added, removed, or have its
-        `type and properties <../../../../concepts/types/>`_ modified,
+        `type and properties <../../../../concepts/types/>`__ modified,
         including
-        whether it is `compressed <../../../../concepts/compression/>`_ or not.
+        whether it is `compressed <../../../../concepts/compression/>`__ or
+        not.
 
         External tables cannot be modified except for their refresh method.
 
         Create or delete an `index
-        <../../../../concepts/indexes/#column-index>`_ on a
+        <../../../../concepts/indexes/#column-index>`__ on a
         particular column. This can speed up certain operations when using
         expressions
         containing equality or relational operators on indexed columns. This
@@ -35433,25 +36859,25 @@ class GPUdbTable( object ):
         applies to tables.
 
         Create or delete a `foreign key
-        <../../../../concepts/tables/#foreign-key>`_
+        <../../../../concepts/tables/#foreign-key>`__
         on a particular column.
 
         Manage a
         `range-partitioned
-        <../../../../concepts/tables/#partitioning-by-range>`_ or a
+        <../../../../concepts/tables/#partitioning-by-range>`__ or a
         `manual list-partitioned
-        <../../../../concepts/tables/#partitioning-by-list-manual>`_
+        <../../../../concepts/tables/#partitioning-by-list-manual>`__
         table's partitions.
 
         Set (or reset) the `tier strategy
-        <../../../../rm/concepts/#tier-strategies>`_
+        <../../../../rm/concepts/#tier-strategies>`__
         of a table or view.
 
         Refresh and manage the refresh mode of a
-        `materialized view <../../../../concepts/materialized_views/>`_ or an
-        `external table <../../../../concepts/external_tables/>`_.
+        `materialized view <../../../../concepts/materialized_views/>`__ or an
+        `external table <../../../../concepts/external_tables/>`__.
 
-        Set the `time-to-live (TTL) <../../../../concepts/ttl/>`_. This can be
+        Set the `time-to-live (TTL) <../../../../concepts/ttl/>`__. This can be
         applied
         to tables or views.
 
@@ -35474,16 +36900,18 @@ class GPUdbTable( object ):
 
                 * **create_index** --
                   Creates either a `column (attribute) index
-                  <../../../../concepts/indexes/#column-index>`_ or `chunk skip
-                  index <../../../../concepts/indexes/#chunk-skip-index>`_,
+                  <../../../../concepts/indexes/#column-index>`__ or `chunk
+                  skip index
+                  <../../../../concepts/indexes/#chunk-skip-index>`__,
                   depending on the specified *index_type*, on the column name
                   specified in input parameter *value*. If this column already
                   has the specified index, an error will be returned.
 
                 * **delete_index** --
                   Deletes either a `column (attribute) index
-                  <../../../../concepts/indexes/#column-index>`_ or `chunk skip
-                  index <../../../../concepts/indexes/#chunk-skip-index>`_,
+                  <../../../../concepts/indexes/#column-index>`__ or `chunk
+                  skip index
+                  <../../../../concepts/indexes/#chunk-skip-index>`__,
                   depending on the specified *index_type*, on the column name
                   specified in input parameter *value*. If this column does not
                   have the specified index, an error will be returned.
@@ -35509,10 +36937,10 @@ class GPUdbTable( object ):
                 * **rename_table** --
                   Renames a table or view within its current schema to input
                   parameter *value*. Has the same naming restrictions as
-                  `tables <../../../../concepts/tables/>`_.
+                  `tables <../../../../concepts/tables/>`__.
 
                 * **ttl** --
-                  Sets the `time-to-live <../../../../concepts/ttl/>`_ in
+                  Sets the `time-to-live <../../../../concepts/ttl/>`__ in
                   minutes of the table or view specified in input parameter
                   *table_name*.
 
@@ -35536,7 +36964,7 @@ class GPUdbTable( object ):
 
                 * **set_column_compression** --
                   Modifies the `compression
-                  <../../../../concepts/compression/>`_ setting on the column
+                  <../../../../concepts/compression/>`__ setting on the column
                   specified in input parameter *value* to the compression type
                   specified in *compression_type*.
 
@@ -35546,14 +36974,14 @@ class GPUdbTable( object ):
 
                 * **create_foreign_key** --
                   Creates a `foreign key
-                  <../../../../concepts/tables/#foreign-key>`_ specified in
+                  <../../../../concepts/tables/#foreign-key>`__ specified in
                   input parameter *value* using the format '(source_column_name
                   [, ...]) references target_table_name(primary_key_column_name
                   [, ...]) [as foreign_key_name]'.
 
                 * **delete_foreign_key** --
                   Deletes a `foreign key
-                  <../../../../concepts/tables/#foreign-key>`_.  The input
+                  <../../../../concepts/tables/#foreign-key>`__.  The input
                   parameter *value* should be the foreign_key_name specified
                   when creating the key or the complete string used to define
                   it.
@@ -35561,26 +36989,26 @@ class GPUdbTable( object ):
                 * **add_partition** --
                   Adds the partition specified in input parameter *value*, to
                   either a `range-partitioned
-                  <../../../../concepts/tables/#partitioning-by-range>`_ or
+                  <../../../../concepts/tables/#partitioning-by-range>`__ or
                   `manual list-partitioned
-                  <../../../../concepts/tables/#partitioning-by-list-manual>`_
+                  <../../../../concepts/tables/#partitioning-by-list-manual>`__
                   table.
 
                 * **remove_partition** --
                   Removes the partition specified in input parameter *value*
                   (and relocates all of its data to the default partition) from
                   either a `range-partitioned
-                  <../../../../concepts/tables/#partitioning-by-range>`_ or
+                  <../../../../concepts/tables/#partitioning-by-range>`__ or
                   `manual list-partitioned
-                  <../../../../concepts/tables/#partitioning-by-list-manual>`_
+                  <../../../../concepts/tables/#partitioning-by-list-manual>`__
                   table.
 
                 * **delete_partition** --
                   Deletes the partition specified in input parameter *value*
                   (and all of its data) from either a `range-partitioned
-                  <../../../../concepts/tables/#partitioning-by-range>`_ or
+                  <../../../../concepts/tables/#partitioning-by-range>`__ or
                   `manual list-partitioned
-                  <../../../../concepts/tables/#partitioning-by-list-manual>`_
+                  <../../../../concepts/tables/#partitioning-by-list-manual>`__
                   table.
 
                 * **set_global_access_mode** --
@@ -35591,26 +37019,27 @@ class GPUdbTable( object ):
 
                 * **refresh** --
                   For a `materialized view
-                  <../../../../concepts/materialized_views/>`_, replays all the
-                  table creation commands required to create the view.  For an
-                  `external table <../../../../concepts/external_tables/>`_,
-                  reloads all data in the table from its associated source
-                  files or `data source <../../../../concepts/data_sources/>`_.
+                  <../../../../concepts/materialized_views/>`__, replays all
+                  the table creation commands required to create the view.  For
+                  an `external table
+                  <../../../../concepts/external_tables/>`__, reloads all data
+                  in the table from its associated source files or `data source
+                  <../../../../concepts/data_sources/>`__.
 
                 * **set_refresh_method** --
                   For a `materialized view
-                  <../../../../concepts/materialized_views/>`_, sets the method
-                  by which the view is refreshed to the method specified in
-                  input parameter *value* - one of 'manual', 'periodic', or
+                  <../../../../concepts/materialized_views/>`__, sets the
+                  method by which the view is refreshed to the method specified
+                  in input parameter *value* - one of 'manual', 'periodic', or
                   'on_change'.  For an `external table
-                  <../../../../concepts/external_tables/>`_, sets the method by
-                  which the table is refreshed to the method specified in input
-                  parameter *value* - either 'manual' or 'on_start'.
+                  <../../../../concepts/external_tables/>`__, sets the method
+                  by which the table is refreshed to the method specified in
+                  input parameter *value* - either 'manual' or 'on_start'.
 
                 * **set_refresh_start_time** --
                   Sets the time to start periodic refreshes of this
                   `materialized view
-                  <../../../../concepts/materialized_views/>`_ to the datetime
+                  <../../../../concepts/materialized_views/>`__ to the datetime
                   string specified in input parameter *value* with format
                   'YYYY-MM-DD HH:MM:SS'.  Subsequent refreshes occur at the
                   specified time + N * the refresh period.
@@ -35618,29 +37047,40 @@ class GPUdbTable( object ):
                 * **set_refresh_period** --
                   Sets the time interval in seconds at which to refresh this
                   `materialized view
-                  <../../../../concepts/materialized_views/>`_ to the value
+                  <../../../../concepts/materialized_views/>`__ to the value
                   specified in input parameter *value*.  Also, sets the refresh
                   method to periodic if not already set.
 
                 * **set_refresh_execute_as** --
                   Sets the user name to refresh this `materialized view
-                  <../../../../concepts/materialized_views/>`_ to the value
+                  <../../../../concepts/materialized_views/>`__ to the value
                   specified in input parameter *value*.
 
                 * **remove_text_search_attributes** --
                   Removes `text search
-                  <../../../../concepts/full_text_search/>`_ attribute from all
-                  columns.
+                  <../../../../concepts/full_text_search/>`__ attribute from
+                  all columns.
 
                 * **set_strategy_definition** --
                   Sets the `tier strategy
-                  <../../../../rm/concepts/#tier-strategies>`_ for the table
+                  <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns to the one specified in input parameter
                   *value*, replacing the existing tier strategy in its
-                  entirety. See `tier strategy usage
-                  <../../../../rm/concepts/#tier-strategies>`_ for format and
-                  `tier strategy examples
-                  <../../../../rm/usage/#tier-strategies>`_ for examples.
+                  entirety.
+
+                * **cancel_datasource_subscription** --
+                  Permanently unsubscribe a data source that is loading
+                  continuously as a stream. The data source can be kafka / S3 /
+                  Azure.
+
+                * **pause_datasource_subscription** --
+                  Temporarily unsubscribe a data source that is loading
+                  continuously as a stream. The data source can be kafka / S3 /
+                  Azure.
+
+                * **resume_datasource_subscription** --
+                  Resubscribe to a paused data source subscription. The data
+                  source can be kafka / S3 / Azure.
 
             value (str)
                 The value of the modification, depending on input parameter
@@ -35708,7 +37148,7 @@ class GPUdbTable( object ):
 
                 * **update_last_access_time** --
                   Indicates whether the `time-to-live
-                  <../../../../concepts/ttl/>`_ (TTL) expiration countdown
+                  <../../../../concepts/ttl/>`__ (TTL) expiration countdown
                   timer should be reset to the table's TTL.
                   Allowed values are:
 
@@ -35730,15 +37170,10 @@ class GPUdbTable( object ):
 
                 * **strategy_definition** --
                   Optional parameter for specifying the `tier strategy
-                  <../../../../rm/concepts/#tier-strategies>`_ for the table
+                  <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns when input parameter *action* is
                   *set_strategy_definition*, replacing the existing tier
-                  strategy in its entirety. See `tier strategy usage
-                  <../../../../rm/concepts/#tier-strategies>`_ for format and
-                  `tier strategy examples
-                  <../../../../rm/usage/#tier-strategies>`_ for examples.  This
-                  option will be ignored if input parameter *value* is also
-                  specified.
+                  strategy in its entirety.
 
                 * **index_type** --
                   Type of index to create, when input parameter *action* is
@@ -35748,11 +37183,11 @@ class GPUdbTable( object ):
 
                   * **column** --
                     Create or delete a `column (attribute) index
-                    <../../../../concepts/indexes/#column-index>`_.
+                    <../../../../concepts/indexes/#column-index>`__.
 
                   * **chunk_skip** --
                     Create or delete a `chunk skip index
-                    <../../../../concepts/indexes/#chunk-skip-index>`_.
+                    <../../../../concepts/indexes/#chunk-skip-index>`__.
 
                   The default value is 'column'.
 
@@ -35819,7 +37254,7 @@ class GPUdbTable( object ):
         modifications include the following:
 
         Create or delete an `index
-        <../../../../concepts/indexes/#column-index>`_ on a
+        <../../../../concepts/indexes/#column-index>`__ on a
         particular column. This can speed up certain operations when using
         expressions
         containing equality or relational operators on indexed columns. This
@@ -35827,9 +37262,9 @@ class GPUdbTable( object ):
         applies to tables.
 
         Manage a table's columns--a column can be added, removed, or have its
-        `type and properties <../../../../concepts/types/>`_ modified.
+        `type and properties <../../../../concepts/types/>`__ modified.
 
-        Set or unset `compression <../../../../concepts/compression/>`_ for a
+        Set or unset `compression <../../../../concepts/compression/>`__ for a
         column.
 
         Parameters:
@@ -35915,7 +37350,7 @@ class GPUdbTable( object ):
                 The source table name to get records from, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing table name.
 
             field_map (dict of str to str)
@@ -35926,7 +37361,7 @@ class GPUdbTable( object ):
                 *source_table_name*). Must be existing column names in source
                 table and target table, and their types must be matched. For
                 details on using expressions, see `Expressions
-                <../../../../concepts/expressions/>`_.
+                <../../../../concepts/expressions/>`__.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -35961,7 +37396,7 @@ class GPUdbTable( object ):
                   source table records (specified by input parameter
                   *source_table_name*) into the target table (specified by
                   input parameter *table_name*) table with a `primary key
-                  <../../../../concepts/tables/#primary-keys>`_.  If set to
+                  <../../../../concepts/tables/#primary-keys>`__.  If set to
                   *true*, any existing target table record with primary key
                   values that match those of a source table record being
                   inserted will be replaced by that new record.  If set to
@@ -36153,26 +37588,37 @@ class GPUdbTable( object ):
     # end collect_statistics
 
 
+    def create_monitor_table( self, monitor_table_name = None, options = {} ):
+
+        response = self.db.create_monitor_table( monitor_table_name,
+                                                 self.qualified_name, options )
+        if not response.is_ok():
+            raise GPUdbException( response.get_error_msg() )
+
+        return response
+    # end create_monitor_table
+
+
     def create_projection( self, column_names = None, options = {},
                            projection_name = None ):
-        """Creates a new `projection <../../../../concepts/projections/>`_ of
+        """Creates a new `projection <../../../../concepts/projections/>`__ of
         an existing table. A projection represents a subset of the columns
         (potentially
         including derived columns) of a table.
 
         For projection details and examples, see
-        `Projections <../../../../concepts/projections/>`_.  For limitations,
+        `Projections <../../../../concepts/projections/>`__.  For limitations,
         see
         `Projection Limitations and Cautions
-        <../../../../concepts/projections/#limitations-and-cautions>`_.
+        <../../../../concepts/projections/#limitations-and-cautions>`__.
 
-        `Window functions <../../../../concepts/window/>`_, which can perform
+        `Window functions <../../../../concepts/window/>`__, which can perform
         operations like moving averages, are available through this endpoint as
         well as
         :meth:`.get_records_by_column`.
 
         A projection can be created with a different
-        `shard key <../../../../concepts/tables/#shard-keys>`_ than the source
+        `shard key <../../../../concepts/tables/#shard-keys>`__ than the source
         table.
         By specifying *shard_key*, the projection will be sharded
         according to the specified columns, regardless of how the source table
@@ -36182,13 +37628,13 @@ class GPUdbTable( object ):
         If input parameter *table_name* is empty, selection is performed
         against a single-row
         virtual table.  This can be useful in executing temporal
-        (`NOW() <../../../../concepts/expressions/#date-time-functions>`_),
+        (`NOW() <../../../../concepts/expressions/#date-time-functions>`__),
         identity
         (`USER()
-        <../../../../concepts/expressions/#user-security-functions>`_), or
+        <../../../../concepts/expressions/#user-security-functions>`__), or
         constant-based functions
         (`GEODIST(-77.11, 38.88, -71.06, 42.36)
-        <../../../../concepts/expressions/#scalar-functions>`_).
+        <../../../../concepts/expressions/#scalar-functions>`__).
 
         Parameters:
 
@@ -36214,7 +37660,7 @@ class GPUdbTable( object ):
 
                 * **expression** --
                   An optional filter `expression
-                  <../../../../concepts/expressions/>`_ to be applied to the
+                  <../../../../concepts/expressions/>`__ to be applied to the
                   source table prior to the projection.  The default value is
                   ''.
 
@@ -36238,21 +37684,6 @@ class GPUdbTable( object ):
                   given for any column name, the alias must be used, rather
                   than the original column name.  The default value is ''.
 
-                * **materialize_on_gpu** --
-                  No longer used.  See `Resource Management Concepts
-                  <../../../../rm/concepts/>`_ for information about how
-                  resources are managed, `Tier Strategy Concepts
-                  <../../../../rm/concepts/>`_ for how resources are targeted
-                  for VRAM, and `Tier Strategy Usage
-                  <../../../../rm/usage/#tier-strategies>`_ for how to specify
-                  a table's priority in VRAM.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
                 * **chunk_size** --
                   Indicates the number of records per chunk to be used for this
                   projection.
@@ -36265,8 +37696,8 @@ class GPUdbTable( object ):
                   original column name.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the projection
-                  specified in input parameter *projection_name*.
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the
+                  projection specified in input parameter *projection_name*.
 
                 * **shard_key** --
                   Comma-separated list of the columns to be sharded on; e.g.
@@ -36316,9 +37747,9 @@ class GPUdbTable( object ):
                 Name of the projection to be created, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.
+                <../../../../concepts/tables/#table-naming-criteria>`__.
 
         Returns:
             A read-only GPUdbTable object.
@@ -36344,6 +37775,17 @@ class GPUdbTable( object ):
     # end create_projection
 
 
+    def create_state_table( self, table_name = None, options = {} ):
+
+        response = self.db.create_state_table( table_name, self.qualified_name,
+                                               self.qualified_name, options )
+        if not response.is_ok():
+            raise GPUdbException( response.get_error_msg() )
+
+        return response
+    # end create_state_table
+
+
     def create_table_monitor( self, options = {} ):
         """Creates a monitor that watches for a single table modification event
         type (insert, update, or delete) on a particular table (identified by
@@ -36365,7 +37807,7 @@ class GPUdbTable( object ):
         :meth:`.clear_table_monitor`.
 
         For more information on table monitors, see
-        `Table Monitors <../../../../concepts/table_monitors/>`_.
+        `Table Monitors <../../../../concepts/table_monitors/>`__.
 
         Parameters:
 
@@ -36439,7 +37881,7 @@ class GPUdbTable( object ):
             expressions (list of str)
                 A list of the actual predicates, one for each select; format
                 should follow the guidelines provided `here
-                <../../../../concepts/expressions/>`_. Specifying one or more
+                <../../../../concepts/expressions/>`__. Specifying one or more
                 input parameter *expressions* is mutually exclusive to
                 specifying *record_id* in the input parameter *options*.    The
                 user can provide a single element (which will be automatically
@@ -36460,7 +37902,7 @@ class GPUdbTable( object ):
                   calling :meth:`.get_records_from_collection` with the
                   *return_record_ids* option. This option cannot be used to
                   delete records from `replicated
-                  <../../../../concepts/tables/#replication>`_ tables.
+                  <../../../../concepts/tables/#replication>`__ tables.
 
                 * **delete_all_records** --
                   If set to *true*, all records in the table will be deleted.
@@ -36501,11 +37943,11 @@ class GPUdbTable( object ):
 
     def filter( self, expression = None, options = {}, view_name = '' ):
         """Filters data based on the specified expression.  The results are
-        stored in a `result set <../../../../concepts/filtered_views/>`_ with
+        stored in a `result set <../../../../concepts/filtered_views/>`__ with
         the
         given input parameter *view_name*.
 
-        For details see `Expressions <../../../../concepts/expressions/>`_.
+        For details see `Expressions <../../../../concepts/expressions/>`__.
 
         The response message contains the number of points for which the
         expression
@@ -36516,7 +37958,8 @@ class GPUdbTable( object ):
 
             expression (str)
                 The select expression to filter the specified table.  For
-                details see `Expressions <../../../../concepts/expressions/>`_.
+                details see `Expressions
+                <../../../../concepts/expressions/>`__.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -36534,16 +37977,16 @@ class GPUdbTable( object ):
                   view this filtered-view is part of.  The default value is ''.
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`_ of the view
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the view
                   specified in input parameter *view_name*.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -36620,9 +38063,9 @@ class GPUdbTable( object ):
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -36698,9 +38141,9 @@ class GPUdbTable( object ):
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -36785,9 +38228,9 @@ class GPUdbTable( object ):
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -36866,9 +38309,9 @@ class GPUdbTable( object ):
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -36960,9 +38403,9 @@ class GPUdbTable( object ):
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -37052,9 +38495,9 @@ class GPUdbTable( object ):
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -37145,9 +38588,9 @@ class GPUdbTable( object ):
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -37229,9 +38672,9 @@ class GPUdbTable( object ):
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -37305,9 +38748,9 @@ class GPUdbTable( object ):
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -37410,9 +38853,9 @@ class GPUdbTable( object ):
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -37446,7 +38889,7 @@ class GPUdbTable( object ):
         *case_sensitive* can modify case sensitivity in matching
         for all modes except *search*. For
         *search* mode details and limitations, see
-        `Full Text Search <../../../../concepts/full_text_search/>`_.
+        `Full Text Search <../../../../concepts/full_text_search/>`__.
 
         Parameters:
 
@@ -37512,9 +38955,9 @@ class GPUdbTable( object ):
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -37571,7 +39014,7 @@ class GPUdbTable( object ):
                 table called input parameter *table_name*, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
                 be an existing table.
 
             source_table_column_name (str)
@@ -37646,9 +39089,9 @@ class GPUdbTable( object ):
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -37726,9 +39169,9 @@ class GPUdbTable( object ):
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_ and
+                <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`_.  Must
+                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
                 not be an already existing table or view.  The default value is
                 ''.
 
@@ -38054,7 +39497,7 @@ class GPUdbTable( object ):
 
         The *update_on_existing_pk* option specifies the record
         collision policy for tables with a `primary key
-        <../../../../concepts/tables/#primary-keys>`_, and
+        <../../../../concepts/tables/#primary-keys>`__, and
         is ignored on tables with no primary key.
 
         Parameters:
@@ -38119,9 +39562,9 @@ class GPUdbTable( object ):
 
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for tables with a
-                  `primary key <../../../../concepts/tables/#primary-keys>`_
+                  `primary key <../../../../concepts/tables/#primary-keys>`__
                   when updating columns of the `primary key
-                  <../../../../concepts/tables/#primary-keys>`_ or inserting
+                  <../../../../concepts/tables/#primary-keys>`__ or inserting
                   new records.  If *true*, existing records with primary key
                   values that match those of a record being updated or inserted
                   will be replaced by the updated and new records.  If *false*,
@@ -38235,13 +39678,13 @@ class GPUdbTable( object ):
                 Name of the table containing the complete series (track)
                 information, in [schema_name.]table_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.
+                <../../../../concepts/tables/#table-name-resolution>`__.
 
             view_name (str)
                 Name of the view containing the series (tracks) which have to
                 be updated, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`_.  The
+                <../../../../concepts/tables/#table-name-resolution>`__.  The
                 default value is ''.
 
             reserved (list of str)
