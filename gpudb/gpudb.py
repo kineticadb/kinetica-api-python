@@ -183,7 +183,7 @@ class C:
     _SHOW_SYSTEM_STATUS_RESPONSE_TRUE       = "true"
     _SHOW_SYSTEM_STATUS_RESPONSE_CLUSTER_OPERATION_RUNNING = "cluster_operation_running"
     _SHOW_SYSTEM_STATUS_RESPONSE_CLUSTER_OPERATION_STATUS  = "cluster_operation_status"
-    _SHOW_SYSTEM_STATUS_RESPONSE_CLUSTER_IRRECOVERABLE     = "irrecoverable"
+    _SHOW_SYSTEM_STATUS_RESPONSE_CLUSTER_IRRECOVERABLE     = "Irrecoverable"
 
     _SYSTEM_PROPERTIES_RESPONSE_ENABLE_HTTPD    = "conf.enable_httpd_proxy"
     _SYSTEM_PROPERTIES_RESPONSE_HM_PORT         = "conf.hm_http_port"
@@ -4651,7 +4651,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.4.0"
+    api_version = "7.1.5.0"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -10582,6 +10582,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/alter/datasink"
+        REQ_SCHEMA_STR = """{"type":"record","name":"alter_datasink_request","fields":[{"name":"name","type":"string"},{"name":"datasink_updates_map","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_datasink_response","fields":[{"name":"updated_properties_map","type":{"type":"map","values":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("name", "string"), ("datasink_updates_map", "map", [("string")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("updated_properties_map", "map", [("string")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/alter/datasink"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/alter/datasource"
         REQ_SCHEMA_STR = """{"type":"record","name":"alter_datasource_request","fields":[{"name":"name","type":"string"},{"name":"datasource_updates_map","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"alter_datasource_response","fields":[{"name":"updated_properties_map","type":{"type":"map","values":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -10824,12 +10835,34 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/create/datasink"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_datasink_request","fields":[{"name":"name","type":"string"},{"name":"destination","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_datasink_response","fields":[{"name":"name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("name", "string"), ("destination", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/create/datasink"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/create/datasource"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_datasource_request","fields":[{"name":"name","type":"string"},{"name":"location","type":"string"},{"name":"user_name","type":"string"},{"name":"password","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"create_datasource_response","fields":[{"name":"name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("name", "string"), ("location", "string"), ("user_name", "string"), ("password", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/datasource"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/create/deltatable"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_delta_table_request","fields":[{"name":"delta_table_name","type":"string"},{"name":"table_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_delta_table_response","fields":[{"name":"delta_table_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("delta_table_name", "string"), ("table_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("delta_table_name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/create/deltatable"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -10885,17 +10918,6 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("view_id", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/materializedview"
-        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
-                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
-                                       "REQ_SCHEMA" : REQ_SCHEMA,
-                                       "RSP_SCHEMA" : RSP_SCHEMA,
-                                       "ENDPOINT" : ENDPOINT }
-        name = "/create/monitortable"
-        REQ_SCHEMA_STR = """{"type":"record","name":"create_monitor_table_request","fields":[{"name":"monitor_table_name","type":"string"},{"name":"table_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"create_monitor_table_response","fields":[{"name":"monitor_table_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("monitor_table_name", "string"), ("table_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("monitor_table_name", "string"), ("info", "map", [("string")])] )
-        ENDPOINT = "/create/monitortable"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -11209,6 +11231,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/drop/datasink"
+        REQ_SCHEMA_STR = """{"type":"record","name":"drop_datasink_request","fields":[{"name":"name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"drop_datasink_response","fields":[{"name":"name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/drop/datasink"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/drop/datasource"
         REQ_SCHEMA_STR = """{"type":"record","name":"drop_datasource_request","fields":[{"name":"name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"drop_datasource_response","fields":[{"name":"name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -11505,6 +11538,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/grant/permission"
+        REQ_SCHEMA_STR = """{"type":"record","name":"grant_permission_request","fields":[{"name":"principal","type":"string"},{"name":"object","type":"string"},{"name":"object_type","type":"string"},{"name":"permission","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"grant_permission_response","fields":[{"name":"principal","type":"string"},{"name":"object","type":"string"},{"name":"object_type","type":"string"},{"name":"permission","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("principal", "string"), ("object", "string"), ("object_type", "string"), ("permission", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("principal", "string"), ("object", "string"), ("object_type", "string"), ("permission", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/grant/permission"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/grant/permission/credential"
         REQ_SCHEMA_STR = """{"type":"record","name":"grant_permission_credential_request","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"credential_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"grant_permission_credential_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"credential_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -11583,10 +11627,10 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/has/permission"
-        REQ_SCHEMA_STR = """{"type":"record","name":"has_permission_request","fields":[{"name":"name","type":"string"},{"name":"target","type":"string"},{"name":"permission","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"has_permission_response","fields":[{"name":"name","type":"string"},{"name":"target","type":"string"},{"name":"permission","type":"string"},{"name":"has_permission","type":"boolean"},{"name":"filters","type":{"type":"map","values":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("name", "string"), ("target", "string"), ("permission", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("name", "string"), ("target", "string"), ("permission", "string"), ("has_permission", "boolean"), ("filters", "map", [("string")]), ("info", "map", [("string")])] )
+        REQ_SCHEMA_STR = """{"type":"record","name":"has_permission_request","fields":[{"name":"principal","type":"string"},{"name":"object","type":"string"},{"name":"object_type","type":"string"},{"name":"permission","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"has_permission_response","fields":[{"name":"principal","type":"string"},{"name":"object","type":"string"},{"name":"object_type","type":"string"},{"name":"permission","type":"string"},{"name":"has_permission","type":"boolean"},{"name":"filters","type":{"type":"map","values":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("principal", "string"), ("object", "string"), ("object_type", "string"), ("permission", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("principal", "string"), ("object", "string"), ("object_type", "string"), ("permission", "string"), ("has_permission", "boolean"), ("filters", "map", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/has/permission"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -11599,6 +11643,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("proc_name", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("proc_name", "string"), ("proc_exists", "boolean"), ("info", "map", [("string")])] )
         ENDPOINT = "/has/proc"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/has/role"
+        REQ_SCHEMA_STR = """{"type":"record","name":"has_role_request","fields":[{"name":"principal","type":"string"},{"name":"role","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"has_role_response","fields":[{"name":"principal","type":"string"},{"name":"role","type":"string"},{"name":"has_role","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("principal", "string"), ("role", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("principal", "string"), ("role", "string"), ("has_role", "boolean"), ("info", "map", [("string")])] )
+        ENDPOINT = "/has/role"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -11793,6 +11848,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/revoke/permission"
+        REQ_SCHEMA_STR = """{"type":"record","name":"revoke_permission_request","fields":[{"name":"principal","type":"string"},{"name":"object","type":"string"},{"name":"object_type","type":"string"},{"name":"permission","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"revoke_permission_response","fields":[{"name":"principal","type":"string"},{"name":"object","type":"string"},{"name":"object_type","type":"string"},{"name":"permission","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("principal", "string"), ("object", "string"), ("object_type", "string"), ("permission", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("principal", "string"), ("object", "string"), ("object_type", "string"), ("permission", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/revoke/permission"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/revoke/permission/credential"
         REQ_SCHEMA_STR = """{"type":"record","name":"revoke_permission_credential_request","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"credential_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"revoke_permission_credential_response","fields":[{"name":"name","type":"string"},{"name":"permission","type":"string"},{"name":"credential_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -11887,6 +11953,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("credential_name", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("credential_names", "array", [("string")]), ("credential_types", "array", [("string")]), ("credential_identities", "array", [("string")]), ("credentials", "array", [("string")]), ("additional_info", "array", [("map", [("string")])]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/credential"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/show/datasink"
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_datasink_request","fields":[{"name":"name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_datasink_response","fields":[{"name":"datasink_names","type":{"type":"array","items":"string"}},{"name":"destination_types","type":{"type":"array","items":"string"}},{"name":"additional_info","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("datasink_names", "array", [("string")]), ("destination_types", "array", [("string")]), ("additional_info", "array", [("map", [("string")])]), ("info", "map", [("string")])] )
+        ENDPOINT = "/show/datasink"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -12112,6 +12189,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/show/tablemonitors"
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_table_monitors_request","fields":[{"name":"monitor_ids","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_table_monitors_response","fields":[{"name":"monitor_ids","type":{"type":"array","items":"string"}},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"events","type":{"type":"array","items":"string"}},{"name":"increasing_columns","type":{"type":"array","items":"string"}},{"name":"filter_expressions","type":{"type":"array","items":"string"}},{"name":"refresh_method","type":{"type":"array","items":"string"}},{"name":"refresh_period","type":{"type":"array","items":"string"}},{"name":"refresh_start_time","type":{"type":"array","items":"string"}},{"name":"datasink_names","type":{"type":"array","items":"string"}},{"name":"additional_info","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("monitor_ids", "array", [("string")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("monitor_ids", "array", [("string")]), ("table_names", "array", [("string")]), ("events", "array", [("string")]), ("increasing_columns", "array", [("string")]), ("filter_expressions", "array", [("string")]), ("refresh_method", "array", [("string")]), ("refresh_period", "array", [("string")]), ("refresh_start_time", "array", [("string")]), ("datasink_names", "array", [("string")]), ("additional_info", "array", [("map", [("string")])]), ("info", "map", [("string")])] )
+        ENDPOINT = "/show/tablemonitors"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/show/tables/bytype"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_tables_by_type_request","fields":[{"name":"type_id","type":"string"},{"name":"label","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"show_tables_by_type_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -12317,6 +12405,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["aggregate_unique"] = "/aggregate/unique"
         self.gpudb_func_to_endpoint_map["aggregate_unpivot"] = "/aggregate/unpivot"
         self.gpudb_func_to_endpoint_map["alter_credential"] = "/alter/credential"
+        self.gpudb_func_to_endpoint_map["alter_datasink"] = "/alter/datasink"
         self.gpudb_func_to_endpoint_map["alter_datasource"] = "/alter/datasource"
         self.gpudb_func_to_endpoint_map["alter_graph"] = "/alter/graph"
         self.gpudb_func_to_endpoint_map["alter_model"] = "/alter/model"
@@ -12339,13 +12428,14 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["collect_statistics"] = "/collect/statistics"
         self.gpudb_func_to_endpoint_map["create_container_registry"] = "/create/container/registry"
         self.gpudb_func_to_endpoint_map["create_credential"] = "/create/credential"
+        self.gpudb_func_to_endpoint_map["create_datasink"] = "/create/datasink"
         self.gpudb_func_to_endpoint_map["create_datasource"] = "/create/datasource"
+        self.gpudb_func_to_endpoint_map["create_delta_table"] = "/create/deltatable"
         self.gpudb_func_to_endpoint_map["create_directory"] = "/create/directory"
         self.gpudb_func_to_endpoint_map["create_graph"] = "/create/graph"
         self.gpudb_func_to_endpoint_map["create_job"] = "/create/job"
         self.gpudb_func_to_endpoint_map["create_join_table"] = "/create/jointable"
         self.gpudb_func_to_endpoint_map["create_materialized_view"] = "/create/materializedview"
-        self.gpudb_func_to_endpoint_map["create_monitor_table"] = "/create/monitortable"
         self.gpudb_func_to_endpoint_map["create_proc"] = "/create/proc"
         self.gpudb_func_to_endpoint_map["create_projection"] = "/create/projection"
         self.gpudb_func_to_endpoint_map["create_resource_group"] = "/create/resourcegroup"
@@ -12374,6 +12464,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["download_files"] = "/download/files"
         self.gpudb_func_to_endpoint_map["drop_container_registry"] = "/drop/container/registry"
         self.gpudb_func_to_endpoint_map["drop_credential"] = "/drop/credential"
+        self.gpudb_func_to_endpoint_map["drop_datasink"] = "/drop/datasink"
         self.gpudb_func_to_endpoint_map["drop_datasource"] = "/drop/datasource"
         self.gpudb_func_to_endpoint_map["drop_model"] = "/drop/model"
         self.gpudb_func_to_endpoint_map["drop_schema"] = "/drop/schema"
@@ -12400,6 +12491,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["get_records_by_series"] = "/get/records/byseries"
         self.gpudb_func_to_endpoint_map["get_records_from_collection"] = "/get/records/fromcollection"
         self.gpudb_func_to_endpoint_map["get_vectortile"] = "/get/vectortile"
+        self.gpudb_func_to_endpoint_map["grant_permission"] = "/grant/permission"
         self.gpudb_func_to_endpoint_map["grant_permission_credential"] = "/grant/permission/credential"
         self.gpudb_func_to_endpoint_map["grant_permission_datasource"] = "/grant/permission/datasource"
         self.gpudb_func_to_endpoint_map["grant_permission_directory"] = "/grant/permission/directory"
@@ -12409,6 +12501,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["grant_role"] = "/grant/role"
         self.gpudb_func_to_endpoint_map["has_permission"] = "/has/permission"
         self.gpudb_func_to_endpoint_map["has_proc"] = "/has/proc"
+        self.gpudb_func_to_endpoint_map["has_role"] = "/has/role"
         self.gpudb_func_to_endpoint_map["has_schema"] = "/has/schema"
         self.gpudb_func_to_endpoint_map["has_table"] = "/has/table"
         self.gpudb_func_to_endpoint_map["has_type"] = "/has/type"
@@ -12426,6 +12519,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["modify_graph"] = "/modify/graph"
         self.gpudb_func_to_endpoint_map["query_graph"] = "/query/graph"
         self.gpudb_func_to_endpoint_map["reserve_resource"] = "/reserve/resource"
+        self.gpudb_func_to_endpoint_map["revoke_permission"] = "/revoke/permission"
         self.gpudb_func_to_endpoint_map["revoke_permission_credential"] = "/revoke/permission/credential"
         self.gpudb_func_to_endpoint_map["revoke_permission_datasource"] = "/revoke/permission/datasource"
         self.gpudb_func_to_endpoint_map["revoke_permission_directory"] = "/revoke/permission/directory"
@@ -12435,6 +12529,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["revoke_role"] = "/revoke/role"
         self.gpudb_func_to_endpoint_map["show_container_registry"] = "/show/container/registry"
         self.gpudb_func_to_endpoint_map["show_credential"] = "/show/credential"
+        self.gpudb_func_to_endpoint_map["show_datasink"] = "/show/datasink"
         self.gpudb_func_to_endpoint_map["show_datasource"] = "/show/datasource"
         self.gpudb_func_to_endpoint_map["show_directories"] = "/show/directories"
         self.gpudb_func_to_endpoint_map["show_files"] = "/show/files"
@@ -12455,6 +12550,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["show_system_timing"] = "/show/system/timing"
         self.gpudb_func_to_endpoint_map["show_table"] = "/show/table"
         self.gpudb_func_to_endpoint_map["show_table_metadata"] = "/show/table/metadata"
+        self.gpudb_func_to_endpoint_map["show_table_monitors"] = "/show/tablemonitors"
         self.gpudb_func_to_endpoint_map["show_tables_by_type"] = "/show/tables/bytype"
         self.gpudb_func_to_endpoint_map["show_triggers"] = "/show/triggers"
         self.gpudb_func_to_endpoint_map["show_types"] = "/show/types"
@@ -16203,6 +16299,88 @@ class GPUdb(object):
     # end alter_credential
 
 
+    # begin alter_datasink
+    def alter_datasink( self, name = None, datasink_updates_map = None, options =
+                        None ):
+        """Alters the properties of an existing `data sink
+        <../../../../concepts/data_sinks/>`__
+
+        Parameters:
+
+            name (str)
+                Name of the data sink to be altered. Must be an existing data
+                sink.
+
+            datasink_updates_map (dict of str to str)
+                Map containing the properties of the data sink to be updated.
+                Error if empty.
+                Allowed keys are:
+
+                * **destination** --
+                  Destination for the output data in format
+                  'destination_type://path[:port]'.
+                  Supported destination types are 'http', 'https' and 'kafka'.
+
+                * **destination_type** --
+                  Destination type for the output data
+
+                * **user_name** --
+                  Name of the remote system user; may be an empty string
+
+                * **password** --
+                  Password for the remote system user; may be an empty string
+
+                * **connection_timeout** --
+                  Timeout in seconds for connecting to this sink
+
+                * **wait_timeout** --
+                  Timeout in seconds for waiting for a response from this sink
+
+                * **credential** --
+                  Name of the `credential
+                  <../../../../concepts/credentials/>`__ object to be used in
+                  this data sink
+
+                * **kafka_topic_name** --
+                  Name of the Kafka topic to use for this data sink, if it
+                  references a Kafka broker
+
+                * **skip_validation** --
+                  Bypass validation of connection to this data sink.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+            options (dict of str to str)
+                Optional parameters.
+
+        Returns:
+            A dict with the following entries--
+
+            updated_properties_map (dict of str to str)
+                Map of values updated
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( name, (basestring)), "alter_datasink(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( datasink_updates_map, (dict)), "alter_datasink(): Argument 'datasink_updates_map' must be (one) of type(s) '(dict)'; given %s" % type( datasink_updates_map ).__name__
+        assert isinstance( options, (dict)), "alter_datasink(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['name'] = name
+        obj['datasink_updates_map'] = self.__sanitize_dicts( datasink_updates_map )
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/alter/datasink', obj, convert_to_attr_dict = True )
+
+        return response
+    # end alter_datasink
+
+
     # begin alter_datasource
     def alter_datasource( self, name = None, datasource_updates_map = None, options
                           = None ):
@@ -16300,6 +16478,25 @@ class GPUdb(object):
                 * **kafka_topic_name** --
                   Name of the Kafka topic to use as the data source
 
+                * **anonymous** --
+                  Create an anonymous connection to the storage provider.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **use_https** --
+                  Use https to connect to datasource if true, otherwise use
+                  http.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
             options (dict of str to str)
                 Optional parameters.
 
@@ -16325,6 +16522,97 @@ class GPUdb(object):
 
         return response
     # end alter_datasource
+
+
+    # begin alter_graph
+    def alter_graph( self, graph_name = None, action = None, action_arg = None,
+                     options = {} ):
+        """For internal use only: Graph server admin command.
+        For internal use only: Graph server admin command.
+
+        Parameters:
+
+            graph_name (str)
+                Graph on which the operation should be applied.
+                If empty then it will apply to all graphs.
+                This request can be sent from the graph server to the graph
+                client, or from the client to the server depending on the type
+                of operation.
+
+            action (str)
+                Operation to be applied
+                Allowed values are:
+
+                * **add_table_monitor** --
+                  Add a table monitor to a graph. The table name is specified
+                  as the action argment.
+
+                * **reset_client** --
+                  Reset all current operations on the client side. Used when
+                  the graph server is restarted to recover from a failure.
+
+                * **reset_server** --
+                  Reset all current operations on the server side. This is also
+                  sent on (re)start.
+
+                * **cancel_task** --
+                  Cancel a specific task on the graph server.
+
+                * **alter_logger** --
+                  Change the server side log level; e.g.,
+                  'GraphServer.GraphSolver=DEBUG'
+
+                * **delete_all** --
+                  Delete all graphs, and remove any persistence info.
+
+                * **status** --
+                  Current status of the graph client (db side).
+
+                * **collect_graphs** --
+                  Get the create command for all persisted graphs.
+
+                * **restore_graphs** --
+                  Re-creates all graphs from persist info on rank0.
+
+            action_arg (str)
+                Action specific argument.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **server_id** --
+                  Indicates which graph server(s) to send the request to.
+                  Default is to send to get information about all the servers.
+
+        Returns:
+            A dict with the following entries--
+
+            action (str)
+                Context specific feedback or action to be taken by the client
+
+            action_arg (str)
+                Action specific argument.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( graph_name, (basestring)), "alter_graph(): Argument 'graph_name' must be (one) of type(s) '(basestring)'; given %s" % type( graph_name ).__name__
+        assert isinstance( action, (basestring)), "alter_graph(): Argument 'action' must be (one) of type(s) '(basestring)'; given %s" % type( action ).__name__
+        assert isinstance( action_arg, (basestring)), "alter_graph(): Argument 'action_arg' must be (one) of type(s) '(basestring)'; given %s" % type( action_arg ).__name__
+        assert isinstance( options, (dict)), "alter_graph(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['graph_name'] = graph_name
+        obj['action'] = action
+        obj['action_arg'] = action_arg
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/alter/graph', obj, convert_to_attr_dict = True )
+
+        return response
+    # end alter_graph
 
 
     # begin alter_model
@@ -17711,6 +17999,30 @@ class GPUdb(object):
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
                 ).
+                Allowed keys are:
+
+                * **keep_autogenerated_sink** --
+                  If *true*, the auto-generated `datasink
+                  <../../../../concepts/data_sinks/>`__ associated with this
+                  monitor, if there is one, will be retained for further use.
+                  If *false*, then the auto-generated sink will be dropped if
+                  there are no other monitors referencing it.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **clear_all_references** --
+                  If *true*, all references that share the same {@input
+                  topic_id} will be cleared.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -17906,6 +18218,78 @@ class GPUdb(object):
     # end create_credential
 
 
+    # begin create_datasink
+    def create_datasink( self, name = None, destination = None, options = {} ):
+        """Creates a `data sink <../../../../concepts/data_sinks/>`__, which
+        contains the
+        destination information for a data sink that is external to the
+        database.
+
+        Parameters:
+
+            name (str)
+                Name of the data sink to be created.
+
+            destination (str)
+                Destination for the output data in format
+                'destination_type://path[:port]'.
+
+                Supported destination types are 'http', 'https' and 'kafka'.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **connection_timeout** --
+                  Timeout in seconds for connecting to this data sink
+
+                * **wait_timeout** --
+                  Timeout in seconds for waiting for a response from this data
+                  sink
+
+                * **credential** --
+                  Name of the `credential
+                  <../../../../concepts/credentials/>`__ object to be used in
+                  this data sink
+
+                * **kafka_topic_name** --
+                  Name of the Kafka topic to publish to if input parameter
+                  *destination* is a Kafka broker
+
+                * **skip_validation** --
+                  Bypass validation of connection to this data sink.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( name, (basestring)), "create_datasink(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( destination, (basestring)), "create_datasink(): Argument 'destination' must be (one) of type(s) '(basestring)'; given %s" % type( destination ).__name__
+        assert isinstance( options, (dict)), "create_datasink(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['name'] = name
+        obj['destination'] = destination
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/create/datasink', obj, convert_to_attr_dict = True )
+
+        return response
+    # end create_datasink
+
+
     # begin create_datasource
     def create_datasource( self, name = None, location = None, user_name = None,
                            password = None, options = {} ):
@@ -18009,6 +18393,25 @@ class GPUdb(object):
                 * **kafka_topic_name** --
                   Name of the Kafka topic to use as the data source
 
+                * **anonymous** --
+                  Use anonymous connection to storage provider.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **use_https** --
+                  Use https to connect to datasource if true, otherwise use
+                  http.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
         Returns:
             A dict with the following entries--
 
@@ -18035,6 +18438,25 @@ class GPUdb(object):
 
         return response
     # end create_datasource
+
+
+    # begin create_delta_table
+    def create_delta_table( self, delta_table_name = None, table_name = None,
+                            options = {} ):
+
+        assert isinstance( delta_table_name, (basestring)), "create_delta_table(): Argument 'delta_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( delta_table_name ).__name__
+        assert isinstance( table_name, (basestring)), "create_delta_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( options, (dict)), "create_delta_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['delta_table_name'] = delta_table_name
+        obj['table_name'] = table_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/create/deltatable', obj, convert_to_attr_dict = True )
+
+        return response
+    # end create_delta_table
 
 
     # begin create_directory
@@ -18760,25 +19182,6 @@ class GPUdb(object):
 
         return response
     # end create_materialized_view
-
-
-    # begin create_monitor_table
-    def create_monitor_table( self, monitor_table_name = None, table_name = None,
-                              options = {} ):
-
-        assert isinstance( monitor_table_name, (basestring)), "create_monitor_table(): Argument 'monitor_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( monitor_table_name ).__name__
-        assert isinstance( table_name, (basestring)), "create_monitor_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
-        assert isinstance( options, (dict)), "create_monitor_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        obj = {}
-        obj['monitor_table_name'] = monitor_table_name
-        obj['table_name'] = table_name
-        obj['options'] = self.__sanitize_dicts( options )
-
-        response = self.__submit_request( '/create/monitortable', obj, convert_to_attr_dict = True )
-
-        return response
-    # end create_monitor_table
 
 
     # begin create_proc
@@ -20244,11 +20647,59 @@ class GPUdb(object):
 
                   The default value is 'insert'.
 
+                * **monitor_id** --
+                  ID to to use for this monitor instead of a randomly generated
+                  one
+
+                * **datasink_name** --
+                  Name of an existing `data sink
+                  <../../../../concepts/data_sinks/>`__ to send change data
+                  notifications to
+
+                * **destination** --
+                  Destination for the output data in format
+                  'destination_type://path[:port]'. Supported destination types
+                  are 'http', 'https' and 'kafka'.
+
+                * **kafka_topic_name** --
+                  Name of the Kafka topic to publish to if *destination* in
+                  input parameter *options* is specified and is a Kafka broker
+
+                * **increasing_column** --
+                  Column on subscribed table that will increase for new records
+                  (e.g., TIMESTAMP).
+
+                * **expression** --
+                  Filter expression to limit records for notification
+
+                * **refresh_method** --
+                  Method controlling when the table monitor reports changes to
+                  the input parameter *table_name*.
+                  Allowed values are:
+
+                  * **on_change** --
+                    Report changes as they occur.
+
+                  * **periodic** --
+                    Report changes periodically at rate specified by
+                    *refresh_period*.
+
+                  The default value is 'on_change'.
+
+                * **refresh_period** --
+                  When *refresh_method* is *periodic*, specifies the period in
+                  seconds at which changes are reported.
+
+                * **refresh_start_time** --
+                  When *refresh_method* is *periodic*, specifies the first time
+                  at which changes are reported.  Value is a datetime string
+                  with format 'YYYY-MM-DD HH:MM:SS'.
+
         Returns:
             A dict with the following entries--
 
             topic_id (str)
-                The ZMQ topic ID to subscribe to for inserted records.
+                The ZMQ topic ID to subscribe to for table events.
 
             table_name (str)
                 Value of input parameter *table_name*.
@@ -20258,7 +20709,31 @@ class GPUdb(object):
                 records.
 
             info (dict of str to str)
-                Additional information.
+                Additional information.  The default value is an empty dict (
+                {} ).
+                Allowed keys are:
+
+                * **insert_topic_id** --
+                  The topic id for 'insert' *event* in input parameter
+                  *options*
+
+                * **update_topic_id** --
+                  The topic id for 'update' *event* in input parameter
+                  *options*
+
+                * **delete_topic_id** --
+                  The topic id for 'delete' *event* in input parameter
+                  *options*
+
+                * **insert_type_schema** --
+                  The JSON Avro schema of the table in output parameter
+                  *table_name*
+
+                * **update_type_schema** --
+                  The JSON Avro schema for 'update' events
+
+                * **delete_type_schema** --
+                  The JSON Avro schema for 'delete' events
         """
         assert isinstance( table_name, (basestring)), "create_table_monitor(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( options, (dict)), "create_table_monitor(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -21685,6 +22160,60 @@ class GPUdb(object):
 
         return response
     # end drop_credential
+
+
+    # begin drop_datasink
+    def drop_datasink( self, name = None, options = {} ):
+        """Drops an existing `data sink <../../../../concepts/data_sinks/>`__.
+
+        By default, if any `table monitors
+        <../../../../concepts/table_monitors>`__ use this
+        sink as a destination, the request will be blocked unless option
+        *clear_table_monitors* is
+        *true*.
+
+        Parameters:
+
+            name (str)
+                Name of the data sink to be dropped. Must be an existing data
+                sink.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **clear_table_monitors** --
+                  If *true*, any `table monitors
+                  <../../../../concepts/table_monitors/>`__ that use this data
+                  sink will be cleared.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( name, (basestring)), "drop_datasink(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( options, (dict)), "drop_datasink(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['name'] = name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/drop/datasink', obj, convert_to_attr_dict = True )
+
+        return response
+    # end drop_datasink
 
 
     # begin drop_datasource
@@ -25665,6 +26194,139 @@ class GPUdb(object):
     # end get_vectortile
 
 
+    # begin grant_permission
+    def grant_permission( self, principal = '', object = None, object_type = None,
+                          permission = None, options = {} ):
+        """Grant user or role the specified permission on the specified object.
+
+        Parameters:
+
+            principal (str)
+                Name of the user or role for which the permission is being
+                granted.  Must be an existing user or role.  The default value
+                is ''.
+
+            object (str)
+                Name of object permission is being granted to.  It is
+                recommended to use a fully-qualified name when possible.
+
+            object_type (str)
+                The type of object being granted to
+                Allowed values are:
+
+                * **credential** --
+                  Credential
+
+                * **datasink** --
+                  Data Sink
+
+                * **datasource** --
+                  Data Source
+
+                * **directory** --
+                  KIFS File Directory
+
+                * **graph** --
+                  A Graph object
+
+                * **proc** --
+                  UDF Procedure
+
+                * **schema** --
+                  Schema
+
+                * **sql_proc** --
+                  SQL Procedure
+
+                * **system** --
+                  System-level access
+
+                * **table** --
+                  Database Table
+
+            permission (str)
+                Permission being granted.
+                Allowed values are:
+
+                * **admin** --
+                  Full read/write and administrative access on the object.
+
+                * **connect** --
+                  Connect access on the given data source or data sink.
+
+                * **delete** --
+                  Delete rows from tables.
+
+                * **execute** --
+                  Ability to Execute the Procedure object.
+
+                * **insert** --
+                  Insert access to tables.
+
+                * **read** --
+                  Ability to read, list and use the object.
+
+                * **update** --
+                  Update access to the table.
+
+                * **user_admin** --
+                  Access to administer users and roles that do not have
+                  system_admin permission.
+
+                * **write** --
+                  Access to write, change and delete objects.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **columns** --
+                  Apply table security to these columns, comma-separated.  The
+                  default value is ''.
+
+                * **filter_expression** --
+                  Optional filter expression to apply to this grant.  Only rows
+                  that match the filter will be affected.  The default value is
+                  ''.
+
+        Returns:
+            A dict with the following entries--
+
+            principal (str)
+                Value of input parameter *principal*.
+
+            object (str)
+                Value of input parameter *object*.
+
+            object_type (str)
+                Value of input parameter *object_type*.
+
+            permission (str)
+                Value of input parameter *permission*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( principal, (basestring)), "grant_permission(): Argument 'principal' must be (one) of type(s) '(basestring)'; given %s" % type( principal ).__name__
+        assert isinstance( object, (basestring)), "grant_permission(): Argument 'object' must be (one) of type(s) '(basestring)'; given %s" % type( object ).__name__
+        assert isinstance( object_type, (basestring)), "grant_permission(): Argument 'object_type' must be (one) of type(s) '(basestring)'; given %s" % type( object_type ).__name__
+        assert isinstance( permission, (basestring)), "grant_permission(): Argument 'permission' must be (one) of type(s) '(basestring)'; given %s" % type( permission ).__name__
+        assert isinstance( options, (dict)), "grant_permission(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['principal'] = principal
+        obj['object'] = object
+        obj['object_type'] = object_type
+        obj['permission'] = permission
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/grant/permission', obj, convert_to_attr_dict = True )
+
+        return response
+    # end grant_permission
+
+
     # begin grant_permission_credential
     def grant_permission_credential( self, name = None, permission = None,
                                      credential_name = None, options = {} ):
@@ -26108,80 +26770,87 @@ class GPUdb(object):
 
 
     # begin has_permission
-    def has_permission( self, name = '', target = None, permission = None, options =
-                        {} ):
+    def has_permission( self, principal = '', object = None, object_type = None,
+                        permission = None, options = {} ):
         """Checks if the specified user has the specified permission on the
         specified object.
 
         Parameters:
 
-            name (str)
+            principal (str)
                 Name of the user for which the permission is being checked.
                 Must be an existing user. If blank, will use the current user.
                 The default value is ''.
 
-            target (str)
+            object (str)
                 Name of object to check for the requested permission.  It is
                 recommended to use a fully-qualified name when possible.
+
+            object_type (str)
+                The type of object being checked
+                Allowed values are:
+
+                * **credential** --
+                  Credential
+
+                * **datasink** --
+                  Data Sink
+
+                * **datasource** --
+                  Data Source
+
+                * **directory** --
+                  KiFS File Directory
+
+                * **graph** --
+                  A Graph object
+
+                * **proc** --
+                  UDF Procedure
+
+                * **schema** --
+                  Schema
+
+                * **sql_proc** --
+                  SQL Procedure
+
+                * **system** --
+                  System-level access
+
+                * **table** --
+                  Database Table
 
             permission (str)
                 Permission to check for.
                 Allowed values are:
 
+                * **admin** --
+                  Full read/write and administrative access on the object.
+
                 * **connect** --
-                  Connect access on the given data source
+                  Connect access on the given data source or data sink.
 
-                * **credential_admin** --
-                  Full read/write and administrative access on the credential.
+                * **delete** --
+                  Delete rows from tables.
 
-                * **credential_read** --
-                  Ability to read and use the credential.
+                * **execute** --
+                  Ability to Execute the Procedure object.
 
-                * **directory_read** --
-                  For files in the directory, access to list files, download
-                  files, or use files in server side functions
+                * **insert** --
+                  Insert access to tables.
 
-                * **directory_write** --
-                  Access to upload files to, or delete files from, the
-                  directory. A user with write access automatically has read
-                  access
+                * **read** --
+                  Ability to read, list and use the object.
 
-                * **proc_execute** --
-                  Execute access to the UDF.
+                * **update** --
+                  Update access to the table.
 
-                * **role** --
-                  User is a member of this role (including indirectly).
-
-                * **sql_proc_execute** --
-                  Execute access to the SQL proc.
-
-                * **system_admin** --
-                  Full access to all data and system functions.
-
-                * **system_read** --
-                  Read-only access to all tables.
-
-                * **system_user_admin** --
+                * **user_admin** --
                   Access to administer users and roles that do not have
                   system_admin permission.
 
-                * **system_write** --
-                  Read and write access to all tables.
-
-                * **table_admin** --
-                  Full read/write and administrative access to the table.
-
-                * **table_delete** --
-                  Delete access to the table.
-
-                * **table_insert** --
-                  Insert access to the table.
-
-                * **table_read** --
-                  Read access to the table.
-
-                * **table_update** --
-                  Update access to the table.
+                * **write** --
+                  Access to write, change and delete objects.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -26190,7 +26859,7 @@ class GPUdb(object):
 
                 * **no_error_if_not_exists** --
                   If *false* will return an error if the provided input
-                  parameter *target* does not exist or is blank. If *true* then
+                  parameter *object* does not exist or is blank. If *true* then
                   it will return *false* for output parameter *has_permission*.
                   Allowed values are:
 
@@ -26202,11 +26871,14 @@ class GPUdb(object):
         Returns:
             A dict with the following entries--
 
-            name (str)
-                Value of input parameter *name*
+            principal (str)
+                Value of input parameter *principal*
 
-            target (str)
-                Fully-qualified value of input parameter *target*
+            object (str)
+                Fully-qualified value of input parameter *object*
+
+            object_type (str)
+                Value of input parameter *object_type*
 
             permission (str)
                 Value of input parameter *permission*
@@ -26228,14 +26900,16 @@ class GPUdb(object):
             info (dict of str to str)
                 Additional information.
         """
-        assert isinstance( name, (basestring)), "has_permission(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
-        assert isinstance( target, (basestring)), "has_permission(): Argument 'target' must be (one) of type(s) '(basestring)'; given %s" % type( target ).__name__
+        assert isinstance( principal, (basestring)), "has_permission(): Argument 'principal' must be (one) of type(s) '(basestring)'; given %s" % type( principal ).__name__
+        assert isinstance( object, (basestring)), "has_permission(): Argument 'object' must be (one) of type(s) '(basestring)'; given %s" % type( object ).__name__
+        assert isinstance( object_type, (basestring)), "has_permission(): Argument 'object_type' must be (one) of type(s) '(basestring)'; given %s" % type( object_type ).__name__
         assert isinstance( permission, (basestring)), "has_permission(): Argument 'permission' must be (one) of type(s) '(basestring)'; given %s" % type( permission ).__name__
         assert isinstance( options, (dict)), "has_permission(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         obj = {}
-        obj['name'] = name
-        obj['target'] = target
+        obj['principal'] = principal
+        obj['object'] = object
+        obj['object_type'] = object_type
         obj['permission'] = permission
         obj['options'] = self.__sanitize_dicts( options )
 
@@ -26285,6 +26959,97 @@ class GPUdb(object):
 
         return response
     # end has_proc
+
+
+    # begin has_role
+    def has_role( self, principal = '', role = None, options = {} ):
+        """Checks if the specified user has the specified role.
+
+        Parameters:
+
+            principal (str)
+                Name of the user for which role membersih is being checked.
+                Must be an existing user. If blank, will use the current user.
+                The default value is ''.
+
+            role (str)
+                Name of role to check for membership.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **no_error_if_not_exists** --
+                  If *false* will return an error if the provided input
+                  parameter *role* does not exist or is blank. If *true* then
+                  it will return *false* for output parameter *has_role*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **only_direct** --
+                  If *false* will search recursively if the input parameter
+                  *principal* is a member of input parameter *role*.  If *true*
+                  then input parameter *principal* must directly be a member of
+                  input parameter *role*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            principal (str)
+                Value of input parameter *principal*
+
+            role (str)
+                input parameter *role* for which membership is being checked
+
+            has_role (bool)
+                Indicates whether the specified user has membership in the
+                specified target input parameter *role*.
+                Allowed values are:
+
+                * **true** --
+                  User has membership in the role
+
+                * **false** --
+                  User does not have membership in the role
+
+            info (dict of str to str)
+                Additional information.  The default value is an empty dict (
+                {} ).
+                Allowed keys are:
+
+                * **direct** --
+                  *true* when principal is directly a member of the role.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+        """
+        assert isinstance( principal, (basestring)), "has_role(): Argument 'principal' must be (one) of type(s) '(basestring)'; given %s" % type( principal ).__name__
+        assert isinstance( role, (basestring)), "has_role(): Argument 'role' must be (one) of type(s) '(basestring)'; given %s" % type( role ).__name__
+        assert isinstance( options, (dict)), "has_role(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['principal'] = principal
+        obj['role'] = role
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/has/role', obj, convert_to_attr_dict = True )
+
+        return response
+    # end has_role
 
 
     # begin has_schema
@@ -29205,6 +29970,134 @@ class GPUdb(object):
     # end reserve_resource
 
 
+    # begin revoke_permission
+    def revoke_permission( self, principal = '', object = None, object_type = None,
+                           permission = None, options = {} ):
+        """Revoke user or role the specified permission on the specified object.
+
+        Parameters:
+
+            principal (str)
+                Name of the user or role for which the permission is being
+                revoked.  Must be an existing user or role.  The default value
+                is ''.
+
+            object (str)
+                Name of object permission is being revoked from.  It is
+                recommended to use a fully-qualified name when possible.
+
+            object_type (str)
+                The type of object being revoked
+                Allowed values are:
+
+                * **credential** --
+                  Credential
+
+                * **datasink** --
+                  Data Sink
+
+                * **datasource** --
+                  Data Source
+
+                * **directory** --
+                  KIFS File Directory
+
+                * **graph** --
+                  A Graph object
+
+                * **proc** --
+                  UDF Procedure
+
+                * **schema** --
+                  Schema
+
+                * **sql_proc** --
+                  SQL Procedure
+
+                * **system** --
+                  System-level access
+
+                * **table** --
+                  Database Table
+
+            permission (str)
+                Permission being revoked.
+                Allowed values are:
+
+                * **admin** --
+                  Full read/write and administrative access on the object.
+
+                * **connect** --
+                  Connect access on the given data source or data sink.
+
+                * **delete** --
+                  Delete rows from tables.
+
+                * **execute** --
+                  Ability to Execute the Procedure object.
+
+                * **insert** --
+                  Insert access to tables.
+
+                * **read** --
+                  Ability to read, list and use the object.
+
+                * **update** --
+                  Update access to the table.
+
+                * **user_admin** --
+                  Access to administer users and roles that do not have
+                  system_admin permission.
+
+                * **write** --
+                  Access to write, change and delete objects.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **columns** --
+                  Revoke table security from these columns, comma-separated.
+                  The default value is ''.
+
+        Returns:
+            A dict with the following entries--
+
+            principal (str)
+                Value of input parameter *principal*.
+
+            object (str)
+                Value of input parameter *object*.
+
+            object_type (str)
+                Value of input parameter *object_type*.
+
+            permission (str)
+                Value of input parameter *permission*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( principal, (basestring)), "revoke_permission(): Argument 'principal' must be (one) of type(s) '(basestring)'; given %s" % type( principal ).__name__
+        assert isinstance( object, (basestring)), "revoke_permission(): Argument 'object' must be (one) of type(s) '(basestring)'; given %s" % type( object ).__name__
+        assert isinstance( object_type, (basestring)), "revoke_permission(): Argument 'object_type' must be (one) of type(s) '(basestring)'; given %s" % type( object_type ).__name__
+        assert isinstance( permission, (basestring)), "revoke_permission(): Argument 'permission' must be (one) of type(s) '(basestring)'; given %s" % type( permission ).__name__
+        assert isinstance( options, (dict)), "revoke_permission(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['principal'] = principal
+        obj['object'] = object
+        obj['object_type'] = object_type
+        obj['permission'] = permission
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/revoke/permission', obj, convert_to_attr_dict = True )
+
+        return response
+    # end revoke_permission
+
+
     # begin revoke_permission_credential
     def revoke_permission_credential( self, name = None, permission = None,
                                       credential_name = None, options = {} ):
@@ -29703,6 +30596,55 @@ class GPUdb(object):
     # end show_credential
 
 
+    # begin show_datasink
+    def show_datasink( self, name = None, options = {} ):
+        """Shows information about a specified `data sink
+        <../../../../concepts/data_sinks/>`__ or all data sinks.
+
+        Parameters:
+
+            name (str)
+                Name of the data sink for which to retrieve information. The
+                name must refer to a currently existing data sink. If '*' is
+                specified, information about all data sinks will be returned.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+
+        Returns:
+            A dict with the following entries--
+
+            datasink_names (list of str)
+                The data sink names.
+
+            destination_types (list of str)
+                The destination type of the data sinks named in output
+                parameter *datasink_names*.
+
+            additional_info (list of dicts of str to str)
+                Additional information about the respective data sinks in
+                output parameter *datasink_names*.
+                Allowed values are:
+
+                * @INNER_STRUCTURE
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( name, (basestring)), "show_datasink(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( options, (dict)), "show_datasink(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['name'] = name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/show/datasink', obj, convert_to_attr_dict = True )
+
+        return response
+    # end show_datasink
+
+
     # begin show_datasource
     def show_datasource( self, name = None, options = {} ):
         """Shows information about a specified `data source
@@ -29786,8 +30728,8 @@ class GPUdb(object):
                 in output parameter *directories*
 
             creation_times (list of longs)
-                The creation time for each directory in seconds since epoch,
-                for the respective directories in output parameter
+                The creation time for each directory in milliseconds since
+                epoch, for the respective directories in output parameter
                 *directories*
 
             permissions (list of str)
@@ -29844,7 +30786,7 @@ class GPUdb(object):
                 User that created the file
 
             creation_times (list of longs)
-                Timestamp at creation time for each file
+                Creation time for each file, in milliseconds since epoch
 
             info (dict of str to str)
                 Additional information.
@@ -30943,6 +31885,86 @@ class GPUdb(object):
     # end show_table_metadata
 
 
+    # begin show_table_monitors
+    def show_table_monitors( self, monitor_ids = None, options = {} ):
+        """Show table monitors and their properties. Table monitors are created
+        using :meth:`.create_table_monitor`.
+        Returns detailed information about existing table monitors.
+
+        Parameters:
+
+            monitor_ids (list of str)
+                List of monitors to be shown. An empty list or a single entry
+                with an empty string returns all table monitors.    The user
+                can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+
+        Returns:
+            A dict with the following entries--
+
+            monitor_ids (list of str)
+                List of monitor IDs.
+
+            table_names (list of str)
+                List of source tables being monitored for the respective output
+                parameter *monitor_ids*.
+
+            events (list of str)
+                List of notification events for the respective output parameter
+                *monitor_ids*.
+
+            increasing_columns (list of str)
+                List of columns used on the respective tables in output
+                parameter *table_names* that will increase for new records.
+
+            filter_expressions (list of str)
+                List of filter expressions used on the respective tables in
+                output parameter *table_names* to limit records for
+                notifications.
+
+            refresh_method (list of str)
+                List of refresh methods used on the respective tables in output
+                parameter *table_names*.
+
+            refresh_period (list of str)
+                List of refresh periods used on the respective tables in output
+                parameter *table_names*.
+
+            refresh_start_time (list of str)
+                List of refresh start times used on the respective tables in
+                output parameter *table_names*.
+
+            datasink_names (list of str)
+                List of datasink names for the respective output parameter
+                *monitor_ids* if one is defined.
+
+            additional_info (list of dicts of str to str)
+                Additional information about the respective monitors in output
+                parameter *monitor_ids*.
+                Allowed values are:
+
+                * @INNER_STRUCTURE
+
+            info (dict of str to str)
+                Additional information.
+        """
+        monitor_ids = monitor_ids if isinstance( monitor_ids, list ) else ( [] if (monitor_ids is None) else [ monitor_ids ] )
+        assert isinstance( options, (dict)), "show_table_monitors(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['monitor_ids'] = monitor_ids
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/show/tablemonitors', obj, convert_to_attr_dict = True )
+
+        return response
+    # end show_table_monitors
+
+
     # begin show_tables_by_type
     def show_tables_by_type( self, type_id = None, label = None, options = {} ):
         """Gets names of the tables whose type matches the given criteria. Each
@@ -32000,12 +33022,14 @@ class GPUdb(object):
                   Multipart upload operation to perform.
                   Allowed values are:
 
+                  * **none** --
+                    Default, indicates this is not a multipart upload
+
                   * **init** --
                     Initialize a multipart file upload
 
                   * **upload_part** --
-                    Upload one or more parts of the specified multipart file
-                    upload
+                    Uploads a part of the specified multipart file upload
 
                   * **complete** --
                     Complete the specified multipart file upload
@@ -37588,15 +38612,15 @@ class GPUdbTable( object ):
     # end collect_statistics
 
 
-    def create_monitor_table( self, monitor_table_name = None, options = {} ):
+    def create_delta_table( self, delta_table_name = None, options = {} ):
 
-        response = self.db.create_monitor_table( monitor_table_name,
-                                                 self.qualified_name, options )
+        response = self.db.create_delta_table( delta_table_name,
+                                               self.qualified_name, options )
         if not response.is_ok():
             raise GPUdbException( response.get_error_msg() )
 
         return response
-    # end create_monitor_table
+    # end create_delta_table
 
 
     def create_projection( self, column_names = None, options = {},
@@ -37835,12 +38859,60 @@ class GPUdbTable( object ):
 
                   The default value is 'insert'.
 
+                * **monitor_id** --
+                  ID to to use for this monitor instead of a randomly generated
+                  one
+
+                * **datasink_name** --
+                  Name of an existing `data sink
+                  <../../../../concepts/data_sinks/>`__ to send change data
+                  notifications to
+
+                * **destination** --
+                  Destination for the output data in format
+                  'destination_type://path[:port]'. Supported destination types
+                  are 'http', 'https' and 'kafka'.
+
+                * **kafka_topic_name** --
+                  Name of the Kafka topic to publish to if *destination* in
+                  input parameter *options* is specified and is a Kafka broker
+
+                * **increasing_column** --
+                  Column on subscribed table that will increase for new records
+                  (e.g., TIMESTAMP).
+
+                * **expression** --
+                  Filter expression to limit records for notification
+
+                * **refresh_method** --
+                  Method controlling when the table monitor reports changes to
+                  the input parameter *table_name*.
+                  Allowed values are:
+
+                  * **on_change** --
+                    Report changes as they occur.
+
+                  * **periodic** --
+                    Report changes periodically at rate specified by
+                    *refresh_period*.
+
+                  The default value is 'on_change'.
+
+                * **refresh_period** --
+                  When *refresh_method* is *periodic*, specifies the period in
+                  seconds at which changes are reported.
+
+                * **refresh_start_time** --
+                  When *refresh_method* is *periodic*, specifies the first time
+                  at which changes are reported.  Value is a datetime string
+                  with format 'YYYY-MM-DD HH:MM:SS'.
+
         Returns:
             The response from the server which is a dict containing the
             following entries--
 
             topic_id (str)
-                The ZMQ topic ID to subscribe to for inserted records.
+                The ZMQ topic ID to subscribe to for table events.
 
             table_name (str)
                 Value of input parameter *table_name*.
@@ -37850,7 +38922,31 @@ class GPUdbTable( object ):
                 records.
 
             info (dict of str to str)
-                Additional information.
+                Additional information.  The default value is an empty dict (
+                {} ).
+                Allowed keys are:
+
+                * **insert_topic_id** --
+                  The topic id for 'insert' *event* in input parameter
+                  *options*
+
+                * **update_topic_id** --
+                  The topic id for 'update' *event* in input parameter
+                  *options*
+
+                * **delete_topic_id** --
+                  The topic id for 'delete' *event* in input parameter
+                  *options*
+
+                * **insert_type_schema** --
+                  The JSON Avro schema of the table in output parameter
+                  *table_name*
+
+                * **update_type_schema** --
+                  The JSON Avro schema for 'update' events
+
+                * **delete_type_schema** --
+                  The JSON Avro schema for 'delete' events
 
         Raises:
 

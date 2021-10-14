@@ -772,7 +772,7 @@ class GPUdbTableMonitor(object):
         class Options(object):
             """
             This class embodies the options for any given callback type.  The
-            :classs:`.Callback` constructor expects an instance of this class.
+            :class:`.Callback` constructor expects an instance of this class.
             However, instead of using this class directly, the user is supposed
             to use an instance of one of its derived classes. Each derived class
             is specialized with options that pertain to a certain type of

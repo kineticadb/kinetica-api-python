@@ -3,16 +3,44 @@
 
 ## Version 7.1
 
-### Version 7.1.4.0 -- 2021-07-29
+### Version 7.1.5.0 -- TBD
 
 #### Added
+-   Added the following endpoints to support data sinks:
+    -   ``/alter/datasink``
+    -   ``/create/datasink``
+    -   ``/drop/datasink``
+    -   ``/grant/permission``
+    -   ``/has/role``
+    -   ``/revoke/permission``
+    -   ``/show/datasink``
+
+-   Added new endpoints for table monitors:
+    -   ``/show/tablemonitors``
+
+#### Changed Endpoints
+-   Added new options ``increasing_column`` and ``expression`` to ``/create/tablemonitor endpoint``.
+-   Added new options ``monitor_id``, ``datasink_name``, ``destination`` and ``kafka_topic_name`` to ``/create/tablemonitor`` endpoint.
+-   Added new permission types ``connect_datasink`` and ``connect_datasource`` to ``/has/permission`` endpoint.
+-   Added new table monitor subscription event type ``all`` to create a monitor id for all events
+
+##### Non-breaking Changes
+-   Added ``shadow_cube_replacement_policy`` option to ``/alter/system/properties`` endpoint
+
+##### Breaking Changes
+-   Fields in the ``/has/permission`` were changed to match ``/grant/permission``.
+
+
+### Version 7.1.4.0 -- 2021-07-29
+
+#### Added Endpoints
 -   Added the following endpoints to support video:
     -  ``/alter/video``
     -  ``/create/video``
     -  ``/get/video``
     -  ``/show/video``
 
--   Added the following endpoints to support the kifs global file namespace:
+-   Added the following endpoints to support the KiFS global file namespace:
     -  ``/create/directory``
     -  ``/delete/directory``
     -  ``/delete/files``
@@ -31,24 +59,12 @@
     -  ``/has/permission``
 
 #### Changed Endpoints
--   Added a new option 'inverse_solve' for the match_batch_solves solver of /match/graph.
--   Added two solvers to the solve/graph endpoint, namely, STATS_ALL, and CLOSENESS for centrality.
--   Added a new solve method 'match_loops' for /match/graph with
-    two additional options 'min_loop_level' and 'max_loop_level'.
--   Added new match graph options for 'match_loops' solve to improve performance:
-    -   `output_batch_size`
-    -   `search_limit`
--   Added new solve graph options for 'page_rank' solve to improve performance:
-    -   `convergence_limit`
-    -   `max_iterations`
--   Changed default type_inference_mode to 'speed' - for 3 external files endpoints: create_table_external, insert_records_fromfiles, insert_records_frompayload
--   New options to create_table_external, insert_records_fromfiles, insert_records_frompayload: text_search_columns, text_search_min_column_length.
 
 ##### Non-breaking Changes
 -   Added new options to ``/alter/system/properties``
-    -   ``kafka_batch_size``
-    -   ``kafka_wait_time``
-    -   ``kafka_timeout``
+    -  ``kafka_batch_size``
+    -  ``kafka_wait_time``
+    -  ``kafka_timeout``
 -   Added new actions to ``/alter/table``
     -  ``cancel_datasource_subscription``
     -  ``pause_datasource_subscription``
@@ -57,41 +73,48 @@
 -   Added ``kafka_group_id`` option to
     -  ``/create/table/external``
     -  ``/insert/records/fromfiles``
--  Added ``datasource_subscriptions`` additional info option to ``/show/table`` response
--   KGEO-937: The /match/graph endpoint has a new option added for MSDO solver option. The new opton name is 'max_truck_stops'. If specified (greater than zero), a truck can at most have this many stops (demand locations) in one round trip. Otherwise, it is unlimited. If 'enable_truck_reuse' is on, this condition will be applied separately at each round trip use of the same truck.
--   /create/table/external, /insert/records/fromfile new option: 'table_insert_mode' with valid_choices: table_per_file, single (default0)
--   /create/table/external, /insert/records/fromfile and /insert/records/frompayload' new value for option: 'file_type':'shapefile'
--   Added ``max_output_lines`` option to ``/execute/proc`` to limit captured stdout and stderr output
+-   Added ``datasource_subscriptions`` additional info option to ``/show/table`` response
+-   Added a new option ``inverse_solve`` for the ``match_batch_solves`` solver of ``/match/graph``.
+-   Added a new solve method ``match_loops`` for ``/match/graph`` with two additional options:
+    -  ``min_loop_level``
+    -  ``max_loop_level``
+-   Added new ``/match/graph`` options for ``match_loops`` solve to improve performance:
+    -  ``output_batch_size``
+    -  ``search_limit``
+-   The ``/match/graph`` endpoint has a new option added for MSDO solver option. The new opton name
+    is ``max_truck_stops``. If specified (greater than zero), a truck can at most have this many
+    stops (demand locations) in one round trip. Otherwise, it is unlimited. If
+    ``enable_truck_reuse`` is on, this condition will be applied separately at each round trip use
+    of the same truck.
+-   Added two solvers to the ``/solve/graph`` endpoint:
+    -  ``STATS_ALL``
+    -  ``CLOSENESS`` (for centrality)
+-   Added new ``/solve/graph`` options for ``page_rank`` solve to improve performance:
+    -  ``convergence_limit``
+    -  ``max_iterations``
+-   Changed default ``type_inference_mode`` to ``speed`` - for 3 external files endpoints:
+    ``/create/table/external``, ``/insert/records/fromfiles``, & ``/insert/records/frompayload``
+-   New options to ``/create/table/external``, ``/insert/records/fromfiles``, &
+    ``/insert/records/frompayload``: ``text_search_columns`` & ``text_search_min_column_length``.
+-   ``/create/table/external``, ``/insert/records/fromfile`` new option: ``table_insert_mode`` with
+    valid_choices: ``table_per_file``, ``single`` (default 0)
+-   ``/create/table/external``, ``/insert/records/fromfile`` and ``/insert/records/frompayload`` new
+    value for option: ``file_type``:``shapefile``
+-   Added ``max_output_lines`` option to ``/execute/proc`` to limit captured stdout and stderr
+    output
 
 ##### Breaking Changes
--    ``/solve/graph`` internal option for distributed solves
--    ``/show/graph`` added info about partitioned graphs as well as graph memory
--    ``/admin/show/jobs`` Added 'flags' field to response to provide additional job metadata
--    ``/show/proc/status`` added 'output' field to response to return captured stdout and stderr output
+-   ``/solve/graph`` internal option for distributed solves
+-   ``/show/graph`` added info about partitioned graphs as well as graph memory
+-   ``/admin/show/jobs`` Added ``flags`` field to response to provide additional job metadata
+-   ``/show/proc/status`` added ``output`` field to response to return captured stdout and stderr
+    output
 
 
 ### Version 7.1.3.0 -- 2021-03-05
 
-#### Changed Endpoints
-
-##### Non-breaking Changes
--   Added a new 'credential' option to the following endpoints:
-    -   ``/create/datasource``
-    -   ``/alter/datasource``
-
 #### Added Endpoints
--   Added the following endpoints to support the kifs global file namespace:
-    -  ``/create/directory``
-    -  ``/delete/directory``
-    -  ``/delete/files``
-    -  ``/download/files``
-    -  ``/grant/permission/directory``
-    -  ``/revoke/permission/directory``
-    -  ``/show/directories``
-    -  ``/show/files``
-    -  ``/upload/files``
-
--   Added the following endpoints to support the credentials:
+-   Added the following endpoints to support credentials:
     -  ``/alter/credential``
     -  ``/create/credential``
     -  ``/drop/credential``
@@ -99,29 +122,44 @@
     -  ``/grant/permission/credential``
     -  ``/revoke/permission/credential``
 
+#### Changed Endpoints
+
+##### Non-breaking Changes
+-   Added a new ``credential`` option to the following endpoints:
+    -  ``/create/datasource``
+    -  ``/alter/datasource``
+
 
 ### Version 7.1.2.0 -- 2021-01-25
 
 #### Changed Endpoints
 
 ##### Non-breaking Changes
--   The 'output_tracks' option is added for /match/graph's match_supply_demand_solver for timestamped tracks generation directly and accurately.
--   All graph endpoints except for ``/delete/graph`` and ``/modify/graph`` can now to a 'server_id' as an option.
--   /admin/reblance and /admin/remove/ranks' aggressiveness option defaults to 10
+-   The ``output_tracks`` option is added for the ``/match/graph`` solver ``match_supply_demand``
+    for timestamped tracks generation directly and accurately.
+-   All graph endpoints except for ``/delete/graph`` and ``/modify/graph`` can now to a
+    ``server_id`` as an option.
+-   ``/admin/reblance`` & ``/admin/remove/ranks`` option ``aggressiveness`` defaults to 10
 -   Added execute_as option to ``/create/materializedview`` and ``/alter/table`` endpoints.
--   /create/table/external, /insert/records/fromfile and /insert/records/frompayload' new option: 'type_inference_mode' with valid_choices: accurate, speed
--   /create/table/external, /insert/records/fromfile and /insert/records/frompayload' new option: 'max_records_to_load' (default=0: load all)
--   /create/table/external, /insert/records/fromfile and /insert/records/frompayload' new option: 'store_points_as_xy' and 'store_points_as_xyz' (both have same meaning)
+-   ``/create/table/external``, ``/insert/records/fromfile`` and ``/insert/records/frompayload`` new
+    option: ``type_inference_mode`` with valid_choices: ``accuracy``, ``speed``
+-   ``/create/table/external``, ``/insert/records/fromfile`` and ``/insert/records/frompayload`` new
+    option: ``max_records_to_load`` (default=0: load all)
+-   ``/create/table/external``, ``/insert/records/fromfile`` and ``/insert/records/frompayload`` new
+    option: ``store_points_as_xy`` and ``store_points_as_xyz`` (both have same meaning)
 
 ##### Breaking Changes
 -   Multiple graph servers support:
-    -   ``/create/graph`` and ``/modify/graph`` response now has a 'result' field indicating success on all graph servers.
-    -   ``/show/graph``
-        -   Response now provide info about which graph server each graph is on.
-        -   Will also provide some extra info about each server (CPU load and memory)
-    -   ``/show/system/properties`` graph parameters are now vectorized and prefixed with 'graph.'
-    -   ``/show/system status`` replaced graph_status by vector of graph status similar to ranks.
--   /admin/add/ranks, /admin/remove/ranks, and /admin/rebalance now require the database to be offline
+    -  ``/create/graph`` and ``/modify/graph`` response now has a ``result`` field indicating
+       success on all graph servers.
+    -  ``/show/graph``
+       -   Response now provide info about which graph server each graph is on.
+       -   Will also provide some extra info about each server (CPU load and memory)
+    -  ``/show/system/properties`` graph parameters are now vectorized and prefixed with ``graph``.
+    -  ``/show/system status`` replaced ``graph_status`` by vector of graph status similar to
+       ranks.
+-   ``/admin/add/ranks``, ``/admin/remove/ranks``, and ``/admin/rebalance`` now require the database
+    to be offline
 
 
 ### Version 7.1.1.0 -- 2020-11-05
@@ -129,94 +167,92 @@
 #### Changed Endpoints
 
 ##### Non-breaking Changes
--   /create/type
-    -   Added "uuid" as a new column property.
-    -   Added "init_with_uuid" as a new column property for uuid column.
--   /create/table endpoint: added "SERIES" to the ``valid_choices`` for the
+-   ``/create/type``
+    -  Added ``uuid`` as a new column property.
+    -  Added ``init_with_uuid`` as a new column property for ``uuid`` column.
+-   ``/create/table endpoint``: added ``SERIES`` to the ``valid_choices`` for the
     ``partition_type``
 
 
 ### Version 7.1.0.0 -- 2020-08-18
 
-#### Added
+#### Added Endpoints
 -   Added the following endpoints to support cluster resiliency:
-    -   ``/admin/add/host``
-    -   ``/admin/alter/host``
-    -   ``/admin/remove/host``
-    -   ``/admin/switchover``
+    -  ``/admin/add/host``
+    -  ``/admin/alter/host``
+    -  ``/admin/remove/host``
+    -  ``/admin/switchover``
 -   Added the following endpoints to support SQL schemas:
-    -   ``/create/schema``
-    -   ``/alter/schema``
-    -   ``/drop/schema``
-    -   ``/show/schema``
-    -   ``/has/schema``
+    -  ``/create/schema``
+    -  ``/alter/schema``
+    -  ``/drop/schema``
+    -  ``/show/schema``
+    -  ``/has/schema``
 -   Added the following endpoints to support data source:
-    -   ``/create/datasource``
-    -   ``alter/datasource``
-    -   ``/drop/datasource``
-    -   ``/show/datasource``
-    -   ``/grant/permission/datasource``
-    -   ``/revoke/permission/datasource``
+    -  ``/create/datasource``
+    -  ``/alter/datasource``
+    -  ``/drop/datasource``
+    -  ``/show/datasource``
+    -  ``/grant/permission/datasource``
+    -  ``/revoke/permission/datasource``
 
 #### Changed Endpoints
 
 ##### Non-breaking Changes
--   Deprecated collection_name parameters wherever they appear. The new method is to qualify the table name or set the default schema.
--   Added qualified_table_name to the response info map for the following endpoints:
-    -   ``/create/materializedview``
-    -   ``/create/table``
-    -   ``/create/union``
-    -   ``/merge/records``
--   Added qualified_projection_name to the response info map for the following endpoints:
-    -   ``/create/projection``
--   Added qualified_result_table_name to the response info map for the following endpoints:
-    -   ``/aggregate/groupby``
-    -   ``/aggregate/unique``
-    -   ``/aggregate/unpivot``
--   Added qualified_table_name to the response info map for the following endpoints:
-    -   ``/filter``
-    -   ``/filter/byarea``
-    -   ``/filter/byarea/geometry``
-    -   ``/filter/bybox``
-    -   ``/filter/bybox/geometry``
-    -   ``/filter/bygeometry``
-    -   ``/filter/bylist``
-    -   ``/filter/byradius``
-    -   ``/filter/byradius/geometry``
-    -   ``/filter/byrange``
-    -   ``/filter/byseries``
-    -   ``/filter/bystring``
-    -   ``/filter/bytable``
-    -   ``/filter/byvalue``
--   /admin/rebalance
-    -   Renamed option table_whitelist to include_tables
-    -   Renamed option table_blacklist to exclude_tables
--   /alter/system/properties
-      - Removed "enable_compound_equi_join" as an option
--   /alter/user
-    -   Added "set_default_schema" as an action
--   /alter/table
-    -   Added "move_to_schema" as an action
--   /show/table
-    -   Added "schema_name" to additional_info map
-    -   Added the following table_descriptions: LOGICAL_VIEW, LOGICAL_EXTERNAL_TABLE, MATERIALIZED_EXTERNAL_TABLE, SCHEMA
+-   Deprecated ``collection_name`` parameters wherever they appear. The new method is to qualify the
+    table name or set the default schema.
+-   Added ``qualified_table_name`` to the response info map for the following endpoints:
+    -  ``/create/materializedview``
+    -  ``/create/table``
+    -  ``/create/union``
+    -  ``/merge/records``
+-   Added ``qualified_projection_name`` to the response info map for the following endpoints:
+    -  ``/create/projection``
+-   Added ``qualified_result_table_name`` to the response info map for the following endpoints:
+    -  ``/aggregate/groupby``
+    -  ``/aggregate/unique``
+    -  ``/aggregate/unpivot``
+-   Added ``qualified_table_name`` to the response info map for the following endpoints:
+    -  ``/filter``
+    -  ``/filter/byarea``
+    -  ``/filter/byarea/geometry``
+    -  ``/filter/bybox``
+    -  ``/filter/bybox/geometry``
+    -  ``/filter/bygeometry``
+    -  ``/filter/bylist``
+    -  ``/filter/byradius``
+    -  ``/filter/byradius/geometry``
+    -  ``/filter/byrange``
+    -  ``/filter/byseries``
+    -  ``/filter/bystring``
+    -  ``/filter/bytable``
+    -  ``/filter/byvalue``
+-   ``/admin/rebalance``
+    -  Renamed option ``table_whitelist`` to ``include_tables``
+    -  Renamed option ``table_blacklist`` to ``exclude_tables``
+-   ``/alter/system/properties``
+    -  Removed ``enable_compound_equi_join`` as an option
+-   ``/alter/user``
+    -  Added ``set_default_schema`` as an action
+-   ``/alter/table``
+    -  Added ``move_to_schema`` as an action
+-   ``/show/table``
+    -  Added ``schema_name`` to ``additional_info`` map
+    -  Added the following ``table_descriptions``: ``LOGICAL_VIEW``, ``LOGICAL_EXTERNAL_TABLE``,
+       ``MATERIALIZED_EXTERNAL_TABLE``, & ``SCHEMA``
 
--   /create/type
-    -   Added "uuid" as a new column property.
-    -   Added "init_with_uuid" as a new column property for uuid column.
-
-- Added ``cb_pointalphas`` option and ``cb_pointalpha_attrs`` and
-  ``cb_pointalpha_vals`` fields to ``visualize/image/classbreak`` to support
-  manipulation of transparency in class-break visualization.
+-   Added ``cb_pointalphas`` option and ``cb_pointalpha_attrs`` and ``cb_pointalpha_vals`` fields to
+    ``/visualize/image/classbreak`` to support manipulation of transparency in class-break
+    visualization.
 
 ##### Breaking Changes
--   /admin/add/ranks
-    -   changed added_ranks parameter in response to an array of strings
-    -   removed results parameter from response
--   /admin/remove/ranks
-    -   changed ranks parameter in request to an array of strings
-    -   changed removed_ranks parameter in response to an array of strings
-    -   removed results parameter from response
+-   ``/admin/add/ranks``
+    -  changed ``added_ranks`` parameter in response to an array of strings
+    -  removed ``results`` parameter from response
+-   ``/admin/remove/ranks``
+    -  changed ``ranks`` parameter in request to an array of strings
+    -  changed ``removed_ranks`` parameter in response to an array of strings
+    -  removed ``results`` parameter from response
 
 
 ## Version 7.0
