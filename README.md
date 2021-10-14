@@ -27,11 +27,11 @@ will not work.
 
 There is also an example file in the example directory.
 
-The documentation can be found at http://www.kinetica.com/docs/7.1/index.html.  
+The documentation can be found at https://docs.kinetica.com/7.1/.  
 The python specific documentation can be found at:
 
-*   http://www.kinetica.com/docs/7.1/tutorials/python_guide.html
-*   http://www.kinetica.com/docs/7.1/api/python/index.html
+*   https://docs.kinetica.com/7.1/guides/python_guide/
+*   https://docs.kinetica.com/7.1/api/python/
 
 
 For changes to the client-side API, please refer to CHANGELOG.md.  For
