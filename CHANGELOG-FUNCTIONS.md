@@ -3,6 +3,73 @@
 
 ## Version 7.1
 
+### Version 7.1.6.0 -- TBD
+
+#### Added
+-   Added new endpoint /repartition/graph
+-   Added new endpoint /show/resource/objects
+
+#### Changed Endpoints
+
+##### Non-breaking Changes
+-   Added new option ``create_home_directory`` to ``/create/user/internal``, ``/create/user/external``, and ``/create/directory`` endpoints
+-   Added ``table_monitor`` as a valid object type to ``/has/permission``, ``/grant/permission`` and ``/revoke/permission`` endpoints
+-   Added new option ``create_temp_table`` to the following endpoints:
+    -   ``/aggregate/groupby``
+    -   ``/aggregate/unique``
+    -   ``/aggregate/unpivot``
+    -   ``/create/jointable``
+    -   ``/create/projection``
+    -   ``/create/table``
+    -   ``/create/union``
+    -   ``/filter``
+    -   ``/filter/byarea``
+    -   ``/filter/byarea/geometry``
+    -   ``/filter/bybox``
+    -   ``/filter/bybox/geometry``
+    -   ``/filter/bygeometry``
+    -   ``/filter/bylist``
+    -   ``/filter/byradius``
+    -   ``/filter/byradius/geometry``
+    -   ``/filter/byrange``
+    -   ``/filter/byseries``
+    -   ``/filter/bystring``
+    -   ``/filter/bytable``
+    -   ``/filter/byvalue``
+    -   ``/merge/records``
+-   Added action type ``stop_deployment`` to ``/alter/model`` endpoint
+-   Added ``deployments`` details to ``/show/model`` response
+-   Added ``owner_resource_group`` details to ``/show/table`` response
+-   Added ``graph_owner_resource_groups`` to ``/show/graph`` response
+-   Added ``data`` field resource group entries of ``/show/resource/statistics`` response
+-   Added action type ``change_owner`` to the following endpoints:
+    -   ``/alter/table``
+-   Added option ``cascade_delete`` to ``/delete/resource/group`` endpoint
+-   Added new option ``max_data`` option to the following:
+    -   ``/alter/resource/group`` request
+    -   ``/create/resource/group`` request
+    -   ``/show/resource/groups`` response
+    - Added option ``show_tier_usage`` to ``/show/resource/groups`` endpoint
+    - ``/show/resource/groups`` allows any user to query their group(s).
+    - Added option ``skip_lines`` to external tables endpoints: ``/insert/records/fromfiles``, ``/insert/records/frompayload``, ``/create/table/external``
+-   Added new option ``use_managed_credentials`` to the following endpoints:
+    -   ``/create/datasource``
+    -   ``/alter/datasource``
+-   Added internal option ``create_metadata`` to ``/alter/system/properties`` endpoint
+
+##### Breaking Changes
+-   Creation of named non-persistent tables now requires ``table_admin`` permission on the parent
+    schema, as with persistent tables. Users without ``table_admin`` permission on any schema may
+    use the new option ``create_temp_table`` for a system-generated table name that does not
+    require ``table_admin`` permission.
+-   Changed ``delete_resource_group`` to return an error if there are users associated
+    with that group or if there are any tables or graphs owned by the group.
+-   Changed ``show_resource_groups``
+    - Request will return an error if the user requests a group which does not
+    exist, previously returned the default group.
+    - Changed default value of option ``show_default_group`` to be false if an
+    explicit list of group names is provided. Previously was always true.
+
 ### Version 7.1.5.0 -- TBD
 
 #### Added
@@ -26,6 +93,8 @@
 
 ##### Non-breaking Changes
 -   Added ``shadow_cube_replacement_policy`` option to ``/alter/system/properties`` endpoint
+-   Added ``audit_response`` option to ``/alter/system/properties`` endpoint
+-   Added new file type: avro in external files endpoints
 
 ##### Breaking Changes
 -   Fields in the ``/has/permission`` were changed to match ``/grant/permission``.

@@ -1145,8 +1145,8 @@ class GPUdbColumnProperty(object):
 
     STORE_ONLY = "store_only"
     """str: Persist the column value but do not make it available to queries (e.g.
-    :meth:`.filter`)-i.e. it is mutually exclusive to the *data* property. Any
-    'bytes' type column must have a *store_only* property. This property
+    :meth:`GPUdb.filter`)-i.e. it is mutually exclusive to the *data* property.
+    Any 'bytes' type column must have a *store_only* property. This property
     reduces system memory usage.
     """
 
@@ -1154,9 +1154,10 @@ class GPUdbColumnProperty(object):
     DISK_OPTIMIZED = "disk_optimized"
     """str: Works in conjunction with the *data* property for string columns. This
     property reduces system disk usage by disabling reverse string lookups.
-    Queries like :meth:`.filter`, :meth:`.filter_by_list`, and
-    :meth:`.filter_by_value` work as usual but :meth:`.aggregate_unique` and
-    :meth:`.aggregate_group_by` are not allowed on columns with this property.
+    Queries like :meth:`GPUdb.filter`, :meth:`GPUdb.filter_by_list`, and
+    :meth:`GPUdb.filter_by_value` work as usual but
+    :meth:`GPUdb.aggregate_unique` and :meth:`GPUdb.aggregate_group_by` are not
+    allowed on columns with this property.
     """
 
 
@@ -1352,8 +1353,8 @@ class GPUdbColumnProperty(object):
 
 
     INIT_WITH_UUID = "init_with_uuid"
-    """str: For 'uuid' type,  repalce empty strings and invalid uuid values with
-    new_uuid()' upon insert.
+    """str: For 'uuid' type, replace empty strings and invalid UUID values with
+    randomly-generated UUIDs upon insert.
     """
 
 # end class GPUdbColumnProperty
@@ -4651,7 +4652,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.5.0"
+    api_version = "7.1.6.0"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -11837,11 +11838,22 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/repartition/graph"
+        REQ_SCHEMA_STR = """{"name":"repartition_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"name":"repartition_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("info", "map", [("string")])] )
+        ENDPOINT = "/repartition/graph"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/reserve/resource"
-        REQ_SCHEMA_STR = """{"type":"record","name":"reserve_resource_request","fields":[{"name":"component","type":"string"},{"name":"bytes_requested","type":"long"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"reserve_resource_response","fields":[{"name":"component","type":"string"},{"name":"reservation","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("component", "string"), ("bytes_requested", "long"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("component", "string"), ("reservation", "long"), ("info", "map", [("string")])] )
+        REQ_SCHEMA_STR = """{"type":"record","name":"reserve_resource_request","fields":[{"name":"component","type":"string"},{"name":"name","type":"string"},{"name":"action","type":"string"},{"name":"bytes_requested","type":"long"},{"name":"owner_id","type":"long"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"reserve_resource_response","fields":[{"name":"component","type":"string"},{"name":"name","type":"string"},{"name":"reservation","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("component", "string"), ("name", "string"), ("action", "string"), ("bytes_requested", "long"), ("owner_id", "long"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("component", "string"), ("name", "string"), ("reservation", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/reserve/resource"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -12015,9 +12027,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/graph"
         REQ_SCHEMA_STR = """{"name":"show_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"show_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"load","type":{"type":"array","items":"int"}},{"name":"memory","type":{"type":"array","items":"long"}},{"name":"graph_names","type":{"type":"array","items":"string"}},{"name":"graph_server_ids","type":{"type":"array","items":"int"}},{"name":"directed","type":{"type":"array","items":"boolean"}},{"name":"num_nodes","type":{"type":"array","items":"long"}},{"name":"num_edges","type":{"type":"array","items":"long"}},{"name":"num_bytes","type":{"type":"array","items":"long"}},{"name":"is_persisted","type":{"type":"array","items":"boolean"}},{"name":"is_partitioned","type":{"type":"array","items":"boolean"}},{"name":"is_sync_db","type":{"type":"array","items":"boolean"}},{"name":"has_insert_table_monitor","type":{"type":"array","items":"boolean"}},{"name":"original_request","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"name":"show_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"load","type":{"type":"array","items":"int"}},{"name":"memory","type":{"type":"array","items":"long"}},{"name":"graph_names","type":{"type":"array","items":"string"}},{"name":"graph_server_ids","type":{"type":"array","items":"int"}},{"name":"graph_owner_user_names","type":{"type":"array","items":"string"}},{"name":"graph_owner_resource_groups","type":{"type":"array","items":"string"}},{"name":"directed","type":{"type":"array","items":"boolean"}},{"name":"num_nodes","type":{"type":"array","items":"long"}},{"name":"num_edges","type":{"type":"array","items":"long"}},{"name":"num_bytes","type":{"type":"array","items":"long"}},{"name":"resource_capacity","type":{"type":"array","items":"long"}},{"name":"is_persisted","type":{"type":"array","items":"boolean"}},{"name":"is_partitioned","type":{"type":"array","items":"boolean"}},{"name":"is_sync_db","type":{"type":"array","items":"boolean"}},{"name":"has_insert_table_monitor","type":{"type":"array","items":"boolean"}},{"name":"original_request","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("load", "array", [("int")]), ("memory", "array", [("long")]), ("graph_names", "array", [("string")]), ("graph_server_ids", "array", [("int")]), ("directed", "array", [("boolean")]), ("num_nodes", "array", [("long")]), ("num_edges", "array", [("long")]), ("num_bytes", "array", [("long")]), ("is_persisted", "array", [("boolean")]), ("is_partitioned", "array", [("boolean")]), ("is_sync_db", "array", [("boolean")]), ("has_insert_table_monitor", "array", [("boolean")]), ("original_request", "array", [("string")]), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("load", "array", [("int")]), ("memory", "array", [("long")]), ("graph_names", "array", [("string")]), ("graph_server_ids", "array", [("int")]), ("graph_owner_user_names", "array", [("string")]), ("graph_owner_resource_groups", "array", [("string")]), ("directed", "array", [("boolean")]), ("num_nodes", "array", [("long")]), ("num_edges", "array", [("long")]), ("num_bytes", "array", [("long")]), ("resource_capacity", "array", [("long")]), ("is_persisted", "array", [("boolean")]), ("is_partitioned", "array", [("boolean")]), ("is_sync_db", "array", [("boolean")]), ("has_insert_table_monitor", "array", [("boolean")]), ("original_request", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/graph"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -12037,9 +12049,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/model"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_model_request","fields":[{"name":"model_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_model_response","fields":[{"name":"model_names","type":{"type":"array","items":"string"}},{"name":"entity_ids","type":{"type":"array","items":"int"}},{"name":"input_schemas","type":{"type":"array","items":"string"}},{"name":"output_schemas","type":{"type":"array","items":"string"}},{"name":"registry_list","type":{"type":"array","items":"string"}},{"name":"container_list","type":{"type":"array","items":"string"}},{"name":"run_function_list","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_model_response","fields":[{"name":"model_names","type":{"type":"array","items":"string"}},{"name":"entity_ids","type":{"type":"array","items":"int"}},{"name":"input_schemas","type":{"type":"array","items":"string"}},{"name":"output_schemas","type":{"type":"array","items":"string"}},{"name":"registry_list","type":{"type":"array","items":"string"}},{"name":"container_list","type":{"type":"array","items":"string"}},{"name":"run_function_list","type":{"type":"array","items":"string"}},{"name":"deployments","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("model_names", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("model_names", "array", [("string")]), ("entity_ids", "array", [("int")]), ("input_schemas", "array", [("string")]), ("output_schemas", "array", [("string")]), ("registry_list", "array", [("string")]), ("container_list", "array", [("string")]), ("run_function_list", "array", [("string")]), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("model_names", "array", [("string")]), ("entity_ids", "array", [("int")]), ("input_schemas", "array", [("string")]), ("output_schemas", "array", [("string")]), ("registry_list", "array", [("string")]), ("container_list", "array", [("string")]), ("run_function_list", "array", [("string")]), ("deployments", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/model"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -12068,6 +12080,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/show/resource/objects"
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_resource_objects_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_resource_objects_response","fields":[{"name":"rank_objects","type":{"type":"map","values":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("rank_objects", "map", [("string")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/show/resource/objects"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/show/resource/statistics"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_resource_statistics_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"show_resource_statistics_response","fields":[{"name":"statistics_map","type":{"type":"map","values":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -12081,9 +12104,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/resourcegroups"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_resource_groups_request","fields":[{"name":"names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_resource_groups_response","fields":[{"name":"groups","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_resource_groups_response","fields":[{"name":"groups","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"rank_usage","type":{"type":"map","values":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("names", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("groups", "array", [("map", [("string")])]), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("groups", "array", [("map", [("string")])]), ("rank_usage", "map", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/resourcegroups"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -12518,6 +12541,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["merge_records"] = "/merge/records"
         self.gpudb_func_to_endpoint_map["modify_graph"] = "/modify/graph"
         self.gpudb_func_to_endpoint_map["query_graph"] = "/query/graph"
+        self.gpudb_func_to_endpoint_map["repartition_graph"] = "/repartition/graph"
         self.gpudb_func_to_endpoint_map["reserve_resource"] = "/reserve/resource"
         self.gpudb_func_to_endpoint_map["revoke_permission"] = "/revoke/permission"
         self.gpudb_func_to_endpoint_map["revoke_permission_credential"] = "/revoke/permission/credential"
@@ -12539,6 +12563,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["show_model"] = "/show/model"
         self.gpudb_func_to_endpoint_map["show_proc"] = "/show/proc"
         self.gpudb_func_to_endpoint_map["show_proc_status"] = "/show/proc/status"
+        self.gpudb_func_to_endpoint_map["show_resource_objects"] = "/show/resource/objects"
         self.gpudb_func_to_endpoint_map["show_resource_statistics"] = "/show/resource/statistics"
         self.gpudb_func_to_endpoint_map["show_resource_groups"] = "/show/resourcegroups"
         self.gpudb_func_to_endpoint_map["show_schema"] = "/show/schema"
@@ -12666,10 +12691,10 @@ class GPUdb(object):
         """Add one or more ranks to an existing Kinetica cluster. The new ranks
         will not contain any data initially (other than replicated tables) and
         will not be assigned any shards. To rebalance data and shards across
-        the cluster, use :meth:`.admin_rebalance`.
+        the cluster, use :meth:`GPUdb.admin_rebalance`.
 
         The database must be offline for this operation, see
-        :meth:`.admin_offline`
+        :meth:`GPUdb.admin_offline`
 
         For example, if attempting to add three new ranks (two ranks on host
         172.123.45.67 and one rank on host 172.123.45.68) to a Kinetica cluster
@@ -12689,7 +12714,7 @@ class GPUdb(object):
         This endpoint's processing includes copying all replicated table data
         to the new rank(s) and therefore could take a long time. The API call
         may time out if run directly.  It is recommended to run this endpoint
-        asynchronously via :meth:`.create_job`.
+        asynchronously via :meth:`GPUdb.create_job`.
 
         .. note::
                 This method should be used for on-premise deployments only.
@@ -12701,7 +12726,7 @@ class GPUdb(object):
                 gpudb.conf file), or host identifiers (e.g. 'host0' from the
                 gpudb.conf file), on which to add ranks to the cluster. The
                 hosts must already be in the cluster. If needed beforehand, to
-                add a new host to the cluster use :meth:`.admin_add_host`.
+                add a new host to the cluster use :meth:`GPUdb.admin_add_host`.
                 Include the same entry as many times as there are ranks to add
                 to the cluster, e.g., if two ranks on host 172.123.45.67 should
                 be added, input parameter *hosts* could look like
@@ -12894,7 +12919,7 @@ class GPUdb(object):
         allowing current active jobs to complete. When the database is in
         backup mode, queries that result in a disk write operation will be
         blocked until backup mode has been completed by using
-        :meth:`.admin_backup_end`.
+        :meth:`GPUdb.admin_backup_end`.
 
         Parameters:
 
@@ -13003,28 +13028,31 @@ class GPUdb(object):
         distributed (as much as possible) across all the ranks.
 
         The database must be offline for this operation, see
-        :meth:`.admin_offline`
+        :meth:`GPUdb.admin_offline`.
 
-        * If :meth:`.admin_rebalance` is invoked after a change is made to the
-          cluster, e.g., a host was added or removed,
-          `sharded data <../../../../concepts/tables/#sharding>`__ will be
-          evenly redistributed across the cluster by number of shards per rank
-          while unsharded data will be redistributed across the cluster by data
-          size per rank
-        * If :meth:`.admin_rebalance` is invoked at some point when unsharded
-          data (a.k.a.
-          `randomly-sharded <../../../../concepts/tables/#random-sharding>`__)
-          in the cluster is unevenly distributed over time, sharded data will
-          not move while unsharded data will be redistributed across the
-          cluster by data size per rank
+        If :meth:`GPUdb.admin_rebalance` is invoked after a change is made to
+        the
+        cluster, e.g., a host was added or removed,
+        `sharded data <../../../../concepts/tables/#sharding>`__ will be
+        evenly redistributed across the cluster by number of shards per rank
+        while unsharded data will be redistributed across the cluster by data
+        size per rank.
 
-        NOTE: Replicated data will not move as a result of this call
+        If :meth:`GPUdb.admin_rebalance` is invoked at some point when
+        unsharded
+        data (a.k.a. `randomly-sharded
+        <../../../../concepts/tables/#random-sharding>`__)
+        in the cluster is unevenly distributed over time, sharded data will
+        not move while unsharded data will be redistributed across the
+        cluster by data size per rank.
+
+        NOTE: Replicated data will not move as a result of this call.
 
         This endpoint's processing time depends on the amount of data in the
         system,
         thus the API call may time out if run directly.  It is recommended to
         run this
-        endpoint asynchronously via :meth:`.create_job`.
+        endpoint asynchronously via :meth:`GPUdb.create_job`.
 
         Parameters:
 
@@ -13109,7 +13137,7 @@ class GPUdb(object):
                 * **repair_incorrectly_sharded_data** --
                   Scans for any data sharded incorrectly and re-routes the data
                   to the correct location. Only necessary if
-                  :meth:`.admin_verify_db` reports an error in sharding
+                  :meth:`GPUdb.admin_verify_db` reports an error in sharding
                   alignment. This can be done as part of a typical rebalance
                   after expanding the cluster or in a standalone fashion when
                   it is believed that data is sharded incorrectly somewhere in
@@ -13145,11 +13173,11 @@ class GPUdb(object):
     def admin_remove_host( self, host = None, options = {} ):
         """Removes a host from an existing cluster. If the host to be removed has
         any ranks running on it, the ranks must be removed using
-        :meth:`.admin_remove_ranks` or manually switched over to a new host
-        using :meth:`.admin_switchover` prior to host removal. If the host to
-        be removed has the graph server or SQL planner running on it, these
-        must be manually switched over to a new host using
-        :meth:`.admin_switchover`.
+        :meth:`GPUdb.admin_remove_ranks` or manually switched over to a new
+        host using :meth:`GPUdb.admin_switchover` prior to host removal. If the
+        host to be removed has the graph server or SQL planner running on it,
+        these must be manually switched over to a new host using
+        :meth:`GPUdb.admin_switchover`.
 
         .. note::
                 This method should be used for on-premise deployments only.
@@ -13210,13 +13238,13 @@ class GPUdb(object):
         will be deleted.
 
         The database must be offline for this operation, see
-        :meth:`.admin_offline`
+        :meth:`GPUdb.admin_offline`
 
         This endpoint's processing time depends on the amount of data in the
         system,
         thus the API call may time out if run directly.  It is recommended to
         run this
-        endpoint asynchronously via :meth:`.create_job`.
+        endpoint asynchronously via :meth:`GPUdb.create_job`.
 
         .. note::
                 This method should be used for on-premise deployments only.
@@ -13230,10 +13258,10 @@ class GPUdb(object):
                 that host, or the host IP address (hostN.address from the
                 gpub.conf file) which also removes all ranks on that host. Rank
                 0 (the head rank) cannot be removed (but can be moved to
-                another host using :meth:`.admin_switchover`). At least one
-                worker rank must be left in the cluster after the operation.
-                The user can provide a single element (which will be
-                automatically promoted to a list internally) or a list.
+                another host using :meth:`GPUdb.admin_switchover`). At least
+                one worker rank must be left in the cluster after the
+                operation.    The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -13966,7 +13994,7 @@ class GPUdb(object):
         supplied to *having*.
 
         The response is returned as a dynamic schema. For details see: `dynamic
-        schemas documentation <../../../../api/#dynamic-schemas>`__.
+        schemas documentation <../../../../api/concepts/#dynamic-schemas>`__.
 
         If a *result_table* name is specified in the input parameter *options*,
         the results are stored in a new table with that name--no results are
@@ -14031,12 +14059,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of *result_table*. If
+                  *result_table_persist* is *false* (or unspecified), then this
+                  is always allowed even if the caller does not have permission
+                  to create tables. The generated name is returned in
+                  *qualified_result_table_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema as part of
-                  *result_table* and use :meth:`.create_schema` to create the
-                  schema if non-existent]  Name of a schema which is to contain
-                  the table specified in *result_table*. If the schema provided
-                  is non-existent, it will be automatically created.
+                  *result_table* and use :meth:`GPUdb.create_schema` to create
+                  the schema if non-existent]  Name of a schema which is to
+                  contain the table specified in *result_table*. If the schema
+                  provided is non-existent, it will be automatically created.
 
                 * **expression** --
                   Filter expression to apply to the table prior to computing
@@ -14289,7 +14331,7 @@ class GPUdb(object):
         supplied to *having*.
 
         The response is returned as a dynamic schema. For details see: `dynamic
-        schemas documentation <../../../../api/#dynamic-schemas>`__.
+        schemas documentation <../../../../api/concepts/#dynamic-schemas>`__.
 
         If a *result_table* name is specified in the input parameter *options*,
         the results are stored in a new table with that name--no results are
@@ -14354,12 +14396,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of *result_table*. If
+                  *result_table_persist* is *false* (or unspecified), then this
+                  is always allowed even if the caller does not have permission
+                  to create tables. The generated name is returned in
+                  *qualified_result_table_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema as part of
-                  *result_table* and use :meth:`.create_schema` to create the
-                  schema if non-existent]  Name of a schema which is to contain
-                  the table specified in *result_table*. If the schema provided
-                  is non-existent, it will be automatically created.
+                  *result_table* and use :meth:`GPUdb.create_schema` to create
+                  the schema if non-existent]  Name of a schema which is to
+                  contain the table specified in *result_table*. If the schema
+                  provided is non-existent, it will be automatically created.
 
                 * **expression** --
                   Filter expression to apply to the table prior to computing
@@ -15253,7 +15309,8 @@ class GPUdb(object):
         {"limit":"10","sort_order":"descending"}.
 
         The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`__.
+        `dynamic schemas documentation
+        <../../../../api/concepts/#dynamic-schemas>`__.
 
         If a *result_table* name is specified in the
         input parameter *options*, the results are stored in a new table with
@@ -15321,12 +15378,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of *result_table*. If
+                  *result_table_persist* is *false* (or unspecified), then this
+                  is always allowed even if the caller does not have permission
+                  to create tables. The generated name is returned in
+                  *qualified_result_table_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema as part of
-                  *result_table* and use :meth:`.create_schema` to create the
-                  schema if non-existent]  Name of a schema which is to contain
-                  the table specified in *result_table*. If the schema provided
-                  is non-existent, it will be automatically created.
+                  *result_table* and use :meth:`GPUdb.create_schema` to create
+                  the schema if non-existent]  Name of a schema which is to
+                  contain the table specified in *result_table*. If the schema
+                  provided is non-existent, it will be automatically created.
 
                 * **expression** --
                   Optional filter expression to apply to the table.
@@ -15496,7 +15567,8 @@ class GPUdb(object):
         {"limit":"10","sort_order":"descending"}.
 
         The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`__.
+        `dynamic schemas documentation
+        <../../../../api/concepts/#dynamic-schemas>`__.
 
         If a *result_table* name is specified in the
         input parameter *options*, the results are stored in a new table with
@@ -15564,12 +15636,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of *result_table*. If
+                  *result_table_persist* is *false* (or unspecified), then this
+                  is always allowed even if the caller does not have permission
+                  to create tables. The generated name is returned in
+                  *qualified_result_table_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema as part of
-                  *result_table* and use :meth:`.create_schema` to create the
-                  schema if non-existent]  Name of a schema which is to contain
-                  the table specified in *result_table*. If the schema provided
-                  is non-existent, it will be automatically created.
+                  *result_table* and use :meth:`GPUdb.create_schema` to create
+                  the schema if non-existent]  Name of a schema which is to
+                  contain the table specified in *result_table*. If the schema
+                  provided is non-existent, it will be automatically created.
 
                 * **expression** --
                   Optional filter expression to apply to the table.
@@ -15777,7 +15863,8 @@ class GPUdb(object):
         and values respectively.
 
         The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`__.
+        `dynamic schemas documentation
+        <../../../../api/concepts/#dynamic-schemas>`__.
 
         Parameters:
 
@@ -15823,12 +15910,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of *result_table*. If
+                  *result_table_persist* is *false* (or unspecified), then this
+                  is always allowed even if the caller does not have permission
+                  to create tables. The generated name is returned in
+                  *qualified_result_table_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema as part of
-                  *result_table* and use :meth:`.create_schema` to create the
-                  schema if non-existent]  Name of a schema which is to contain
-                  the table specified in *result_table*. If the schema is
-                  non-existent, it will be automatically created.
+                  *result_table* and use :meth:`GPUdb.create_schema` to create
+                  the schema if non-existent]  Name of a schema which is to
+                  contain the table specified in *result_table*. If the schema
+                  is non-existent, it will be automatically created.
 
                 * **result_table** --
                   The name of a table used to store the results, in
@@ -15998,7 +16099,8 @@ class GPUdb(object):
         and values respectively.
 
         The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`__.
+        `dynamic schemas documentation
+        <../../../../api/concepts/#dynamic-schemas>`__.
 
         Parameters:
 
@@ -16044,12 +16146,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of *result_table*. If
+                  *result_table_persist* is *false* (or unspecified), then this
+                  is always allowed even if the caller does not have permission
+                  to create tables. The generated name is returned in
+                  *qualified_result_table_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema as part of
-                  *result_table* and use :meth:`.create_schema` to create the
-                  schema if non-existent]  Name of a schema which is to contain
-                  the table specified in *result_table*. If the schema is
-                  non-existent, it will be automatically created.
+                  *result_table* and use :meth:`GPUdb.create_schema` to create
+                  the schema if non-existent]  Name of a schema which is to
+                  contain the table specified in *result_table*. If the schema
+                  is non-existent, it will be automatically created.
 
                 * **result_table** --
                   The name of a table used to store the results, in
@@ -16321,15 +16437,6 @@ class GPUdb(object):
                   'destination_type://path[:port]'.
                   Supported destination types are 'http', 'https' and 'kafka'.
 
-                * **destination_type** --
-                  Destination type for the output data
-
-                * **user_name** --
-                  Name of the remote system user; may be an empty string
-
-                * **password** --
-                  Password for the remote system user; may be an empty string
-
                 * **connection_timeout** --
                   Timeout in seconds for connecting to this sink
 
@@ -16344,6 +16451,25 @@ class GPUdb(object):
                 * **kafka_topic_name** --
                   Name of the Kafka topic to use for this data sink, if it
                   references a Kafka broker
+
+                * **max_batch_size** --
+                  Maximum number of records per notification message.  The
+                  default value is '1'.
+
+                * **max_message_size** --
+                  Maximum size in bytes of each notification message.  The
+                  default value is '1000000'.
+
+                * **json_format** --
+                  The desired format of JSON encoded notifications message.
+                  If *nested*, records are returned as an array.
+                  Otherwise, only a single record per messages is returned.
+                  Allowed values are:
+
+                  * flat
+                  * nested
+
+                  The default value is 'flat'.
 
                 * **skip_validation** --
                   Bypass validation of connection to this data sink.
@@ -16479,7 +16605,20 @@ class GPUdb(object):
                   Name of the Kafka topic to use as the data source
 
                 * **anonymous** --
-                  Create an anonymous connection to the storage provider.
+                  Create an anonymous connection to the storage
+                  provider--DEPRECATED: this is now the default.  Specify
+                  use_managed_credentials for non-anonymous connection.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **use_managed_credentials** --
+                  When no credentials are supplied, we use anonymous access by
+                  default.  If this is set, we will use cloud provider user
+                  settings.
                   Allowed values are:
 
                   * true
@@ -16527,77 +16666,7 @@ class GPUdb(object):
     # begin alter_graph
     def alter_graph( self, graph_name = None, action = None, action_arg = None,
                      options = {} ):
-        """For internal use only: Graph server admin command.
-        For internal use only: Graph server admin command.
 
-        Parameters:
-
-            graph_name (str)
-                Graph on which the operation should be applied.
-                If empty then it will apply to all graphs.
-                This request can be sent from the graph server to the graph
-                client, or from the client to the server depending on the type
-                of operation.
-
-            action (str)
-                Operation to be applied
-                Allowed values are:
-
-                * **add_table_monitor** --
-                  Add a table monitor to a graph. The table name is specified
-                  as the action argment.
-
-                * **reset_client** --
-                  Reset all current operations on the client side. Used when
-                  the graph server is restarted to recover from a failure.
-
-                * **reset_server** --
-                  Reset all current operations on the server side. This is also
-                  sent on (re)start.
-
-                * **cancel_task** --
-                  Cancel a specific task on the graph server.
-
-                * **alter_logger** --
-                  Change the server side log level; e.g.,
-                  'GraphServer.GraphSolver=DEBUG'
-
-                * **delete_all** --
-                  Delete all graphs, and remove any persistence info.
-
-                * **status** --
-                  Current status of the graph client (db side).
-
-                * **collect_graphs** --
-                  Get the create command for all persisted graphs.
-
-                * **restore_graphs** --
-                  Re-creates all graphs from persist info on rank0.
-
-            action_arg (str)
-                Action specific argument.
-
-            options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
-                Allowed keys are:
-
-                * **server_id** --
-                  Indicates which graph server(s) to send the request to.
-                  Default is to send to get information about all the servers.
-
-        Returns:
-            A dict with the following entries--
-
-            action (str)
-                Context specific feedback or action to be taken by the client
-
-            action_arg (str)
-                Action specific argument.
-
-            info (dict of str to str)
-                Additional information.
-        """
         assert isinstance( graph_name, (basestring)), "alter_graph(): Argument 'graph_name' must be (one) of type(s) '(basestring)'; given %s" % type( graph_name ).__name__
         assert isinstance( action, (basestring)), "alter_graph(): Argument 'action' must be (one) of type(s) '(basestring)'; given %s" % type( action ).__name__
         assert isinstance( action_arg, (basestring)), "alter_graph(): Argument 'action_arg' must be (one) of type(s) '(basestring)'; given %s" % type( action_arg ).__name__
@@ -16694,6 +16763,10 @@ class GPUdb(object):
                 * **max_cpu_concurrency** --
                   Maximum number of simultaneous threads that will be used to
                   execute a request for this group.
+
+                * **max_data** --
+                  Maximum amount of cumulative ram usage regardless of tier
+                  status for this group.
 
                 * **max_scheduling_priority** --
                   Maximum priority of a scheduled task for this group.
@@ -16851,7 +16924,7 @@ class GPUdb(object):
 
     # begin alter_system_properties
     def alter_system_properties( self, property_updates_map = None, options = {} ):
-        """The :meth:`.alter_system_properties` endpoint is primarily used to
+        """The :meth:`GPUdb.alter_system_properties` endpoint is primarily used to
         simplify the testing of the system and is not expected to be used
         during normal execution.  Commands are given through the input
         parameter *property_updates_map* whose keys are commands and values are
@@ -16953,8 +17026,8 @@ class GPUdb(object):
 
                 * **request_timeout** --
                   Number of minutes after which filtering (e.g.,
-                  :meth:`.filter`) and aggregating (e.g.,
-                  :meth:`.aggregate_group_by`) queries will timeout.  The
+                  :meth:`GPUdb.filter`) and aggregating (e.g.,
+                  :meth:`GPUdb.aggregate_group_by`) queries will timeout.  The
                   default value is '20'.
 
                 * **max_get_records_size** --
@@ -16973,12 +17046,15 @@ class GPUdb(object):
                 * **audit_data** --
                   Enable or disable auditing of request data.
 
+                * **audit_response** --
+                  Enable or disable auditing of response information.
+
                 * **shadow_agg_size** --
                   Size of the shadow aggregate chunk cache in bytes.  The
                   default value is '10000000'.
 
                 * **shadow_filter_size** --
-                  Size of the shdow filter chunk cache in bytes.  The default
+                  Size of the shadow filter chunk cache in bytes.  The default
                   value is '10000000'.
 
                 * **synchronous_compression** --
@@ -17117,10 +17193,10 @@ class GPUdb(object):
 
                 * **move_to_collection** --
                   [DEPRECATED--please use *move_to_schema* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Moves a table or view into a schema named input parameter
-                  *value*.  If the schema provided is non-existent, it will be
-                  automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Moves a table or view into a schema named
+                  input parameter *value*.  If the schema provided is
+                  non-existent, it will be automatically created.
 
                 * **move_to_schema** --
                   Moves a table or view into a schema named input parameter
@@ -17280,6 +17356,9 @@ class GPUdb(object):
                 * **resume_datasource_subscription** --
                   Resubscribe to a paused data source subscription. The data
                   source can be kafka / S3 / Azure.
+
+                * **change_owner** --
+                  Change the owner resource group of the table.
 
             value (str)
                 The value of the modification, depending on input parameter
@@ -17989,12 +18068,12 @@ class GPUdb(object):
     # begin clear_table_monitor
     def clear_table_monitor( self, topic_id = None, options = {} ):
         """Deactivates a table monitor previously created with
-        :meth:`.create_table_monitor`.
+        :meth:`GPUdb.create_table_monitor`.
 
         Parameters:
 
             topic_id (str)
-                The topic ID returned by :meth:`.create_table_monitor`.
+                The topic ID returned by :meth:`GPUdb.create_table_monitor`.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -18015,8 +18094,8 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **clear_all_references** --
-                  If *true*, all references that share the same {@input
-                  topic_id} will be cleared.
+                  If *true*, all references that share the same input parameter
+                  *topic_id* will be cleared.
                   Allowed values are:
 
                   * true
@@ -18257,6 +18336,25 @@ class GPUdb(object):
                   Name of the Kafka topic to publish to if input parameter
                   *destination* is a Kafka broker
 
+                * **max_batch_size** --
+                  Maximum number of records per notification message.  The
+                  default value is '1'.
+
+                * **max_message_size** --
+                  Maximum size in bytes of each notification message.  The
+                  default value is '1000000'.
+
+                * **json_format** --
+                  The desired format of JSON encoded notifications message.
+                  If *nested*, records are returned as an array. Otherwise,
+                  only a single record per messages is returned.
+                  Allowed values are:
+
+                  * flat
+                  * nested
+
+                  The default value is 'flat'.
+
                 * **skip_validation** --
                   Bypass validation of connection to this data sink.
                   Allowed values are:
@@ -18307,7 +18405,8 @@ class GPUdb(object):
                 Location of the remote storage in
                 'storage_provider_type://[storage_path[:storage_port]]' format.
 
-                Supported storage provider types are 'hdfs' and 's3'.
+                Supported storage provider types are 'azure','hdfs','kafka' and
+                's3'.
 
             user_name (str)
                 Name of the remote system user; may be an empty string
@@ -18394,7 +18493,20 @@ class GPUdb(object):
                   Name of the Kafka topic to use as the data source
 
                 * **anonymous** --
-                  Use anonymous connection to storage provider.
+                  Use anonymous connection to storage provider--DEPRECATED:
+                  this is now the default.  Specify use_managed_credentials for
+                  non-anonymous connection.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **use_managed_credentials** --
+                  When no credentials are supplied, we use anonymous access by
+                  default.  If this is set, we will use cloud provider user
+                  settings.
                   Allowed values are:
 
                   * true
@@ -18463,7 +18575,7 @@ class GPUdb(object):
     def create_directory( self, directory_name = None, options = {} ):
         """Creates a new directory in `KiFS <../../../../tools/kifs/>`__. The new
         directory serves as a location in which the user can upload files using
-        :meth:`.upload_files`.
+        :meth:`GPUdb.upload_files`.
 
         Parameters:
 
@@ -18474,6 +18586,11 @@ class GPUdb(object):
                 Optional parameters.  The default value is an empty dict ( {}
                 ).
                 Allowed keys are:
+
+                * **create_home_directory** --
+                  When set, a home directory is created for the user name
+                  provided in the value. The input parameter *directory_name*
+                  must be an empty string in this case. The user must exist.
 
                 * **no_error_if_exists** --
                   If *true*, does not return an error if the directory already
@@ -18735,7 +18852,7 @@ class GPUdb(object):
                   that upon database restart, if *save_persist* is also set to
                   *true*, the graph will be fully reconstructed and the table
                   monitors will be reattached. For more details on table
-                  monitors, see :meth:`.create_table_monitor`.
+                  monitors, see :meth:`GPUdb.create_table_monitor`.
                   Allowed values are:
 
                   * true
@@ -18802,6 +18919,11 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **label_delimiter** --
+                  If provided the label string will be split according to this
+                  delimiter and each sub-string will be applied as a separate
+                  label onto the specified edge.  The default value is ''.
+
                 * **sql_request_avro_json** --
                     The default value is ''.
 
@@ -18853,7 +18975,7 @@ class GPUdb(object):
         """Create a job which will run asynchronously. The response returns a job
         ID, which can be used to query the status and result of the job. The
         status and the result of the job upon completion can be requested by
-        :meth:`.get_job`.
+        :meth:`GPUdb.get_job`.
 
         Parameters:
 
@@ -18989,12 +19111,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *join_table_name*. This is always allowed even if the caller
+                  does not have permission to create tables. The generated name
+                  is returned in *qualified_join_table_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   join as part of input parameter *join_table_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the join. If the schema is non-existent,
-                  it will be automatically created.  The default value is ''.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the join. If the schema
+                  is non-existent, it will be automatically created.  The
+                  default value is ''.
 
                 * **max_query_dimensions** --
                   No longer used.
@@ -19095,7 +19231,7 @@ class GPUdb(object):
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   materialized view as part of input parameter *table_name* and
-                  use :meth:`.create_schema` to create the schema if
+                  use :meth:`GPUdb.create_schema` to create the schema if
                   non-existent]  Name of a schema which is to contain the newly
                   created view. If the schema provided is non-existent, it will
                   be automatically created.
@@ -19124,7 +19260,7 @@ class GPUdb(object):
 
                   * **manual** --
                     Refresh only occurs when manually requested by calling
-                    :meth:`.alter_table` with an 'action' of 'refresh'
+                    :meth:`GPUdb.alter_table` with an 'action' of 'refresh'
 
                   * **on_query** --
                     Refresh any time the view is queried.
@@ -19217,8 +19353,8 @@ class GPUdb(object):
                   The proc command will be invoked only once per
                   execution, and will not have direct access to any tables
                   named as input or
-                  output table parameters in the call to :meth:`.execute_proc`.
-                  It will,
+                  output table parameters in the call to
+                  :meth:`GPUdb.execute_proc`.  It will,
                   however, be able to access the database using native API
                   calls.
 
@@ -19319,7 +19455,7 @@ class GPUdb(object):
         `Window functions <../../../../concepts/window/>`__, which can perform
         operations like moving averages, are available through this endpoint as
         well as
-        :meth:`.get_records_by_column`.
+        :meth:`GPUdb.get_records_by_column`.
 
         A projection can be created with a different
         `shard key <../../../../concepts/tables/#shard-keys>`__ than the source
@@ -19371,10 +19507,24 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *projection_name*. If *persist* is *false* (or unspecified),
+                  then this is always allowed even if the caller does not have
+                  permission to create tables. The generated name is returned
+                  in *qualified_projection_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   projection as part of input parameter *projection_name* and
-                  use :meth:`.create_schema` to create the schema if
+                  use :meth:`GPUdb.create_schema` to create the schema if
                   non-existent]  Name of a schema for the projection. If the
                   schema is non-existent, it will be automatically created.
                   The default value is ''.
@@ -19555,6 +19705,10 @@ class GPUdb(object):
                   Maximum number of simultaneous threads that will be used to
                   execute a request for this group.
 
+                * **max_data** --
+                  Maximum amount of cumulative ram usage regardless of tier
+                  status for this group.
+
                 * **max_scheduling_priority** --
                   Maximum priority of a scheduled task for this group.
 
@@ -19710,7 +19864,7 @@ class GPUdb(object):
         the type of the table is given by input parameter *type_id*, which must
         be the ID of
         a currently registered type (i.e. one created via
-        :meth:`.create_type`).
+        :meth:`GPUdb.create_type`).
 
         A table may optionally be designated to use a
         `replicated <../../../../concepts/tables/#replication>`__ distribution
@@ -19753,17 +19907,32 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *table_name*. If *is_result_table* is *true*, then this is
+                  always allowed even if the caller does not have permission to
+                  create tables. The generated name is returned in
+                  *qualified_table_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema as part of
-                  input parameter *table_name* and use :meth:`.create_schema`
-                  to create the schema if non-existent]  Name of a schema which
-                  is to contain the newly created table. If the schema is
-                  non-existent, it will be automatically created.
+                  input parameter *table_name* and use
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema which is to contain the newly
+                  created table. If the schema is non-existent, it will be
+                  automatically created.
 
                 * **is_collection** --
-                  [DEPRECATED--please use :meth:`.create_schema` to create a
-                  schema instead]  Indicates whether to create a schema instead
-                  of a table.
+                  [DEPRECATED--please use :meth:`GPUdb.create_schema` to create
+                  a schema instead]  Indicates whether to create a schema
+                  instead of a table.
                   Allowed values are:
 
                   * true
@@ -19897,9 +20066,6 @@ class GPUdb(object):
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
 
-                * **is_virtual_union** --
-                  <DEVELOPER>
-
         Returns:
             A dict with the following entries--
 
@@ -19945,14 +20111,14 @@ class GPUdb(object):
         <../../../../concepts/external_tables/>`__, which is a
         local database object whose source data is located externally to the
         database.  The source data can
-        be located either on the cluster, accessible to the database; or
-        remotely, accessible via a
+        be located either in `KiFS <../../../../tools/kifs/>`__; on the
+        cluster, accessible to the database; or remotely, accessible via a
         pre-defined external `data source
         <../../../../concepts/data_sources/>`__.
 
         The external table can have its structure defined explicitly, via input
         parameter *create_table_options*,
-        which contains many of the options from :meth:`.create_table`; or
+        which contains many of the options from :meth:`GPUdb.create_table`; or
         defined implicitly, inferred
         from the source data.
 
@@ -19968,18 +20134,21 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-naming-criteria>`__.
 
             filepaths (list of str)
-                A list of file paths from which data will be sourced; wildcards
-                (*) can be used
-                to specify a group of files.
+                A list of file paths from which data will be sourced;
 
-                For paths in KiFS, use the uri prefix of kifs:// followed by
-                the full path to a file or directory.
+                For paths in `KiFS <../../../../tools/kifs/>`__, use the uri
+                prefix of kifs:// followed by the path to
+                a file or directory. File matching by prefix is supported, e.g.
+                kifs://dir/file would match dir/file_1
+                and dir/file_2. When prefix matching is used, the path must
+                start with a full, valid KiFS directory name.
 
                 If an external data source is specified in *datasource_name*,
                 these file
                 paths must resolve to accessible files at that data source
-                location. Also, wildcards will only work
-                when used within the file name, not the path.
+                location. Prefix matching is supported.
+                If the data source is hdfs, prefixes must be aligned with
+                directories, i.e. partial file names will not match.
 
                 If no data source is specified, the files are assumed to be
                 local to the database and must all be
@@ -19987,16 +20156,24 @@ class GPUdb(object):
                 to the path) specified by the
                 external files directory in the Kinetica
                 `configuration file <../../../../config/#external-files>`__.
-                The user can provide a single element (which will be
-                automatically promoted to a list internally) or a list.
+                Wildcards (*) can be used to specify a group of files
+                Prefix matching is supported, the prefixes must be aligned with
+                directories.
+
+                If the first path ends in .tsv, the text delimiter will be
+                defaulted to a tab character.
+                If the first path ends in .psv, the text delimiter will be
+                defaulted to a pipe character (|).    The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
 
             modify_columns (dict of str to dicts of str to str)
                 Not implemented yet.  The default value is an empty dict ( {}
                 ).
 
             create_table_options (dict of str to str)
-                Options from :meth:`.create_table`, allowing the structure of
-                the table to
+                Options from :meth:`GPUdb.create_table`, allowing the structure
+                of the table to
                 be defined independently of the data source.  The default value
                 is an empty dict ( {} ).
                 Allowed keys are:
@@ -20164,20 +20341,19 @@ class GPUdb(object):
 
                 * **batch_size** --
                   Internal tuning parameter--number of records per batch when
-                  inserting data
+                  inserting data.
 
                 * **column_formats** --
                   For each target column specified, applies the
-                  column-property-bound
-                  format to the source data loaded into that column.  Each
-                  column format will contain a mapping of one
-                  or more of its column properties to an appropriate format for
-                  each property.  Currently supported
-                  column properties include date, time, & datetime. The
-                  parameter value must be formatted as a JSON
-                  string of maps of column names to maps of column properties
-                  to their corresponding column formats,
-                  e.g.,
+                  column-property-bound format to the source data
+                  loaded into that column.  Each column format will contain a
+                  mapping of one or more of its column
+                  properties to an appropriate format for each property.
+                  Currently supported column properties
+                  include date, time, & datetime. The parameter value must be
+                  formatted as a JSON string of maps of
+                  column names to maps of column properties to their
+                  corresponding column formats, e.g.,
                   '{ "order_date" : { "date" : "%Y.%m.%d" }, "order_time" : {
                   "time" : "%H:%M:%S" } }'.
                   See *default_column_formats* for valid format syntax.
@@ -20261,17 +20437,17 @@ class GPUdb(object):
 
                   * **permissive** --
                     Records with missing columns are populated with nulls if
-                    possible; otherwise, malformed records are skipped.
+                    possible; otherwise, the malformed records are skipped.
 
                   * **ignore_bad_records** --
                     Malformed records are skipped.
 
                   * **abort** --
-                    Current insertion is stopped and entire operation is
-                    aborted when an error is encountered.  Primary key
-                    collisions are considered abortable errors in this mode.
+                    Stops current insertion and aborts entire operation when an
+                    error is encountered.  Primary key collisions are
+                    considered abortable errors in this mode.
 
-                  The default value is 'permissive'.
+                  The default value is 'abort'.
 
                 * **external_table_type** --
                   Specifies whether the external table holds a local copy of
@@ -20290,18 +20466,21 @@ class GPUdb(object):
                   The default value is 'materialized'.
 
                 * **file_type** --
-                  Specifies the type of the external data file(s) used as the
-                  source of data for this table.
+                  Specifies the type of the file(s) whose records will be
+                  inserted.
                   Allowed values are:
+
+                  * **avro** --
+                    Avro file format
 
                   * **delimited_text** --
                     Delimited text file format; e.g., CSV, TSV, PSV, etc.
 
-                  * **parquet** --
-                    Apache Parquet file format
-
                   * **json** --
                     Json file format
+
+                  * **parquet** --
+                    Apache Parquet file format
 
                   * **shapefile** --
                     ShapeFile file format
@@ -20309,9 +20488,8 @@ class GPUdb(object):
                   The default value is 'delimited_text'.
 
                 * **ingestion_mode** --
-                  For *materialized* external tables, whether to do a full
-                  load, dry run, or perform a type inference on the source
-                  data.
+                  Whether to do a full load, dry run, or perform a type
+                  inference on the source data.
                   Allowed values are:
 
                   * **full** --
@@ -20325,14 +20503,19 @@ class GPUdb(object):
 
                   * **type_inference_only** --
                     Infer the type of the source data and return, without
-                    creating the table and ingesting data.  The inferred type
-                    is returned in the response.
+                    ingesting any data.  The inferred type is returned in the
+                    response.
 
                   The default value is 'full'.
 
+                * **kafka_group_id** --
+                  The group id to be used consuming data from a kakfa topic
+                  (valid only for kafka datasource subscriptions).
+
                 * **loading_mode** --
                   Scheme for distributing the extraction and loading of data
-                  from the source data file(s).
+                  from the source data file(s). This option applies only when
+                  loading files that are local to the database.
                   Allowed values are:
 
                   * **head** --
@@ -20362,27 +20545,32 @@ class GPUdb(object):
                     (which will allow the worker to
                     automatically deduplicate data).
                     NOTE:
-                    If the table's columns aren't defined, table structure will
+                    If the target table doesn't exist, the table structure will
                     be determined by the head node. If the
                     head node has no files local to it, it will be unable to
                     determine the structure and the request
                     will fail.
-                    This mode should not be used in conjunction with a data
-                    source, as data sources are seen by all
-                    worker processes as shared resources with no 'local'
-                    component.
                     If the head node is configured to have no worker processes,
                     no data strictly accessible to the head
                     node will be loaded.
 
                   The default value is 'head'.
 
-                * **primary_keys** --
-                  Optional: comma separated list of column names, to set as
-                  primary keys, when not specified in the type.  The default
-                  value is ''.
+                * **local_time_offset** --
+                  For Avro local timestamp columns
 
-                * **shard_keys** --
+                * **num_tasks_per_rank** --
+                  Optional: number of tasks for reading file per rank. Default
+                  will be external_file_reader_num_tasks
+
+                * **poll_interval** --
+                  If *true*, the number of seconds between attempts to load
+                  external files into the table.  If zero, polling will be
+                  continuous as long as data is found.  If no data is found,
+                  the interval will steadily increase to a maximum of 60
+                  seconds.
+
+                * **primary_keys** --
                   Optional: comma separated list of column names, to set as
                   primary keys, when not specified in the type.  The default
                   value is ''.
@@ -20394,14 +20582,22 @@ class GPUdb(object):
 
                   * **manual** --
                     Refresh only occurs when manually requested by invoking the
-                    refresh action of :meth:`.alter_table` on this table.
+                    refresh action of :meth:`GPUdb.alter_table` on this table.
 
                   * **on_start** --
                     Refresh table on database startup and when manually
                     requested by invoking the refresh action of
-                    :meth:`.alter_table` on this table.
+                    :meth:`GPUdb.alter_table` on this table.
 
                   The default value is 'manual'.
+
+                * **shard_keys** --
+                  Optional: comma separated list of column names, to set as
+                  primary keys, when not specified in the type.  The default
+                  value is ''.
+
+                * **skip_lines** --
+                  Skip number of lines from begining of file.
 
                 * **subscribe** --
                   Continuously poll the data source to check for new data and
@@ -20413,10 +20609,16 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-                * **poll_interval** --
-                  If *true*, the number of seconds between attempts to load
-                  external files into the table. If zero, polling will be
-                  continuous.
+                * **table_insert_mode** --
+                  Optional: table_insert_mode. When inserting records from
+                  multiple files: if table_per_file then insert from each file
+                  into a new table. Currently supported only for shapefiles.
+                  Allowed values are:
+
+                  * single
+                  * table_per_file
+
+                  The default value is 'single'.
 
                 * **text_comment_string** --
                   Specifies the character string that should be interpreted as
@@ -20474,7 +20676,7 @@ class GPUdb(object):
                   a null
                   value in the source data.
                   For *delimited_text* *file_type* only.  The default value is
-                  ''.
+                  '\\N'.
 
                 * **text_quote_character** --
                   Specifies the character that should be interpreted as a field
@@ -20490,9 +20692,26 @@ class GPUdb(object):
                   For *delimited_text* *file_type* only.  The default value is
                   '"'.
 
-                * **num_tasks_per_rank** --
-                  Optional: number of tasks for reading file per rank. Default
-                  will be external_file_reader_num_tasks
+                * **text_search_columns** --
+                  Add 'text_search' property to internally inferenced string
+                  columns. Comma seperated list of column names or '*' for all
+                  columns. To add text_search property only to string columns
+                  of minimum size, set also the option
+                  'text_search_min_column_length'
+
+                * **text_search_min_column_length** --
+                  Set minimum column size. Used only when 'text_search_columns'
+                  has a value.
+
+                * **truncate_table** --
+                  If set to *true*, truncates the table specified by input
+                  parameter *table_name* prior to loading the file(s).
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **type_inference_mode** --
                   optimize type inference for:.
@@ -20507,32 +20726,6 @@ class GPUdb(object):
                     will fit with minimum data scanned
 
                   The default value is 'speed'.
-
-                * **table_insert_mode** --
-                  Optional: table_insert_mode. When inserting records from
-                  multiple files: if table_per_file then insert from each file
-                  into a new table. Currently supported only for shapefiles.
-                  Allowed values are:
-
-                  * single
-                  * table_per_file
-
-                  The default value is 'single'.
-
-                * **kafka_group_id** --
-                  The group id to be used consuming data from a kakfa topic
-                  (valid only for kafka datasource subscriptions).
-
-                * **text_search_columns** --
-                  Add 'text_search' property to internally inferenced string
-                  columns. Comma seperated list of column names or '*' for all
-                  columns. To add text_search property only to string columns
-                  of minimum size, set also the option
-                  'text_search_min_column_length'
-
-                * **text_search_min_column_length** --
-                  Set minimum column size. Used only when 'text_search_columns'
-                  has a value.
 
         Returns:
             A dict with the following entries--
@@ -20611,7 +20804,7 @@ class GPUdb(object):
         using output parameter *type_schema*. The monitor will continue to run
         (regardless of
         whether or not there are any subscribers) until deactivated with
-        :meth:`.clear_table_monitor`.
+        :meth:`GPUdb.clear_table_monitor`.
 
         For more information on table monitors, see
         `Table Monitors <../../../../concepts/table_monitors/>`__.
@@ -20756,18 +20949,19 @@ class GPUdb(object):
         """Sets up an area trigger mechanism for two column_names for one or
         more tables. (This function is essentially the two-dimensional version
         of
-        :meth:`.create_trigger_by_range`.) Once the trigger has been activated,
-        any
-        record added to the listed tables(s) via :meth:`.insert_records` with
-        the
+        :meth:`GPUdb.create_trigger_by_range`.) Once the trigger has been
+        activated, any
+        record added to the listed tables(s) via :meth:`GPUdb.insert_records`
+        with the
         chosen columns' values falling within the specified region will trip
         the
         trigger. All such records will be queued at the trigger port (by
         default '9001'
-        but able to be retrieved via :meth:`.show_system_status`) for any
+        but able to be retrieved via :meth:`GPUdb.show_system_status`) for any
         listening
         client to collect. Active triggers can be cancelled by using the
-        :meth:`.clear_trigger` endpoint or by clearing all relevant tables.
+        :meth:`GPUdb.clear_trigger` endpoint or by clearing all relevant
+        tables.
 
         The output returns the trigger handle as well as indicating success or
         failure
@@ -20852,16 +21046,16 @@ class GPUdb(object):
         """Sets up a simple range trigger for a column_name for one or more
         tables. Once the trigger has been activated, any record added to the
         listed
-        tables(s) via :meth:`.insert_records` with the chosen column_name's
-        value
+        tables(s) via :meth:`GPUdb.insert_records` with the chosen
+        column_name's value
         falling within the specified range will trip the trigger. All such
         records will
         be queued at the trigger port (by default '9001' but able to be
         retrieved via
-        :meth:`.show_system_status`) for any listening client to collect.
+        :meth:`GPUdb.show_system_status`) for any listening client to collect.
         Active
-        triggers can be cancelled by using the :meth:`.clear_trigger` endpoint
-        or by
+        triggers can be cancelled by using the :meth:`GPUdb.clear_trigger`
+        endpoint or by
         clearing all relevant tables.
 
         The output returns the trigger handle as well as indicating success or
@@ -20945,11 +21139,11 @@ class GPUdb(object):
         then a uniqueness constraint is enforced, in that only a single object
         can exist with a given primary key column value (or set of values for
         the key columns, if using a composite primary key). When
-        :meth:`inserting <.insert_records>` data into a table with a primary
-        key, depending on the parameters in the request, incoming objects with
-        primary key values that match existing objects will either overwrite
-        (i.e. update) the existing object or will be skipped and not added into
-        the set.
+        :meth:`inserting <GPUdb.insert_records>` data into a table with a
+        primary key, depending on the parameters in the request, incoming
+        objects with primary key values that match existing objects will either
+        overwrite (i.e. update) the existing object or will be skipped and not
+        added into the set.
 
         Example of a type definition with some of the parameters::
 
@@ -21002,19 +21196,20 @@ class GPUdb(object):
 
                 * **store_only** --
                   Persist the column value but do not make it available to
-                  queries (e.g. :meth:`.filter`)-i.e. it is mutually exclusive
-                  to the *data* property. Any 'bytes' type column must have a
-                  *store_only* property. This property reduces system memory
-                  usage.
+                  queries (e.g. :meth:`GPUdb.filter`)-i.e. it is mutually
+                  exclusive to the *data* property. Any 'bytes' type column
+                  must have a *store_only* property. This property reduces
+                  system memory usage.
 
                 * **disk_optimized** --
                   Works in conjunction with the *data* property for string
                   columns. This property reduces system disk usage by disabling
-                  reverse string lookups. Queries like :meth:`.filter`,
-                  :meth:`.filter_by_list`, and :meth:`.filter_by_value` work as
-                  usual but :meth:`.aggregate_unique` and
-                  :meth:`.aggregate_group_by` are not allowed on columns with
-                  this property.
+                  reverse string lookups. Queries like :meth:`GPUdb.filter`,
+                  :meth:`GPUdb.filter_by_list`, and
+                  :meth:`GPUdb.filter_by_value` work as usual but
+                  :meth:`GPUdb.aggregate_unique` and
+                  :meth:`GPUdb.aggregate_group_by` are not allowed on columns
+                  with this property.
 
                 * **timestamp** --
                   Valid only for 'long' columns. Indicates that this field
@@ -21168,8 +21363,8 @@ class GPUdb(object):
                   upon insert.
 
                 * **init_with_uuid** --
-                  For 'uuid' type,  repalce empty strings and invalid uuid
-                  values with new_uuid()' upon insert.
+                  For 'uuid' type, replace empty strings and invalid UUID
+                  values with randomly-generated UUIDs upon insert.
 
                 The default value is an empty dict ( {} ).
 
@@ -21183,7 +21378,7 @@ class GPUdb(object):
             type_id (str)
                 An identifier representing the created type. This type_id can
                 be used in subsequent calls to :meth:`create a table
-                <.create_table>`
+                <GPUdb.create_table>`
 
             type_definition (str)
                 Value of input parameter *type_definition*.
@@ -21284,13 +21479,27 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *table_name*. If *persist* is *false* (or unspecified), then
+                  this is always allowed even if the caller does not have
+                  permission to create tables. The generated name is returned
+                  in *qualified_table_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   projection as part of input parameter *table_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of the schema for the output table. If the schema
-                  provided is non-existent, it will be automatically created.
-                  The default value is ''.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of the schema for the output table. If
+                  the schema provided is non-existent, it will be automatically
+                  created.  The default value is ''.
 
                 * **mode** --
                   If *merge_views*, then this operation will merge the provided
@@ -21434,6 +21643,16 @@ class GPUdb(object):
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
                 ).
+                Allowed keys are:
+
+                * **create_home_directory** --
+                  when true, a home directory in KiFS is created for this user.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
         Returns:
             A dict with the following entries--
@@ -21484,6 +21703,15 @@ class GPUdb(object):
 
                 * **default_schema** --
                   default schema associate with this user
+
+                * **create_home_directory** --
+                  when true, a home directory in KiFS is created for this user.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
         Returns:
             A dict with the following entries--
@@ -21874,8 +22102,8 @@ class GPUdb(object):
 
                 * **record_id** --
                   A record ID identifying a single record, obtained at the time
-                  of :meth:`insertion of the record <.insert_records>` or by
-                  calling :meth:`.get_records_from_collection` with the
+                  of :meth:`insertion of the record <GPUdb.insert_records>` or
+                  by calling :meth:`GPUdb.get_records_from_collection` with the
                   *return_record_ids* option. This option cannot be used to
                   delete records from `replicated
                   <../../../../concepts/tables/#replication>`__ tables.
@@ -21929,6 +22157,18 @@ class GPUdb(object):
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
                 ).
+                Allowed keys are:
+
+                * **cascade_delete** --
+                  If *true*, delete any existing entities owned by this group.
+                  Otherwise this request will return an error of any such
+                  entities exist.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -22449,17 +22689,17 @@ class GPUdb(object):
                 * **cache_input** --
                   A comma-delimited list of table names from input parameter
                   *input_table_names* from which input data will be cached for
-                  use in subsequent calls to :meth:`.execute_proc` with the
-                  *use_cached_input* option. Cached input data will be retained
-                  until the proc status is cleared with the
-                  :meth:`clear_complete <.show_proc_status>` option of
-                  :meth:`.show_proc_status` and all proc instances using the
-                  cached data have completed.  The default value is ''.
+                  use in subsequent calls to :meth:`GPUdb.execute_proc` with
+                  the *use_cached_input* option. Cached input data will be
+                  retained until the proc status is cleared with the
+                  :meth:`clear_complete <GPUdb.show_proc_status>` option of
+                  :meth:`GPUdb.show_proc_status` and all proc instances using
+                  the cached data have completed.  The default value is ''.
 
                 * **use_cached_input** --
                   A comma-delimited list of run IDs (as returned from prior
-                  calls to :meth:`.execute_proc`) of running or completed proc
-                  instances from which input data cached using the
+                  calls to :meth:`GPUdb.execute_proc`) of running or completed
+                  proc instances from which input data cached using the
                   *cache_input* option will be used. Cached input data will not
                   be used for any tables specified in input parameter
                   *input_table_names*, but data from all other tables cached
@@ -22470,13 +22710,13 @@ class GPUdb(object):
 
                 * **run_tag** --
                   A string that, if not empty, can be used in subsequent calls
-                  to :meth:`.show_proc_status` or :meth:`.kill_proc` to
-                  identify the proc instance.  The default value is ''.
+                  to :meth:`GPUdb.show_proc_status` or :meth:`GPUdb.kill_proc`
+                  to identify the proc instance.  The default value is ''.
 
                 * **max_output_lines** --
                   The maximum number of lines of output from stdout and stderr
-                  to return via :meth:`.show_proc_status`. If the number of
-                  lines output exceeds the maximum, earlier lines are
+                  to return via :meth:`GPUdb.show_proc_status`. If the number
+                  of lines output exceeds the maximum, earlier lines are
                   discarded.  The default value is '100'.
 
         Returns:
@@ -22484,8 +22724,8 @@ class GPUdb(object):
 
             run_id (str)
                 The run ID of the running proc instance. This may be passed to
-                :meth:`.show_proc_status` to obtain status information, or
-                :meth:`.kill_proc` to kill the proc instance.
+                :meth:`GPUdb.show_proc_status` to obtain status information, or
+                :meth:`GPUdb.kill_proc` to kill the proc instance.
 
             info (dict of str to str)
                 Additional information.
@@ -22519,7 +22759,7 @@ class GPUdb(object):
                      ):
         """Execute a SQL statement (query, DML, or DDL).
 
-        See `SQL Support <../../../../concepts/sql/>`__ for the complete set of
+        See `SQL Support <../../../../sql/>`__ for the complete set of
         supported SQL commands.
 
         Parameters:
@@ -22682,7 +22922,7 @@ class GPUdb(object):
                 * **update_on_existing_pk** --
                   Can be used to customize behavior when the updated primary
                   key value already exists as described in
-                  :meth:`.insert_records`.
+                  :meth:`GPUdb.insert_records`.
                   Allowed values are:
 
                   * true
@@ -22814,7 +23054,7 @@ class GPUdb(object):
                                 get_column_major = True ):
         """Execute a SQL statement (query, DML, or DDL).
 
-        See `SQL Support <../../../../concepts/sql/>`__ for the complete set of
+        See `SQL Support <../../../../sql/>`__ for the complete set of
         supported SQL commands.
 
         Parameters:
@@ -22977,7 +23217,7 @@ class GPUdb(object):
                 * **update_on_existing_pk** --
                   Can be used to customize behavior when the updated primary
                   key value already exists as described in
-                  :meth:`.insert_records`.
+                  :meth:`GPUdb.insert_records`.
                   Allowed values are:
 
                   * true
@@ -23187,12 +23427,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema is
-                  non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema is non-existent, it will be automatically
+                  created.
 
                 * **view_id** --
                   view this filtered-view is part of.  The default value is ''.
@@ -23289,12 +23543,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema
-                  provided is non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema provided is non-existent, it will be
+                  automatically created.
 
         Returns:
             A dict with the following entries--
@@ -23388,12 +23656,25 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  The schema for the newly created view. If the schema is
-                  non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  The schema for the newly created view. If the
+                  schema is non-existent, it will be automatically created.
 
         Returns:
             A dict with the following entries--
@@ -23495,12 +23776,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema is
-                  non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema is non-existent, it will be automatically
+                  created.
 
         Returns:
             A dict with the following entries--
@@ -23602,12 +23897,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema
-                  provided is non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema provided is non-existent, it will be
+                  automatically created.
 
         Returns:
             A dict with the following entries--
@@ -23721,12 +24030,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema
-                  provided is non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema provided is non-existent, it will be
+                  automatically created.
 
         Returns:
             A dict with the following entries--
@@ -23817,12 +24140,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema
-                  provided is non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema provided is non-existent, it will be
+                  automatically created.
 
                 * **filter_mode** --
                   String indicating the filter mode, either 'in_list' or
@@ -23941,13 +24278,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema which is to contain the newly created view.
-                  If the schema is non-existent, it will be automatically
-                  created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema which is to contain the newly
+                  created view. If the schema is non-existent, it will be
+                  automatically created.
 
         Returns:
             A dict with the following entries--
@@ -24049,12 +24399,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema
-                  provided is non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema provided is non-existent, it will be
+                  automatically created.
 
         Returns:
             A dict with the following entries--
@@ -24147,12 +24511,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema is
-                  non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema is non-existent, it will be automatically
+                  created.
 
         Returns:
             A dict with the following entries--
@@ -24251,12 +24629,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema is
-                  non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema is non-existent, it will be automatically
+                  created.
 
                 * **spatial_radius** --
                   A positive number passed as a string representing the radius
@@ -24385,12 +24777,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema is
-                  non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema is non-existent, it will be automatically
+                  created.
 
                 * **case_sensitive** --
                   If *false* then string filtering will ignore case. Does not
@@ -24500,12 +24906,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema is
-                  non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema is non-existent, it will be automatically
+                  created.
 
                 * **filter_mode** --
                   String indicating the filter mode, either *in_table* or
@@ -24652,12 +25072,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema is
-                  non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema is non-existent, it will be automatically
+                  created.
 
         Returns:
             A dict with the following entries--
@@ -24700,8 +25134,8 @@ class GPUdb(object):
     # begin get_job
     def get_job( self, job_id = None, options = {} ):
         """Get the status and result of asynchronously running job.  See the
-        :meth:`.create_job` for starting an asynchronous job.  Some fields of
-        the response are filled only after the submitted job has finished
+        :meth:`GPUdb.create_job` for starting an asynchronous job.  Some fields
+        of the response are filled only after the submitted job has finished
         execution.
 
         Parameters:
@@ -25169,7 +25603,7 @@ class GPUdb(object):
         `Window functions <../../../../concepts/window/>`__, which can perform
         operations like moving averages, are available through this endpoint as
         well as
-        :meth:`.create_projection`.
+        :meth:`GPUdb.create_projection`.
 
         When using pagination, if the table (or the underlying table in the
         case of a
@@ -25192,7 +25626,8 @@ class GPUdb(object):
         <../../../../concepts/expressions/#scalar-functions>`__).
 
         The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`__.
+        `dynamic schemas documentation
+        <../../../../api/concepts/#dynamic-schemas>`__.
 
         Parameters:
 
@@ -25360,7 +25795,7 @@ class GPUdb(object):
         `Window functions <../../../../concepts/window/>`__, which can perform
         operations like moving averages, are available through this endpoint as
         well as
-        :meth:`.create_projection`.
+        :meth:`GPUdb.create_projection`.
 
         When using pagination, if the table (or the underlying table in the
         case of a
@@ -25383,7 +25818,8 @@ class GPUdb(object):
         <../../../../concepts/expressions/#scalar-functions>`__).
 
         The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`__.
+        `dynamic schemas documentation
+        <../../../../api/concepts/#dynamic-schemas>`__.
 
         Parameters:
 
@@ -25590,7 +26026,8 @@ class GPUdb(object):
         *offset* and
         input parameter *limit* parameters.
 
-        In contrast to :meth:`.get_records` this returns records grouped by
+        In contrast to :meth:`GPUdb.get_records` this returns records grouped
+        by
         series/track. So if input parameter *offset* is 0 and input parameter
         *limit* is 5 this operation
         would return the first 5 series/tracks in input parameter *table_name*.
@@ -25723,7 +26160,8 @@ class GPUdb(object):
         *offset* and
         input parameter *limit* parameters.
 
-        In contrast to :meth:`.get_records` this returns records grouped by
+        In contrast to :meth:`GPUdb.get_records` this returns records grouped
+        by
         series/track. So if input parameter *offset* is 0 and input parameter
         *limit* is 5 this operation
         would return the first 5 series/tracks in input parameter *table_name*.
@@ -25864,7 +26302,7 @@ class GPUdb(object):
                                      -9999, encoding = 'binary', options = {} ):
         """Retrieves records from a collection. The operation can optionally
         return the record IDs which can be used in certain queries such as
-        :meth:`.delete_records`.
+        :meth:`GPUdb.delete_records`.
 
         This operation supports paging through the data via the input parameter
         *offset* and
@@ -26010,7 +26448,7 @@ class GPUdb(object):
                                                 True ):
         """Retrieves records from a collection. The operation can optionally
         return the record IDs which can be used in certain queries such as
-        :meth:`.delete_records`.
+        :meth:`GPUdb.delete_records`.
 
         This operation supports paging through the data via the input parameter
         *offset* and
@@ -26243,6 +26681,9 @@ class GPUdb(object):
 
                 * **table** --
                   Database Table
+
+                * **table_monitor** --
+                  Table monitor
 
             permission (str)
                 Permission being granted.
@@ -26820,6 +27261,9 @@ class GPUdb(object):
                 * **table** --
                   Database Table
 
+                * **table_monitor** --
+                  Table monitor
+
             permission (str)
                 Permission to check for.
                 Allowed values are:
@@ -27148,8 +27592,8 @@ class GPUdb(object):
         Parameters:
 
             type_id (str)
-                Id of the type returned in response to :meth:`.create_type`
-                request.
+                Id of the type returned in response to
+                :meth:`GPUdb.create_type` request.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -27416,9 +27860,14 @@ class GPUdb(object):
     def insert_records_from_files( self, table_name = None, filepaths = None,
                                    modify_columns = {}, create_table_options =
                                    {}, options = {} ):
-        """Reads from one or more files located on the server and inserts the data
-        into a new or
+        """Reads from one or more files and inserts the data into a new or
         existing table.
+        The source data can be located either in `KiFS
+        <../../../../tools/kifs/>`__; on the cluster, accessible to the
+        database; or
+        remotely, accessible via a pre-defined external `data source
+        <../../../../concepts/data_sources/>`__.
+
 
         For delimited text files, there are two loading schemes: positional and
         name-based. The name-based
@@ -27433,6 +27882,13 @@ class GPUdb(object):
         being used, names matching
         the file header's names may be provided to *columns_to_load* instead of
         numbers, but ranges are not supported.
+
+        Note: Due to data being loaded in parallel, there is no insertion order
+        guaranteed.  For tables with
+        primary keys, in the case of a primary key collision, this means it is
+        indeterminate which record
+        will be inserted first and remain, while the rest of the colliding key
+        records are discarded.
 
         Returns once all files are processed.
 
@@ -27451,19 +27907,38 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-naming-criteria>`__.
 
             filepaths (list of str)
-                Absolute or relative filepath(s) from where files will be
-                loaded. Relative filepaths are relative to the defined
-                `external_files_directory
-                <../../../../config/#external-files>`__ parameter in the server
-                configuration. The filepaths may include wildcards (*). If the
-                first path ends in .tsv, the text delimiter will be defaulted
-                to a tab character. If the first path ends in .psv, the text
-                delimiter will be defaulted to a pipe character (|).
+                A list of file paths from which data will be sourced;
 
                 For paths in `KiFS <../../../../tools/kifs/>`__, use the uri
-                prefix of kifs:// followed by the full path to a file or
-                directory    The user can provide a single element (which will
-                be automatically promoted to a list internally) or a list.
+                prefix of kifs:// followed by the path to
+                a file or directory. File matching by prefix is supported, e.g.
+                kifs://dir/file would match dir/file_1
+                and dir/file_2. When prefix matching is used, the path must
+                start with a full, valid KiFS directory name.
+
+                If an external data source is specified in *datasource_name*,
+                these file
+                paths must resolve to accessible files at that data source
+                location. Prefix matching is is supported.
+                If the data source is hdfs, prefixes must be aligned with
+                directories, i.e. partial file names will not match.
+
+                If no data source is specified, the files are assumed to be
+                local to the database and must all be
+                accessible to the gpudb user, residing on the path (or relative
+                to the path) specified by the
+                external files directory in the Kinetica
+                `configuration file <../../../../config/#external-files>`__.
+                Wildcards (*) can be used to specify a group of files.
+                Prefix matching is supported, the prefixes must be aligned with
+                directories.
+
+                If the first path ends in .tsv, the text delimiter will be
+                defaulted to a tab character.
+                If the first path ends in .psv, the text delimiter will be
+                defaulted to a pipe character (|).     The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
 
             modify_columns (dict of str to dicts of str to str)
                 Not implemented yet.  The default value is an empty dict ( {}
@@ -27614,7 +28089,8 @@ class GPUdb(object):
                   Optional name of a table to which records that were rejected
                   are written.  The bad-record-table has the following columns:
                   line_number (long), line_rejected (string), error_message
-                  (string).
+                  (string). When error handling is Abort, bad records table is
+                  not populated.
 
                 * **bad_record_table_limit** --
                   A positive integer indicating the maximum number of records
@@ -27729,21 +28205,24 @@ class GPUdb(object):
                     error is encountered.  Primary key collisions are
                     considered abortable errors in this mode.
 
-                  The default value is 'permissive'.
+                  The default value is 'abort'.
 
                 * **file_type** --
                   Specifies the type of the file(s) whose records will be
                   inserted.
                   Allowed values are:
 
+                  * **avro** --
+                    Avro file format
+
                   * **delimited_text** --
                     Delimited text file format; e.g., CSV, TSV, PSV, etc.
 
-                  * **parquet** --
-                    Apache Parquet file format
-
                   * **json** --
                     Json file format
+
+                  * **parquet** --
+                    Apache Parquet file format
 
                   * **shapefile** --
                     ShapeFile file format
@@ -27771,9 +28250,14 @@ class GPUdb(object):
 
                   The default value is 'full'.
 
+                * **kafka_group_id** --
+                  The group id to be used consuming data from a kakfa topic
+                  (valid only for kafka datasource subscriptions).
+
                 * **loading_mode** --
                   Scheme for distributing the extraction and loading of data
-                  from the source data file(s).
+                  from the source data file(s). This option applies only when
+                  loading files that are local to the database.
                   Allowed values are:
 
                   * **head** --
@@ -27808,15 +28292,25 @@ class GPUdb(object):
                     head node has no files local to it, it will be unable to
                     determine the structure and the request
                     will fail.
-                    This mode should not be used in conjuction with a data
-                    source, as data sources are seen by all
-                    worker processes as shared resources with no 'local'
-                    component.
                     If the head node is configured to have no worker processes,
                     no data strictly accessible to the head
                     node will be loaded.
 
                   The default value is 'head'.
+
+                * **local_time_offset** --
+                  For Avro local timestamp columns
+
+                * **num_tasks_per_rank** --
+                  Optional: number of tasks for reading file per rank. Default
+                  will be external_file_reader_num_tasks
+
+                * **poll_interval** --
+                  If *true*, the number of seconds between attempts to load
+                  external files into the table.  If zero, polling will be
+                  continuous as long as data is found.  If no data is found,
+                  the interval will steadily increase to a maximum of 60
+                  seconds.
 
                 * **primary_keys** --
                   Optional: comma separated list of column names, to set as
@@ -27828,6 +28322,9 @@ class GPUdb(object):
                   primary keys, when not specified in the type.  The default
                   value is ''.
 
+                * **skip_lines** --
+                  Skip number of lines from begining of file.
+
                 * **subscribe** --
                   Continuously poll the data source to check for new data and
                   load it into the table.
@@ -27838,12 +28335,16 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-                * **poll_interval** --
-                  If *true*, the number of seconds between attempts to load
-                  external files into the table.  If zero, polling will be
-                  continuous as long as data is found.  If no data is found,
-                  the interval will steadily increase to a maximum of 60
-                  seconds.
+                * **table_insert_mode** --
+                  Optional: table_insert_mode. When inserting records from
+                  multiple files: if table_per_file then insert from each file
+                  into a new table. Currently supported only for shapefiles.
+                  Allowed values are:
+
+                  * single
+                  * table_per_file
+
+                  The default value is 'single'.
 
                 * **text_comment_string** --
                   Specifies the character string that should be interpreted as
@@ -27901,7 +28402,7 @@ class GPUdb(object):
                   a null
                   value in the source data.
                   For *delimited_text* *file_type* only.  The default value is
-                  ''.
+                  '\\N'.
 
                 * **text_quote_character** --
                   Specifies the character that should be interpreted as a field
@@ -27917,6 +28418,17 @@ class GPUdb(object):
                   For *delimited_text* *file_type* only.  The default value is
                   '"'.
 
+                * **text_search_columns** --
+                  Add 'text_search' property to internally inferenced string
+                  columns. Comma seperated list of column names or '*' for all
+                  columns. To add text_search property only to string columns
+                  of minimum size, set also the option
+                  'text_search_min_column_length'
+
+                * **text_search_min_column_length** --
+                  Set minimum column size. Used only when 'text_search_columns'
+                  has a value.
+
                 * **truncate_table** --
                   If set to *true*, truncates the table specified by input
                   parameter *table_name* prior to loading the file(s).
@@ -27926,10 +28438,6 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
-
-                * **num_tasks_per_rank** --
-                  Optional: number of tasks for reading file per rank. Default
-                  will be external_file_reader_num_tasks
 
                 * **type_inference_mode** --
                   optimize type inference for:.
@@ -27944,32 +28452,6 @@ class GPUdb(object):
                     will fit with minimum data scanned
 
                   The default value is 'speed'.
-
-                * **table_insert_mode** --
-                  Optional: table_insert_mode. When inserting records from
-                  multiple files: if table_per_file then insert from each file
-                  into a new table. Currently supported only for shapefiles.
-                  Allowed values are:
-
-                  * single
-                  * table_per_file
-
-                  The default value is 'single'.
-
-                * **kafka_group_id** --
-                  The group id to be used consuming data from a kakfa topic
-                  (valid only for kafka datasource subscriptions).
-
-                * **text_search_columns** --
-                  Add 'text_search' property to internally inferenced string
-                  columns. Comma seperated list of column names or '*' for all
-                  columns. To add text_search property only to string columns
-                  of minimum size, set also the option
-                  'text_search_min_column_length'
-
-                * **text_search_min_column_length** --
-                  Set minimum column size. Used only when 'text_search_columns'
-                  has a value.
 
         Returns:
             A dict with the following entries--
@@ -28065,8 +28547,9 @@ class GPUdb(object):
 
             create_table_options (dict of str to str)
                 Options used when creating the target table. Includes type to
-                use. The other options match those in :meth:`.create_table`.
-                The default value is an empty dict ( {} ).
+                use. The other options match those in
+                :meth:`GPUdb.create_table`.  The default value is an empty dict
+                ( {} ).
                 Allowed keys are:
 
                 * **type_id** --
@@ -28309,7 +28792,7 @@ class GPUdb(object):
 
                   * **permissive** --
                     Records with missing columns are populated with nulls if
-                    possible; otherwise, malformed records are skipped.
+                    possible; otherwise, the malformed records are skipped.
 
                   * **ignore_bad_records** --
                     Malformed records are skipped.
@@ -28319,21 +28802,24 @@ class GPUdb(object):
                     error is encountered.  Primary key collisions are
                     considered abortable errors in this mode.
 
-                  The default value is 'permissive'.
+                  The default value is 'abort'.
 
                 * **file_type** --
                   Specifies the type of the file(s) whose records will be
                   inserted.
                   Allowed values are:
 
+                  * **avro** --
+                    Avro file format
+
                   * **delimited_text** --
                     Delimited text file format; e.g., CSV, TSV, PSV, etc.
 
-                  * **parquet** --
-                    Apache Parquet file format
-
                   * **json** --
                     Json file format
+
+                  * **parquet** --
+                    Apache Parquet file format
 
                   * **shapefile** --
                     ShapeFile file format
@@ -28361,6 +28847,64 @@ class GPUdb(object):
 
                   The default value is 'full'.
 
+                * **loading_mode** --
+                  Scheme for distributing the extraction and loading of data
+                  from the source data file(s). This option applies only when
+                  loading files that are local to the database.
+                  Allowed values are:
+
+                  * **head** --
+                    The head node loads all data. All files must be available
+                    to the head node.
+
+                  * **distributed_shared** --
+                    The head node coordinates loading data by worker
+                    processes across all nodes from shared files available to
+                    all workers.
+                    NOTE:
+                    Instead of existing on a shared source, the files can be
+                    duplicated on a source local to each host
+                    to improve performance, though the files must appear as the
+                    same data set from the perspective of
+                    all hosts performing the load.
+
+                  * **distributed_local** --
+                    A single worker process on each node loads all files
+                    that are available to it. This option works best when each
+                    worker loads files from its own file
+                    system, to maximize performance. In order to avoid data
+                    duplication, either each worker performing
+                    the load needs to have visibility to a set of files unique
+                    to it (no file is visible to more than
+                    one node) or the target table needs to have a primary key
+                    (which will allow the worker to
+                    automatically deduplicate data).
+                    NOTE:
+                    If the target table doesn't exist, the table structure will
+                    be determined by the head node. If the
+                    head node has no files local to it, it will be unable to
+                    determine the structure and the request
+                    will fail.
+                    If the head node is configured to have no worker processes,
+                    no data strictly accessible to the head
+                    node will be loaded.
+
+                  The default value is 'head'.
+
+                * **local_time_offset** --
+                  For Avro local timestamp columns
+
+                * **num_tasks_per_rank** --
+                  Optional: number of tasks for reading file per rank. Default
+                  will be external_file_reader_num_tasks
+
+                * **poll_interval** --
+                  If *true*, the number of seconds between attempts to load
+                  external files into the table.  If zero, polling will be
+                  continuous as long as data is found.  If no data is found,
+                  the interval will steadily increase to a maximum of 60
+                  seconds.
+
                 * **primary_keys** --
                   Optional: comma separated list of column names, to set as
                   primary keys, when not specified in the type.  The default
@@ -28370,6 +28914,30 @@ class GPUdb(object):
                   Optional: comma separated list of column names, to set as
                   primary keys, when not specified in the type.  The default
                   value is ''.
+
+                * **skip_lines** --
+                  Skip number of lines from begining of file.
+
+                * **subscribe** --
+                  Continuously poll the data source to check for new data and
+                  load it into the table.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **table_insert_mode** --
+                  Optional: table_insert_mode. When inserting records from
+                  multiple files: if table_per_file then insert from each file
+                  into a new table. Currently supported only for shapefiles.
+                  Allowed values are:
+
+                  * single
+                  * table_per_file
+
+                  The default value is 'single'.
 
                 * **text_comment_string** --
                   Specifies the character string that should be interpreted as
@@ -28427,7 +28995,7 @@ class GPUdb(object):
                   a null
                   value in the source data.
                   For *delimited_text* *file_type* only.  The default value is
-                  ''.
+                  '\\N'.
 
                 * **text_quote_character** --
                   Specifies the character that should be interpreted as a field
@@ -28443,9 +29011,26 @@ class GPUdb(object):
                   For *delimited_text* *file_type* only.  The default value is
                   '"'.
 
-                * **num_tasks_per_rank** --
-                  Optional: number of tasks for reading file per rank. Default
-                  will be external_file_reader_num_tasks
+                * **text_search_columns** --
+                  Add 'text_search' property to internally inferenced string
+                  columns. Comma seperated list of column names or '*' for all
+                  columns. To add text_search property only to string columns
+                  of minimum size, set also the option
+                  'text_search_min_column_length'
+
+                * **text_search_min_column_length** --
+                  Set minimum column size. Used only when 'text_search_columns'
+                  has a value.
+
+                * **truncate_table** --
+                  If set to *true*, truncates the table specified by input
+                  parameter *table_name* prior to loading the file(s).
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **type_inference_mode** --
                   optimize type inference for:.
@@ -28460,17 +29045,6 @@ class GPUdb(object):
                     will fit with minimum data scanned
 
                   The default value is 'speed'.
-
-                * **text_search_columns** --
-                  Add 'text_search' property to internally inferenced string
-                  columns. Comma seperated list of column names or '*' for all
-                  columns. To add text_search property only to string columns
-                  of minimum size, set also the option
-                  'text_search_min_column_length'
-
-                * **text_search_min_column_length** --
-                  Set minimum column size. Used only when 'text_search_columns'
-                  has a value.
 
         Returns:
             A dict with the following entries--
@@ -28868,10 +29442,10 @@ class GPUdb(object):
                 * **run_tag** --
                   If input parameter *run_id* is specified, kill the proc
                   instance that has a matching run ID and a matching run tag
-                  that was provided to :meth:`.execute_proc`. If input
+                  that was provided to :meth:`GPUdb.execute_proc`. If input
                   parameter *run_id* is not specified, kill the proc
                   instance(s) where a matching run tag was provided to
-                  :meth:`.execute_proc`.  The default value is ''.
+                  :meth:`GPUdb.execute_proc`.  The default value is ''.
 
         Returns:
             A dict with the following entries--
@@ -29137,26 +29711,26 @@ class GPUdb(object):
                 * **left_turn_penalty** --
                   This will add an additonal weight over the edges labelled as
                   'left turn' if the 'add_turn' option parameter of the
-                  :meth:`.create_graph` was invoked at graph creation.  The
-                  default value is '0.0'.
+                  :meth:`GPUdb.create_graph` was invoked at graph creation.
+                  The default value is '0.0'.
 
                 * **right_turn_penalty** --
                   This will add an additonal weight over the edges labelled as'
                   right turn' if the 'add_turn' option parameter of the
-                  :meth:`.create_graph` was invoked at graph creation.  The
-                  default value is '0.0'.
+                  :meth:`GPUdb.create_graph` was invoked at graph creation.
+                  The default value is '0.0'.
 
                 * **intersection_penalty** --
                   This will add an additonal weight over the edges labelled as
                   'intersection' if the 'add_turn' option parameter of the
-                  :meth:`.create_graph` was invoked at graph creation.  The
-                  default value is '0.0'.
+                  :meth:`GPUdb.create_graph` was invoked at graph creation.
+                  The default value is '0.0'.
 
                 * **sharp_turn_penalty** --
                   This will add an additonal weight over the edges labelled as
                   'sharp turn' or 'u-turn' if the 'add_turn' option parameter
-                  of the :meth:`.create_graph` was invoked at graph creation.
-                  The default value is '0.0'.
+                  of the :meth:`GPUdb.create_graph` was invoked at graph
+                  creation.  The default value is '0.0'.
 
                 * **aggregated_output** --
                   For the *match_supply_demand* solver only. When it is true
@@ -29377,12 +29951,26 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *table_name*. If *persist* is *false*, then this is always
+                  allowed even if the caller does not have permission to create
+                  tables. The generated name is returned in
+                  *qualified_table_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   merged table as part of input parameter *table_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created merged table specified
-                  by input parameter *table_name*.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created merged
+                  table specified by input parameter *table_name*.
 
                 * **is_replicated** --
                   Indicates the `distribution scheme
@@ -29611,7 +30199,7 @@ class GPUdb(object):
                   that upon database restart, if *save_persist* is also set to
                   *true*, the graph will be fully reconstructed and the table
                   monitors will be reattached. For more details on table
-                  monitors, see :meth:`.create_table_monitor`.
+                  monitors, see :meth:`GPUdb.create_table_monitor`.
                   Allowed values are:
 
                   * true
@@ -29707,7 +30295,7 @@ class GPUdb(object):
     def query_graph( self, graph_name = None, queries = None, restrictions = [],
                      adjacency_table = '', rings = 1, options = {} ):
         """Employs a topological query on a network graph generated a-priori by
-        :meth:`.create_graph` and returns a list of adjacent edge(s) or
+        :meth:`GPUdb.create_graph` and returns a list of adjacent edge(s) or
         node(s),
         also known as an adjacency list, depending on what's been provided to
         the
@@ -29951,17 +30539,89 @@ class GPUdb(object):
     # end query_graph
 
 
+    # begin repartition_graph
+    def repartition_graph( self, graph_name = None, options = {} ):
+        """Rebalances an existing partitioned graph.
+
+        IMPORTANT: It's highly recommended that you review the
+        `Network Graphs & Solvers
+        <../../../../graph_solver/network_graph_solver/>`__
+        concepts documentation, the
+        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`__,
+        and/or some `graph examples <../../../../guide-tags/graph/>`__ before
+        using this endpoint.
+
+        Parameters:
+
+            graph_name (str)
+                Name of the graph resource to rebalance.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **new_graph_name** --
+                  If a non-empty value is specified, the original graph will be
+                  kept
+                  (non-default behaviour) and a new balanced graph will be
+                  created under this given name.  When the
+                  value is empty (default), the generated 'balanced' graph will
+                  replace the original 'unbalanced'
+                  graph under the same graph name.  The default value is ''.
+
+                * **source_node** --
+                  The distributed shortest path solve is run from this source
+                  node to
+                  all the nodes in the graph to create balaced partitions using
+                  the iso-distance levels of the
+                  solution.  The source node is selected by the rebalance
+                  algorithm automatically (default case when
+                  the value is an empty string). Otherwise, the user specified
+                  node is used as the source.  The default value is ''.
+
+                * **sql_request_avro_json** --
+                    The default value is ''.
+
+        Returns:
+            A dict with the following entries--
+
+            result (bool)
+                Indicates a successful rebalancing on all servers.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( graph_name, (basestring)), "repartition_graph(): Argument 'graph_name' must be (one) of type(s) '(basestring)'; given %s" % type( graph_name ).__name__
+        assert isinstance( options, (dict)), "repartition_graph(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['graph_name'] = graph_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/repartition/graph', obj, convert_to_attr_dict = True )
+
+        return response
+    # end repartition_graph
+
+
     # begin reserve_resource
-    def reserve_resource( self, component = None, bytes_requested = None, options =
-                          {} ):
+    def reserve_resource( self, component = None, name = None, action = None,
+                          bytes_requested = 0, owner_id = 0, options = {} ):
 
         assert isinstance( component, (basestring)), "reserve_resource(): Argument 'component' must be (one) of type(s) '(basestring)'; given %s" % type( component ).__name__
+        assert isinstance( name, (basestring)), "reserve_resource(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( action, (basestring)), "reserve_resource(): Argument 'action' must be (one) of type(s) '(basestring)'; given %s" % type( action ).__name__
         assert isinstance( bytes_requested, (int, long, float)), "reserve_resource(): Argument 'bytes_requested' must be (one) of type(s) '(int, long, float)'; given %s" % type( bytes_requested ).__name__
+        assert isinstance( owner_id, (int, long, float)), "reserve_resource(): Argument 'owner_id' must be (one) of type(s) '(int, long, float)'; given %s" % type( owner_id ).__name__
         assert isinstance( options, (dict)), "reserve_resource(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         obj = {}
         obj['component'] = component
+        obj['name'] = name
+        obj['action'] = action
         obj['bytes_requested'] = bytes_requested
+        obj['owner_id'] = owner_id
         obj['options'] = self.__sanitize_dicts( options )
 
         response = self.__submit_request( '/reserve/resource', obj, convert_to_attr_dict = True )
@@ -30019,6 +30679,9 @@ class GPUdb(object):
 
                 * **table** --
                   Database Table
+
+                * **table_monitor** --
+                  Table monitor
 
             permission (str)
                 Permission being revoked.
@@ -30875,6 +31538,12 @@ class GPUdb(object):
             graph_server_ids (list of ints)
                 Id(s) of the graph(s).
 
+            graph_owner_user_names (list of str)
+                Owner the graph(s) and associated solution table(s).
+
+            graph_owner_resource_groups (list of str)
+                Owner resource groups(s) of the graph(s).
+
             directed (list of bools)
                 Whether or not the edges of the graph have directions
                 (bi-directional edges can still exist in directed graphs).
@@ -30889,6 +31558,9 @@ class GPUdb(object):
                 Total number of edges in the graph.
 
             num_bytes (list of longs)
+                Memory this graph uses in bytes.
+
+            resource_capacity (list of longs)
                 Memory this graph uses in bytes.
 
             is_persisted (list of bools)
@@ -31033,9 +31705,9 @@ class GPUdb(object):
     # begin show_proc_status
     def show_proc_status( self, run_id = '', options = {} ):
         """Shows the statuses of running or completed proc instances. Results are
-        grouped by run ID (as returned from :meth:`.execute_proc`) and data
-        segment ID (each invocation of the proc command on a data segment is
-        assigned a data segment ID).
+        grouped by run ID (as returned from :meth:`GPUdb.execute_proc`) and
+        data segment ID (each invocation of the proc command on a data segment
+        is assigned a data segment ID).
 
         Parameters:
 
@@ -31065,10 +31737,10 @@ class GPUdb(object):
                 * **run_tag** --
                   If input parameter *run_id* is specified, return the status
                   for a proc instance that has a matching run ID and a matching
-                  run tag that was provided to :meth:`.execute_proc`. If input
-                  parameter *run_id* is not specified, return statuses for all
-                  proc instances where a matching run tag was provided to
-                  :meth:`.execute_proc`.  The default value is ''.
+                  run tag that was provided to :meth:`GPUdb.execute_proc`. If
+                  input parameter *run_id* is not specified, return statuses
+                  for all proc instances where a matching run tag was provided
+                  to :meth:`GPUdb.execute_proc`.  The default value is ''.
 
         Returns:
             A dict with the following entries--
@@ -31077,29 +31749,29 @@ class GPUdb(object):
                 The proc names corresponding to the returned run IDs.
 
             params (dict of str to dicts of str to str)
-                The string params passed to :meth:`.execute_proc` for the
+                The string params passed to :meth:`GPUdb.execute_proc` for the
                 returned run IDs.
 
             bin_params (dict of str to dicts of str to str)
-                The binary params passed to :meth:`.execute_proc` for the
+                The binary params passed to :meth:`GPUdb.execute_proc` for the
                 returned run IDs.
 
             input_table_names (dict of str to lists of str)
-                The input table names passed to :meth:`.execute_proc` for the
-                returned run IDs.
+                The input table names passed to :meth:`GPUdb.execute_proc` for
+                the returned run IDs.
 
             input_column_names (dict of str to dicts of str to lists of str)
-                The input column names passed to :meth:`.execute_proc` for the
-                returned run IDs, supplemented with the column names for input
-                tables not included in the input column name map.
+                The input column names passed to :meth:`GPUdb.execute_proc` for
+                the returned run IDs, supplemented with the column names for
+                input tables not included in the input column name map.
 
             output_table_names (dict of str to lists of str)
-                The output table names passed to :meth:`.execute_proc` for the
-                returned run IDs.
+                The output table names passed to :meth:`GPUdb.execute_proc` for
+                the returned run IDs.
 
             options (dict of str to dicts of str to str)
-                The optional parameters passed to :meth:`.execute_proc` for the
-                returned run IDs.
+                The optional parameters passed to :meth:`GPUdb.execute_proc`
+                for the returned run IDs.
 
             overall_statuses (dict of str to str)
                 Overall statuses for the returned run IDs. Note that these are
@@ -31158,6 +31830,83 @@ class GPUdb(object):
 
         return response
     # end show_proc_status
+
+
+    # begin show_resource_objects
+    def show_resource_objects( self, options = {} ):
+        """Returns information about the internal sub-components (tiered objects)
+        which use resources of the system. The request can either return
+        results from
+        actively used objects (default) or it can be used to query the status
+        of the
+        objects of a given list of tables.
+        Returns detailed information about the requested resource objects.
+
+        Parameters:
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **tiers** --
+                  Comma-separated list of tiers to query, leave blank for all
+                  tiers.
+
+                * **expression** --
+                  An expression to filter the returned objects. Expression is
+                  limited to the following operators:
+                  =,!=,<,<=,>,>=,+,-,*,AND,OR,LIKE. For details see
+                  `Expressions <../../../../concepts/expressions/>`__. To use a
+                  more complex expression, query the
+                  ki_catalog.ki_tiered_objects table directly.
+
+                * **order_by** --
+                  Single column to be sorted by as well as the sort direction,
+                  e.g., 'size asc'.
+                  Allowed values are:
+
+                  * size
+                  * id
+                  * priority
+                  * tier
+                  * evictable
+                  * owner_resource_group
+
+                * **limit** --
+                  An integer indicating the maximum number of results to be
+                  returned, per rank, or (-1) to indicate that the maximum
+                  number of results allowed by the server
+                  should be returned.  The number of records returned will
+                  never exceed the server's own limit,
+                  defined by the `max_get_records_size
+                  <../../../../config/#general>`__ parameter in the server
+                  configuration.  The default value is '100'.
+
+                * **table_names** --
+                  Comma-separated list of tables to restrict the results to.
+                  Use '*' to show all tables.
+
+        Returns:
+            A dict with the following entries--
+
+            rank_objects (dict of str to str)
+                Tier usage across ranks. Layout is:
+                response.rank_usage[rank_number][resource_group_name] =
+                group_usage (as stringified json)
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( options, (dict)), "show_resource_objects(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/show/resource/objects', obj, convert_to_attr_dict = True )
+
+        return response
+    # end show_resource_objects
 
 
     # begin show_resource_statistics
@@ -31221,7 +31970,9 @@ class GPUdb(object):
                   The default value is 'true'.
 
                 * **show_default_group** --
-                  If *true* include the default resource group in the response.
+                  If *true* include the default and system resource groups in
+                  the response. This value defaults to false if an explicit
+                  list of group names is provided, and true otherwise.
                   Allowed values are:
 
                   * true
@@ -31229,11 +31980,26 @@ class GPUdb(object):
 
                   The default value is 'true'.
 
+                * **show_tier_usage** --
+                  If *true* include the resource group usage on the worker
+                  ranks in the response.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
         Returns:
             A dict with the following entries--
 
             groups (list of dicts of str to str)
                 Map of resource group information.
+
+            rank_usage (dict of str to str)
+                Tier usage across ranks. Layout is:
+                response.rank_usage[rank_number][resource_group_name] =
+                group_usage (as stringified json)
 
             info (dict of str to str)
                 Additional information.
@@ -31888,7 +32654,7 @@ class GPUdb(object):
     # begin show_table_monitors
     def show_table_monitors( self, monitor_ids = None, options = {} ):
         """Show table monitors and their properties. Table monitors are created
-        using :meth:`.create_table_monitor`.
+        using :meth:`GPUdb.create_table_monitor`.
         Returns detailed information about existing table monitors.
 
         Parameters:
@@ -31976,7 +32742,7 @@ class GPUdb(object):
         Parameters:
 
             type_id (str)
-                Type id returned by a call to :meth:`.create_type`.
+                Type id returned by a call to :meth:`GPUdb.create_type`.
 
             label (str)
                 Optional user supplied label which can be used instead of the
@@ -32070,11 +32836,12 @@ class GPUdb(object):
         Parameters:
 
             type_id (str)
-                Type Id returned in response to a call to :meth:`.create_type`.
+                Type Id returned in response to a call to
+                :meth:`GPUdb.create_type`.
 
             label (str)
                 Option string that was supplied by user in a call to
-                :meth:`.create_type`.
+                :meth:`GPUdb.create_type`.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -32424,26 +33191,26 @@ class GPUdb(object):
                 * **left_turn_penalty** --
                   This will add an additonal weight over the edges labelled as
                   'left turn' if the 'add_turn' option parameter of the
-                  :meth:`.create_graph` was invoked at graph creation.  The
-                  default value is '0.0'.
+                  :meth:`GPUdb.create_graph` was invoked at graph creation.
+                  The default value is '0.0'.
 
                 * **right_turn_penalty** --
                   This will add an additonal weight over the edges labelled as'
                   right turn' if the 'add_turn' option parameter of the
-                  :meth:`.create_graph` was invoked at graph creation.  The
-                  default value is '0.0'.
+                  :meth:`GPUdb.create_graph` was invoked at graph creation.
+                  The default value is '0.0'.
 
                 * **intersection_penalty** --
                   This will add an additonal weight over the edges labelled as
                   'intersection' if the 'add_turn' option parameter of the
-                  :meth:`.create_graph` was invoked at graph creation.  The
-                  default value is '0.0'.
+                  :meth:`GPUdb.create_graph` was invoked at graph creation.
+                  The default value is '0.0'.
 
                 * **sharp_turn_penalty** --
                   This will add an additonal weight over the edges labelled as
                   'sharp turn' or 'u-turn' if the 'add_turn' option parameter
-                  of the :meth:`.create_graph` was invoked at graph creation.
-                  The default value is '0.0'.
+                  of the :meth:`GPUdb.create_graph` was invoked at graph
+                  creation.  The default value is '0.0'.
 
                 * **num_best_paths** --
                   For *MULTIPLE_ROUTING* solvers only; sets the number of
@@ -32630,11 +33397,11 @@ class GPUdb(object):
 
             expressions (list of str)
                 A list of the actual predicates, one for each update; format
-                should follow the guidelines :meth:`here <.filter>`.    The
+                should follow the guidelines :meth:`here <GPUdb.filter>`.
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.  The
                 user can provide a single element (which will be automatically
-                promoted to a list internally) or a list.  The user can provide
-                a single element (which will be automatically promoted to a
-                list internally) or a list.
+                promoted to a list internally) or a list.
 
             new_values_maps (list of dicts of str to str and/or None)
                 List of new values for the matching records.  Each element is a
@@ -32763,8 +33530,8 @@ class GPUdb(object):
 
                 * **record_id** --
                   ID of a single record to be updated (returned in the call to
-                  :meth:`.insert_records` or
-                  :meth:`.get_records_from_collection`).
+                  :meth:`GPUdb.insert_records` or
+                  :meth:`GPUdb.get_records_from_collection`).
 
             record_type (RecordType)
                 A :class:`RecordType` object using which the the binary data
@@ -32953,7 +33720,7 @@ class GPUdb(object):
         The multipart upload must be completed for the file to be usable in
         KiFS.
         Information about multipart uploads in progress is available in
-        :meth:`.show_files`.
+        :meth:`GPUdb.show_files`.
 
         File data may be pre-encoded using base64 encoding. This should be
         indicated
@@ -32962,8 +33729,8 @@ class GPUdb(object):
 
         Each file path must reside in a top-level KiFS directory, i.e. one of
         the
-        directories listed in :meth:`.show_directories`. The user must have
-        write
+        directories listed in :meth:`GPUdb.show_directories`. The user must
+        have write
         permission on the directory. Nested directories are permitted in file
         name
         paths. Directories are deliniated with the directory separator of '/'.
@@ -34348,27 +35115,31 @@ class GPUdbTable( object ):
         self._type_id         = None
         self._is_replicated   = self.options._is_replicated
 
-        # Create a random table name if none is given
-        if not name:
-            # No name is given
-            self._name = GPUdbTable.random_name()
-            self.qualified_name = self._name
+        if not self.options._create_temp_table:
+            # Create a random table name if none is given
+            if not name:
+                # No name is given
+                self._name = GPUdbTable.random_name()
+                self.qualified_name = self._name
 
-            # Check if a collection name was given
-            if ( self._collection_name is not None ):
-                # The user has specified a collection name, treat that as
-                # the schema name
-                self.qualified_name = ( "{coll}.{table}"
-                                        "".format( coll = self._collection_name,
-                                                   table = self._name ) )
+                # Check if a collection name was given
+                if ( self._collection_name is not None ):
+                    # The user has specified a collection name, treat that as
+                    # the schema name
+                    self.qualified_name = ( "{coll}.{table}"
+                                            "".format( coll = self._collection_name,
+                                                       table = self._name ) )
+            else:
+                # The user gave a name, save it
+                self._name = name
+
+                self.qualified_name = self.__get_qualified_name( self._name )
+            # end handling name
+            self.__log_debug( "Table name '{}', qualified name '{}'"
+                              "".format( self._name, self.qualified_name ) )
         else:
-            # The user gave a name, save it
-            self._name = name
-
-            self.qualified_name = self.__get_qualified_name( self._name )
-        # end handling name
-        self.__log_debug( "Table name '{}', qualified name '{}'"
-                          "".format( self._name, self.qualified_name ) )
+            self._name = ""
+            self.qualified_name = ""
 
         # The table is known to be read only
         if read_only_table_count is not None: # Integer value 0 accepted
@@ -34396,15 +35167,18 @@ class GPUdbTable( object ):
         # NOT a known read-only table; need to either get info on it or create it
         # -----------------------------------------------------------------------
         try:
-            # Does a table with the same name exist already?
-            has_table_rsp = self.db.has_table( self.qualified_name )
-            if not has_table_rsp.is_ok( ):
-                # There was a problem checking for the table
-                raise GPUdbException( "Problem checking existence of the table: " + _Util.get_error_msg( has_table_rsp ) )
-            table_exists = has_table_rsp["table_exists"]
-            self.__log_debug( "Does a table with qualified name '{}' already "
-                              "exist?: {}"
-                              "".format( self.qualified_name, table_exists ) )
+            if not self.options._create_temp_table:
+                # Does a table with the same name exist already?
+                has_table_rsp = self.db.has_table( self.qualified_name )
+                if not has_table_rsp.is_ok( ):
+                    # There was a problem checking for the table
+                    raise GPUdbException( "Problem checking existence of the table: " + _Util.get_error_msg( has_table_rsp ) )
+                table_exists = has_table_rsp["table_exists"]
+                self.__log_debug( "Does a table with qualified name '{}' already "
+                                  "exist?: {}"
+                                  "".format( self.qualified_name, table_exists ) )
+            else:
+                table_exists = False
 
             # Do different things based on whether the table already exists
             if table_exists:
@@ -34477,6 +35251,10 @@ class GPUdbTable( object ):
 
                 if not _Util.is_ok( rsp_obj ): # problem creating the table
                     raise GPUdbException( _Util.get_error_msg( rsp_obj ) )
+
+                if self.options._create_temp_table:
+                    self._name = rsp_obj["table_name"]
+                    self.qualified_name = rsp_obj["info"]["qualified_table_name"]
             # end if-else
         except GPUdbException as e:
             if IS_PYTHON_3:
@@ -36038,12 +36816,26 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *join_table_name*. This is always allowed even if the caller
+                  does not have permission to create tables. The generated name
+                  is returned in *qualified_join_table_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   join as part of input parameter *join_table_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the join. If the schema is non-existent,
-                  it will be automatically created.  The default value is ''.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the join. If the schema
+                  is non-existent, it will be automatically created.  The
+                  default value is ''.
 
                 * **max_query_dimensions** --
                   No longer used.
@@ -36170,13 +36962,27 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *table_name*. If *persist* is *false* (or unspecified), then
+                  this is always allowed even if the caller does not have
+                  permission to create tables. The generated name is returned
+                  in *qualified_table_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   projection as part of input parameter *table_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of the schema for the output table. If the schema
-                  provided is non-existent, it will be automatically created.
-                  The default value is ''.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of the schema for the output table. If
+                  the schema provided is non-existent, it will be automatically
+                  created.  The default value is ''.
 
                 * **mode** --
                   If *merge_views*, then this operation will merge the provided
@@ -36362,12 +37168,26 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *table_name*. If *persist* is *false*, then this is always
+                  allowed even if the caller does not have permission to create
+                  tables. The generated name is returned in
+                  *qualified_table_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   merged table as part of input parameter *table_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created merged table specified
-                  by input parameter *table_name*.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created merged
+                  table specified by input parameter *table_name*.
 
                 * **is_replicated** --
                   Indicates the `distribution scheme
@@ -36548,7 +37368,7 @@ class GPUdbTable( object ):
         supplied to *having*.
 
         The response is returned as a dynamic schema. For details see: `dynamic
-        schemas documentation <../../../../api/#dynamic-schemas>`__.
+        schemas documentation <../../../../api/concepts/#dynamic-schemas>`__.
 
         If a *result_table* name is specified in the input parameter *options*,
         the results are stored in a new table with that name--no results are
@@ -36606,12 +37426,26 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of *result_table*. If
+                  *result_table_persist* is *false* (or unspecified), then this
+                  is always allowed even if the caller does not have permission
+                  to create tables. The generated name is returned in
+                  *qualified_result_table_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema as part of
-                  *result_table* and use :meth:`.create_schema` to create the
-                  schema if non-existent]  Name of a schema which is to contain
-                  the table specified in *result_table*. If the schema provided
-                  is non-existent, it will be automatically created.
+                  *result_table* and use :meth:`GPUdb.create_schema` to create
+                  the schema if non-existent]  Name of a schema which is to
+                  contain the table specified in *result_table*. If the schema
+                  provided is non-existent, it will be automatically created.
 
                 * **expression** --
                   Filter expression to apply to the table prior to computing
@@ -37415,7 +38249,8 @@ class GPUdbTable( object ):
         {"limit":"10","sort_order":"descending"}.
 
         The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`__.
+        `dynamic schemas documentation
+        <../../../../api/concepts/#dynamic-schemas>`__.
 
         If a *result_table* name is specified in the
         input parameter *options*, the results are stored in a new table with
@@ -37477,12 +38312,26 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of *result_table*. If
+                  *result_table_persist* is *false* (or unspecified), then this
+                  is always allowed even if the caller does not have permission
+                  to create tables. The generated name is returned in
+                  *qualified_result_table_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema as part of
-                  *result_table* and use :meth:`.create_schema` to create the
-                  schema if non-existent]  Name of a schema which is to contain
-                  the table specified in *result_table*. If the schema provided
-                  is non-existent, it will be automatically created.
+                  *result_table* and use :meth:`GPUdb.create_schema` to create
+                  the schema if non-existent]  Name of a schema which is to
+                  contain the table specified in *result_table*. If the schema
+                  provided is non-existent, it will be automatically created.
 
                 * **expression** --
                   Optional filter expression to apply to the table.
@@ -37662,7 +38511,8 @@ class GPUdbTable( object ):
         and values respectively.
 
         The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation <../../../../api/#dynamic-schemas>`__.
+        `dynamic schemas documentation
+        <../../../../api/concepts/#dynamic-schemas>`__.
 
         Parameters:
 
@@ -37699,12 +38549,26 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of *result_table*. If
+                  *result_table_persist* is *false* (or unspecified), then this
+                  is always allowed even if the caller does not have permission
+                  to create tables. The generated name is returned in
+                  *qualified_result_table_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema as part of
-                  *result_table* and use :meth:`.create_schema` to create the
-                  schema if non-existent]  Name of a schema which is to contain
-                  the table specified in *result_table*. If the schema is
-                  non-existent, it will be automatically created.
+                  *result_table* and use :meth:`GPUdb.create_schema` to create
+                  the schema if non-existent]  Name of a schema which is to
+                  contain the table specified in *result_table*. If the schema
+                  is non-existent, it will be automatically created.
 
                 * **result_table** --
                   The name of a table used to store the results, in
@@ -37942,10 +38806,10 @@ class GPUdbTable( object ):
 
                 * **move_to_collection** --
                   [DEPRECATED--please use *move_to_schema* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Moves a table or view into a schema named input parameter
-                  *value*.  If the schema provided is non-existent, it will be
-                  automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Moves a table or view into a schema named
+                  input parameter *value*.  If the schema provided is
+                  non-existent, it will be automatically created.
 
                 * **move_to_schema** --
                   Moves a table or view into a schema named input parameter
@@ -38105,6 +38969,9 @@ class GPUdbTable( object ):
                 * **resume_datasource_subscription** --
                   Resubscribe to a paused data source subscription. The data
                   source can be kafka / S3 / Azure.
+
+                * **change_owner** --
+                  Change the owner resource group of the table.
 
             value (str)
                 The value of the modification, depending on input parameter
@@ -38639,7 +39506,7 @@ class GPUdbTable( object ):
         `Window functions <../../../../concepts/window/>`__, which can perform
         operations like moving averages, are available through this endpoint as
         well as
-        :meth:`.get_records_by_column`.
+        :meth:`GPUdb.get_records_by_column`.
 
         A projection can be created with a different
         `shard key <../../../../concepts/tables/#shard-keys>`__ than the source
@@ -38674,10 +39541,24 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *projection_name*. If *persist* is *false* (or unspecified),
+                  then this is always allowed even if the caller does not have
+                  permission to create tables. The generated name is returned
+                  in *qualified_projection_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   projection as part of input parameter *projection_name* and
-                  use :meth:`.create_schema` to create the schema if
+                  use :meth:`GPUdb.create_schema` to create the schema if
                   non-existent]  Name of a schema for the projection. If the
                   schema is non-existent, it will be automatically created.
                   The default value is ''.
@@ -38828,7 +39709,7 @@ class GPUdbTable( object ):
         using output parameter *type_schema*. The monitor will continue to run
         (regardless of
         whether or not there are any subscribers) until deactivated with
-        :meth:`.clear_table_monitor`.
+        :meth:`GPUdb.clear_table_monitor`.
 
         For more information on table monitors, see
         `Table Monitors <../../../../concepts/table_monitors/>`__.
@@ -38994,8 +39875,8 @@ class GPUdbTable( object ):
 
                 * **record_id** --
                   A record ID identifying a single record, obtained at the time
-                  of :meth:`insertion of the record <.insert_records>` or by
-                  calling :meth:`.get_records_from_collection` with the
+                  of :meth:`insertion of the record <GPUdb.insert_records>` or
+                  by calling :meth:`GPUdb.get_records_from_collection` with the
                   *return_record_ids* option. This option cannot be used to
                   delete records from `replicated
                   <../../../../concepts/tables/#replication>`__ tables.
@@ -39062,12 +39943,26 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema is
-                  non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema is non-existent, it will be automatically
+                  created.
 
                 * **view_id** --
                   view this filtered-view is part of.  The default value is ''.
@@ -39148,12 +40043,26 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema
-                  provided is non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema provided is non-existent, it will be
+                  automatically created.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -39226,12 +40135,25 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  The schema for the newly created view. If the schema is
-                  non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  The schema for the newly created view. If the
+                  schema is non-existent, it will be automatically created.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -39313,12 +40235,26 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema is
-                  non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema is non-existent, it will be automatically
+                  created.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -39394,12 +40330,26 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema
-                  provided is non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema provided is non-existent, it will be
+                  automatically created.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -39488,12 +40438,26 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema
-                  provided is non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema provided is non-existent, it will be
+                  automatically created.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -39565,12 +40529,26 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema
-                  provided is non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema provided is non-existent, it will be
+                  automatically created.
 
                 * **filter_mode** --
                   String indicating the filter mode, either 'in_list' or
@@ -39672,13 +40650,26 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema which is to contain the newly created view.
-                  If the schema is non-existent, it will be automatically
-                  created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema which is to contain the newly
+                  created view. If the schema is non-existent, it will be
+                  automatically created.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -39757,12 +40748,26 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema
-                  provided is non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema provided is non-existent, it will be
+                  automatically created.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -39833,12 +40838,26 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema is
-                  non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema is non-existent, it will be automatically
+                  created.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -39916,12 +40935,26 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema is
-                  non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema is non-existent, it will be automatically
+                  created.
 
                 * **spatial_radius** --
                   A positive number passed as a string representing the radius
@@ -40030,12 +41063,26 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema is
-                  non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema is non-existent, it will be automatically
+                  created.
 
                 * **case_sensitive** --
                   If *false* then string filtering will ignore case. Does not
@@ -40125,12 +41172,26 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema is
-                  non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema is non-existent, it will be automatically
+                  created.
 
                 * **filter_mode** --
                   String indicating the filter mode, either *in_table* or
@@ -40254,12 +41315,26 @@ class GPUdbTable( object ):
                 ).
                 Allowed keys are:
 
+                * **create_temp_table** --
+                  If *true*, a unique temporary table name will be generated in
+                  the sys_temp schema and used in place of input parameter
+                  *view_name*. This is always allowed even if the caller does
+                  not have permission to create tables. The generated name is
+                  returned in *qualified_view_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **collection_name** --
                   [DEPRECATED--please specify the containing schema for the
                   view as part of input parameter *view_name* and use
-                  :meth:`.create_schema` to create the schema if non-existent]
-                  Name of a schema for the newly created view. If the schema is
-                  non-existent, it will be automatically created.
+                  :meth:`GPUdb.create_schema` to create the schema if
+                  non-existent]  Name of a schema for the newly created view.
+                  If the schema is non-existent, it will be automatically
+                  created.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -40600,7 +41675,7 @@ class GPUdbTable( object ):
 
             expressions (list of str)
                 A list of the actual predicates, one for each update; format
-                should follow the guidelines :meth:`here <.filter>`.
+                should follow the guidelines :meth:`here <GPUdb.filter>`.
 
             new_values_maps (list of dicts of str to str and/or None)
                 List of new values for the matching records.  Each element is a
@@ -40717,8 +41792,8 @@ class GPUdbTable( object ):
 
                 * **record_id** --
                   ID of a single record to be updated (returned in the call to
-                  :meth:`.insert_records` or
-                  :meth:`.get_records_from_collection`).
+                  :meth:`GPUdb.insert_records` or
+                  :meth:`GPUdb.get_records_from_collection`).
 
         Returns:
             The response from the server which is a dict containing the
@@ -40965,6 +42040,7 @@ class GPUdbTableOptions(object):
     __chunk_size                  = "chunk_size"
     __strategy_definition         = "strategy_definition"
     __is_result_table             = "is_result_table"
+    __create_temp_table           = "create_temp_table"
 
     _supported_options = [ __no_error_if_exists,
                            __collection_name,
@@ -40980,7 +42056,8 @@ class GPUdbTableOptions(object):
                            __ttl,
                            __chunk_size,
                            __strategy_definition,
-                           __is_result_table
+                           __is_result_table,
+                           __create_temp_table
     ]
 
 
@@ -41015,6 +42092,7 @@ class GPUdbTableOptions(object):
         self._chunk_size                  = None
         self._strategy_definition         = None
         self._is_result_table             = None
+        self._create_temp_table           = False
 
         if (_dict is None):
             return # nothing to do
@@ -41082,6 +42160,9 @@ class GPUdbTableOptions(object):
 
         if self._disallow_homogeneous_tables is not None:
             result[ self.__disallow_homogeneous_tables ] = "true" if self._disallow_homogeneous_tables else "false"
+
+        if self._create_temp_table is not None:
+            result[ self.__create_temp_table ] = "true" if self._create_temp_table else "false"
 
         return result
     # end as_json
@@ -41244,5 +42325,18 @@ class GPUdbTableOptions(object):
         self._strategy_definition = val
         return self
     # end strategy_definition
+
+
+    def create_temp_table(self, val):
+        if isinstance( val, bool ):
+            self._create_temp_table = val
+        elif val.lower() in ["true", "false"]:
+            self._create_temp_table = True if (val.lower() == "true") else False
+        else:
+            raise GPUdbException( "Value for 'create_temp_table' must be "
+                                  "boolean or one of ['true', 'false']; "
+                                  "given " + repr( val ) )
+        return self
+    # end create_temp_table
 
 # end class GPUdbTableOptions
