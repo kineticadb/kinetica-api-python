@@ -2,6 +2,12 @@
 
 ## Version 7.1
 
+### Version 7.1.6.1 - 2022-02-08
+
+#### Fixed
+-   Made 7.1.6 API backward-compatible with previous database versions
+
+
 ### Version 7.1.6.0 - 2022-01-27
 
 #### Notes

@@ -3,7 +3,7 @@
 
 ## Version 7.1
 
-### Version 7.1.6.0 -- TBD
+### Version 7.1.6.0 -- 2022-01-27
 
 #### Added
 -   Added new endpoint /repartition/graph
@@ -70,7 +70,7 @@
     - Changed default value of option ``show_default_group`` to be false if an
     explicit list of group names is provided. Previously was always true.
 
-### Version 7.1.5.0 -- TBD
+### Version 7.1.5.0 -- 2021-10-13
 
 #### Added
 -   Added the following endpoints to support data sinks:

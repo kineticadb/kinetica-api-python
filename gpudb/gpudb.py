@@ -2789,7 +2789,7 @@ class GPUdb(object):
                         logging_level_str                   = self.__logging_level_str,
                         logging_level                       = self.logging_level,
                         password_str                        = self.__password_str,
-                        password                            = self.password,
+                        password                            = "********",
                         primary_host_str                    = self.__primary_host_str,
                         primary_host                        = self.primary_host,
                         protocol_str                        = self.__protocol_str,
@@ -4652,7 +4652,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.6.0"
+    api_version = "7.1.6.1"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -42161,8 +42161,8 @@ class GPUdbTableOptions(object):
         if self._disallow_homogeneous_tables is not None:
             result[ self.__disallow_homogeneous_tables ] = "true" if self._disallow_homogeneous_tables else "false"
 
-        if self._create_temp_table is not None:
-            result[ self.__create_temp_table ] = "true" if self._create_temp_table else "false"
+        if self._create_temp_table is not None and self._create_temp_table:
+            result[ self.__create_temp_table ] = "true"
 
         return result
     # end as_json
