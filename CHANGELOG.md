@@ -2,6 +2,22 @@
 
 ## Version 7.1
 
+### Version 7.1.7.0 - 2022-07-18
+
+#### Fixed
+-   Made the API Python3 compatible
+-   Prevented client hanging when connection IP/URL does not match any known to
+    the server; client will operate in degraded mode (no multi-head, etc.)
+-   Removed client-side primary key check, to improve performance and make
+    returned errors more consistently delivered
+-   Rectified a formatting issue while building expressions for keyed lookups
+    that was resulting in a failure on Python 2.7.x.
+-   Corrected some string/null comparisons
+
+#### Notes
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
+
+
 ### Version 7.1.6.1 - 2022-02-08
 
 #### Fixed

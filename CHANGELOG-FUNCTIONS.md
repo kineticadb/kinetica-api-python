@@ -3,11 +3,37 @@
 
 ## Version 7.1
 
+### Version 7.1.7.0
+
+#### Added
+-  Added support for Google Cloud Storage as a backend for cold storage and external data sources
+-  Added new endpoint /insert/records/fromquery
+-  Added new endpoint /export/records/totable
+-  Added new endpoint /upload/files/fromurl
+
+#### Changed Endpoints
+-  Added new options ``gcs_bucket_name``, ``gcs_project_id`` and ``gcs_service_account_keys`` to endpoints ``/create/datasource`` and ``/alter/datasource``
+-  Added new options ``gcs_service_account_id`` and ``gcs_service_account_keys`` to endpoints ``/create/credential`` and ``/alter/credential``
+-  Added new options ``jdbc_driver_jar_path`` and ``jdbc_driver_class_name`` to endpoints ``/create/datasource`` and ``/create/datasink``
+-  Added new options ``remote_query`` and  ``remote_query_filter_column`` to ``/create/table/external`` endpoint 
+-  Added new option ``expression`` to ``/get/records/fromcollection`` endpoint 
+-  Added new options ``create_temp_table``, ``result_table``, ``result_table_persist``, and ``ttl`` to endpoint ``/aggregate/k_means`` 
+-  Added new info item ``qualified_result_table_item`` to response for endpoint ``/aggregate/k_means``
+-  Added new solve method and its options, ``match_charging_stations`` for endpoint ``/match/graph/``
+-  Added new internal option ``simplify`` to /create/graph and /modify/graph endpoints
+-  Added new options ``track_id_column_name`` and ``track_order_column_name`` to ``/visualize/image`` and ``/visualize/image/classbreak``
+
+##### Breaking Changes
+-  Added new option ``persist`` to endpoints ``/alter/system/properties``, ``/alter/resourcegroup``, and ``/alter/tier``, which defaults to true
+
+
 ### Version 7.1.6.0 -- 2022-01-27
 
 #### Added
 -   Added new endpoint /repartition/graph
 -   Added new endpoint /show/resource/objects
+-   Existing option in insert/records/fromfiles, frompayload & create/table/external: bad_record_table_limit was per rank and now global
+-   Added new option in insert/records/fromfiles, frompayload & create/table/external: bad_record_table_limit_per_input: limit bad records to insert into bad_record_table_name when inserting from subscription or from multiple files
 
 #### Changed Endpoints
 
@@ -56,6 +82,7 @@
     -   ``/create/datasource``
     -   ``/alter/datasource``
 -   Added internal option ``create_metadata`` to ``/alter/system/properties`` endpoint
+-   Added internal option ``get_auto_view_updators`` to ``/alter/system/properties`` endpoint
 
 ##### Breaking Changes
 -   Creation of named non-persistent tables now requires ``table_admin`` permission on the parent
@@ -407,7 +434,7 @@
 ##### Non-breaking Changes
 -   Added 'unit_unloading_cost' option is added to the /match/graph endpoint for
     match_supply_demand solve case to add the unloading time per drop amount.
--   Added total_number_of_records and has_more_records to /get/recordsfromcollection response info map.
+-   Added total_number_of_records and has_more_records to /get/records/fromcollection response info map.
 
 ##### Breaking Changes
 

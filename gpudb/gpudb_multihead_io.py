@@ -1741,7 +1741,7 @@ class _RecordKey:
         def compute_hashes( self ):
             """Compute the Murmur hash of the key.
             """
-            a = mmh3.hash64( self._buffer_value, seed = 10 )
+            a = mmh3.hash64( bytes(self._buffer_value), seed = 10 )
             self._routing_hash = a[ 0 ] # the first half
 
             self._hash_code = int( self._routing_hash ^ ( self._routing_hash >> 32 ) )
@@ -2177,8 +2177,8 @@ class _RecordKeyBuilder:
                 predicate = '({n} = "{d}")'.format( n = col_name,
                                                     d = key_value )
             else:
-                predicate = '({n} = {d})'.format( n = col_name,
-                                                  d = key_value )
+                predicate = '({} = {!r})'.format( col_name,
+                                                  key_value )
 
             predicates.append( predicate )
         # end loop
@@ -2250,8 +2250,8 @@ class _RecordKeyBuilder:
                 predicate = '({n} = "{d}")'.format( n = col_name,
                                                     d = value )
             else:
-                predicate = '({n} = {d})'.format( n = col_name,
-                                                  d = value )
+                predicate = '({} = {!r})'.format( col_name,
+                                                  value )
 
             # Add the predicate to the list of expressions to be used
             expression_items.append( predicate )
@@ -2301,18 +2301,11 @@ class _WorkerQueue:
         # Save the values
         self.url = url
         self.capacity = capacity
-        self.has_primary_key = has_primary_key
-        self.update_on_existing_pk = update_on_existing_pk
 
         # Initialize other members:
         # A queue for the data
         self.record_queue = []
 
-        # A map of pk/shard key to queue index for that data
-        # (if the table contains primary keys)
-        self.primary_key_to_queue_index_map = None
-        if self.has_primary_key:
-            self.primary_key_to_queue_index_map = {}
     # end WorkerQueue __init__
 
 
@@ -2331,37 +2324,8 @@ class _WorkerQueue:
         Returns:
             The list of records (if the queue becomes full) or None.
         """
-        old_queue_length = len( self.record_queue )
 
-        # Need to check a lot of stuff if the record has a valid primary key
-        if (self.has_primary_key and key.is_valid):
-            key_hash_code = key.hash_code
-
-            if self.update_on_existing_pk:
-                # Update on existing primary key (if key exists)
-                if key_hash_code in self.primary_key_to_queue_index_map:
-                    # Find the index for this key in the record queue
-                    key_index = self.primary_key_to_queue_index_map[ key_hash_code ]
-                    self.record_queue[ key_index ] = record
-                else: # key does NOT exist
-                    # Add the key to the queue and keep track of the queue
-                    # index in the key->index map
-                    self.record_queue.append( record )
-                    self.primary_key_to_queue_index_map[ key_hash_code ] = old_queue_length
-                # end inner if
-            else: # if key already exists, do NOT insert this record
-                if key_hash_code in self.primary_key_to_queue_index_map:
-                    # Yes, the key exists, so, it's a problem
-                    return None
-                else: # key does not already exist
-                    self.record_queue.append( record )
-                    self.primary_key_to_queue_index_map[ key_hash_code ] = old_queue_length
-            # end update on existing PK if-else
-        else:
-            # The table has no primary key; so no map to worry about
-            self.record_queue.append( record )
-        # end outer if-else
-
+        self.record_queue.append(record)
         # Flush the record queue when full capacity has been reached
         if (len( self.record_queue ) == self.capacity):
             # Return whatever flush returns (which is the current/old queue)
@@ -2383,10 +2347,6 @@ class _WorkerQueue:
 
         # Create a fresh new queue
         self.record_queue = []
-
-        # if a key->record_queue_index map exists, clear it
-        if self.primary_key_to_queue_index_map:
-            self.primary_key_to_queue_index_map = {}
 
         return old_queue
     # end flush
@@ -3919,7 +3879,7 @@ class RecordRetriever:
 
             # Subtract 1 from each value of the routing_table
             # (because the 1st worker rank is the 0th element in the worker list)
-            # TODO: Check if this needs to be aligned with the Java API
+            # This is aligned with the Java API
             self.routing_table = [(rank-1) for rank in shard_info[ C._shard_ranks ] ]
         except GPUdbException as ex:
             # Couldn't get the current shard assignment info; see if this is due
