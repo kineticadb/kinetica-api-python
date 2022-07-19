@@ -35,6 +35,7 @@ def package_files(directory):
 current_path = os.path.dirname(os.path.abspath(__file__))
 extra_files = package_files(current_path+'/gpudb')
 
+extra_link_args=[]
 
 # If we are not on Windows test for the existence of gcc
 if os.name != 'nt':
@@ -66,6 +67,13 @@ if os.name != 'nt':
         print ("********************************************************")
         print ("")
 
+    # Relative path from protocol.so to local libpythonX.Y.so.
+    if sys.version_info[0] == 2:
+        # python27/lib/python2.7/site-packages/gpudb-A.B.C.D-py2.7-linux-x86_64.egg/gpudb/protocol.so
+        extra_link_args=["-Wl,-rpath,$ORIGIN/../../../.."]
+    else:
+        # python3/lib/python3.7/site-packages/gpudb/protocol.cpython-37m-x86_64-linux-gnu.so
+        extra_link_args=["-Wl,-rpath,$ORIGIN/../../.."]
 
 
 # The c-extension avro module
@@ -76,12 +84,13 @@ c_avro_module = Extension( "gpudb.protocol",
                                       "protocol/dt.c",
                                       "protocol/protocol.c",
                                       "protocol/record.c",
-                                      "protocol/schema.c"] )
+                                      "protocol/schema.c"],
+                           extra_link_args=extra_link_args )
 
 setup(
     name = 'gpudb',
     packages = ['gpudb'],
-    version = '7.1.6.1',
+    version = '7.1.7.0',
     description = 'Python client for GPUdb',
     long_description = "The client-side Python API for Kinetica.  Create, store, retrieve, and query data with ease and speed.",
     author = 'Kinetica DB Inc.',
