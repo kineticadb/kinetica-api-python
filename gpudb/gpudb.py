@@ -3796,31 +3796,60 @@ class GPUdb(object):
     # end class Version
 
 
-    class URL( object ):
+    class ValidateUrl(object):
+
+        @staticmethod
+        def validate_url(url=None):
+            """
+
+            """
+            if url is None:
+                return (True, None)
+
+            parsed_url = None
+            if IS_PYTHON_3:
+                from urllib.parse import urlparse
+            else:
+                from urlparse import urlparse
+
+            if not url.lower().startswith('http://') and not url.lower().startswith('https://') and '://' in url:
+                return False, None
+
+            parsed_url = urlparse(url)
+            ip_pat = re.compile('^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$')
+
+            if ip_pat.match(parsed_url.scheme):
+                # means the URL is in the form <ip_address>:<port>
+                split_path = None
+                port = None
+                path = None
+                if '/' in parsed_url.path:
+                    split_path = parsed_url.path.split('/')
+                    if len(split_path) > 0:
+                        port = int(split_path[0])
+                        path = '/' + str(split_path[1])
+
+                netloc = parsed_url.scheme + ':' + (str(port) if port is not None else str(9191))
+                scheme = 'http' if port is not None and port == '9191' else 'https'
+                path = '' if path is None else path
+                ret_val = (scheme, netloc, path, '', '', '')
+                return True, ret_val
+
+            protocol = 'HTTP' if not url.lower().startswith('http://') and not url.lower().startswith(
+                'https://') else parsed_url.scheme
+            if parsed_url is not None:
+                return (protocol == '' or (
+                        protocol.lower() == 'http' or protocol.lower() == 'https')
+                        and parsed_url.netloc != '' or (parsed_url.netloc == '' and parsed_url.path != ''), parsed_url)
+
+    # End class ValidateUrl
+
+    class URL(object):
         """An internal class to handle URLs.  Stores the hostname/IP address,
         port, protocol, path, and the full URL (as a string).
         """
 
-        # A regex pattern to use when parsing URLs.  Here are the components:
-        # ^ -- Match the whole string
-        # ((.*)://)? -- Optional protocol separated by '://'.  Just the protocol
-        #               is also captured on its own, before the separating '://'
-        # (.+@)? -- Allow any username:password separated by @ (password
-        #           is optional)
-        # ([a-z0-9][a-z0-9-.]+) -- Hostname or IP address
-        # (:([0-9]+))? -- Optional port (separated from hostname/IP by a colon)
-        #                 Just the port is also captured on its own, after the
-        #                 separating colon.
-        # (/[a-z0-9-/]*)? -- Optional path (could have multiple segments).
-        #                       Initially separated by /
-        # $ -- Match the whole string
-        #
-        # Note that the whole patter will ignore the case
-        __url_regex = re.compile( "^((.*)://)?(.+@)?([a-z0-9][a-z0-9-.]+)?(:([0-9]+))?(/[a-z0-9-/]*)?$",
-                                  re.IGNORECASE )
-
-
-        def __init__(self, url, accept_full_urls_only = False ):
+        def __init__(self, url, accept_full_urls_only=False):
             """Takes in a string containing a full URL, or another :class:`URL`
             object, and creates a :class:`URL` object from it.
 
@@ -3836,8 +3865,8 @@ class GPUdb(object):
             """
             # Handle an URL object
             if isinstance(url, self.__class__):
-                self.__host     = url.host
-                self.__port     = url.port
+                self.__host = url.host
+                self.__port = url.port
                 self.__protocol = url.protocol
                 self.__url_path = url.path
                 self.__full_url = url.url
@@ -3845,52 +3874,46 @@ class GPUdb(object):
             # end if
 
             # If not an URL object, must be a string
-            if not isinstance( url, (basestring, unicode) ):
-                raise GPUdbException( "Expected a string URL; got: '{}', "
-                                      "type {}".format( url,
-                                                        str(type(url)) ) )
+            if not isinstance(url, (basestring, unicode)):
+                raise GPUdbException("Expected a string URL; got: '{}', "
+                                "type {}".format(url,
+                                                 str(type(url))))
 
             # Parse the URL
             if url == "":
                 # Handle an empty URL
                 protocol = "HTTP"
                 hostname = "127.0.0.1"
-                port     = "9191"
-                path     = ""
+                port = "9191"
+                path = ""
                 self.__using_default_protocol = True
-                self.__using_default_port     = True
+                self.__using_default_port = True
             else:
                 # Use the regex to parse the non-empty URL
                 try:
-                    regex_match = self.__url_regex.match( url )
+                    url_valid = GPUdb.ValidateUrl.validate_url(url)
                 except Exception as ex:
-                    raise GPUdbException( "Failed to parse given url '{}': {}"
-                                          "".format( url, str(ex) ) )
+                    raise GPUdbException("Failed to parse given url '{}': {}"
+                                    "".format(url, str(ex)))
 
                 # No match means it's a bad URL
-                if not regex_match:
-                    raise GPUdbException( "Failed to parse given url '{}'"
-                                          "".format( url ) )
+                if not url_valid[0]:
+                    raise GPUdbException("Failed to parse given url '{}'"
+                                    "".format(url))
 
                 # Extract some information from the URL
-                (
-                    dummy, # protocol with '://'
-                    protocol, # just the protocol, e.g. http or https
-                    username_pass, # username, with optional password, ending in @
-                    hostname, # hostname or IP address
-                    dummy2,   # optional port separator (exists only if port exists)
-                    port,     # optional port
-                    path      # path, could have multiple sections separated by /
-                ) = regex_match.groups()
+                (protocol, netloc, path, params, query, fragment) = url_valid[1]
+                user_host = netloc.split('@')
+                username_pass = user_host[0] if len(
+                    user_host) > 1 else ''  # username, with optional password, ending in @
+                hostname = user_host[1] if len(user_host) > 1 else user_host[0]  # hostname or IP address
+                port_index = netloc.rfind(':')
+                port = netloc[port_index + 1:] if port_index != -1 else None  # optional port
 
                 # Handle the protocol
                 if protocol:
                     # We're going to use the upper case for the protocol internally
                     protocol = protocol.upper()
-                    # Check that a valid protocol was used
-                    if protocol not in ["HTTP", "HTTPS"]:
-                        raise GPUdbException( "Invalid protocol used ('{}') in URL '{}'"
-                                              "".format( protocol, url ) )
                     self.__using_default_protocol = False
                 else:
                     # If the protocol is not given, we'll use HTTP
@@ -3900,25 +3923,19 @@ class GPUdb(object):
 
                 # Handle an empty IP address or hostname
                 if not hostname:
-                    # Default value
-                    hostname = "127.0.0.1"
+                    if path != '':
+                        hostname = path
+                        path = ''
+                    else:
+                        # Default value
+                        hostname = "127.0.0.1"
 
                 # Strip trailing slashes from the path, and use empty string instead
                 # of None when no path is given
                 if path:
-                    path = path.rstrip( "/" )
+                    path = path.rstrip("/")
                 else:
                     path = ""
-                # end if
-
-                # We may have to use a default port; decide on the default
-                # based on the protocol
-                if protocol == 'HTTP':
-                    # We're using the Kinetica default rank-0 port of 9191, not
-                    # the default port of 80
-                    default_port = 9191
-                elif protocol == 'HTTPS':
-                    default_port = 443
                 # end if
 
                 # If the user has not given any port or any path, then we would
@@ -3932,83 +3949,76 @@ class GPUdb(object):
                 self.__using_default_port = False
                 if not path and not port:
                     self.__using_default_port = True
-                    port = default_port
+                    port = 9191 if protocol.lower() == 'http' else 443  # default_port
                 # end if
             # end if
 
             # Validate the port
-            if port:
-                try :
-                    port = int( port )
-                except :
-                    raise GPUdbException( "Expected a numeric port; got '{}',"
-                                          " type {}"
-                                          "".format( port,
-                                                     str(type( port )) ) )
+            if port and not self.__using_default_port:
+                try:
+                    port = int(port)
+                except:
+                    raise GPUdbException("Expected a numeric port; got '{}',"
+                                    " type {}"
+                                    "".format(port,
+                                              str(type(port))))
                 # Port value must be within (0, 65536)
-                if ( (port <= 0) or (port >= 65536) ):
-                    raise GPUdbException( "Expected a valid port (1-65535); "
-                                          "got '{}'".format( port ) )
+                if ((port <= 0) or (port >= 65536)):
+                    raise GPUdbException("Expected a valid port (1-65535); "
+                                    "got '{}'".format(port))
                 # end if
 
-                # A port is being used; we will need to add it to the full URL
-                port_str = ":{}".format( port )
-            else:
-                # No port is being used; we will need to skip the port segment
-                # in the full URL
-                port_str = ""
-            # end if
+            if ':' not in hostname:
+                hostname = hostname + ':' + str(port)
 
             # Construct the full URL
-            full_url = ( "{protocol}://{ip}{port}{path}"
-                         "".format( protocol = protocol.lower(),
-                                    ip       = hostname,
-                                    port     = port_str,
-                                    path     = path ) )
+            full_url = ("{protocol}://{ip}{path}"
+                        "".format(protocol=protocol.lower(),
+                                  ip=hostname,
+                                  path=path))
 
+            self.__host = hostname.split(':')[0] if ':' in hostname else str(hostname)
+            self.__port = int(port) if port else None
+            self.__protocol = str(protocol)
+            self.__url_path = str(path)
+            self.__full_url = str(full_url)
 
-            self.__host     = str( hostname )
-            self.__port     = int( port ) if port else None
-            self.__protocol = str( protocol )
-            self.__url_path = str( path )
-            self.__full_url = str( full_url )
         # end __init__
 
-
-        def __eq__( self, other ):
+        def __eq__(self, other):
             if isinstance(other, self.__class__):
-                if ( self.__host != other.__host ):
+                if (self.__host != other.__host):
                     return False
-                if ( self.__port != other.__port ):
+                if (self.__port != other.__port):
                     return False
-                if ( self.__protocol != other.__protocol ):
+                if (self.__protocol != other.__protocol):
                     return False
-                if ( self.__url_path != other.__url_path ):
+                if (self.__url_path != other.__url_path):
                     return False
-                if ( self.__full_url != other.__full_url ):
+                if (self.__full_url != other.__full_url):
                     return False
                 return True
             else:
                 return False
-        # end __eq__
 
+        # end __eq__
 
         def __ne__(self, other):
             return not self.__eq__(other)
-        # end __ne__
 
+        # end __ne__
 
         def __str__(self):
             """String representation of the URL."""
             return self.url
-        # end __str__
 
+        # end __str__
 
         def __hash__(self):
             """Hash the object."""
             return self.url.__hash__()
-        # end __hash__
 
+        # end __hash__
 
         @property
         def host(self):
@@ -4655,7 +4665,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.7.0"
+    api_version = "7.1.7.1"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -4883,7 +4893,7 @@ class GPUdb(object):
 
         self.__log_debug( "Got host: {}".format( host ) )
 
-        # If the user explciitly gave a separate port & protocol via
+        # If the user explicitly gave a separate port & protocol via
         # the options, reconcile that with the user given URLs (i.e.,
         # if the
         hosts = []
@@ -4900,72 +4910,7 @@ class GPUdb(object):
                 self.__log_debug( "host_ is not None" )
                 # This may throw if there is a sever problem with the URL
                 url = GPUdb.URL( host_ )
-
-                # If the user gave an explicit port, we need to decided
-                # whether to use it or not.  We would only force usage
-                # of this port if the given URL doesn't already have a
-                # port and can be overridden.  Note that if there is no
-                # port in the URL, but there is a path, we should not
-                # insert any port there.  All this logic is handled by
-                # just checking if the parsed URL is using a default
-                # port or not.
-                if url.using_default_port:
-                    if (port_ is not None):
-                        # Since the URL is using the default port,
-                        # we will override it with the other port
-                        # that the user passed in the constructor
-                        port_str = ":{}".format( port_ )
-                        self.__log_debug( "Using default port in URL & user gave "
-                                          "separate explicit port '{}'; use that"
-                                          "".format( port_ ) )
-                    else:
-                        # The user given URL is using a default port,
-                        # but the user has not given any other port via
-                        # the options argument.  So, just use this defualt
-                        # port.
-                        port_str = ":{}".format( url.port )
-                        self.__log_debug( "Using default port in URL BUT NO user "
-                                          "given separate explicit port; use "
-                                          "the default port"
-                                          "".format( url.port ) )
-                elif url.port is not None:
-                    # The URL is not using the default port, BUT it does
-                    # have a port.  So, if we need to reconstruct
-                    # the URL further along, we will be using this one
-                    port_str = ":{}".format( url.port )
-                    self.__log_debug( "NOT using default port in URL & URL port "
-                                      "exists; use that port"
-                                      "".format( url.port ) )
-                else:
-                    # The URL does NOT have.  So, if we need to reconstruct
-                    # the URL further along, it wont' have any port component
-                    port_str = ""
-                    self.__log_debug( "NO port in URL" )
-                # end if
-
-                # Do the same thing with a user given protocol
-                if (protocol_ is not None):
-                    self.__log_debug( "Using default protocol?: {}"
-                                      "".format( url.using_default_protocol ) )
-                    if not url.using_default_protocol:
-                        self.__log_debug( "NOT using default protocol (actual is {})"
-                                          " for host_: {}"
-                                          "".format( url.protocol, host_ ) )
-                        # Since the URL is not using the default protocol,
-                        # we won't be overriding it with the other protocol
-                        # that the user passed in the constructor
-                        protocol_ = url.protocol.lower()
-                    # end inner if
-                else:
-                    protocol_ = url.protocol.lower()
-                # end if
-
-                # Put it all back together
-                host_ = ("{protocol}://{ip}{port}{path}"
-                         "".format( protocol = protocol_,
-                                    ip       = url.host,
-                                    port     = port_str,
-                                    path     = url.path ) )
+                host_ = url.url
             # end if
 
             # Add the possibly modified host to the final hosts list
@@ -16717,6 +16662,12 @@ class GPUdb(object):
                   Amazon IAM Role ARN which has required S3 permissions that
                   can be assumed for the given S3 IAM user
 
+                * **s3_encryption_customer_algorithm** --
+                  Customer encryption algorithm used encrypting data
+
+                * **s3_encryption_customer_key** --
+                  Customer encryption key to encrypt or decrypt data
+
                 * **hdfs_kerberos_keytab** --
                   Kerberos keytab file location for the given HDFS user
 
@@ -16766,6 +16717,12 @@ class GPUdb(object):
 
                 * **kafka_topic_name** --
                   Name of the Kafka topic to use as the data source
+
+                * **jdbc_driver_jar_path** --
+                  JDBC driver jar file location.  This may be a KIFS file.
+
+                * **jdbc_driver_class_name** --
+                  Name of the JDBC driver class
 
                 * **anonymous** --
                   Create an anonymous connection to the storage
