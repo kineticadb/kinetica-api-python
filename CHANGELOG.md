@@ -2,6 +2,12 @@
 
 ## Version 7.1
 
+### Version 7.1.7.1 - 2022-08-10
+
+#### Fixed
+-   Made the connection parameters more accommodating to different URL/host/port
+    combinations
+
 ### Version 7.1.7.0 - 2022-07-18
 
 #### Fixed

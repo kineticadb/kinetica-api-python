@@ -67,9 +67,9 @@ if os.name != 'nt':
         print ("********************************************************")
         print ("")
 
-    # Relative path from protocol.so to local libpythonX.Y.so.
+    # Relative path from protocol_v2.so to local libpythonX.Y.so.
     if sys.version_info[0] == 2:
-        # python27/lib/python2.7/site-packages/gpudb-A.B.C.D-py2.7-linux-x86_64.egg/gpudb/protocol.so
+        # python27/lib/python2.7/site-packages/gpudb-A.B.C.D-py2.7-linux-x86_64.egg/gpudb/protocol_v2.so
         extra_link_args=["-Wl,-rpath,$ORIGIN/../../../.."]
     else:
         # python3/lib/python3.7/site-packages/gpudb/protocol.cpython-37m-x86_64-linux-gnu.so
@@ -90,7 +90,7 @@ c_avro_module = Extension( "gpudb.protocol",
 setup(
     name = 'gpudb',
     packages = ['gpudb'],
-    version = '7.1.7.0',
+    version = '7.1.7.1',
     description = 'Python client for GPUdb',
     long_description = "The client-side Python API for Kinetica.  Create, store, retrieve, and query data with ease and speed.",
     author = 'Kinetica DB Inc.',
