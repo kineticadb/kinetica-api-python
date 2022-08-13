@@ -3824,13 +3824,18 @@ class GPUdb(object):
                 port = None
                 path = None
                 if '/' in parsed_url.path:
+                    # This could be of the form <port>/<path> as in '10.0.0.10:8082/gpudb-0'
                     split_path = parsed_url.path.split('/')
                     if len(split_path) > 0:
                         port = int(split_path[0])
                         path = '/' + str(split_path[1])
+                else:
+                    if parsed_url.path.isdigit():
+                        # This is just the port as in '10.0.0.10:9191'
+                        port = int(parsed_url.path)
 
                 netloc = parsed_url.scheme + ':' + (str(port) if port is not None else str(9191))
-                scheme = 'http' if port is not None and port == '9191' else 'https'
+                scheme = 'http' if port is not None and str(port) == '9191' else 'https'
                 path = '' if path is None else path
                 ret_val = (scheme, netloc, path, '', '', '')
                 return True, ret_val
@@ -3969,7 +3974,7 @@ class GPUdb(object):
                 # end if
 
             if ':' not in hostname:
-                hostname = hostname + ':' + str(port)
+                hostname = hostname + (':' + str(port) if port is not None else '')
 
             # Construct the full URL
             full_url = ("{protocol}://{ip}{path}"
@@ -4665,7 +4670,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.7.1"
+    api_version = "7.1.7.2"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -21809,6 +21814,13 @@ class GPUdb(object):
                 Optional parameters.  The default value is an empty dict ( {}
                 ).
                 Allowed keys are:
+
+                * **resource_group** --
+                  Name of an existing resource group to associate with this
+                  user
+
+                * **default_schema** --
+                  default schema associate with this user
 
                 * **create_home_directory** --
                   when true, a home directory in KiFS is created for this user.
