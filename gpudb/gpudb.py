@@ -3803,8 +3803,6 @@ class GPUdb(object):
             """
 
             """
-            if url is None:
-                return (True, None)
 
             parsed_url = None
             if IS_PYTHON_3:
@@ -3812,40 +3810,41 @@ class GPUdb(object):
             else:
                 from urlparse import urlparse
 
-            if not url.lower().startswith('http://') and not url.lower().startswith('https://') and '://' in url:
+            if url.count('://') > 1:
+                # Malformed URL
                 return False, None
 
+            if '://' not in url:
+                # If the URL doesn't start with any protocol
+                # we prepend the default 'http'
+                url = 'http://' + url
+
             parsed_url = urlparse(url)
-            ip_pat = re.compile('^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$')
 
-            if ip_pat.match(parsed_url.scheme):
-                # means the URL is in the form <ip_address>:<port>
-                split_path = None
-                port = None
-                path = None
-                if '/' in parsed_url.path:
-                    # This could be of the form <port>/<path> as in '10.0.0.10:8082/gpudb-0'
-                    split_path = parsed_url.path.split('/')
-                    if len(split_path) > 0:
-                        port = int(split_path[0])
-                        path = '/' + str(split_path[1])
-                else:
-                    if parsed_url.path.isdigit():
-                        # This is just the port as in '10.0.0.10:9191'
-                        port = int(parsed_url.path)
+            scheme = parsed_url.scheme
 
-                netloc = parsed_url.scheme + ':' + (str(port) if port is not None else str(9191))
-                scheme = 'http' if port is not None and str(port) == '9191' else 'https'
-                path = '' if path is None else path
-                ret_val = (scheme, netloc, path, '', '', '')
-                return True, ret_val
+            if scheme not in ['http', 'https']:
+                # We don't deal with any protocol other than these
+                return False, None
 
-            protocol = 'HTTP' if not url.lower().startswith('http://') and not url.lower().startswith(
-                'https://') else parsed_url.scheme
-            if parsed_url is not None:
-                return (protocol == '' or (
-                        protocol.lower() == 'http' or protocol.lower() == 'https')
-                        and parsed_url.netloc != '' or (parsed_url.netloc == '' and parsed_url.path != ''), parsed_url)
+            hostname = parsed_url.hostname
+            port = parsed_url.port
+            path = parsed_url.path.rstrip('/')
+
+            port = 9191 if port is None else port  # default port
+
+            protocol = scheme.upper()
+
+            # Construct the full URL
+            full_url = ("{protocol}://{ip}:{port}{path}"
+                        "".format(protocol=protocol,
+                                  ip=hostname,
+                                  port=port,
+                                  path=path))
+
+            ret_val = True, (full_url, protocol, hostname, port, path)
+
+            return ret_val
 
     # End class ValidateUrl
 
@@ -3854,7 +3853,7 @@ class GPUdb(object):
         port, protocol, path, and the full URL (as a string).
         """
 
-        def __init__(self, url, accept_full_urls_only=False):
+        def __init__(self, url=None, accept_full_urls_only=False):
             """Takes in a string containing a full URL, or another :class:`URL`
             object, and creates a :class:`URL` object from it.
 
@@ -3878,115 +3877,44 @@ class GPUdb(object):
                 return
             # end if
 
-            # If not an URL object, must be a string
-            if not isinstance(url, (basestring, unicode)):
+            # If not a URL object, must be a string or None
+            if url is not None and not isinstance(url, (basestring, unicode)):
                 raise GPUdbException("Expected a string URL; got: '{}', "
                                 "type {}".format(url,
                                                  str(type(url))))
+            full_url = None
 
             # Parse the URL
-            if url == "":
+            if url == "" or url is None:
                 # Handle an empty URL
                 protocol = "HTTP"
                 hostname = "127.0.0.1"
                 port = "9191"
                 path = ""
-                self.__using_default_protocol = True
-                self.__using_default_port = True
+                # Construct the full URL
+                full_url = ("{protocol}://{ip}:{port}{path}"
+                            "".format(protocol=protocol.lower(),
+                                      ip=hostname,
+                                      port=port,
+                                      path=path))
             else:
-                # Use the regex to parse the non-empty URL
-                try:
-                    url_valid = GPUdb.ValidateUrl.validate_url(url)
-                except Exception as ex:
-                    raise GPUdbException("Failed to parse given url '{}': {}"
-                                    "".format(url, str(ex)))
+                # Use the ValidateUrl class to validate the URL
+                url_valid = GPUdb.ValidateUrl.validate_url(url)
 
-                # No match means it's a bad URL
                 if not url_valid[0]:
                     raise GPUdbException("Failed to parse given url '{}'"
                                     "".format(url))
 
-                # Extract some information from the URL
-                (protocol, netloc, path, params, query, fragment) = url_valid[1]
-                user_host = netloc.split('@')
-                username_pass = user_host[0] if len(
-                    user_host) > 1 else ''  # username, with optional password, ending in @
-                hostname = user_host[1] if len(user_host) > 1 else user_host[0]  # hostname or IP address
-                port_index = netloc.rfind(':')
-                port = netloc[port_index + 1:] if port_index != -1 else None  # optional port
+                full_url, protocol, hostname, port, path = url_valid[1]
 
-                # Handle the protocol
-                if protocol:
-                    # We're going to use the upper case for the protocol internally
-                    protocol = protocol.upper()
-                    self.__using_default_protocol = False
-                else:
-                    # If the protocol is not given, we'll use HTTP
-                    protocol = "HTTP"
-                    self.__using_default_protocol = True
-                # end if
+            self.__using_default_protocol = protocol.lower() == 'http'
+            self.__using_default_port = str(port) == '9191'
 
-                # Handle an empty IP address or hostname
-                if not hostname:
-                    if path != '':
-                        hostname = path
-                        path = ''
-                    else:
-                        # Default value
-                        hostname = "127.0.0.1"
-
-                # Strip trailing slashes from the path, and use empty string instead
-                # of None when no path is given
-                if path:
-                    path = path.rstrip("/")
-                else:
-                    path = ""
-                # end if
-
-                # If the user has not given any port or any path, then we would
-                # use the default port.  It is possible for a URL to not have a
-                # port.  For example, cloud instances do not have ports, but do
-                # have paths.  But, it is also possible for the user to just
-                # give the IP address or the hostname without specifying a port,
-                # and the old behavior was to add the default port in this case.
-                # The new behavior is to add a default port only if no path is
-                # given in the URL.
-                self.__using_default_port = False
-                if not path and not port:
-                    self.__using_default_port = True
-                    port = 9191 if protocol.lower() == 'http' else 443  # default_port
-                # end if
-            # end if
-
-            # Validate the port
-            if port and not self.__using_default_port:
-                try:
-                    port = int(port)
-                except:
-                    raise GPUdbException("Expected a numeric port; got '{}',"
-                                    " type {}"
-                                    "".format(port,
-                                              str(type(port))))
-                # Port value must be within (0, 65536)
-                if ((port <= 0) or (port >= 65536)):
-                    raise GPUdbException("Expected a valid port (1-65535); "
-                                    "got '{}'".format(port))
-                # end if
-
-            if ':' not in hostname:
-                hostname = hostname + (':' + str(port) if port is not None else '')
-
-            # Construct the full URL
-            full_url = ("{protocol}://{ip}{path}"
-                        "".format(protocol=protocol.lower(),
-                                  ip=hostname,
-                                  path=path))
-
-            self.__host = hostname.split(':')[0] if ':' in hostname else str(hostname)
+            self.__host = hostname
             self.__port = int(port) if port else None
-            self.__protocol = str(protocol)
-            self.__url_path = str(path)
-            self.__full_url = str(full_url)
+            self.__protocol = protocol
+            self.__url_path = path
+            self.__full_url = full_url
 
         # end __init__
 
@@ -4670,7 +4598,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.7.2"
+    api_version = "7.1.7.3"
 
     # -------------------------  GPUdb Methods --------------------------------
 

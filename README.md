@@ -1,3 +1,17 @@
+<h3 align="center" style="margin:0px">
+	<img width="200" src="https://2wz2rk1b7g6s3mm3mk3dj0lh-wpengine.netdna-ssl.com/wp-content/uploads/2018/08/kinetica_logo.svg" alt="Kinetica Logo"/>
+</h3>
+<h5 align="center" style="margin:0px">
+	<a href="https://www.kinetica.com/">Website</a>
+	|
+	<a href="https://docs.kinetica.com/7.1/">Docs</a>
+	|
+	<a href="https://docs.kinetica.com/7.1/api/">API Docs</a>
+	|
+	<a href="https://join.slack.com/t/kinetica-community/shared_invite/zt-1bt9x3mvr-uMKrXlSDXfy3oU~sKi84qg">Community Slack</a>   
+</h5>
+
+
 # Kinetica Python API
 
 This is the 7.1.x.y version of the client-side Python API for Kinetica.  The
@@ -7,22 +21,21 @@ there are breaking changes between versions, so it is critical that they match.
 For example, Kinetica 6.2 and 7.0 have incompatible changes, so the 6.2.x.y
 versions of the Python API would NOT be compatible with 7.0.a.b versions.
 
+
 ## Contents
 
 * [Installation Instructions](#installation-instructions)
 * [Troubleshooting Installation](#troubleshooting-installation)
 * [GPUdb Table Monitor Client API](#gpudb-table-monitor-client-api)
-* [GPUdbTableMonitor.Options](#gpudbtablemonitoroptions)
-* [GPUdbTableMonitor.Options Examples](#gpudbtablemonitoroptions-examples)
-* [GPUdbTableMonitor.Callbacks](#gpudbtablemonitorcallbacks)
-* [Table Monitor Examples](#examples)
+* [Support](#support)
+* [Contact Us](#contact-us)
 
 
 ## Installation Instructions
 
-To install this package, run 'python setup.py install' in the root directory of
+To install this package, run `python setup.py install` in the root directory of
 the repo.  Note that due to the in-house compiled C-module dependency, this
-package must be installed, and simply copying gpudb.py or having a link to it
+package must be installed, and simply copying `gpudb.py` or having a link to it
 will not work.
 
 There is also an example file in the example directory.
@@ -34,8 +47,10 @@ The python specific documentation can be found at:
 *   https://docs.kinetica.com/7.1/api/python/
 
 
-For changes to the client-side API, please refer to CHANGELOG.md.  For
-changes to GPUdb functions, please refer to CHANGELOG-FUNCTIONS.md.
+For changes to the client-side API, please refer to
+[CHANGELOG.md](CHANGELOG.md).  For
+changes to Kinetica functions, please refer to
+[CHANGELOG-FUNCTIONS.md](CHANGELOG-FUNCTIONS.md).
 
 
 ### Troubleshooting Installation
@@ -250,3 +265,25 @@ for an insert table monitor.
     receives notifications it just pushes them into the shared Queue and then
     `TableMonitorExampleClient` consumes them from the shared Queue and
     displays them in the console.
+
+
+
+## Support
+
+For bugs, please submit an
+[issue on Github](https://github.com/kineticadb/kinetica-api-python/issues).
+
+For support, you can post on
+[stackoverflow](https://stackoverflow.com/questions/tagged/kinetica) under the
+``kinetica`` tag or
+[Slack](https://join.slack.com/t/kinetica-community/shared_invite/zt-1bt9x3mvr-uMKrXlSDXfy3oU~sKi84qg).
+
+
+## Contact Us
+
+* Ask a question on Slack:
+  [Slack](https://join.slack.com/t/kinetica-community/shared_invite/zt-1bt9x3mvr-uMKrXlSDXfy3oU~sKi84qg)
+* Follow on GitHub:
+  [Follow @kineticadb](https://github.com/kineticadb) 
+* Email us:  <support@kinetica.com>
+* Visit:  <https://www.kinetica.com/contact/>

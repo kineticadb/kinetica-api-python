@@ -841,6 +841,7 @@ static PyObject* RecordType_from_dynamic_schema(PyTypeObject* type, PyObject* ar
 
     CHECK_STRING(i == field_count, PyExc_ValueError, "column_datatypes field has too few values", error)
 
+    PyBuffer_Release(&buffer);
     Py_DECREF(parsed);
     Py_DECREF(field_seq);
 
