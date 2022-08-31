@@ -2,6 +2,12 @@
 
 ## Version 7.0
 
+### Version 7.0.20.1 - 2022-08-31
+
+#### Fixed
+-   Memory leak in underlying C-extension library
+
+
 ### Version 7.0.20.0 - 2020-11-25
 
 #### Added

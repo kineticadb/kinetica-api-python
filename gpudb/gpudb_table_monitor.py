@@ -69,7 +69,6 @@ except ImportError:
 
 
 class GPUdbTableMonitor(object):
-
     class Client(object):
         """ This class is the main client side API class implementing most of the
             functionalities. Implementing table monitor functions means that this class
@@ -82,45 +81,43 @@ class GPUdbTableMonitor(object):
             The intended use of this class is to derive from this and define the
             different callback methods and pass the callback methods wrapped in
             different callback objects of the types defined by the class
-            :class:`GPUdbTableMonitor.Callback.Type`. The callback objects thus
+            :class:`.Callback.Type`. The callback objects thus
             created must be passed as a list to the constructor of this class.
 
             A usage that will suffice for most cases has been given in the
-            'examples/table_monitor_example.py' file. The user is requested to
+            ``examples/table_monitor_example.py`` file. The user is requested to
             go through the example to get a thorough understanding of how to use
             this class.
 
             The readme contains the relevant links to navigate directly to the
             examples provided.
-
         """
 
         def __init__(self, db, table_name, callback_list, options=None):
             """
 
-            Args:
-                db (GPUdb)
-                    The GPUdb object which is created external to this
-                    class and passed in to facilitate calling different methods of the
-                    GPUdb API. This has to be pre-initialized and must have a valid
-                    value. If this is uninitialized then the constructor would raise a
-                    GPUdbException exception.
+            Parameters:
+                db (:class:`gpudb.GPUdb`)
+                    The :class:`gpudb.GPUdb` object which is created external to
+                    this class and passed in to facilitate calling different
+                    methods of that API. This has to be pre-initialized and must
+                    have a valid value. If this is uninitialized then the
+                    constructor will raise a :class:`gpudb.GPUdbException`.
 
                 table_name (str)
-                    The name of the Kinetica table for
-                    which a monitor is to be created. This must have a valid value and
-                    cannot be an empty string. In case this parameter does not have a
-                    valid value the constructor will raise a :class:`GPUdbException`
-                    exception.
+                    The name of the Kinetica table for which a monitor is to be
+                    created. This must have a valid value and cannot be an empty
+                    string. In case this parameter does not have a valid value,
+                    the constructor will raise a :class:`gpudb.GPUdbException`.
 
-                callback_list (list(GPUdbTableMonitor.Callback))
-                    List of :class:`GPUdbTableMonitor.Callback` objects
+                callback_list (list(:class:`.Callback`))
+                    List of :class:`.Callback` objects
 
-                options (GPUdbTableMonitor.Options)
-                    The class to encapsulate the various options that can be passed
-                    to a :class:`GPUdbTableMonitor.Client` object to alter the
-                    behaviour of the monitor instance. The details are given in the
-                    section of :class:`GPUdbTableMonitor.Options` class.
+                options (:class:`GPUdbTableMonitor.Options`)
+                    The class to encapsulate the various options that can be
+                    passed to a :class:`.Client` object to alter the behavior of
+                    the monitor instance. The details are given in the
+                    :class:`GPUdbTableMonitor.Options` section.
             """
             # super(GPUdbTableMonitor.Client, self).__init__()
 
@@ -151,7 +148,7 @@ class GPUdbTableMonitor(object):
             monitor_callbacks = any(
                 (cb is not None)
                 and (
-                    cb.callback_type in GPUdbTableMonitor.Callback.Type.monitor_types()
+                        cb.callback_type in GPUdbTableMonitor.Callback.Type.monitor_types()
                 )
                 and (cb.event_callback is not None)
                 for cb in callback_list)
@@ -238,7 +235,6 @@ class GPUdbTableMonitor(object):
                         "type: Expected "
                         "'Options' type")
 
-
         # End __init__ Client
 
         def __get_operation_list_from_callbacks(self):
@@ -272,9 +268,9 @@ class GPUdbTableMonitor(object):
                                            "... No table monitor can be created")
                         raise GPUdbException("Error : No callback object found "
                                              "of one of the types of"
-                                           "[INSERT_RAW, INSERT_DECODED, DELETED"
-                                           "or UPDATED] to create table monitor"
-                                           "... No table monitor can be created")
+                                             "[INSERT_RAW, INSERT_DECODED, DELETED"
+                                             "or UPDATED] to create table monitor"
+                                             "... No table monitor can be created")
 
             return operation_list
 
@@ -284,7 +280,7 @@ class GPUdbTableMonitor(object):
 
             Checks for existence of the table as well.
 
-            Args:
+            Parameters:
                 db (GPUdb)
                     the GPUdb object needed to access the different APIs
 
@@ -297,7 +293,7 @@ class GPUdbTableMonitor(object):
             """
             table_name_value_correct = False
 
-            if ( ( db is None ) or ( not isinstance(db, GPUdb) ) ):
+            if ((db is None) or (not isinstance(db, GPUdb))):
                 return False
 
             if (table_name is not None
@@ -315,15 +311,14 @@ class GPUdbTableMonitor(object):
             return table_name_value_correct
 
         def start_monitor(self):
-            """ Method to start the Table Monitor
-                This the API called by the client to start the table monitor
+            """ This the API called by the client to start the table monitor
 
                 This method has to be called to activate the table monitors which
                 have been created in accordance to the callback objects passed in
                 the constructor, whether this class is instantiated directly or a
-                class derived from 'Client' (:class:`GPUdbMonitor.Client`) is used.
+                class derived from (:class:`.Client`) is used.
 
-                .. seealso: :meth:`stop_monitor`
+                .. seealso:: :meth:`stop_monitor`
             """
             for event_type in self.__operation_list:
 
@@ -369,16 +364,15 @@ class GPUdbTableMonitor(object):
                     self.task_list.append(delete_task)
 
         def stop_monitor(self):
-            """ Method to Stop the table monitor.
-                This API is called by the client to stop the table monitor.
+            """ This API is called by the client to stop the table monitor.
                 This has to be called to stop the table monitor which has been
-                started by the call 'start_monitor'.
+                started by the call :meth:`start_monitor`.
 
                 Failure to call this method will produce unpredictable results
                 since the table monitors running in the background will not be
                 stopped and cleaned up properly.
 
-                .. seealso: :meth:`.start_monitor`
+                .. seealso:: :meth:`start_monitor`
             """
             for task in self.task_list:
                 task.stop()
@@ -393,7 +387,7 @@ class GPUdbTableMonitor(object):
             """
             This property sets the log level for this class and its derivatives.
 
-            Args:
+            Parameters:
                 value (logging.level): Default setting is logging.INFO
 
             Raises:
@@ -404,8 +398,6 @@ class GPUdbTableMonitor(object):
                 self._logger.setLevel(value)
             except (ValueError, TypeError, Exception) as ex:
                 raise GPUdbException("Invalid log level: '{}'".format(str(ex)))
-
-
 
         class _TableEvent(enum.Enum):
             """ Enum for table monitor event types
@@ -449,27 +441,25 @@ class GPUdbTableMonitor(object):
 
     # End Client class
 
-
-
     class Options(object):
         """
         Encapsulates the various options used to create a table monitor. The
         class is initialized with sensible defaults which can be overridden by
-        the users of the class. The following options are supported :
+        the users of the class. The following options are supported:
 
         * **inactivity_timeout**
             This option controls the time interval to set the timeout to
             determine when the program would do idle time processing like checking
-            for the table existence, server HA failover if needed etc.. It is
+            for the table existence, server HA failover, etc., if needed. It is
             specified in minutes as a float so that seconds can be accommodated
             as well. The default value is set to 20 minutes, which is
             converted internally to seconds.
 
-        Example usage:
+        Example usage::
+
             options = GPUdbTableMonitor.Options(_dict=dict(
-            inactivity_timeout=0.1
-        )
-        )
+                inactivity_timeout=0.1
+            ))
 
         """
         __inactivity_timeout = 'inactivity_timeout'
@@ -481,16 +471,16 @@ class GPUdbTableMonitor(object):
 
         @staticmethod
         def default():
-            """Create a default set of options for :class:`Client`
+            """Create a default set of options for :class:`.Client`
 
             Returns:
-                Options instance
+                :class:`GPUdbTableMonitor.Options` instance
 
             """
             return GPUdbTableMonitor.Options()
 
         def __init__(self, _dict=None):
-            """ Constructor for GPUdbTableMonitor.Options class
+            """ Constructor for :class:`GPUdbTableMonitor.Options` class
 
             Parameters:
                 _dict (dict)
@@ -499,7 +489,7 @@ class GPUdbTableMonitor(object):
                     set internally.
 
             Returns:
-                A GPUdbTableMonitor.Options object.
+                A :class:`GPUdbTableMonitor.Options` object.
             """
             # Set default values
             # Default is 0.1 minutes = 6 secs
@@ -529,7 +519,7 @@ class GPUdbTableMonitor(object):
 
         @property
         def inactivity_timeout(self):
-            """This is the getter for the property 'inactivity_timeout'.
+            """This is the getter for the property `inactivity_timeout`.
             This is specified in minutes as a float so that seconds can be
             accommodated. This indicates a timeout interval after which if no
             notification is received from the server table monitors, the program
@@ -539,19 +529,22 @@ class GPUdbTableMonitor(object):
 
             The default value is set to 20 minutes converted to milliseconds.
 
-            Returns: The value of the timeout as set in the Options instance.
+            Returns:
+                The value of the timeout as set in the
+                :class:`GPUdbTableMonitor.Options` instance.
 
             """
             return self._inactivity_timeout
 
         @inactivity_timeout.setter
         def inactivity_timeout(self, val):
-            """This is the setter for the property 'inactivity_timeout'.
+            """This is the setter for the property `inactivity_timeout`.
 
-            Args:
-                val (float): This value is in minutes and internally converted
-                to float so that seconds can be accommodated easily. The default
-                value is 20 minutes converted to milliseconds.
+            Parameters:
+                val (float)
+                    This value is in minutes and internally converted to float
+                    so that seconds can be accommodated easily. The default
+                    value is 20 minutes converted to milliseconds.
             """
             try:
                 value = float(val)
@@ -587,53 +580,51 @@ class GPUdbTableMonitor(object):
 
     # End Options class
 
-
-
     class Callback(object):
         """Use this class to indicate which type of table monitor is desired.
 
-        When the :class:`GPUdbTableMonitor.Client` is constructed a list of
-        objects of this class has to be supplied to the constructor of the class.
+        When the :class:`.Client` is constructed, a list of objects of this
+        class has to be supplied to the constructor of the class.
 
-        If the list of callbacks is empty or the list does not contain at least one
-        of the callbacks of types (:class:`GPUdbTableMonitor.Callback.Type`)
-        'INSERT_DECODED', 'INSERT_RAW', 'DELETED' or 'UPDATED' no table monitor
-        would be created internally and the program would raise an exception of
-        type :class:`GPUdbException` and exit. So, a list of objects of this class
-        is mandatory for the table monitor to function.
+        If the list of callbacks is empty or the list does not contain at least
+        one of the callbacks of types (:class:`.Callback.Type`)
+        ``INSERT_DECODED``, ``INSERT_RAW``, ``DELETED``, or ``UPDATED``, no
+        table monitor would be created internally and the program would raise a
+        :class:`gpudb.GPUdbException` and exit. So, a list of objects of this
+        class is mandatory for the table monitor to function.
 
-        An example of using this class and passing on to the constructor of the
-        class :class:`GPUdbTableMonitor.Client` is as follows:
+        An example of using this class and passing on to the constructor of
+        :class:`.Client` is as follows::
 
-        class GPUdbTableMonitorExample(GPUdbTableMonitor.Client):
+            class GPUdbTableMonitorExample(GPUdbTableMonitor.Client):
 
-            def __init__(self, db, table_name, options=None):
+                def __init__(self, db, table_name, options=None):
 
-                # Create the list of callbacks objects which are to be passed to the
-                # 'GPUdbTableMonitor.Client' class constructor
+                    # Create the list of callbacks objects which are to be passed to the
+                    # GPUdbTableMonitor.Client class constructor
 
-                # This example shows only two callbacks being created so
-                # only an insert type table monitor will be created. For other
-                # types callback objects could be created similarly to receive
-                # notifications about other events.
-                callbacks = [
-                    GPUdbTableMonitor.Callback(GPUdbTableMonitor.Callback.Type.INSERT_RAW,
-                                              self.on_insert_raw,
-                                              self.on_error),
+                    # This example shows only two callbacks being created so
+                    # only an insert type table monitor will be created. For other
+                    # types callback objects could be created similarly to receive
+                    # notifications about other events.
+                    callbacks = [
+                        GPUdbTableMonitor.Callback(GPUdbTableMonitor.Callback.Type.INSERT_RAW,
+                                                  self.on_insert_raw,
+                                                  self.on_error),
 
-                    GPUdbTableMonitor.Callback(GPUdbTableMonitor.Callback.Type.INSERT_DECODED,
-                                              self.on_insert_decoded,
-                                              self.on_error,
-                                              GPUdbTableMonitor.Callback.InsertDecodedOptions( GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode.ABORT ))
+                        GPUdbTableMonitor.Callback(GPUdbTableMonitor.Callback.Type.INSERT_DECODED,
+                                                  self.on_insert_decoded,
+                                                  self.on_error,
+                                                  GPUdbTableMonitor.Callback.InsertDecodedOptions( GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode.ABORT ))
 
-                ]
+                    ]
 
-                # Invoke the base class constructor and pass in the list of callback
-                # objects created earlier.  This invocation is mandatory for the table
-                # monitor to be actually functional.
-                super(GPUdbTableMonitorExample, self).__init__(
-                    db, table_name,
-                    callbacks, options=options)
+                    # Invoke the base class constructor and pass in the list of callback
+                    # objects created earlier.  This invocation is mandatory for the table
+                    # monitor to be actually functional.
+                    super(GPUdbTableMonitorExample, self).__init__(
+                        db, table_name,
+                        callbacks, options=options)
         """
 
         def __init__(
@@ -642,26 +633,25 @@ class GPUdbTableMonitor(object):
                 event_callback,
                 error_callback=None,
                 event_options=None,
-                ):
+        ):
             """
             Constructor for this class.
 
-            Args:
-                callback_type (enum :class:`GPUdbTableMonitor.Callback.Type`)
+            Parameters:
+                callback_type (:class:`.Callback.Type`)
                     This indicates the type of the table monitor this callback
-                    will be used for.
-                    It must be of the type
-                    :class:`GPUdbTableMonitor.Callback.Type` enum.
+                    will be used for.  It must be of the type
+                    :class:`.Callback.Type` enum.
 
                 event_callback (method reference)
                     This is to be called for any event related to an operation
                     on a table like insert, update, delete etc. As soon as such
                     an event is observed this method will be called.
 
-                    This method can have only one parameter. For different
-                    table monitor events (callback_type/s) the parameter would
+                    This method can have only one parameter. For each
+                    table monitor event (`callback_type`), the parameter would
                     be different. The method name has got no significance as
-                    long as the signature is as given below:
+                    long as the signature is as given below::
 
                         def method_name(param):
                             # param - Could be a (dict|bytes|int|str)
@@ -671,36 +661,39 @@ class GPUdbTableMonitor(object):
                     The method thus defined does not return anything.
 
                     The following table describes the parameter types which
-                    correspond to each of the 'callback_type's:
-                    --------------------------------------------------------
-                    |NO | callback_type  | param type
-                    --------------------------------------------------------
-                    |1. | INSERT_DECODED | type will be 'dict'.
-                    |2. | INSERT_RAW     | type will be 'bytes'.
-                    |3. | DELETED        | type will be 'int'.
-                    |4. | UPDATED        | type will be 'int'.
-                    |5. | TABLE_ALTERED  | type will be 'str'.
-                    |6. | TABLE_DROPPED  | type will be 'str'.
+                    correspond to each of the `callback_type`:
+
+                    == ================== ==============
+                    NO callback_type      Parameter Type
+                    == ================== ==============
+                    1  ``INSERT_DECODED`` ``dict``
+                    2  ``INSERT_RAW``     ``bytes``
+                    3  ``DELETED``        ``int``
+                    4  ``UPDATED``        ``int``
+                    5  ``TABLE_ALTERED``  ``str``
+                    6  ``TABLE_DROPPED``  ``str``
+                    == ================== ==============
 
                 error_callback (method reference)
                     Optional parameter.
 
                     This will be called in case of any operational error that
                     typically could manifest in the form of some exception
-                    (GPUdbException).
+                    (:class:`gpudb.GPUdbException`).
 
                     The name of the method does not matter. It must have only
-                    one argument of type 'str'. The argument to this method
+                    one argument of type ``str``. The argument to this method
                     will contain information related to the error that
                     occurred; often details about any exception that was
                     raised.
 
-                    The signature of this method has to be:
+                    The signature of this method has to be::
+
                         def method_name(param):
                             # param - str
                             # code here ...
 
-                event_options (:class:`GPUdbTableMonitor.Callback.Options`)
+                event_options (:class:`.Callback.Options`)
                     Optional parameter.
 
                     Options applicable to a specific callback type, e.g.,
@@ -716,11 +709,11 @@ class GPUdbTableMonitor(object):
                     "Argument type must be of type "
                     "Callback.Type enum ...")
 
-            if not self.__check_whether_function( error_callback ):
+            if not self.__check_whether_function(error_callback):
                 raise GPUdbException("'error_callback' passed in is not a "
                                      "valid method reference")
 
-            if not self.__check_whether_function( event_callback ):
+            if not self.__check_whether_function(event_callback):
                 raise GPUdbException("'event_callback' passed in is not a "
                                      "valid method reference")
 
@@ -738,7 +731,7 @@ class GPUdbTableMonitor(object):
         @property
         def event_callback(self):
             """
-            Getter for the __event_callback field
+            Getter for the `__event_callback` field
             Used to call the method pointed to once an event is received
             """
             return self.__event_callback
@@ -746,7 +739,7 @@ class GPUdbTableMonitor(object):
         @property
         def error_callback(self):
             """
-            Getter for the __error_callback field
+            Getter for the `__error_callback` field
             Used to call the method pointed to in case of an error related to
             the callback_type of this class.
             """
@@ -763,7 +756,7 @@ class GPUdbTableMonitor(object):
         def __check_whether_function(self, func):
             """ Tests whether the object passed in is actually a function or not
 
-            Args:
+            Parameters:
                 func (Callback.event_callback):
 
             Returns: True or False
@@ -779,42 +772,41 @@ class GPUdbTableMonitor(object):
         class Options(object):
             """
             This class embodies the options for any given callback type.  The
-            :classs:`GPUdbTableMonitor.Callback` constructor expects an instance
-            of this class.  However, instead of using this class directly, the
-            user is supposed to use an instance of one of its derived classes.
-            Each derived class is specialized with options that pertain to a
-            certain type of callback.
+            :classs:`.Callback` constructor expects an instance of this class.
+            However, instead of using this class directly, the user is supposed
+            to use an instance of one of its derived classes. Each derived class
+            is specialized with options that pertain to a certain type of
+            callback.
 
             Note that, currently, there is only one derived class as other
             callback types do not have special options at the moment.
 
-            .. seealso:: :class:`GPUdbTableMonitor.Callback.InsertDecodedOptions`
+            .. seealso:: :class:`.Callback.InsertDecodedOptions`
             """
             pass
 
         # End of Options class
 
-
         class InsertDecodedOptions(Options):
             """
-            Options used to control the behaviour if there is some kind of
-            error occurs while receiving notifications about inserted records
-            after decoding.
+            Options used to control the behavior if an error occurs while
+            receiving notifications about inserted records after decoding.
             """
 
             def __init__(self, decode_failure_mode=None):
                 """Constructor for this class.
 
-                Args:
-                    decode_failure_mode (:class:`GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode`)
-                        This is either SKIP or ABORT as described in the class
-                        documentation.
+                Parameters:
+                    decode_failure_mode (:class:`.Callback.InsertDecodedOptions.DecodeFailureMode`)
+                        This is either ``SKIP`` or ``ABORT`` as described in the
+                        class documentation.
                 """
                 if decode_failure_mode is None:
                     self.__decode_failure_mode = GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode.SKIP
                     return
 
-                if not isinstance(decode_failure_mode, GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode):
+                if not isinstance(decode_failure_mode,
+                                  GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode):
                     raise GPUdbException("error_mode must be of type "
                                          "InsertDecodedOptions.DecodeFailureMode enum (SKIP|ABORT)")
                 else:
@@ -823,6 +815,7 @@ class GPUdbTableMonitor(object):
             @property
             def decode_failure_mode(self):
                 """Getter method
+
                 Return the __decode_failure_mode value.
                 """
                 return self.__decode_failure_mode
@@ -834,15 +827,16 @@ class GPUdbTableMonitor(object):
                 1. GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode.SKIP
                 2. GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode.ABORT
 
-                .. seealso:: :class:`GPUdbTableMonitor.Callback.InsertDecodedOptions`
+                .. seealso:: :class:`.Callback.InsertDecodedOptions`
                 """
-                if ( not isinstance(value, int )
+                if (not isinstance(value, int)
                         or not isinstance(value, GPUdbTableMonitor.Callback.InsertDecodedOptions)
-                        or ( value not in
-                        [GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode.SKIP,
-                         GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode.ABORT] ) ):
-                    raise GPUdbException("'decode_failure_mode' value must be one of [PUdbTableMonitorCallback.InsertDecodedOptions.DecodeFailureMode.SKIP, "
-                                         "Callback.InsertDecodedOptions.DecodeFailureMode.ABORT]")
+                        or (value not in
+                            [GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode.SKIP,
+                             GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode.ABORT])):
+                    raise GPUdbException(
+                        "'decode_failure_mode' value must be one of [PUdbTableMonitorCallback.InsertDecodedOptions.DecodeFailureMode.SKIP, "
+                        "Callback.InsertDecodedOptions.DecodeFailureMode.ABORT]")
                 else:
                     self.__decode_failure_mode = value
 
@@ -851,23 +845,22 @@ class GPUdbTableMonitor(object):
                 This enum is used to identify the two possible modes to handle any
                 error that can occur while decoding the payload received from the
                 server table monitors.
-                In both the cases (SKIP and ABORT) it will try to recover once by
-                default.
+                In both the cases (``SKIP`` and ``ABORT``) it will try to
+                recover once by default.
                 """
 
                 ABORT = 1
                 """
-                int: If there is some kind of decoding error and
-                ABORT is specified then the the program aborts (quits with an
-                exception)
+                int: If a decoding error occurs and ``ABORT`` is specified, then
+                the the program aborts (quits with an exception)
                 """
 
                 SKIP = 2
                 """
-                int: if SKIP is specified then the program will skip to
-                the next record and try to decode that. In SKIP mode, the record
-                which has been skipped due to problem in decoding will appear as
-                an error log.
+                int: if ``SKIP`` is specified, then the program will skip to the
+                next record and try to decode that. In ``SKIP`` mode, the record
+                that has been skipped due to a problem in decoding will appear
+                in the error log.
                 """
             # End of DecodeFailureMode enum class
 
@@ -885,71 +878,77 @@ class GPUdbTableMonitor(object):
 
             INSERT_DECODED = 1
             """
-            int: This mode indicates an interest in receiving records after decoding
-            according to the table schema. This is used to create an insert monitor
-            internally. The user will get the notification through the callback
-            method pointed to by 'event_callback' property of the class 
-            'GPUdbTableMonitor.Callback'. The inserted records will be returned
+            int: This mode indicates an interest in receiving records after
+            decoding according to the table schema. This is used to create an
+            insert monitor internally. The user will get the notification
+            through the callback method pointed to by the `event_callback`
+            property of :class:`.Callback. The inserted records will be returned
             as a dict as an argument to the `event_callback`.
-            .. seealso:: :class:`GPUdbTableMonitor.Client` class documentation.
+
+            .. seealso:: :class:`.Client`
             """
 
             INSERT_RAW = 2
             """
-            int: This mode indicates an interest in receiving records before decoding
-            that is as raw bytes. This is used to create an insert monitor
-            internally. The user will get the notification through the callback
-            method pointed to by 'event_callback' property of the class 
-            'GPUdbTableMonitor.Callback'. The inserted records will be returned
-            as bytes as an argument to the 'event_callback'.
-            .. seealso:: :class:`GPUdbTableMonitor.Client` class documentation.
+            int: This mode indicates an interest in receiving records before
+            decoding that is as raw bytes. This is used to create an insert
+            monitor internally. The user will get the notification through the
+            callback method pointed to by the `event_callback` property of
+            :class:`.Callback`. The inserted records will be returned as bytes
+            as an argument to the `event_callback`.
+
+            .. seealso:: :class:`.Client`
             """
 
             DELETED = 3
             """
-            int: This mode indicates an interest in receiving notification about the
-            count of deleted records. This is used to create a delete monitor
-            internally. The user will get the notification through the callback
-            method pointed to by 'event_callback' property of the class 
-            'GPUdbTableMonitor.Callback'.
-            .. seealso:: :class:`GPUdbTableMonitor.Client` class documentation.
+            int: This mode indicates an interest in receiving notification about
+            the count of deleted records. This is used to create a delete
+            monitor internally. The user will get the notification through the
+            callback method pointed to by the `event_callback` property of
+            :class:`.Callback`.
+
+            .. seealso:: :class:`.Client`
             """
 
             UPDATED = 4
             """
-            int: This mode indicates an interest in receiving notification about the
-            count of updated records. This is used to create an update monitor
-            internally. The user will get the notification through the callback
-            method pointed to by 'event_callback' property of the class 
-            'GPUdbTableMonitor.Callback'.
-            .. seealso:: :class:`GPUdbTableMonitor.Client` class documentation.
+            int: This mode indicates an interest in receiving notification about
+            the count of updated records. This is used to create an update
+            monitor internally. The user will get the notification through the
+            callback method pointed to by the `event_callback` property of
+            :class:`.Callback`.
+
+            .. seealso:: :class:`.Client`
             """
 
             TABLE_ALTERED = 5
             """
-            int: This mode indicates an interest in receiving notification about the
-            possible table alterations while one or more table monitors (insert,
-            update, delete) are monitoring a table. If this is supplied then the
-            user will be notified using the callback pointed to by 
-            'event_callback' property of the class 'GPUdbTableMonitor.Callback'.
-            .. seealso:: :class:`GPUdbTableMonitor.Client` class documentation.
+            int: This mode indicates an interest in receiving notification about
+            the possible table alterations while one or more table monitors
+            (insert, update, delete) are monitoring a table. If this is supplied
+            then the user will be notified using the callback pointed to by the
+            `event_callback` property of :class:`.Callback`.
+
+            .. seealso:: :class:`.Client`
             """
 
             TABLE_DROPPED = 6
             """
-            int: This mode indicates an interest in receiving notification about the
-            possible table deletions while one or more table monitors (insert,
-            update, delete) are monitoring a table. If this is supplied then the
-            user will be notified using the callback pointed to by 
-            'event_callback' property of the class 'GPUdbTableMonitor.Callback'.
-            .. seealso:: :class:`GPUdbTableMonitor.Client` class documentation.
+            int: This mode indicates an interest in receiving notification about
+            the possible table deletions while one or more table monitors
+            (insert, update, delete) are monitoring a table. If this is supplied
+            then the user will be notified using the callback pointed to by the
+            `event_callback` property of :class:`.Callback`.
+
+            .. seealso:: :class:`.Client`
             """
 
             @staticmethod
             def event_types():
                 """This method returns the list of all available types and it is
                 called to validate the callback type supplied to the constructor
-                of the Callback class.
+                of :class:`.Callback`.
                 """
                 return [GPUdbTableMonitor.Callback.Type.INSERT_RAW,
                         GPUdbTableMonitor.Callback.Type.INSERT_DECODED,
@@ -960,10 +959,10 @@ class GPUdbTableMonitor(object):
 
             @staticmethod
             def monitor_types():
-                """This method returns the list of all available types that could be
-                relevant to the creation of a table monitor and it is
+                """This method returns the list of all available types that
+                could be relevant to the creation of a table monitor and it is
                 called to validate the callback type supplied to the constructor
-                of the Callback class.
+                of :class:`.Callback`.
                 """
                 return [GPUdbTableMonitor.Callback.Type.INSERT_RAW,
                         GPUdbTableMonitor.Callback.Type.INSERT_DECODED,
@@ -971,7 +970,6 @@ class GPUdbTableMonitor(object):
                         GPUdbTableMonitor.Callback.Type.UPDATED]
 
     # End of Callback class
-
 
 
 class _BaseTask(threading.Thread):
@@ -1030,17 +1028,17 @@ class _BaseTask(threading.Thread):
 
         super(_BaseTask, self).__init__()
 
-        if ( ( db is None ) or ( not isinstance(db, GPUdb) ) ):
+        if ((db is None) or (not isinstance(db, GPUdb))):
             raise GPUdbException("db must be of type GPUdb")
         self.db = db
 
-        if ( ( table_name is None )
-                or ( not isinstance(table_name,(basestring, unicode)) ) ):
+        if ((table_name is None)
+                or (not isinstance(table_name, (basestring, unicode)))):
             raise GPUdbException("table_name must be a string")
         self.table_name = table_name
 
-        if ( ( table_event is None )
-                or ( not isinstance(table_event, GPUdbTableMonitor.Client._TableEvent) ) ):
+        if ((table_event is None)
+                or (not isinstance(table_event, GPUdbTableMonitor.Client._TableEvent))):
             raise GPUdbException("table_event must be of type enum _TableEvent")
 
         self.event_type = table_event
@@ -1094,8 +1092,8 @@ class _BaseTask(threading.Thread):
 
         self.type_id, self.type_schema = self._get_type_and_schema_for_table()
 
-        if ( ( self.type_schema is not None )
-                and ( self.type_id is not None ) ):
+        if ((self.type_schema is not None)
+                and (self.type_id is not None)):
             self.record_type = RecordType.from_type_schema(
                 label="",
                 type_schema=self.type_schema,
@@ -1116,19 +1114,20 @@ class _BaseTask(threading.Thread):
         also caches the topic_id and the table schema in instance variables
         so that decoding of the messages received could be done.
 
-        Returns: True or False
+        Returns:
+            True or False
 
         """
         try:
-            if ( table_event == GPUdbTableMonitor.Client._TableEvent.DELETE ):
+            if (table_event == GPUdbTableMonitor.Client._TableEvent.DELETE):
                 retval = self.db.create_table_monitor(self.table_name,
                                                       options={
                                                           'event': 'delete'})
-            elif ( table_event == GPUdbTableMonitor.Client._TableEvent.INSERT ):
+            elif (table_event == GPUdbTableMonitor.Client._TableEvent.INSERT):
                 retval = self.db.create_table_monitor(self.table_name,
                                                       options={
                                                           'event': 'insert'})
-            elif ( table_event == GPUdbTableMonitor.Client._TableEvent.UPDATE ):
+            elif (table_event == GPUdbTableMonitor.Client._TableEvent.UPDATE):
                 retval = self.db.create_table_monitor(self.table_name,
                                                       options={
                                                           'event': 'update'})
@@ -1189,9 +1188,9 @@ class _BaseTask(threading.Thread):
     # End _disconnect_from_topic _BaseTask
 
     def run(self):
-        """ Process queued messages until this client is stopped externally:
+        """ Process queued messages until this client is stopped externally.
 
-            * Poll the message queue every second for new messages. When the
+            Poll the message queue every second for new messages. When the
             client is stopped externally, finish processing any messages in
             the current batch, and then disconnect from the message queue and
             remove the table monitor
@@ -1200,7 +1199,8 @@ class _BaseTask(threading.Thread):
             try:
                 self._fetch_message()
             except zmq.ZMQError as zmqe:
-                self._logger.error("ZMQ connection error : %s" % zmqe.message)
+                if not self.kill:
+                    self._logger.error("ZMQ connection error : %s" % zmqe.strerror)
                 # Try to re-create the table monitor, resorting to HA
                 if not self._check_state_on_inactivity_timeout_expiry():
                     self.kill = True
@@ -1219,6 +1219,8 @@ class _BaseTask(threading.Thread):
 
         """
         self.kill = True
+        self.socket.close()
+        self.context.term()
 
     # End stop _BaseTask
 
@@ -1227,7 +1229,8 @@ class _BaseTask(threading.Thread):
         the main message processing loop is idle because server on
         successful polling returned nothing.
 
-        Returns: Nothing
+        Returns:
+            Nothing
 
         """
         self._logger.debug("In _check_state_on_inactivity_timeout_expiry ...")
@@ -1242,7 +1245,7 @@ class _BaseTask(threading.Thread):
             current_full_url = self.full_url
 
             if table_exists:
-                if ( current_full_url != self.db.gpudb_full_url ):
+                if (current_full_url != self.db.gpudb_full_url):
                     # HA taken over
 
                     # Cache the full_url value
@@ -1277,8 +1280,8 @@ class _BaseTask(threading.Thread):
                 self._quit_on_exception(
                     event_type=GPUdbTableMonitor.Client._TableEvent.TABLE_DROPPED,
                     message="Table %s does not "
-                    "exist anymore ..."
-                    % self.table_name)
+                            "exist anymore ..."
+                            % self.table_name)
 
         except GPUdbException as gpe:
             self._logger.error("GpuDb error : %s" % gpe.message)
@@ -1297,18 +1300,20 @@ class _BaseTask(threading.Thread):
         so that the clients know that they should terminate as well and can
         exit gracefully.
 
-        Args: message: The exact exception message that could be logged for
-        further troubleshooting
+        Parameters:
+            message
+                The exact exception message that could be logged for
+                further troubleshooting
         """
         if message is not None:
             self._logger.error(message)
 
-        if ( ( event_type == GPUdbTableMonitor.Client._TableEvent.TABLE_DROPPED )
-                and ( self._table_dropped_callback is not None ) ):
+        if ((event_type == GPUdbTableMonitor.Client._TableEvent.TABLE_DROPPED)
+                and (self._table_dropped_callback is not None)):
             self._table_dropped_callback.event_callback(message)
 
-        if ( ( event_type == GPUdbTableMonitor.Client._TableEvent.TABLE_ALTERED )
-                and ( self._table_altered_callback is not None ) ):
+        if ((event_type == GPUdbTableMonitor.Client._TableEvent.TABLE_ALTERED)
+                and (self._table_altered_callback is not None)):
             self._table_altered_callback.event_callback(message)
 
         # Connection to GPUDb failed or some other GPUDb failure, might as
@@ -1322,7 +1327,8 @@ class _BaseTask(threading.Thread):
         tuple composed of the values Args: table_name: The name of the table
         for which the type_id and schema are to be retrieved
 
-        Returns: A tuple containing the type_id and schema
+        Returns:
+            A tuple containing the type_id and schema
 
         """
         try:
@@ -1398,8 +1404,8 @@ class _BaseTask(threading.Thread):
 
             This method has to be overridden in the derived classes
 
-        Args:
-            messages:
+        Parameters:
+            messages
         """
         raise NotImplementedError(
             "Method '_process_message' of '_BaseTask' must be overridden in the derived classes")
@@ -1425,12 +1431,14 @@ class _BaseTask(threading.Thread):
         """
         This property sets the log level for this class and its derivatives.
 
-        Args:
-            value (logging.level): Default setting is logging.INFO
+        Parameters:
+            value (logging.level)
+                Default setting is logging.INFO
 
         Raises:
-            GPUdbException: If the value passed is not one of logging.INFO
-            or logging.DEBUG etc.
+            GPUdbException
+                If the value passed is not one of logging.INFO
+                or logging.DEBUG etc.
         """
         try:
             self._logger.setLevel(value)
@@ -1453,24 +1461,25 @@ class _InsertWatcherTask(_BaseTask):
         """
         [summary]
 
-        Args:
-        db (GPUdb)
-            Handle to GPUdb instance
+        Parameters:
+            db (GPUdb)
+                Handle to GPUdb instance
 
-        table_name (str)
-            Name of the table to create the monitor for
+            table_name (str)
+                Name of the table to create the monitor for
 
-        options (:class:`GPUdbTableMonitor.Options`)
-            Options to configure Client
+            options (:class:`GPUdbTableMonitor.Options`)
+                Options to configure Client
 
-        callbacks (list of :class:`GPUdbTableMonitor.Callback`): List of
-        Callback objects passed by user to be called on various events relevant
-        to Insert operation
-        Order of callbacks in the list:
-            - 0 - insert_raw callback
-            - 1 - insert_decoded callback
-            - 2 - table_dropped callback
-            - 3 - table_altered callback
+            callbacks (list of :class:`GPUdbTableMonitor.Callback`)
+                List of Callback objects passed by user to be called on various
+                events relevant to Insert operation
+
+                Order of callbacks in the list:
+                    - 0 - insert_raw callback
+                    - 1 - insert_decoded callback
+                    - 2 - table_dropped callback
+                    - 3 - table_altered callback
 
         """
         table_event = GPUdbTableMonitor.Client._TableEvent.INSERT
@@ -1489,13 +1498,11 @@ class _InsertWatcherTask(_BaseTask):
                                                  options=options,
                                                  id='INSERT_' + table_name)
 
-
     def _connect(self):
         """ Overrides the base class method
             wrapping the call to setup method.
         """
         self.setup()
-
 
     def _try_decoding_on_table_altered(self, message_data):
         """This method tries to decode with the new type schema in case a
@@ -1503,13 +1510,13 @@ class _InsertWatcherTask(_BaseTask):
             only fail if the 'DECODE_FAILURE_THRESHOLD_SECS' seconds have
             elapsed and still the decoding of the message has failed.
 
-        Args:
-            message_data:
-            The raw message data (binary)
+        Parameters:
+            message_data
+                The raw message data (binary)
 
         Returns:
-            record:
-            The decoded record if there is one else None
+            record
+                The decoded record if there is one else None
 
         """
         record = None
@@ -1547,12 +1554,12 @@ class _InsertWatcherTask(_BaseTask):
     def _process_message(self, messages):
         """ Process only messages assuming that they are inserts.
 
-        Args:
-            messages (list): Multi-part messages received from a single socket
-            poll.
+        Parameters:
+            messages (list)
+                Multi-part messages received from a single socket poll.
         """
 
-        if IS_PYTHON_2 :
+        if IS_PYTHON_2:
             topic_id_recvd = "".join(
                 chr(x) for x in bytearray(messages[0], 'utf-8'))
         else:
@@ -1563,8 +1570,8 @@ class _InsertWatcherTask(_BaseTask):
         # Process all messages, skipping the (first) topic frame
         for message_index, message_data in enumerate(messages[1:]):
 
-            if ( self.__cb_insert_raw is not None
-                    and self.__cb_insert_raw.event_callback is not None ):
+            if (self.__cb_insert_raw is not None
+                    and self.__cb_insert_raw.event_callback is not None):
                 try:
                     self.__cb_insert_raw.event_callback(message_data)
                 except Exception as e:
@@ -1574,13 +1581,13 @@ class _InsertWatcherTask(_BaseTask):
             # Decode the record from the message using the type
             # schema, initially returned during table monitor
             # creation
-            if ( self.__cb_insert_decoded is not None
-                    and self.__cb_insert_decoded.event_callback is not None ):
+            if (self.__cb_insert_decoded is not None
+                    and self.__cb_insert_decoded.event_callback is not None):
                 try:
                     record = dict(GPUdbRecord.decode_binary_data(self.record_type,
-                                                             message_data)[0])
+                                                                 message_data)[0])
                     try:
-                        self.__cb_insert_decoded.event_callback( record )
+                        self.__cb_insert_decoded.event_callback(record)
                     except Exception as cbe:
                         self._logger.error(cbe)
                         raise GPUdbException("Exception in calling event_callback"
@@ -1598,8 +1605,8 @@ class _InsertWatcherTask(_BaseTask):
                     record = self._try_decoding_on_table_altered(
                         message_data)
 
-                    if ( record is None ):
-                        if ( self.__cb_insert_decoded.event_options.error_mode
+                    if (record is None):
+                        if (self.__cb_insert_decoded.event_options.error_mode
                                 == GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode.ABORT):
 
                             self._logger.error("Failed to decode message {} "
@@ -1607,32 +1614,32 @@ class _InsertWatcherTask(_BaseTask):
                                 message_data,
                                 self.type_schema))
 
-                            if ( self.__cb_insert_decoded.error_callback is not None):
+                            if (self.__cb_insert_decoded.error_callback is not None):
                                 self.__cb_insert_decoded.error_callback("Failed to decode message {} "
-                                               "with schema {}".format(
-                                message_data,
-                                self.type_schema))
+                                                                        "with schema {}".format(
+                                    message_data,
+                                    self.type_schema))
 
                             self._quit_on_exception(GPUdbTableMonitor.Client._TableEvent.TABLE_ALTERED,
                                                     "Table altered, "
                                                     "terminating ..."
                                                     )
                         elif (self.__cb_insert_decoded.event_options.error_mode
-                                == GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode.SKIP):
+                              == GPUdbTableMonitor.Callback.InsertDecodedOptions.DecodeFailureMode.SKIP):
                             # This is the case of DecodeFailureMode.SKIP
                             # Emit a waring log message and skip over to
                             # subsequent records.
                             self._logger.warning("Failed to decode message {} "
-                                       "with schema {}, skipping to next "
+                                                 "with schema {}, skipping to next "
                                                  "records.".format(message_data,
-                                                               self.type_schema))
+                                                                   self.type_schema))
                             continue
                         else:
                             self._logger.error("Unknown 'DecodeFailureMode' found .. cannot handle")
                             raise GPUdbException("Unknown 'DecodeFailureMode' found .. cannot handle")
                     else:
                         # Decoded second time, send the notification
-                        self.__cb_insert_decoded.event_callback( record )
+                        self.__cb_insert_decoded.event_callback(record)
 
                     # End if (not decoded)
 
@@ -1661,30 +1668,31 @@ class _UpdateWatcherTask(_BaseTask):
         Constructor the the class _UpdateWatcherTask which inherits from
         _BaseTask
 
-        Args:
-        db (GPUdb)
-            Handle to GPUdb instance
+        Parameters:
+            db (GPUdb)
+                Handle to GPUdb instance
 
-        table_name (str)
-            Name of the table to create the monitor for
+            table_name (str)
+                Name of the table to create the monitor for
 
-        options (:class:`GPUdbTableMonitor.Options`)
-            Options to configure Client
+            options (:class:`GPUdbTableMonitor.Options`)
+                Options to configure Client
 
-        callbacks (list of :class:`GPUdbTableMonitor.Callback`): List of
-        Callback objects passed by user to be called on
-        various events relevant to Update operation
-            Order of callbacks in the list:
-            - 0 - updated callback
-            - 1 - table_dropped callback
-            - 2 - table_altered callback
+            callbacks (list of :class:`GPUdbTableMonitor.Callback`)
+                List of Callback objects passed by user to be called on
+                various events relevant to Update operation
+
+                Order of callbacks in the list:
+                - 0 - updated callback
+                - 1 - table_dropped callback
+                - 2 - table_altered callback
         """
 
         table_event = GPUdbTableMonitor.Client._TableEvent.UPDATE
 
-        self._callbacks = None if ( callbacks is None
-                                    or ( not isinstance(callbacks, list)
-                                    or len(callbacks) <= 0 ) ) else callbacks
+        self._callbacks = None if (callbacks is None
+                                   or (not isinstance(callbacks, list)
+                                       or len(callbacks) <= 0)) else callbacks
 
         self.__cb_update = self._callbacks[0]
 
@@ -1695,7 +1703,6 @@ class _UpdateWatcherTask(_BaseTask):
                                                  table_altered_callback=self._callbacks[2],
                                                  options=options,
                                                  id='UPDATE_' + table_name)
-
 
     def _connect(self):
         """ Overrides the base class method
@@ -1719,7 +1726,7 @@ class _UpdateWatcherTask(_BaseTask):
         # Decode the record from the message using the type
         # schema, initially returned during table monitor
         # creation
-        if ( self.__cb_update is not None
+        if (self.__cb_update is not None
                 and self.__cb_update.event_callback is not None):
             try:
                 returned_obj = dict(
@@ -1765,30 +1772,31 @@ class _DeleteWatcherTask(_BaseTask):
         """
         Constructor of the _DeleteWatcherTask class
 
-        Args:
-        db (GPUdb) :
-            Handle to GPUdb instance
+        Parameters:
+            db (GPUdb)
+                Handle to GPUdb instance
 
-        table_name (str):
-            Name of the table to create the monitor for
+            table_name (str)
+                Name of the table to create the monitor for
 
-        options (:class:`GPUdbTableMonitor.Options`):
-            Options to configure Client
+            options (:class:`GPUdbTableMonitor.Options`)
+                Options to configure Client
 
-        callbacks (List of :class:`GPUdbTableMonitor.Callback`):
-            List of Callback objects passed by user to be called on various
-            events relevant to the Delete operation
-            Order of callbacks in the list:
-            - 0 - deleted callback
-            - 1 - table_dropped callback
-            - 2 - table_altered callback
+            callbacks (List of :class:`GPUdbTableMonitor.Callback`)
+                List of Callback objects passed by user to be called on various
+                events relevant to the Delete operation
+
+                Order of callbacks in the list:
+                - 0 - deleted callback
+                - 1 - table_dropped callback
+                - 2 - table_altered callback
         """
 
         table_event = GPUdbTableMonitor.Client._TableEvent.DELETE
 
-        self._callbacks = ( None if callbacks is None
-                                    or ( not isinstance(callbacks, list)
-                                         or len(callbacks) <= 0 ) else callbacks )
+        self._callbacks = (None if callbacks is None
+                                   or (not isinstance(callbacks, list)
+                                       or len(callbacks) <= 0) else callbacks)
         self.__cb_delete = None if self._callbacks is None else self._callbacks[0]
 
         super(_DeleteWatcherTask, self).__init__(db,
@@ -1798,7 +1806,6 @@ class _DeleteWatcherTask(_BaseTask):
                                                  table_altered_callback=self._callbacks[2],
                                                  options=options,
                                                  id='DELETE_' + table_name)
-
 
     def _connect(self):
         """ Overrides the base class method
@@ -1823,8 +1830,8 @@ class _DeleteWatcherTask(_BaseTask):
         # Decode the record from the message using the type
         # schema, initially returned during table monitor
         # creation
-        if ( self.__cb_delete is not None
-                and self.__cb_delete.event_callback is not None ):
+        if (self.__cb_delete is not None
+                and self.__cb_delete.event_callback is not None):
             try:
                 retobj = dict(
                     GPUdbRecord.decode_binary_data(self.type_schema, messages[1])[

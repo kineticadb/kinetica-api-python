@@ -1,41 +1,56 @@
+<h3 align="center" style="margin:0px">
+	<img width="200" src="https://2wz2rk1b7g6s3mm3mk3dj0lh-wpengine.netdna-ssl.com/wp-content/uploads/2018/08/kinetica_logo.svg" alt="Kinetica Logo"/>
+</h3>
+<h5 align="center" style="margin:0px">
+	<a href="https://www.kinetica.com/">Website</a>
+	|
+	<a href="https://docs.kinetica.com/7.0/">Docs</a>
+	|
+	<a href="https://docs.kinetica.com/7.0/api/">API Docs</a>
+	|
+	<a href="https://join.slack.com/t/kinetica-community/shared_invite/zt-1bt9x3mvr-uMKrXlSDXfy3oU~sKi84qg">Community Slack</a>   
+</h5>
+
+
 # Kinetica Python API
 
 This is the 7.0.x.y version of the client-side Python API for Kinetica.  The
 first two components of the client version must match that of the Kinetica
 server.  When the versions do not match, the API will print a warning.  Often,
 there are breaking changes between versions, so it is critical that they match.
-For example, Kinetica 6.2 and 7.0 have incompatible changes; so the 6.2.x.y
+For example, Kinetica 6.2 and 7.0 have incompatible changes, so the 6.2.x.y
 versions of the Python API would NOT be compatible with 7.0.a.b versions.
+
 
 ## Contents
 
 * [Installation Instructions](#installation-instructions)
 * [Troubleshooting Installation](#troubleshooting-installation)
 * [GPUdb Table Monitor Client API](#gpudb-table-monitor-client-api)
-* [GPUdbTableMonitor.Options](#gpudbtablemonitoroptions)
-* [GPUdbTableMonitor.Options Examples](#gpudbtablemonitoroptions-examples)
-* [GPUdbTableMonitor.Callback](#gpudbtablemonitorcallbacks)
-* [Table Monitor Examples](#examples)
+* [Support](#support)
+* [Contact Us](#contact-us)
 
 
 ## Installation Instructions
 
-To install this package, run 'python setup.py install' in the root directory of
+To install this package, run `python setup.py install` in the root directory of
 the repo.  Note that due to the in-house compiled C-module dependency, this
-package must be installed, and simply copying gpudb.py or having a link to it
+package must be installed, and simply copying `gpudb.py` or having a link to it
 will not work.
 
 There is also an example file in the example directory.
 
-The documentation can be found at http://www.kinetica.com/docs/7.0/index.html.
+The documentation can be found at https://docs.kinetica.com/7.0/.  
 The python specific documentation can be found at:
 
-*   http://www.kinetica.com/docs/7.0/tutorials/python_guide.html
-*   http://www.kinetica.com/docs/7.0/api/python/index.html
+*   https://docs.kinetica.com/7.0/tutorials/python_guide.html
+*   https://docs.kinetica.com/7.0/api/python/
 
 
-For changes to the client-side API, please refer to CHANGELOG.md.  For
-changes to GPUdb functions, please refere to CHANGELOG-FUNCTIONS.md.
+For changes to the client-side API, please refer to
+[CHANGELOG.md](CHANGELOG.md).  For
+changes to Kinetica functions, please refer to
+[CHANGELOG-FUNCTIONS.md](CHANGELOG-FUNCTIONS.md).
 
 
 ### Troubleshooting Installation
@@ -82,15 +97,16 @@ When one of the above events happen at the target table, the monitor client API
 can invoke user-written functions that supposedly react to that type of event.
 To facilitate integrating such user-written functions, `GPUdbTableMonitor.Callback`
 is provided.  More on that to follow.
-
 `GPUdbTableMonitor.Client` can be used in two ways:
+
 *  Create an instance and pass in the appropriate arguments (including a list of
    `GPUdbTableMonitor.Callback` objects.  Use this instance in ther user's
    application directly.
+   
 *  Extend the class with all the necessary callback functions.  These newly
    definied functions then need to be passed to the superclass's, i.e.
    `GPUdbTableMonitor.Client`'s, constructor.
-
+   
 Note that the current implementation, the `GPUdbTableMonitor.Client` class
 is designed to handle a single Kinetica table.
 Also note that `GPUdbTableMonitor.Client` utilizes multiple threads internally.
@@ -106,10 +122,10 @@ This class allows the user to configure the behavior of the
 
 | Property Name             | Description | Default Value |
 |:---                       | :---        | :---          |
-| ``inactivity_timeout``    | A timeout in minutes for monitor inactivity.  If the monitor does not receive any even triggers during such a period, the API will check if the table still exists or if the active Kinetica cluster is still operational.  The API will take appropriate corrective actions to ensure that the monitor continues to function.  In case of the deletion of the target table, the monitor will log the event and stop execution.  The parameter takes in float values to allow for fractions of minutes as the timeout. | 20 (minutes) |
+| ``inactivity_timeout``    | A timeout in minutes for monitor inactivity. If the monitor does not receive any even triggers during such a period, the API will check if the table still exists or if the active Kinetica cluster is still operational.  The API will take appropriate corrective actions to ensure that the monitor continues to function.  In case of the deletion of the target table, the monitor will log the event and stop execution.  The parameter takes in float values to allow for fractions of minutes as the timeout. | 20 (minutes) |
 
 
-#### GPUdbTableMonitor.Options Example
+#### GPUdbTableMonitor.Options Examples
 
 ```python
 from gpudb import GPUdbTableMonitor
@@ -226,11 +242,13 @@ for an insert table monitor.
 
 
 ### Examples
+
 1.  [table_monitor_example.py](examples/table_monitor_example.py)
     This example uses the class `GPUdbTableMonitorExample` which is derived from
     the class ``GPUdbTableMonitor.Client`` to demonstrate how to use
     the client class provided by Kinetica for first-time users. The defined
     callback methods in `GPUdbTableMonitorExample` just logs the event payloads.
+    
 2.  [table_monitor_example_queued_impl.py](./examples/table_monitor_example_queued_impl.py)
     This example demonstrates a scenario where the table monitor API is used
     in an application that runs it's own thread(s).  In such a situation, some
@@ -247,3 +265,25 @@ for an insert table monitor.
     receives notifications it just pushes them into the shared Queue and then
     `TableMonitorExampleClient` consumes them from the shared Queue and
     displays them in the console.
+
+
+
+## Support
+
+For bugs, please submit an
+[issue on Github](https://github.com/kineticadb/kinetica-api-python/issues).
+
+For support, you can post on
+[stackoverflow](https://stackoverflow.com/questions/tagged/kinetica) under the
+``kinetica`` tag or
+[Slack](https://join.slack.com/t/kinetica-community/shared_invite/zt-1bt9x3mvr-uMKrXlSDXfy3oU~sKi84qg).
+
+
+## Contact Us
+
+* Ask a question on Slack:
+  [Slack](https://join.slack.com/t/kinetica-community/shared_invite/zt-1bt9x3mvr-uMKrXlSDXfy3oU~sKi84qg)
+* Follow on GitHub:
+  [Follow @kineticadb](https://github.com/kineticadb) 
+* Email us:  <support@kinetica.com>
+* Visit:  <https://www.kinetica.com/contact/>
