@@ -2,6 +2,12 @@
 
 ## Version 7.1
 
+### Version 7.1.7.4 - 2022-10-06
+
+#### Fixed
+-   Issue with services that don't accept uppercase protocols
+
+
 ### Version 7.1.7.3 - 2022-08-31
 
 #### Fixed
