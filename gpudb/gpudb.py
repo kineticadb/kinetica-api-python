@@ -3837,7 +3837,7 @@ class GPUdb(object):
 
             # Construct the full URL
             full_url = ("{protocol}://{ip}:{port}{path}"
-                        "".format(protocol=protocol,
+                        "".format(protocol=protocol.lower(),
                                   ip=hostname,
                                   port=port,
                                   path=path))
@@ -4598,7 +4598,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.7.3"
+    api_version = "7.1.7.4"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -20599,6 +20599,10 @@ class GPUdb(object):
 
                   The default value is 'full'.
 
+                * **jdbc_fetch_size** --
+                  The JDBC fetch size, which determines how many rows to fetch
+                  per round trip.
+
                 * **kafka_group_id** --
                   The group id to be used consuming data from a kakfa topic
                   (valid only for kafka datasource subscriptions).
@@ -20823,7 +20827,12 @@ class GPUdb(object):
 
                 * **remote_query_filter_column** --
                   Name of column to be used for splitting the query into
-                  multiple sub-queries.  The default value is ''.
+                  multiple sub-queries using the data distribution of given
+                  column.  The default value is ''.
+
+                * **remote_query_partition_column** --
+                  Alias name for remote_query_filter_column.  The default value
+                  is ''.
 
         Returns:
             A dict with the following entries--
@@ -29602,6 +29611,10 @@ class GPUdb(object):
 
                   The default value is 'head'.
 
+                * **num_tasks_per_rank** --
+                  Optional: number of tasks for reading file per rank. Default
+                  will be external_file_reader_num_tasks
+
                 * **primary_keys** --
                   Optional: comma separated list of column names, to set as
                   primary keys, when not specified in the type.  The default
@@ -29622,16 +29635,17 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-                * **num_tasks_per_rank** --
-                  Optional: number of tasks for reading file per rank. Default
-                  will be external_file_reader_num_tasks
-
                 * **remote_query** --
                   Remote SQL query from which data will be sourced
 
                 * **remote_query_filter_column** --
                   Name of column to be used for splitting the query into
-                  multiple sub-queries.  The default value is ''.
+                  multiple sub-queries using the data distribution of given
+                  column.  The default value is ''.
+
+                * **remote_query_partition_column** --
+                  Alias name for remote_query_filter_column.  The default value
+                  is ''.
 
         Returns:
             A dict with the following entries--
@@ -30228,13 +30242,14 @@ class GPUdb(object):
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  This
                 table contains a `track
-                <../../../../geospatial/geo_objects/#geospatial-tracks>`__ of
-                geospatial points for the matched portion of the graph, a track
-                ID, and a score value. Also outputs a details table containing
-                a trip ID (that matches the track ID), the latitude/longitude
-                pair, the timestamp the point was recorded at, and an edge ID
-                corresponding to the matched road segment. Must not be an
-                existing table of the same name.  The default value is ''.
+                <../../../../location_intelligence/geo_objects/#geospatial-tracks>`__
+                of geospatial points for the matched portion of the graph, a
+                track ID, and a score value. Also outputs a details table
+                containing a trip ID (that matches the track ID), the
+                latitude/longitude pair, the timestamp the point was recorded
+                at, and an edge ID corresponding to the matched road segment.
+                Must not be an existing table of the same name.  The default
+                value is ''.
 
             options (dict of str to str)
                 Additional parameters.  The default value is an empty dict ( {}
