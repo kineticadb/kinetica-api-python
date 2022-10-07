@@ -2,6 +2,12 @@
 
 ## Version 7.1
 
+### Version 7.1.7.5 - 2022-10-07
+
+#### Fixed
+-   Issue with injection of default HTTP port into HTTPS urls
+
+
 ### Version 7.1.7.4 - 2022-10-06
 
 #### Fixed
