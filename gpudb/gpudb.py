@@ -3831,7 +3831,8 @@ class GPUdb(object):
             port = parsed_url.port
             path = parsed_url.path.rstrip('/')
 
-            port = 9191 if port is None else port  # default port
+            if port is None:
+                port = 9191 if scheme == 'http' else 443  # default port
 
             protocol = scheme.upper()
 
