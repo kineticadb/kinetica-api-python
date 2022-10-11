@@ -21,10 +21,10 @@ IS_PYTHON_3 = (sys.version_info[0] >= 3) # checking the major component
 IS_PYTHON_27_OR_ABOVE = sys.version_info >= (2, 7)
 
 
-if IS_PYTHON_3:
+try:
     from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, RecordType, _Util
     from gpudb.gpudb import GPUdbException, GPUdbConnectionException, GPUdbExitException, GPUdbFailoverDisabledException, GPUdbHAUnavailableException, GPUdbUnauthorizedAccessException
-else:
+except:
     from gpudb       import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, RecordType, _Util
     from gpudb       import GPUdbException, GPUdbConnectionException, GPUdbExitException, GPUdbFailoverDisabledException, GPUdbHAUnavailableException, GPUdbUnauthorizedAccessException
 

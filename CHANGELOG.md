@@ -2,6 +2,15 @@
 
 ## Version 7.1
 
+### Version 7.1.7.6 - 2022-10-10
+
+#### Added
+-   Support for more platforms on Python 3.10
+
+#### Fixed
+-   Import issue with Python3 on Mac OS
+
+
 ### Version 7.1.7.5 - 2022-10-07
 
 #### Fixed

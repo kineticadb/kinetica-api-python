@@ -4599,7 +4599,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.7.4"
+    api_version = "7.1.7.6"
 
     # -------------------------  GPUdb Methods --------------------------------
 
