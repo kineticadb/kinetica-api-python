@@ -50,10 +50,10 @@ if not gpudb_module_path + "/packages" in sys.path:
 
 from protocol import RecordType
 
-if IS_PYTHON_3:
+try:
     from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbException, \
         GPUdbConnectionException
-else:
+except:
     from gpudb import GPUdb, GPUdbRecord, GPUdbException, \
         GPUdbConnectionException
 
