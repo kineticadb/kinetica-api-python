@@ -3,6 +3,23 @@
 
 ## Version 7.1
 
+### Version 7.1.8.0
+
+#### Added
+-  Added new endpoint /export/records/tofiles
+-  Added new endpoint /alter/directory
+
+#### Changed Endpoints
+-   Added new options ``resource_group`` and ``default_schema`` to ``/create/user/external`` endpoint
+-   Added new option ``directory_data_limit`` to ``/create/user/internal`` and ``/create/user/external`` endpoints
+-   Added new option ``data_limit`` to ``/create/directory`` endpoint
+
+##### Non-breaking Changes
+-   Added support for Azure, HDFS, S3 and Google Cloud storage providers to ``/create/datasink`` and ``/alter/datasink`` endpoints
+
+##### Breaking Changes
+
+
 ### Version 7.1.7.0
 
 #### Added
@@ -16,6 +33,7 @@
 -  Added new options ``gcs_service_account_id`` and ``gcs_service_account_keys`` to endpoints ``/create/credential`` and ``/alter/credential``
 -  Added new options ``jdbc_driver_jar_path`` and ``jdbc_driver_class_name`` to endpoints ``/create/datasource`` and ``/create/datasink``
 -  Added new options ``remote_query`` and  ``remote_query_filter_column`` to ``/create/table/external`` endpoint 
+-  Added new options ``tcs_per_tom``, ``tps_per_tom``, and ``max_concurrent_kernels`` to ``/alter/system/properties`` endpoint 
 -  Added new option ``expression`` to ``/get/records/fromcollection`` endpoint 
 -  Added new options ``create_temp_table``, ``result_table``, ``result_table_persist``, and ``ttl`` to endpoint ``/aggregate/k_means`` 
 -  Added new info item ``qualified_result_table_item`` to response for endpoint ``/aggregate/k_means``

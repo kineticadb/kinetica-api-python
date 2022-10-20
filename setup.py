@@ -47,7 +47,7 @@ if os.name != 'nt':
         print ("")
         print ("********************************************************")
         print ("WARNING: Could not find gcc; please install it before")
-        print ("         attempting to install the GPUdb Python API")
+        print ("         attempting to install the Kinetica Python API")
         print ("         module.")
         print ("********************************************************")
         print ("")
@@ -63,13 +63,13 @@ if os.name != 'nt':
         print ("********************************************************")
         print ("WARNING: Could not find Python.h; please install the")
         print ("         Python developers' package before attempting" )
-        print ("         to install the GPUdb Python API module.")
+        print ("         to install the Kinetica Python API module.")
         print ("********************************************************")
         print ("")
 
-    # Relative path from protocol_v2.so to local libpythonX.Y.so.
+    # Relative path from protocol.so to local libpythonX.Y.so.
     if sys.version_info[0] == 2:
-        # python27/lib/python2.7/site-packages/gpudb-A.B.C.D-py2.7-linux-x86_64.egg/gpudb/protocol_v2.so
+        # python27/lib/python2.7/site-packages/gpudb-A.B.C.D-py2.7-linux-x86_64.egg/gpudb/protocol.so
         extra_link_args=["-Wl,-rpath,$ORIGIN/../../../.."]
     else:
         # python3/lib/python3.7/site-packages/gpudb/protocol.cpython-37m-x86_64-linux-gnu.so
@@ -90,13 +90,13 @@ c_avro_module = Extension( "gpudb.protocol",
 setup(
     name = 'gpudb',
     packages = ['gpudb'],
-    version = '7.1.7.6',
-    description = 'Python client for GPUdb',
+    version = '7.1.8.0',
+    description = 'Python client for Kinetica DB',
     long_description = "The client-side Python API for Kinetica.  Create, store, retrieve, and query data with ease and speed.",
-    author = 'Kinetica DB Inc.',
+    author = 'Kinetica DB, Inc.',
     author_email = 'support@kinetica.com',
     package_data = {'gpudb': extra_files},
-    url = 'http://www.kinetica.com',
+    url = 'https://www.kinetica.com',
     install_requires = [ "future", 'pyzmq'],
     ext_modules = [ c_avro_module ]
 )

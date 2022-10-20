@@ -176,6 +176,19 @@ class C:
     _HEADER_CONTENT_TYPE  = "Content-type"
     _HEADER_HA_SYNC_MODE  = "X-Kinetica-Group"
 
+    # Internally used header values
+    _REQUEST_ENCODING_JSON   = "application/json"
+    _REQUEST_ENCODING_OCTET  = "application/octet-stream"
+    _REQUEST_ENCODING_SNAPPY = "application/x-snappy"
+
+    # Connection constants
+    _REQUEST_GET  = "GET"
+    _REQUEST_POST = "POST"
+
+    # Constants used in endpoint requests
+    _ENCODING_BINARY = "BINARY"
+    _ENCODING_JSON   = "JSON"
+    _ENCODING_SNAPPY = "SNAPPY"
 
     # Constants used in endpoint responses
     _SHOW_SYSTEM_STATUS_RESPONSE_SYSTEM  = "system"
@@ -1279,6 +1292,12 @@ class GPUdbColumnProperty(object):
     """str: This property provides optimized memory, disk and query performance
     for string columns. Strings with this property must be no longer than 256
     characters.
+    """
+
+
+    BOOLEAN = "boolean"
+    """str: This property provides optimized memory and query performance for int
+    columns. Ints with this property must be between 0 and 1(inclusive)
     """
 
 
@@ -2697,7 +2716,7 @@ class GPUdb(object):
             self.__cluster_reconnect_count            = 1
             self.__disable_auto_discovery             = False
             self.__disable_failover                   = False
-            self.__encoding                           = "BINARY"
+            self.__encoding                           = C._ENCODING_BINARY
             self.__ha_failover_order                  = GPUdb.HAFailoverOrder.RANDOM
             self.__host_manager_port                  = GPUdb._DEFAULT_HOST_MANAGER_PORT
             self.__hostname_regex                     = None
@@ -3036,7 +3055,7 @@ class GPUdb(object):
             # Handle all cases
             value = value.upper()
 
-            if (value not in ["BINARY", "JSON", "SNAPPY"]):
+            if (value not in [C._ENCODING_BINARY, C._ENCODING_JSON, C._ENCODING_SNAPPY]):
                 raise GPUdbException( "Expected encoding to be either 'BINARY', "
                                       "'JSON' or 'SNAPPY'; got '{}' "
                                       "".format( value ) )
@@ -3795,7 +3814,6 @@ class GPUdb(object):
 
     # end class Version
 
-
     class ValidateUrl(object):
 
         @staticmethod
@@ -3993,7 +4011,6 @@ class GPUdb(object):
             return self.__full_url
 
     # end class URL
-
 
     class ClusterAddressInfo( object ):
         """Inner class to keep track of all relevant information for a given
@@ -4599,7 +4616,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.7.6"
+    api_version = "7.1.8.0"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -4730,9 +4747,9 @@ class GPUdb(object):
         self.__intra_cluster_failover_timeout     = self.options.intra_cluster_failover_timeout
 
         # Validate the encoding
-        if (self.encoding.upper() == 'SNAPPY' and not HAVE_SNAPPY):
+        if (self.encoding.upper() == C._ENCODING_SNAPPY and not HAVE_SNAPPY):
             self.__log_warn('SNAPPY encoding specified but python-snappy is not installed; reverting to BINARY')
-            self.__encoding = 'BINARY'
+            self.__encoding = C._ENCODING_BINARY
 
         # Set default values for some internal information
         self.__use_httpd = False
@@ -4757,9 +4774,9 @@ class GPUdb(object):
         # end if
 
         self.client_to_object_encoding_map = { \
-                                               "BINARY": "binary",
-                                               "SNAPPY": "binary",
-                                               "JSON": "json",
+                                               C._ENCODING_BINARY: "binary",
+                                               C._ENCODING_SNAPPY: "binary",
+                                               C._ENCODING_JSON: "json",
         }
 
         # Set the synchronicity override mode to be default
@@ -7597,7 +7614,7 @@ class GPUdb(object):
             # Post the request
             path = "{url_path}{endpoint}".format( url_path = url.path,
                                                   endpoint = endpoint )
-            http_conn.request( "POST", path, body_data, headers )
+            http_conn.request( C._REQUEST_POST, path, body_data, headers )
         except ssl.SSLError as ex:
             msg = ("Unable to execute SSL handshake with '{}' due to: {}"
                    "".format( url.url,
@@ -8200,15 +8217,15 @@ class GPUdb(object):
             # end for
         # end if
 
-        if self.encoding == 'BINARY':
-            headers[ C._HEADER_CONTENT_TYPE ] = "application/octet-stream"
-            headers[ C._HEADER_ACCEPT       ] = "application/octet-stream"
-        elif self.encoding == 'JSON':
-            headers[ C._HEADER_CONTENT_TYPE ] = "application/json"
-            headers[ C._HEADER_ACCEPT       ] = "application/json"
-        elif self.encoding == 'SNAPPY':
-            headers[ C._HEADER_CONTENT_TYPE ] = "application/x-snappy"
-            headers[ C._HEADER_ACCEPT       ] = "application/x-snappy"
+        if self.encoding == C._ENCODING_BINARY:
+            headers[ C._HEADER_CONTENT_TYPE ] = C._REQUEST_ENCODING_OCTET
+            headers[ C._HEADER_ACCEPT       ] = C._REQUEST_ENCODING_OCTET
+        elif self.encoding == C._ENCODING_JSON:
+            headers[ C._HEADER_CONTENT_TYPE ] = C._REQUEST_ENCODING_JSON
+            headers[ C._HEADER_ACCEPT       ] = C._REQUEST_ENCODING_JSON
+        elif self.encoding == C._ENCODING_SNAPPY:
+            headers[ C._HEADER_CONTENT_TYPE ] = C._REQUEST_ENCODING_SNAPPY
+            headers[ C._HEADER_ACCEPT       ] = C._REQUEST_ENCODING_SNAPPY
             body_data = snappy.compress(body_data)
         # end if
 
@@ -9312,7 +9329,7 @@ class GPUdb(object):
 
         # Try to post the message
         try:
-            conn.request("POST", url_path, body_data, headers)
+            conn.request(C._REQUEST_POST, url_path, body_data, headers)
         except Exception as ex:
             ex_str = GPUdbException.stringify_exception( ex )
             raise GPUdbConnectionException( "Error posting to '{}:{}{}' due "
@@ -9374,9 +9391,9 @@ class GPUdb(object):
         if encoding is None:
             encoding = self.encoding
 
-        if (encoding == 'BINARY') or (encoding == 'SNAPPY'):
+        if (encoding == C._ENCODING_BINARY) or (encoding == C._ENCODING_SNAPPY):
             return _Util.decode_binary_data( SCHEMA, encoded_datum )
-        elif encoding == 'JSON':
+        elif encoding == C._ENCODING_JSON:
             data_str = json.loads( _Util.ensure_str(encoded_datum) )
             return data_str
     # end __read_orig_datum
@@ -9407,10 +9424,10 @@ class GPUdb(object):
         if stype == 'none':
             out = collections.OrderedDict()
         else:
-            if self.encoding == 'JSON':
-                out = self.__read_orig_datum(SCHEMA, resp['data_str'], 'JSON')
-            elif (self.encoding == 'BINARY') or (self.encoding == 'SNAPPY'):
-                out = self.__read_orig_datum(SCHEMA, resp['data'], 'BINARY')
+            if self.encoding == C._ENCODING_JSON:
+                out = self.__read_orig_datum(SCHEMA, resp['data_str'], C._ENCODING_JSON)
+            elif (self.encoding == C._ENCODING_BINARY) or (self.encoding == C._ENCODING_SNAPPY):
+                out = self.__read_orig_datum(SCHEMA, resp['data'], C._ENCODING_BINARY)
 
         del resp['data']
         del resp['data_str']
@@ -9441,9 +9458,9 @@ class GPUdb(object):
             encoding = self.encoding
 
         try:
-            if (encoding == 'BINARY') or (encoding == 'SNAPPY'):
+            if (encoding == C._ENCODING_BINARY) or (encoding == C._ENCODING_SNAPPY):
                 return SCHEMA.decode( encoded_datum )
-            elif encoding == 'JSON':
+            elif encoding == C._ENCODING_JSON:
                 data_str = json.loads( _Util.ensure_str(encoded_datum) )
                 return data_str
         except (Exception, RuntimeError) as ex:
@@ -9484,9 +9501,9 @@ class GPUdb(object):
         if stype == 'none':
             out = collections.OrderedDict()
         else:
-            if self.encoding == 'JSON':
-                out = self.__read_orig_datum_cext(SCHEMA, resp['data_str'], 'JSON')
-            elif (self.encoding == 'BINARY') or (self.encoding == 'SNAPPY'):
+            if self.encoding == C._ENCODING_JSON:
+                out = self.__read_orig_datum_cext(SCHEMA, resp['data_str'], C._ENCODING_JSON)
+            elif (self.encoding == C._ENCODING_BINARY) or (self.encoding == C._ENCODING_SNAPPY):
                 try:
                     out = SCHEMA.decode( encoded_datum, resp['data'] )
                 except (Exception, RuntimeError) as ex:
@@ -9636,9 +9653,9 @@ class GPUdb(object):
             encoding = encoding.upper()
 
         # Build the encoder; this output is where the data will be written
-        if encoding == 'BINARY' or encoding == 'SNAPPY':
+        if encoding == C._ENCODING_BINARY or encoding == C._ENCODING_SNAPPY:
             return _Util.encode_binary_data( SCHEMA, datum, self.encoding )
-        elif encoding == 'JSON':
+        elif encoding == C._ENCODING_JSON:
             return json.dumps( _Util.convert_dict_bytes_to_str( datum ) )
     # end encode_datum
 
@@ -9662,9 +9679,9 @@ class GPUdb(object):
             encoding = encoding.upper()
 
         # Build the encoder; this output is where the data will be written
-        if encoding == 'BINARY' or encoding == 'SNAPPY':
+        if encoding == C._ENCODING_BINARY or encoding == C._ENCODING_SNAPPY:
             return _Util.encode_binary_data_cext( SCHEMA, datum, self.encoding )
-        elif encoding == 'JSON':
+        elif encoding == C._ENCODING_JSON:
             # Convert bytes to strings first
             datum = _Util.convert_dict_bytes_to_str( datum )
 
@@ -9688,7 +9705,7 @@ class GPUdb(object):
 
     def read_trigger_msg(self, encoded_datum):
         RSP_SCHEMA = self.gpudb_schemas[ "trigger_notification" ]["RSP_SCHEMA"]
-        return self.__read_orig_datum_cext(RSP_SCHEMA, encoded_datum, 'BINARY')
+        return self.__read_orig_datum_cext(RSP_SCHEMA, encoded_datum, C._ENCODING_BINARY)
 
 
 
@@ -9948,7 +9965,7 @@ class GPUdb(object):
         # Ping is a get, unlike all endpoints which are post
         # TODO: Do we need any special header?
         headers = {
-            C._HEADER_ACCEPT: "application/json"
+            C._HEADER_ACCEPT: C._REQUEST_ENCODING_JSON
         }
         wms_path = "{url_path}/wms{params}".format( url_path = url.path,
                                                     params   = wms_params )
@@ -9961,7 +9978,7 @@ class GPUdb(object):
         # Actually submit the /wms request
         try:
             # Send the get request
-            http_conn.request( "get", wms_path, "", headers )
+            http_conn.request( C._REQUEST_GET, wms_path, "", headers )
             # Process the response
             raw_response = http_conn.getresponse()
             # Save the response
@@ -10016,9 +10033,9 @@ class GPUdb(object):
             # Ping is a get, unlike all endpoints which are post
             # TODO: Do we need any special header?
             headers = {
-                C._HEADER_ACCEPT: "application/json"
+                C._HEADER_ACCEPT: C._REQUEST_ENCODING_JSON
             }
-            http_conn.request( "get", url.path, "", headers )
+            http_conn.request( C._REQUEST_GET, url.path, "", headers )
 
             # Get the ping response
             response = http_conn.getresponse()
@@ -10102,10 +10119,10 @@ class GPUdb(object):
         # Ping is a get, unlike all endpoints which are post
         # TODO: Do we need any special header?
         headers = {
-            C._HEADER_ACCEPT: "application/json"
+            C._HEADER_ACCEPT: C._REQUEST_ENCODING_JSON
         }
         debug_endpoint = "{}/debug".format( url.path )
-        http_conn.request( "get", debug_endpoint, "", headers )
+        http_conn.request( C._REQUEST_GET, debug_endpoint, "", headers )
 
         response = http_conn.getresponse()
         return response.read()
@@ -10501,6 +10518,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("name", "string"), ("datasource_updates_map", "map", [("string")]), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("updated_properties_map", "map", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/alter/datasource"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/alter/directory"
+        REQ_SCHEMA_STR = """{"type":"record","name":"alter_directory_request","fields":[{"name":"directory_name","type":"string"},{"name":"directory_updates_map","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_directory_response","fields":[{"name":"directory_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("directory_name", "string"), ("directory_updates_map", "map", [("string")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("directory_name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/alter/directory"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -11223,6 +11251,17 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "RSP_SCHEMA_CEXT" : RSP_SCHEMA_CEXT,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/export/records/tofiles"
+        REQ_SCHEMA_STR = """{"type":"record","name":"export_records_to_files_request","fields":[{"name":"table_name","type":"string"},{"name":"filepath","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"export_records_to_files_response","fields":[{"name":"table_name","type":"string"},{"name":"count_exported","type":"long"},{"name":"count_skipped","type":"long"},{"name":"files","type":{"type":"array","items":"string"}},{"name":"last_timestamp","type":"long"},{"name":"data_text","type":{"type":"array","items":"string"}},{"name":"data_bytes","type":{"type":"array","items":"bytes"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("filepath", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("count_exported", "long"), ("count_skipped", "long"), ("files", "array", [("string")]), ("last_timestamp", "long"), ("data_text", "array", [("string")]), ("data_bytes", "array", [("bytes")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/export/records/tofiles"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/export/records/totable"
         REQ_SCHEMA_STR = """{"type":"record","name":"export_records_to_table_request","fields":[{"name":"table_name","type":"string"},{"name":"remote_query","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"export_records_to_table_response","fields":[{"name":"table_name","type":"string"},{"name":"count_inserted","type":"long"},{"name":"count_skipped","type":"long"},{"name":"count_updated","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -11928,9 +11967,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/directories"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_directories_request","fields":[{"name":"directory_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_directories_response","fields":[{"name":"directories","type":{"type":"array","items":"string"}},{"name":"users","type":{"type":"array","items":"string"}},{"name":"creation_times","type":{"type":"array","items":"long"}},{"name":"permissions","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_directories_response","fields":[{"name":"directories","type":{"type":"array","items":"string"}},{"name":"users","type":{"type":"array","items":"string"}},{"name":"creation_times","type":{"type":"array","items":"long"}},{"name":"data_usages","type":{"type":"array","items":"long"}},{"name":"data_limits","type":{"type":"array","items":"long"}},{"name":"permissions","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("directory_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("directories", "array", [("string")]), ("users", "array", [("string")]), ("creation_times", "array", [("long")]), ("permissions", "array", [("string")]), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("directories", "array", [("string")]), ("users", "array", [("string")]), ("creation_times", "array", [("long")]), ("data_usages", "array", [("long")]), ("data_limits", "array", [("long")]), ("permissions", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/directories"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -12258,6 +12297,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/visualize/getfeatureinfo"
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_get_feature_info_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"x_column_names","type":{"type":"array","items":"string"}},{"name":"y_column_names","type":{"type":"array","items":"string"}},{"name":"geometry_column_names","type":{"type":"array","items":"string"}},{"name":"query_column_names","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"projection","type":"string"},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"x","type":"int"},{"name":"y","type":"int"},{"name":"radius","type":"int"},{"name":"limit","type":"long"},{"name":"encoding","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"visualize_get_feature_info_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"type_schemas","type":{"type":"array","items":"string"}},{"name":"records_binary","type":{"type":"array","items":"bytes"}},{"name":"records_json","type":{"type":"array","items":"string"}},{"name":"geojson_encoded_response","type":"string"},{"name":"text_encoded_response","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("x_column_names", "array", [("string")]), ("y_column_names", "array", [("string")]), ("geometry_column_names", "array", [("string")]), ("query_column_names", "array", [("array", [("string")])]), ("projection", "string"), ("min_x", "double"), ("max_x", "double"), ("min_y", "double"), ("max_y", "double"), ("width", "int"), ("height", "int"), ("x", "int"), ("y", "int"), ("radius", "int"), ("limit", "long"), ("encoding", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("type_schemas", "array", [("string")]), ("records_binary", "array", [("bytes")]), ("records_json", "array", [("string")]), ("geojson_encoded_response", "string"), ("text_encoded_response", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/visualize/getfeatureinfo"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/visualize/image"
         REQ_SCHEMA_STR = """{"type":"record","name":"visualize_image_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"world_table_names","type":{"type":"array","items":"string"}},{"name":"x_column_name","type":"string"},{"name":"y_column_name","type":"string"},{"name":"symbol_column_name","type":"string"},{"name":"geometry_column_name","type":"string"},{"name":"track_ids","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"min_x","type":"double"},{"name":"max_x","type":"double"},{"name":"min_y","type":"double"},{"name":"max_y","type":"double"},{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"projection","type":"string"},{"name":"bg_color","type":"long"},{"name":"style_options","type":{"type":"map","values":{"type":"array","items":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_image_response","fields":[{"name":"width","type":"double"},{"name":"height","type":"double"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -12375,6 +12425,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["alter_credential"] = "/alter/credential"
         self.gpudb_func_to_endpoint_map["alter_datasink"] = "/alter/datasink"
         self.gpudb_func_to_endpoint_map["alter_datasource"] = "/alter/datasource"
+        self.gpudb_func_to_endpoint_map["alter_directory"] = "/alter/directory"
         self.gpudb_func_to_endpoint_map["alter_graph"] = "/alter/graph"
         self.gpudb_func_to_endpoint_map["alter_model"] = "/alter/model"
         self.gpudb_func_to_endpoint_map["alter_resource_group"] = "/alter/resourcegroup"
@@ -12440,6 +12491,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["evaluate_model"] = "/evaluate/model"
         self.gpudb_func_to_endpoint_map["execute_proc"] = "/execute/proc"
         self.gpudb_func_to_endpoint_map["execute_sql"] = "/execute/sql"
+        self.gpudb_func_to_endpoint_map["export_records_to_files"] = "/export/records/tofiles"
         self.gpudb_func_to_endpoint_map["export_records_to_table"] = "/export/records/totable"
         self.gpudb_func_to_endpoint_map["filter"] = "/filter"
         self.gpudb_func_to_endpoint_map["filter_by_area"] = "/filter/byarea"
@@ -12533,6 +12585,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["update_records_by_series"] = "/update/records/byseries"
         self.gpudb_func_to_endpoint_map["upload_files"] = "/upload/files"
         self.gpudb_func_to_endpoint_map["upload_files_fromurl"] = "/upload/files/fromurl"
+        self.gpudb_func_to_endpoint_map["visualize_get_feature_info"] = "/visualize/getfeatureinfo"
         self.gpudb_func_to_endpoint_map["visualize_image"] = "/visualize/image"
         self.gpudb_func_to_endpoint_map["visualize_image_chart"] = "/visualize/image/chart"
         self.gpudb_func_to_endpoint_map["visualize_image_classbreak"] = "/visualize/image/classbreak"
@@ -13783,8 +13836,28 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **rebuild_on_error** --
+                  [DEPRECATED -- Use the Rebuild DB feature of GAdmin
+                  instead.].
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **verify_nulls** --
-                  When enabled, verifies that null values are set to zero.
+                  When *true*, verifies that null values are set to zero.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **verify_persist** --
+                  When *true*, persistent objects will be compared against
+                  their state in memory.
                   Allowed values are:
 
                   * true
@@ -13793,8 +13866,8 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **concurrent_safe** --
-                  When enabled, allows this endpoint to be run safely with
-                  other concurrent database operations. Other operations may be
+                  When *true*, allows this endpoint to be run safely with other
+                  concurrent database operations. Other operations may be
                   slower while this is running.
                   Allowed values are:
 
@@ -13804,8 +13877,20 @@ class GPUdb(object):
                   The default value is 'true'.
 
                 * **verify_rank0** --
-                  When enabled, compares rank0 table meta-data against workers
-                  meta-data.
+                  If *true*, compare rank0 table metadata against workers'
+                  metadata.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **delete_orphaned_tables** --
+                  If *true*, orphaned table directories found on workers for
+                  which there is no corresponding metadata will be deleted.
+                  Must set *verify_persist* in input parameter *options* to
+                  *true*.
                   Allowed values are:
 
                   * true
@@ -16395,10 +16480,10 @@ class GPUdb(object):
                   * azure_sas
                   * azure_storage_key
                   * docker
-                  * hdfs
-                  * kafka
                   * gcs_service_account_id
                   * gcs_service_account_keys
+                  * hdfs
+                  * kafka
 
                 * **identity** --
                   New user for the credential
@@ -16472,9 +16557,99 @@ class GPUdb(object):
                   <../../../../concepts/credentials/>`__ object to be used in
                   this data sink
 
+                * **s3_bucket_name** --
+                  Name of the Amazon S3 bucket to use as the data sink
+
+                * **s3_region** --
+                  Name of the Amazon S3 region where the given bucket is
+                  located
+
+                * **s3_aws_role_arn** --
+                  Amazon IAM Role ARN which has required S3 permissions that
+                  can be assumed for the given S3 IAM user
+
+                * **hdfs_kerberos_keytab** --
+                  Kerberos keytab file location for the given HDFS user.  This
+                  may be a KIFS file.
+
+                * **hdfs_delegation_token** --
+                  Delegation token for the given HDFS user
+
+                * **hdfs_use_kerberos** --
+                  Use kerberos authentication for the given HDFS cluster.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **azure_storage_account_name** --
+                  Name of the Azure storage account to use as the data sink,
+                  this is valid only if tenant_id is specified
+
+                * **azure_container_name** --
+                  Name of the Azure storage container to use as the data sink
+
+                * **azure_tenant_id** --
+                  Active Directory tenant ID (or directory ID)
+
+                * **azure_sas_token** --
+                  Shared access signature token for Azure storage account to
+                  use as the data sink
+
+                * **azure_oauth_token** --
+                  Oauth token to access given storage container
+
+                * **gcs_bucket_name** --
+                  Name of the Google Cloud Storage bucket to use as the data
+                  sink
+
+                * **gcs_project_id** --
+                  Name of the Google Cloud project to use as the data sink
+
+                * **gcs_service_account_keys** --
+                  Google Cloud service account keys to use for authenticating
+                  the data sink
+
+                * **kafka_url** --
+                  The publicly-accessible full path URL to the kafka broker,
+                  e.g., 'http://172.123.45.67:9300'.
+
                 * **kafka_topic_name** --
                   Name of the Kafka topic to use for this data sink, if it
                   references a Kafka broker
+
+                * **anonymous** --
+                  Create an anonymous connection to the storage
+                  provider--DEPRECATED: this is now the default.  Specify
+                  use_managed_credentials for non-anonymous connection.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **use_managed_credentials** --
+                  When no credentials are supplied, we use anonymous access by
+                  default.  If this is set, we will use cloud provider user
+                  settings.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **use_https** --
+                  Use https to connect to datasink if true, otherwise use http.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
                 * **max_batch_size** --
                   Maximum number of records per notification message.  The
@@ -16603,7 +16778,8 @@ class GPUdb(object):
                   Customer encryption key to encrypt or decrypt data
 
                 * **hdfs_kerberos_keytab** --
-                  Kerberos keytab file location for the given HDFS user
+                  Kerberos keytab file location for the given HDFS user.  This
+                  may be a KIFS file.
 
                 * **hdfs_delegation_token** --
                   Delegation token for the given HDFS user
@@ -16721,6 +16897,52 @@ class GPUdb(object):
 
         return response
     # end alter_datasource
+
+
+    # begin alter_directory
+    def alter_directory( self, directory_name = None, directory_updates_map = None,
+                         options = None ):
+        """Alters an existing directory in `KiFS <../../../../tools/kifs/>`__.
+
+        Parameters:
+
+            directory_name (str)
+                Name of the directory in KiFS to be altered.
+
+            directory_updates_map (dict of str to str)
+                Map containing the properties of the directory to be altered.
+                Error if empty.
+                Allowed keys are:
+
+                * **data_limit** --
+                  The maximum capacity, in bytes, to apply to the directory.
+                  Set to -1 to indicate no upper limit.
+
+            options (dict of str to str)
+                Optional parameters.
+
+        Returns:
+            A dict with the following entries--
+
+            directory_name (str)
+                Value of input parameter *directory_name*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( directory_name, (basestring)), "alter_directory(): Argument 'directory_name' must be (one) of type(s) '(basestring)'; given %s" % type( directory_name ).__name__
+        assert isinstance( directory_updates_map, (dict)), "alter_directory(): Argument 'directory_updates_map' must be (one) of type(s) '(dict)'; given %s" % type( directory_updates_map ).__name__
+        assert isinstance( options, (dict)), "alter_directory(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['directory_name'] = directory_name
+        obj['directory_updates_map'] = self.__sanitize_dicts( directory_updates_map )
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/alter/directory', obj, convert_to_attr_dict = True )
+
+        return response
+    # end alter_directory
 
 
     # begin alter_graph
@@ -17149,6 +17371,20 @@ class GPUdb(object):
                 * **kafka_timeout** --
                   Number of seconds after which kakfa poll will timeout if
                   datasource has no records.  The default value is '5'.
+
+                * **egress_single_file_max_size** --
+                  Max file size (in MB) to allow saving to a single file. May
+                  be overridden by target limitations.  The default value is
+                  '100'.
+
+                * **max_concurrent_kernels** --
+                  Sets the max_concurrent_kernels value of the conf.
+
+                * **tcs_per_tom** --
+                  Sets the tcs_per_tom value of the conf.
+
+                * **tps_per_tom** --
+                  Sets the tps_per_tom value of the conf.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -18459,9 +18695,10 @@ class GPUdb(object):
 
             destination (str)
                 Destination for the output data in format
-                'destination_type://path[:port]'.
+                'storage_provider_type://path[:port]'.
 
-                Supported destination types are 'http', 'https' and 'kafka'.
+                Supported storage provider types are 'azure', 'gcs', 'hdfs',
+                'http', 'https', 'jdbc', 'kafka' and 's3'.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -18479,6 +18716,73 @@ class GPUdb(object):
                   Name of the `credential
                   <../../../../concepts/credentials/>`__ object to be used in
                   this data sink
+
+                * **s3_bucket_name** --
+                  Name of the Amazon S3 bucket to use as the data sink
+
+                * **s3_region** --
+                  Name of the Amazon S3 region where the given bucket is
+                  located
+
+                * **s3_aws_role_arn** --
+                  Amazon IAM Role ARN which has required S3 permissions that
+                  can be assumed for the given S3 IAM user
+
+                * **s3_encryption_customer_algorithm** --
+                  Customer encryption algorithm used encrypting data
+
+                * **s3_encryption_customer_key** --
+                  Customer encryption key to encrypt or decrypt data
+
+                * **hdfs_kerberos_keytab** --
+                  Kerberos keytab file location for the given HDFS user.  This
+                  may be a KIFS file.
+
+                * **hdfs_delegation_token** --
+                  Delegation token for the given HDFS user
+
+                * **hdfs_use_kerberos** --
+                  Use kerberos authentication for the given HDFS cluster.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **azure_storage_account_name** --
+                  Name of the Azure storage account to use as the data sink,
+                  this is valid only if tenant_id is specified
+
+                * **azure_container_name** --
+                  Name of the Azure storage container to use as the data sink
+
+                * **azure_tenant_id** --
+                  Active Directory tenant ID (or directory ID)
+
+                * **azure_sas_token** --
+                  Shared access signature token for Azure storage account to
+                  use as the data sink
+
+                * **azure_oauth_token** --
+                  Oauth token to access given storage container
+
+                * **gcs_bucket_name** --
+                  Name of the Google Cloud Storage bucket to use as the data
+                  sink
+
+                * **gcs_project_id** --
+                  Name of the Google Cloud project to use as the data sink
+
+                * **gcs_service_account_keys** --
+                  Google Cloud service account keys to use for authenticating
+                  the data sink
+
+                * **jdbc_driver_jar_path** --
+                  JDBC driver jar file location
+
+                * **jdbc_driver_class_name** --
+                  Name of the JDBC driver class
 
                 * **kafka_topic_name** --
                   Name of the Kafka topic to publish to if input parameter
@@ -18503,11 +18807,25 @@ class GPUdb(object):
 
                   The default value is 'flat'.
 
-                * **jdbc_driver_jar_path** --
-                  JDBC driver jar file location
+                * **use_managed_credentials** --
+                  When no credentials are supplied, we use anonymous access by
+                  default.  If this is set, we will use cloud provider user
+                  settings.
+                  Allowed values are:
 
-                * **jdbc_driver_class_name** --
-                  Name of the JDBC driver class
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **use_https** --
+                  Use https to connect to datasink if true, otherwise use http.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
                 * **skip_validation** --
                   Bypass validation of connection to this data sink.
@@ -18609,7 +18927,8 @@ class GPUdb(object):
                   Customer encryption key to encrypt or decrypt data
 
                 * **hdfs_kerberos_keytab** --
-                  Kerberos keytab file location for the given HDFS user
+                  Kerberos keytab file location for the given HDFS user.  This
+                  may be a KIFS file.
 
                 * **hdfs_delegation_token** --
                   Delegation token for the given HDFS user
@@ -18664,7 +18983,7 @@ class GPUdb(object):
                   Name of the Kafka topic to use as the data source
 
                 * **jdbc_driver_jar_path** --
-                  JDBC driver jar file location
+                  JDBC driver jar file location.  This may be a KIFS file.
 
                 * **jdbc_driver_class_name** --
                   Name of the JDBC driver class
@@ -18768,6 +19087,11 @@ class GPUdb(object):
                   When set, a home directory is created for the user name
                   provided in the value. The input parameter *directory_name*
                   must be an empty string in this case. The user must exist.
+
+                * **data_limit** --
+                  The maximum capacity, in bytes, to apply to the created
+                  directory. Set to -1 to indicate no upper limit. If empty,
+                  the system default limit is applied.
 
                 * **no_error_if_exists** --
                   If *true*, does not return an error if the directory already
@@ -19693,6 +20017,63 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **partition_type** --
+                  `Partitioning <../../../../concepts/tables/#partitioning>`__
+                  scheme to use.
+                  Allowed values are:
+
+                  * **RANGE** --
+                    Use `range partitioning
+                    <../../../../concepts/tables/#partitioning-by-range>`__.
+
+                  * **INTERVAL** --
+                    Use `interval partitioning
+                    <../../../../concepts/tables/#partitioning-by-interval>`__.
+
+                  * **LIST** --
+                    Use `list partitioning
+                    <../../../../concepts/tables/#partitioning-by-list>`__.
+
+                  * **HASH** --
+                    Use `hash partitioning
+                    <../../../../concepts/tables/#partitioning-by-hash>`__.
+
+                  * **SERIES** --
+                    Use `series partitioning
+                    <../../../../concepts/tables/#partitioning-by-series>`__.
+
+                * **partition_keys** --
+                  Comma-separated list of partition keys, which are the columns
+                  or column expressions by which records will be assigned to
+                  partitions defined by *partition_definitions*.
+
+                * **partition_definitions** --
+                  Comma-separated list of partition definitions, whose format
+                  depends on the choice of *partition_type*.  See `range
+                  partitioning
+                  <../../../../concepts/tables/#partitioning-by-range>`__,
+                  `interval partitioning
+                  <../../../../concepts/tables/#partitioning-by-interval>`__,
+                  `list partitioning
+                  <../../../../concepts/tables/#partitioning-by-list>`__, `hash
+                  partitioning
+                  <../../../../concepts/tables/#partitioning-by-hash>`__, or
+                  `series partitioning
+                  <../../../../concepts/tables/#partitioning-by-series>`__ for
+                  example formats.
+
+                * **is_automatic_partition** --
+                  If *true*, a new partition will be created for values which
+                  don't fall into an existing partition.  Currently only
+                  supported for `list partitions
+                  <../../../../concepts/tables/#partitioning-by-list>`__.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **view_id** --
                   ID of view of which this projection is a member.  The default
                   value is ''.
@@ -20479,11 +20860,12 @@ class GPUdb(object):
                   the target table exists, the column names must match the
                   source data field names for a name-mapping
                   to be successful.
+                  Mutually exclusive with *columns_to_skip*.
 
                 * **columns_to_skip** --
                   Specifies a comma-delimited list of columns from the source
                   data to
-                  skip.  Mutually exclusive to columns_to_load.
+                  skip.  Mutually exclusive with *columns_to_load*.
 
                 * **datasource_name** --
                   Name of an existing external data source from which data
@@ -21410,6 +21792,11 @@ class GPUdb(object):
                   performance for string columns. Strings with this property
                   must be no longer than 256 characters.
 
+                * **boolean** --
+                  This property provides optimized memory and query performance
+                  for int columns. Ints with this property must be between 0
+                  and 1(inclusive)
+
                 * **int8** --
                   This property provides optimized memory and query performance
                   for int columns. Ints with this property must be between -128
@@ -21758,16 +22145,22 @@ class GPUdb(object):
                   user
 
                 * **default_schema** --
-                  default schema associate with this user
+                  Default schema to associate with this user
 
                 * **create_home_directory** --
-                  when true, a home directory in KiFS is created for this user.
+                  When *true*, a home directory in KiFS is created for this
+                  user.
                   Allowed values are:
 
                   * true
                   * false
 
                   The default value is 'true'.
+
+                * **directory_data_limit** --
+                  The maximum capacity to apply to the created directory if
+                  *create_home_directory* is *true*. Set to -1 to indicate no
+                  upper limit. If empty, the system default limit is applied.
 
         Returns:
             A dict with the following entries--
@@ -21817,16 +22210,22 @@ class GPUdb(object):
                   user
 
                 * **default_schema** --
-                  default schema associate with this user
+                  Default schema to associate with this user
 
                 * **create_home_directory** --
-                  when true, a home directory in KiFS is created for this user.
+                  When *true*, a home directory in KiFS is created for this
+                  user.
                   Allowed values are:
 
                   * true
                   * false
 
                   The default value is 'true'.
+
+                * **directory_data_limit** --
+                  The maximum capacity to apply to the created directory if
+                  *create_home_directory* is *true*. Set to -1 to indicate no
+                  upper limit. If empty, the system default limit is applied.
 
         Returns:
             A dict with the following entries--
@@ -23503,6 +23902,239 @@ class GPUdb(object):
 
         return response
     # end execute_sql_and_decode
+
+
+    # begin export_records_to_files
+    def export_records_to_files( self, table_name = None, filepath = None, options =
+                                 {} ):
+        """Export records from a table to files. All tables can be exported, in
+        full or partial
+        (see *columns_to_export* and *columns_to_skip*).
+        Additional filtering can be applied when using export table with
+        expression through SQL.
+        Default destination is KIFS, though other storage types (Azure, S3,
+        GCS, and HDFS) are supported
+        through *datasink_name*; see :meth:`GPUdb.create_datasink`.
+
+        Server's local file system is not supported.  Default file format is
+        delimited text. See options for
+        different file types and different options for each file type.  Table
+        is saved to a single file if
+        within max file size limits (may vary depending on datasink type).  If
+        not, then table is split into
+        multiple files; these may be smaller than the max size limit.
+
+        All filenames created are returned in the response.
+
+        Parameters:
+
+            table_name (str)
+
+
+            filepath (str)
+                Path to data export target.  If input parameter *filepath* has
+                a file extension, it is
+                read as the name of a file. If input parameter *filepath* is a
+                directory, then the source table name with a
+                random UUID appended will be used as the name of each exported
+                file, all written to that directory.
+                If filepath is a filename, then all exported files will have a
+                random UUID appended to the given
+                name.  In either case, the target directory specified or
+                implied must exist.  The names of all
+                exported files are returned in the response.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **batch_size** --
+                  Number of records to be exported as a batch.  The default
+                  value is '1000000'.
+
+                * **column_formats** --
+                  For each source column specified, applies the
+                  column-property-bound
+                  format.  Currently supported column properties include date,
+                  time, & datetime. The parameter value
+                  must be formatted as a JSON string of maps of column names to
+                  maps of column properties to their
+                  corresponding column formats, e.g.,
+                  '{ "order_date" : { "date" : "%Y.%m.%d" }, "order_time" : {
+                  "time" : "%H:%M:%S" } }'.
+                  See *default_column_formats* for valid format syntax.
+
+                * **columns_to_export** --
+                  Specifies a comma-delimited list of columns from the source
+                  table to
+                  export, written to the output file in the order they are
+                  given.
+                  Column names can be provided, in which case the target file
+                  will use those names as the column
+                  headers as well.
+                  Alternatively, column numbers can be specified--discretely or
+                  as a range.  For example, a value of
+                  '5,7,1..3' will write values from the fifth column in the
+                  source table into the first column in the
+                  target file, from the seventh column in the source table into
+                  the second column in the target file,
+                  and from the first through third columns in the source table
+                  into the third through fifth columns in
+                  the target file.
+                  Mutually exclusive with *columns_to_skip*.
+
+                * **columns_to_skip** --
+                  Comma-separated list of column names or column numbers to not
+                  export.  All columns in the source table not specified will
+                  be written to the target file in the
+                  order they appear in the table definition.  Mutually
+                  exclusive with
+                  *columns_to_export*.
+
+                * **datasink_name** --
+                  Datasink name, created using :meth:`GPUdb.create_datasink`.
+
+                * **default_column_formats** --
+                  Specifies the default format to use to write data.  Currently
+                  supported column properties include date, time, & datetime.
+                  This default column-property-bound
+                  format can be overridden by specifying a column property &
+                  format for a given source column in
+                  *column_formats*. For each specified annotation, the format
+                  will apply to all
+                  columns with that annotation unless custom *column_formats*
+                  for that
+                  annotation are specified.
+                  The parameter value must be formatted as a JSON string that
+                  is a map of column properties to their
+                  respective column formats, e.g., '{ "date" : "%Y.%m.%d",
+                  "time" : "%H:%M:%S" }'.  Column
+                  formats are specified as a string of control characters and
+                  plain text. The supported control
+                  characters are 'Y', 'm', 'd', 'H', 'M', 'S', and 's', which
+                  follow the Linux 'strptime()'
+                  specification, as well as 's', which specifies seconds and
+                  fractional seconds (though the fractional
+                  component will be truncated past milliseconds).
+                  Formats for the 'date' annotation must include the 'Y', 'm',
+                  and 'd' control characters. Formats for
+                  the 'time' annotation must include the 'H', 'M', and either
+                  'S' or 's' (but not both) control
+                  characters. Formats for the 'datetime' annotation meet both
+                  the 'date' and 'time' control character
+                  requirements. For example, '{"datetime" : "%m/%d/%Y %H:%M:%S"
+                  }' would be used to write text
+                  as "05/04/2000 12:12:11"
+
+                * **export_ddl** --
+                  Save DDL to a separate file.  The default value is 'false'.
+
+                * **file_extention** --
+                  Extension to give the export file.  The default value is
+                  '.csv'.
+
+                * **file_type** --
+                  Specifies the file format to use when exporting data.
+                  Allowed values are:
+
+                  * **delimited_text** --
+                    Delimited text file format; e.g., CSV, TSV, PSV, etc.
+
+                  The default value is 'delimited_text'.
+
+                * **kinetica_header** --
+                  Whether to include a Kinetica proprietary header. Will not be
+                  written if *text_has_header* is
+                  *false*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **kinetica_header_delimiter** --
+                  If a Kinetica proprietary header is included, then specify a
+                  property separator. Different from column delimiter.  The
+                  default value is '|'.
+
+                * **single_file** --
+                  Save records to a single file. This option may be ignored if
+                  file
+                  size exceeds internal file size limits (this limit will
+                  differ on different targets).
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **text_delimiter** --
+                  Specifies the character to write out to delimit field values
+                  and
+                  field names in the header (if present).
+                  For *delimited_text* *file_type* only.  The default value is
+                  ','.
+
+                * **text_has_header** --
+                  Indicates whether to write out a header row.
+                  For *delimited_text* *file_type* only.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **text_null_string** --
+                  Specifies the character string that should be written out for
+                  the null
+                  value in the data.
+                  For *delimited_text* *file_type* only.  The default value is
+                  '\\N'.
+
+        Returns:
+            A dict with the following entries--
+
+            table_name (str)
+                Name of source table
+
+            count_exported (long)
+                Number of source table records exported
+
+            count_skipped (long)
+                Number of source table records skipped
+
+            files (list of str)
+                Names of all exported files
+
+            last_timestamp (long)
+                Timestamp of last file scanned
+
+            data_text (list of str)
+
+
+            data_bytes (list of str)
+
+
+            info (dict of str to str)
+                Additional information
+        """
+        assert isinstance( table_name, (basestring)), "export_records_to_files(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
+        assert isinstance( filepath, (basestring)), "export_records_to_files(): Argument 'filepath' must be (one) of type(s) '(basestring)'; given %s" % type( filepath ).__name__
+        assert isinstance( options, (dict)), "export_records_to_files(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['table_name'] = table_name
+        obj['filepath'] = filepath
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/export/records/tofiles', obj, convert_to_attr_dict = True )
+
+        return response
+    # end export_records_to_files
 
 
     # begin export_records_to_table
@@ -28370,11 +29002,12 @@ class GPUdb(object):
                   the target table exists, the column names must match the
                   source data field names for a name-mapping
                   to be successful.
+                  Mutually exclusive with *columns_to_skip*.
 
                 * **columns_to_skip** --
                   Specifies a comma-delimited list of columns from the source
                   data to
-                  skip.  Mutually exclusive to columns_to_load.
+                  skip.  Mutually exclusive with *columns_to_load*.
 
                 * **datasource_name** --
                   Name of an existing external data source from which data
@@ -28979,11 +29612,12 @@ class GPUdb(object):
                   the target table exists, the column names must match the
                   source data field names for a name-mapping
                   to be successful.
+                  Mutually exclusive with *columns_to_skip*.
 
                 * **columns_to_skip** --
                   Specifies a comma-delimited list of columns from the source
                   data to
-                  skip.  Mutually exclusive to columns_to_load.
+                  skip.  Mutually exclusive with *columns_to_load*.
 
                 * **default_column_formats** --
                   Specifies the default format to be applied to source data
@@ -29351,7 +29985,7 @@ class GPUdb(object):
                 If the table does not exist, the table will be created using
                 either an existing
                 *type_id* or the type inferred from the
-                file, and the new table name will have to meet standard
+                remote query, and the new table name will have to meet standard
                 `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.
 
@@ -29507,23 +30141,16 @@ class GPUdb(object):
                   Optional name of a table to which records that were rejected
                   are written.  The bad-record-table has the following columns:
                   line_number (long), line_rejected (string), error_message
-                  (string).
+                  (string). When error handling is Abort, bad records table is
+                  not populated.
 
                 * **bad_record_table_limit** --
                   A positive integer indicating the maximum number of records
                   that can be  written to the bad-record-table.   Default value
                   is 10000
 
-                * **bad_record_table_limit_per_input** --
-                  For subscriptions: A positive integer indicating the maximum
-                  number of records that can be written to the bad-record-table
-                  per file/payload. Default value will be
-                  'bad_record_table_limit' and total size of the table per rank
-                  is limited to 'bad_record_table_limit'
-
-                * **jdbc_fetch_size** --
-                  The JDBC fetch size, which determines how many rows to fetch
-                  per round trip.
+                * **batch_size** --
+                  Number of records per batch when inserting data.
 
                 * **datasource_name** --
                   Name of an existing external data source from which table
@@ -29545,7 +30172,7 @@ class GPUdb(object):
                     error is encountered.  Primary key collisions are
                     considered abortable errors in this mode.
 
-                  The default value is 'permissive'.
+                  The default value is 'abort'.
 
                 * **ingestion_mode** --
                   Whether to do a full load, dry run, or perform a type
@@ -29568,52 +30195,12 @@ class GPUdb(object):
 
                   The default value is 'full'.
 
-                * **loading_mode** --
-                  Scheme for distributing the extraction and loading of data
-                  from the source data file(s). This option applies only when
-                  loading files that are local to the database.
-                  Allowed values are:
-
-                  * **head** --
-                    The head node loads all data. All files must be available
-                    to the head node.
-
-                  * **distributed_shared** --
-                    The head node coordinates loading data by worker
-                    processes across all nodes from shared files available to
-                    all workers.
-                    NOTE:
-                    Instead of existing on a shared source, the files can be
-                    duplicated on a source local to each host
-                    to improve performance, though the files must appear as the
-                    same data set from the perspective of
-                    all hosts performing the load.
-
-                  * **distributed_local** --
-                    A single worker process on each node loads all files
-                    that are available to it. This option works best when each
-                    worker loads files from its own file
-                    system, to maximize performance. In order to avoid data
-                    duplication, either each worker performing
-                    the load needs to have visibility to a set of files unique
-                    to it (no file is visible to more than
-                    one node) or the target table needs to have a primary key
-                    (which will allow the worker to
-                    automatically deduplicate data).
-                    NOTE:
-                    If the target table doesn't exist, the table structure will
-                    be determined by the head node. If the
-                    head node has no files local to it, it will be unable to
-                    determine the structure and the request
-                    will fail.
-                    If the head node is configured to have no worker processes,
-                    no data strictly accessible to the head
-                    node will be loaded.
-
-                  The default value is 'head'.
+                * **jdbc_fetch_size** --
+                  The JDBC fetch size, which determines how many rows to fetch
+                  per round trip.
 
                 * **num_tasks_per_rank** --
-                  Optional: number of tasks for reading file per rank. Default
+                  Optional: number of tasks for reading data per rank. Default
                   will be external_file_reader_num_tasks
 
                 * **primary_keys** --
@@ -29628,7 +30215,7 @@ class GPUdb(object):
 
                 * **truncate_table** --
                   If set to *true*, truncates the table specified by input
-                  parameter *table_name* prior to loading the file(s).
+                  parameter *table_name* prior to loading the data.
                   Allowed values are:
 
                   * true
@@ -30313,6 +30900,12 @@ class GPUdb(object):
                   demand locations - can increase this up to 2M.  The default
                   value is '10000'.
 
+                * **max_supply_combinations** --
+                  For the *match_supply_demand* solver only. This is the cutoff
+                  for the number of generated combinations for sequencing the
+                  supply locations if/when 'permute_supplies' is true.  The
+                  default value is '10000'.
+
                 * **left_turn_penalty** --
                   This will add an additonal weight over the edges labelled as
                   'left turn' if the 'add_turn' option parameter of the
@@ -30420,6 +31013,45 @@ class GPUdb(object):
                   unlimited. If 'enable_truck_reuse' is on, this condition will
                   be applied separately at each round trip use of the same
                   truck.  The default value is '0'.
+
+                * **truck_service_radius** --
+                  For the *match_supply_demand* solver only. If specified
+                  (greater than zero), it filters the demands outside this
+                  radius centered around the truck's originating location
+                  (distance or time).  The default value is '0.0'.
+
+                * **batch_tsm_mode** --
+                  For the *match_supply_demand* solver only. When enabled, it
+                  sets the number of visits on each demand location by a single
+                  salesman at each trip is considered to be (one) 1, otherwise
+                  there is no bound.
+                  Allowed values are:
+
+                  * **true** --
+                    Sets only one visit per demand location by a salesman (tsm
+                    mode)
+
+                  * **false** --
+                    No preset limit (usual msdo mode)
+
+                  The default value is 'false'.
+
+                * **restricted_truck_type** --
+                  For the *match_supply_demand* solver only. Optimization is
+                  performed by restricting routes labeled by
+                  'MSDO_ODDEVEN_RESTRICTED' only for this truck type.
+                  Allowed values are:
+
+                  * **odd** --
+                    Applies odd/even rule restrictions to odd tagged vehicles.
+
+                  * **even** --
+                    Applies odd/even rule restrictions to even tagged vehicles.
+
+                  * **none** --
+                    Does not apply odd/even rule restrictions to any vehicles.
+
+                  The default value is 'none'.
 
                 * **server_id** --
                   Indicates which graph server(s) to send the request to.
@@ -31978,6 +32610,14 @@ class GPUdb(object):
                 The creation time for each directory in milliseconds since
                 epoch, for the respective directories in output parameter
                 *directories*
+
+            data_usages (list of longs)
+                The data usage each directory in bytes, for the respective
+                directories in output parameter *directories*
+
+            data_limits (list of longs)
+                The data limit for each directory in bytes, for the respective
+                directories in output parameter *directories*
 
             permissions (list of str)
                 Highest level of permission the calling user has for the
@@ -34462,6 +35102,61 @@ class GPUdb(object):
 
         return response
     # end upload_files_fromurl
+
+
+    # begin visualize_get_feature_info
+    def visualize_get_feature_info( self, table_names = None, x_column_names = None,
+                                    y_column_names = None, geometry_column_names
+                                    = None, query_column_names = None,
+                                    projection = None, min_x = None, max_x =
+                                    None, min_y = None, max_y = None, width =
+                                    None, height = None, x = None, y = None,
+                                    radius = None, limit = None, encoding =
+                                    None, options = {} ):
+
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        x_column_names = x_column_names if isinstance( x_column_names, list ) else ( [] if (x_column_names is None) else [ x_column_names ] )
+        y_column_names = y_column_names if isinstance( y_column_names, list ) else ( [] if (y_column_names is None) else [ y_column_names ] )
+        geometry_column_names = geometry_column_names if isinstance( geometry_column_names, list ) else ( [] if (geometry_column_names is None) else [ geometry_column_names ] )
+        query_column_names = query_column_names if isinstance( query_column_names, list ) else ( [] if (query_column_names is None) else [ query_column_names ] )
+        assert isinstance( projection, (basestring)), "visualize_get_feature_info(): Argument 'projection' must be (one) of type(s) '(basestring)'; given %s" % type( projection ).__name__
+        assert isinstance( min_x, (int, long, float)), "visualize_get_feature_info(): Argument 'min_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_x ).__name__
+        assert isinstance( max_x, (int, long, float)), "visualize_get_feature_info(): Argument 'max_x' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_x ).__name__
+        assert isinstance( min_y, (int, long, float)), "visualize_get_feature_info(): Argument 'min_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( min_y ).__name__
+        assert isinstance( max_y, (int, long, float)), "visualize_get_feature_info(): Argument 'max_y' must be (one) of type(s) '(int, long, float)'; given %s" % type( max_y ).__name__
+        assert isinstance( width, (int, long, float)), "visualize_get_feature_info(): Argument 'width' must be (one) of type(s) '(int, long, float)'; given %s" % type( width ).__name__
+        assert isinstance( height, (int, long, float)), "visualize_get_feature_info(): Argument 'height' must be (one) of type(s) '(int, long, float)'; given %s" % type( height ).__name__
+        assert isinstance( x, (int, long, float)), "visualize_get_feature_info(): Argument 'x' must be (one) of type(s) '(int, long, float)'; given %s" % type( x ).__name__
+        assert isinstance( y, (int, long, float)), "visualize_get_feature_info(): Argument 'y' must be (one) of type(s) '(int, long, float)'; given %s" % type( y ).__name__
+        assert isinstance( radius, (int, long, float)), "visualize_get_feature_info(): Argument 'radius' must be (one) of type(s) '(int, long, float)'; given %s" % type( radius ).__name__
+        assert isinstance( limit, (int, long, float)), "visualize_get_feature_info(): Argument 'limit' must be (one) of type(s) '(int, long, float)'; given %s" % type( limit ).__name__
+        assert isinstance( encoding, (basestring)), "visualize_get_feature_info(): Argument 'encoding' must be (one) of type(s) '(basestring)'; given %s" % type( encoding ).__name__
+        assert isinstance( options, (dict)), "visualize_get_feature_info(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['table_names'] = table_names
+        obj['x_column_names'] = x_column_names
+        obj['y_column_names'] = y_column_names
+        obj['geometry_column_names'] = geometry_column_names
+        obj['query_column_names'] = query_column_names
+        obj['projection'] = projection
+        obj['min_x'] = min_x
+        obj['max_x'] = max_x
+        obj['min_y'] = min_y
+        obj['max_y'] = max_y
+        obj['width'] = width
+        obj['height'] = height
+        obj['x'] = x
+        obj['y'] = y
+        obj['radius'] = radius
+        obj['limit'] = limit
+        obj['encoding'] = encoding
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/visualize/getfeatureinfo', obj, convert_to_attr_dict = True )
+
+        return response
+    # end visualize_get_feature_info
 
 
     # begin visualize_image
@@ -40326,6 +41021,63 @@ class GPUdbTable( object ):
                 * **retain_partitions** --
                   Determines whether the created projection will retain the
                   partitioning scheme from the source table.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **partition_type** --
+                  `Partitioning <../../../../concepts/tables/#partitioning>`__
+                  scheme to use.
+                  Allowed values are:
+
+                  * **RANGE** --
+                    Use `range partitioning
+                    <../../../../concepts/tables/#partitioning-by-range>`__.
+
+                  * **INTERVAL** --
+                    Use `interval partitioning
+                    <../../../../concepts/tables/#partitioning-by-interval>`__.
+
+                  * **LIST** --
+                    Use `list partitioning
+                    <../../../../concepts/tables/#partitioning-by-list>`__.
+
+                  * **HASH** --
+                    Use `hash partitioning
+                    <../../../../concepts/tables/#partitioning-by-hash>`__.
+
+                  * **SERIES** --
+                    Use `series partitioning
+                    <../../../../concepts/tables/#partitioning-by-series>`__.
+
+                * **partition_keys** --
+                  Comma-separated list of partition keys, which are the columns
+                  or column expressions by which records will be assigned to
+                  partitions defined by *partition_definitions*.
+
+                * **partition_definitions** --
+                  Comma-separated list of partition definitions, whose format
+                  depends on the choice of *partition_type*.  See `range
+                  partitioning
+                  <../../../../concepts/tables/#partitioning-by-range>`__,
+                  `interval partitioning
+                  <../../../../concepts/tables/#partitioning-by-interval>`__,
+                  `list partitioning
+                  <../../../../concepts/tables/#partitioning-by-list>`__, `hash
+                  partitioning
+                  <../../../../concepts/tables/#partitioning-by-hash>`__, or
+                  `series partitioning
+                  <../../../../concepts/tables/#partitioning-by-series>`__ for
+                  example formats.
+
+                * **is_automatic_partition** --
+                  If *true*, a new partition will be created for values which
+                  don't fall into an existing partition.  Currently only
+                  supported for `list partitions
+                  <../../../../concepts/tables/#partitioning-by-list>`__.
                   Allowed values are:
 
                   * true
