@@ -2,6 +2,17 @@
 
 ## Version 7.1
 
+### Version 7.1.8.0 - 2022-10-18
+
+#### Fixed
+-   Issue with injection of default HTTP port into HTTPS URLs
+-   Issue with services that don't accept uppercase protocols
+-   Issue with services that don't accept lowercase methods
+
+#### Notes
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
+
+
 ### Version 7.1.7.6 - 2022-10-10
 
 #### Added
@@ -14,7 +25,7 @@
 ### Version 7.1.7.5 - 2022-10-07
 
 #### Fixed
--   Issue with injection of default HTTP port into HTTPS urls
+-   Issue with injection of default HTTP port into HTTPS URLs
 
 
 ### Version 7.1.7.4 - 2022-10-06
@@ -41,6 +52,7 @@
 #### Fixed
 -   Made the connection parameters more accommodating to different URL/host/port
     combinations
+
 
 ### Version 7.1.7.0 - 2022-07-18
 
