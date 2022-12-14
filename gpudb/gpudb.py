@@ -2726,7 +2726,7 @@ class GPUdb(object):
             self.__logging_level                      = None
             self.__password                           = None
             self.__primary_host                       = None
-            self.__protocol                           = "HTTP" # TODO: Use enums maybe?
+            self.__protocol                           = None
             self.__skip_ssl_cert_verification         = False
             self.__timeout                            = None # means indefinite wait
             self.__username                           = None
@@ -3401,7 +3401,11 @@ class GPUdb(object):
             if value is not None:
                 # Validate the value by actually trying to set it to a dummy
                 # logger object
-                value = value.upper()
+                if isinstance(value, (basestring, unicode)):
+                    value = value.upper()
+                else:
+                    value = int(value)
+
                 try:
                     dummy_logger = logging.getLogger( "dummy_test_logger" )
                     dummy_logger.setLevel( value )
@@ -3490,6 +3494,12 @@ class GPUdb(object):
                 If the *host* argument of the GPUdb constructor contains fully
                 qualified URLs, then this protocol will not be used.
             """
+            # None is a valid value
+            if value is None:
+                self.__protocol = value
+                return
+            # end if
+
             if not isinstance( value, (basestring, unicode) ):
                 raise GPUdbException( "Option 'protocol' must be a string; "
                                       "given '{}' type {}"
@@ -3815,29 +3825,49 @@ class GPUdb(object):
     # end class Version
 
     class ValidateUrl(object):
+        """An internal class to handle connection URL parsing
+        """
 
         @staticmethod
         def validate_url(url=None):
+            """Takes in a string URL, validates it, adds defaults where
+            necessary, and returns a tuple with the URL components.
+
+            Parameters:
+                url (str)
+                    A string containing a Kinetica connection URL.
+
+            Returns:
+                A two-part tuple, the first is whether or not the URL was able
+                to be parsed, and the second is a 7-part tuple containing the
+                parsed URL and its components:
+                
+                * Full URL
+                * Protocol (HTTP,HTTPS)
+                * Hostname
+                * Port
+                * Path
+                * Username (if specified in the URL)
+                * Password (if specified in the URL)
             """
 
-            """
-
-            parsed_url = None
             if IS_PYTHON_3:
                 from urllib.parse import urlparse
             else:
                 from urlparse import urlparse
 
-            if url.count('://') > 1:
+            parsed_url = '' if url is None else url
+
+            if parsed_url.count('://') > 1:
                 # Malformed URL
                 return False, None
 
-            if '://' not in url:
+            if '://' not in parsed_url:
                 # If the URL doesn't start with any protocol
                 # we prepend the default 'http'
-                url = 'http://' + url
+                parsed_url = 'http://' + parsed_url
 
-            parsed_url = urlparse(url)
+            parsed_url = urlparse(parsed_url)
 
             scheme = parsed_url.scheme
 
@@ -3846,22 +3876,44 @@ class GPUdb(object):
                 return False, None
 
             hostname = parsed_url.hostname
-            port = parsed_url.port
+
+            # Default hostname
+            if hostname is None:
+                hostname = "127.0.0.1"
+
+            # Check if port is out-of-bounds
+            try:
+                port = parsed_url.port
+            except:
+                return False, None
+
             path = parsed_url.path.rstrip('/')
 
+            # Default port; for HTTP, default port only assigned if no path
             if port is None:
-                port = 9191 if scheme == 'http' else 443  # default port
+                if scheme == 'https':
+                    port = 443
+                else:
+                    if path == '':
+                        port = 9191
 
+            # Don't list 443 in the URL if using HTTPS or no port given
+            if (scheme == 'https' and port == 443) or port == None:
+                port_suffix = ''
+            else:
+                port_suffix = ':{}'.format(port)
+
+            # Later parts of the API rely on protocol being uppercase
             protocol = scheme.upper()
 
             # Construct the full URL
-            full_url = ("{protocol}://{ip}:{port}{path}"
-                        "".format(protocol=protocol.lower(),
+            full_url = ("{protocol}://{ip}{port_suffix}{path}"
+                        "".format(protocol=scheme.lower(),
                                   ip=hostname,
-                                  port=port,
+                                  port_suffix=port_suffix,
                                   path=path))
 
-            ret_val = True, (full_url, protocol, hostname, port, path)
+            ret_val = True, (full_url, protocol, hostname, port, path, parsed_url.username, parsed_url.password)
 
             return ret_val
 
@@ -3872,15 +3924,22 @@ class GPUdb(object):
         port, protocol, path, and the full URL (as a string).
         """
 
-        def __init__(self, url=None, accept_full_urls_only=False):
+        def __init__(self, url=None, port=None, protocol=None, accept_full_urls_only=False):
             """Takes in a string containing a full URL, or another :class:`URL`
             object, and creates a :class:`URL` object from it.
 
             Parameters:
                 url (str or GPUdb.URL)
-                    The URL--either a string or another GPUdb.URL object--to
+                    Either a hostname/URL string or another GPUdb.URL object
                     to create this object for.  Note that the port is not a
                     mandatory part of the URL.
+                port (int)
+                    Optional port.  If specified, will be appended to any host
+                    specified and will override the port of any URL specified.
+                protocol (str)
+                    Optional protocol.  If specified, will be prepended to any
+                    host specified and will override the protocol of any URL
+                    specified.
                 accept_full_urls_only (bool)
                     Optional argument.  If False, then be flexible in the parsing;
                     for example, if no port is given, use the default port.  If
@@ -3893,6 +3952,8 @@ class GPUdb(object):
                 self.__protocol = url.protocol
                 self.__url_path = url.path
                 self.__full_url = url.url
+                self.__username = url.username
+                self.__password = url.password
                 return
             # end if
 
@@ -3903,35 +3964,42 @@ class GPUdb(object):
                                                  str(type(url))))
             full_url = None
 
-            # Parse the URL
-            if url == "" or url is None:
-                # Handle an empty URL
-                protocol = "HTTP"
-                hostname = "127.0.0.1"
-                port = "9191"
-                path = ""
-                # Construct the full URL
-                full_url = ("{protocol}://{ip}:{port}{path}"
-                            "".format(protocol=protocol.lower(),
-                                      ip=hostname,
-                                      port=port,
-                                      path=path))
+            # Use the ValidateUrl class to validate the URL
+            url_valid = GPUdb.ValidateUrl.validate_url(url)
+
+            if not url_valid[0]:
+                raise GPUdbException("Failed to parse given url '{}'"
+                                "".format(url))
+
+            full_url, protocol_, hostname, port_, path, username, password = url_valid[1]
+
+            if protocol is None and port is None:
+                self.__username = username
+                self.__password = password
             else:
-                # Use the ValidateUrl class to validate the URL
-                url_valid = GPUdb.ValidateUrl.validate_url(url)
+                # If port and/or protocol were specified separately, re-init URL
+                #   with those injected into the URL
+                protocol_ = protocol if protocol is not None else protocol_
+                port_ = port if port is not None else port_
 
-                if not url_valid[0]:
-                    raise GPUdbException("Failed to parse given url '{}'"
-                                    "".format(url))
-
-                full_url, protocol, hostname, port, path = url_valid[1]
-
-            self.__using_default_protocol = protocol.lower() == 'http'
-            self.__using_default_port = str(port) == '9191'
+                full_url = (
+                    "{protocol}://{username}:{password}@{ip}:{port}{path}".format(
+                        protocol = protocol_.lower(),
+                        username = username,
+                        password = password,
+                        ip = hostname,
+                        port = port_,
+                        path = path
+                ))
+                self.__init__(full_url)
+                return
+    
+            self.__using_default_protocol = protocol_.lower() == 'http'
+            self.__using_default_port = str(port_) == '9191'
 
             self.__host = hostname
-            self.__port = int(port) if port else None
-            self.__protocol = protocol
+            self.__port = int(port_) if port_ else None
+            self.__protocol = protocol_
             self.__url_path = path
             self.__full_url = full_url
 
@@ -3948,6 +4016,10 @@ class GPUdb(object):
                 if (self.__url_path != other.__url_path):
                     return False
                 if (self.__full_url != other.__full_url):
+                    return False
+                if (self.__username != other.__username):
+                    return False
+                if (self.__password != other.__password):
                     return False
                 return True
             else:
@@ -4009,6 +4081,16 @@ class GPUdb(object):
         def url(self):
             """Read-only property--fully qualified URL."""
             return self.__full_url
+
+        @property
+        def username(self):
+            """Read-only property--username in URL, if present."""
+            return self.__username
+
+        @property
+        def password(self):
+            """Read-only property--password in URL, if present."""
+            return self.__password
 
     # end class URL
 
@@ -4616,7 +4698,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.8.0"
+    api_version = "7.1.8.2"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -4644,7 +4726,7 @@ class GPUdb(object):
                 Example: "https://domain.com:port/path/".
                 If only a single URL or host is given, and no *primary_host* is
                 explicitly specified via the options, then the given URL will be
-                sed as the primary URL.  Default is 'http://127.0.0.1:9191'
+                used as the primary URL.  Default is 'http://127.0.0.1:9191'
                 (implemented internally).
 
                 Note that in versions 7.0 and prior, the URL also allowed
@@ -4759,20 +4841,6 @@ class GPUdb(object):
             self.set_client_logger_level( self.__logging_level )
         # end if
 
-        # Set up the credentials to be used per POST
-        self.auth = None
-        if self.username is not None:
-            if IS_PYTHON_3:
-                # base64 encode the username and password
-                self.auth = ('%s:%s' % (self.username, self.password) )
-                self.auth = _Util.str_to_bytes( self.auth )
-                self.auth = base64.b64encode( self.auth ).decode( "ascii" ).replace('\n', '')
-                self.auth = ("Basic %s" % self.auth)
-            else: # Python 2.x
-                self.auth = base64.encodestring('%s:%s' % (self.username, self.password)).replace('\n', '')
-                self.auth = ("Basic %s" % self.auth)
-        # end if
-
         self.client_to_object_encoding_map = { \
                                                C._ENCODING_BINARY: "binary",
                                                C._ENCODING_SNAPPY: "binary",
@@ -4845,29 +4913,44 @@ class GPUdb(object):
         self.__log_debug( "Got host: {}".format( host ) )
 
         # If the user explicitly gave a separate port & protocol via
-        # the options, reconcile that with the user given URLs (i.e.,
-        # if the
+        # the options, reconcile that with the user given URLs.
         hosts = []
         for (host_, port_, protocol_) in zip(host, port, protocol):
             self.__log_debug( "Working on host '{}' port '{}' protocol '{}'"
                               "".format( host_, port_, protocol_ ) )
             if host_ is None:
-                if port_ is None:
-                    host_ = "127.0.0.1:9191"
-                else:
-                    host_ = "127.0.0.1:{}".format( port_ )
-                # end if
+                url = GPUdb.URL( host_, port_, protocol_ )
             else:
-                self.__log_debug( "host_ is not None" )
-                # This may throw if there is a sever problem with the URL
-                url = GPUdb.URL( host_ )
-                host_ = url.url
+                url = GPUdb.URL( host_, port_, protocol_ )
+
+                self.__log_debug( "Connection: <%s> @ <%s>" % (url.username, url.url) )
+
+                # If no user/pass set, attempt to pull from any URLs
+                if self.__username is None:
+                    self.__username = url.username
+                if self.__password is None:
+                    self.__password = url.password
             # end if
 
             # Add the possibly modified host to the final hosts list
-            hosts.append( host_ )
+            hosts.append( url.url )
         # end for
         self.__log_debug( "Using (possibly modified) host: {}".format( hosts ) )
+
+        # Set up the credentials to be used per POST
+        self.auth = None
+        if self.username is not None:
+            self.__log_debug('Setting up credentials with username <%s>' % self.username)
+            if IS_PYTHON_3:
+                # base64 encode the username and password
+                self.auth = ('%s:%s' % (self.username, self.password) )
+                self.auth = _Util.str_to_bytes( self.auth )
+                self.auth = base64.b64encode( self.auth ).decode( "ascii" ).replace('\n', '')
+                self.auth = ("Basic %s" % self.auth)
+            else: # Python 2.x
+                self.auth = base64.encodestring('%s:%s' % (self.username, self.password)).replace('\n', '')
+                self.auth = ("Basic %s" % self.auth)
+        # end if
 
         # We need to keep a running count of how many times we've failed and had
         # to switch to a different HA ring head node (useful for multi-head I/O)
@@ -9917,7 +10000,7 @@ class GPUdb(object):
 
             url (str or GPUdb.URL)
                 An optional URL to which we submit the /wms endpoint.  If None
-                given, use the currel URL for this :class:`GPUdb` object.
+                given, use the current URL for this :class:`GPUdb` object.
 
         Returns:
             A dict with the following entries--
@@ -9962,8 +10045,7 @@ class GPUdb(object):
 
         http_conn = self.__initialize_http_connection( url, self.timeout )
 
-        # Ping is a get, unlike all endpoints which are post
-        # TODO: Do we need any special header?
+        # WMS is a get, unlike all endpoints which are post
         headers = {
             C._HEADER_ACCEPT: C._REQUEST_ENCODING_JSON
         }
@@ -10031,7 +10113,6 @@ class GPUdb(object):
             http_conn = self.__initialize_http_connection( url, ping_timeout )
 
             # Ping is a get, unlike all endpoints which are post
-            # TODO: Do we need any special header?
             headers = {
                 C._HEADER_ACCEPT: C._REQUEST_ENCODING_JSON
             }
@@ -10116,8 +10197,7 @@ class GPUdb(object):
         debug_timeout = 1 # 1 second
         http_conn = self.__initialize_http_connection( url, debug_timeout )
 
-        # Ping is a get, unlike all endpoints which are post
-        # TODO: Do we need any special header?
+        # Debug is a get, unlike all endpoints which are post
         headers = {
             C._HEADER_ACCEPT: C._REQUEST_ENCODING_JSON
         }
@@ -13857,7 +13937,10 @@ class GPUdb(object):
 
                 * **verify_persist** --
                   When *true*, persistent objects will be compared against
-                  their state in memory.
+                  their state in memory and workers will be checked for
+                  orphaned table data in persist. To check for orphaned worker
+                  data, either set *concurrent_safe* in input parameter
+                  *options* to *true* or place the database offline.
                   Allowed values are:
 
                   * true
@@ -13890,7 +13973,9 @@ class GPUdb(object):
                   If *true*, orphaned table directories found on workers for
                   which there is no corresponding metadata will be deleted.
                   Must set *verify_persist* in input parameter *options* to
-                  *true*.
+                  *true*. It is recommended to run this while the database is
+                  offline OR set *concurrent_safe* in input parameter *options*
+                  to *true*.
                   Allowed values are:
 
                   * true
@@ -17407,8 +17492,8 @@ class GPUdb(object):
             A dict with the following entries--
 
             updated_properties_map (dict of str to str)
-                map of values updated, For speed tests a map of values measured
-                to the measurement
+                Map of values updated; for speed tests, a map of values
+                measured to the measurement
 
             info (dict of str to str)
                 Additional information.
@@ -18085,6 +18170,9 @@ class GPUdb(object):
                   * false
 
                   The default value is 'true'.
+
+                * **rank** --
+                  Apply the requested change only to a specific rank.
 
         Returns:
             A dict with the following entries--
@@ -20989,6 +21077,20 @@ class GPUdb(object):
                 * **kafka_group_id** --
                   The group id to be used consuming data from a kakfa topic
                   (valid only for kafka datasource subscriptions).
+
+                * **kafka_offset_reset_policy** --
+                  Policy to determine whether the data consumption starts
+                  either at earliest offset or latest offset.
+                  Allowed values are:
+
+                  * earliest
+                  * latest
+
+                  The default value is 'earliest'.
+
+                * **kafka_subscription_cancel_after** --
+                  Sets the subscription lifespan (in minutes). Expired
+                  subscription will be cancelled automatically.
 
                 * **loading_mode** --
                   Scheme for distributing the extraction and loading of data
@@ -24030,7 +24132,7 @@ class GPUdb(object):
                 * **export_ddl** --
                   Save DDL to a separate file.  The default value is 'false'.
 
-                * **file_extention** --
+                * **file_extension** --
                   Extension to give the export file.  The default value is
                   '.csv'.
 
@@ -29112,6 +29214,20 @@ class GPUdb(object):
                   The group id to be used consuming data from a kakfa topic
                   (valid only for kafka datasource subscriptions).
 
+                * **kafka_offset_reset_policy** --
+                  Policy to determine whether the data consumption starts
+                  either at earliest offset or latest offset.
+                  Allowed values are:
+
+                  * earliest
+                  * latest
+
+                  The default value is 'earliest'.
+
+                * **kafka_subscription_cancel_after** --
+                  Sets the subscription lifespan (in minutes). Expired
+                  subscription will be cancelled automatically.
+
                 * **loading_mode** --
                   Scheme for distributing the extraction and loading of data
                   from the source data file(s). This option applies only when
@@ -30820,6 +30936,10 @@ class GPUdb(object):
                   Matches an optimal path across a number of ev-charging
                   stations between source and target locations.
 
+                * **match_similarity** --
+                  Matches the intersection set(s) by computing the Jaccard
+                  similarity score between node pairs.
+
                 The default value is 'markov_chain'.
 
             solution_table (str)
@@ -30986,39 +31106,60 @@ class GPUdb(object):
                   the algorithm to set the maximal number of threads within
                   these constraints.  The default value is '0'.
 
-                * **truck_service_limit** --
+                * **service_limit** --
                   For the *match_supply_demand* solver only. If specified
-                  (greater than zero), any truck's total service cost (distance
-                  or time) will be limited by the specified value including
-                  multiple rounds (if set).  The default value is '0.0'.
+                  (greater than zero), any supply actor's total service cost
+                  (distance or time) will be limited by the specified value
+                  including multiple rounds (if set).  The default value is
+                  '0.0'.
 
-                * **enable_truck_reuse** --
+                * **enable_reuse** --
                   For the *match_supply_demand* solver only. If specified
-                  (true), all trucks can be scheduled for second rounds from
-                  their originating depots.
+                  (true), all supply actors can be scheduled for second rounds
+                  from their originating depots.
                   Allowed values are:
 
                   * **true** --
-                    Allows reusing trucks for scheduling again.
+                    Allows reusing supply actors (trucks, e.g.) for scheduling
+                    again.
 
                   * **false** --
-                    Trucks are scheduled only once from their depots.
+                    Supply actors are scheduled only once from their depots.
 
                   The default value is 'false'.
 
-                * **max_truck_stops** --
+                * **max_stops** --
                   For the *match_supply_demand* solver only. If specified
-                  (greater than zero), a truck can at most have this many stops
-                  (demand locations) in one round trip. Otherwise, it is
-                  unlimited. If 'enable_truck_reuse' is on, this condition will
-                  be applied separately at each round trip use of the same
-                  truck.  The default value is '0'.
+                  (greater than zero), a supply actor (truck) can at most have
+                  this many stops (demand locations) in one round trip.
+                  Otherwise, it is unlimited. If 'enable_truck_reuse' is on,
+                  this condition will be applied separately at each round trip
+                  use of the same truck.  The default value is '0'.
 
-                * **truck_service_radius** --
+                * **service_radius** --
                   For the *match_supply_demand* solver only. If specified
                   (greater than zero), it filters the demands outside this
-                  radius centered around the truck's originating location
-                  (distance or time).  The default value is '0.0'.
+                  radius centered around the supply actor's originating
+                  location (distance or time).  The default value is '0.0'.
+
+                * **permute_supplies** --
+                  For the *match_supply_demand* solver only. If specified
+                  (true), supply side actors are permuted for the demand
+                  combinations during msdo optimization - note that this option
+                  increases optimization time significantly - use of
+                  'max_combinations' option is recommended to prevent
+                  prohibitively long runs.
+                  Allowed values are:
+
+                  * **true** --
+                    Generates sequences over supply side permutations if total
+                    supply is less than twice the total demand
+
+                  * **false** --
+                    Permutations are not performed, rather a specific order of
+                    supplies based on capacity is computed
+
+                  The default value is 'true'.
 
                 * **batch_tsm_mode** --
                   For the *match_supply_demand* solver only. When enabled, it
@@ -31036,10 +31177,27 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-                * **restricted_truck_type** --
+                * **round_trip** --
+                  For the *match_supply_demand* solver only. When enabled, the
+                  supply will have to return back to the origination location.
+                  Allowed values are:
+
+                  * **true** --
+                    The optimization is done for trips in round trip manner
+                    always returning to originating locations
+
+                  * **false** --
+                    Supplies do not have to come back to their originating
+                    locations in their routes. The routes are considered
+                    finished at the final dropoff.
+
+                  The default value is 'true'.
+
+                * **restricted_type** --
                   For the *match_supply_demand* solver only. Optimization is
                   performed by restricting routes labeled by
-                  'MSDO_ODDEVEN_RESTRICTED' only for this truck type.
+                  'MSDO_ODDEVEN_RESTRICTED' only for this supply actor (truck)
+                  type.
                   Allowed values are:
 
                   * **odd** --
@@ -31107,6 +31265,28 @@ class GPUdb(object):
                 * **charging_penalty** --
                   For the *match_charging_stations* solver only. This is the
                   penalty for full charging.  The default value is '30000.0'.
+
+                * **max_hops** --
+                  For the *match_similarity* solver only. Searches within this
+                  maximum hops for source and target node pairs to compute the
+                  Jaccard scores.  The default value is '3'.
+
+                * **traversal_node_limit** --
+                  For the *match_similarity* solver only. Limits the traversal
+                  depth if it reaches this many number of nodes.  The default
+                  value is '1000'.
+
+                * **paired_similarity** --
+                  For the *match_similarity* solver only. If true, it computes
+                  Jaccard score between each pair, otherwise it will compute
+                  Jaccard from the intersection set between the source and
+                  target nodes.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
         Returns:
             A dict with the following entries--
@@ -31688,7 +31868,7 @@ class GPUdb(object):
                   * true
                   * false
 
-                  The default value is 'true'.
+                  The default value is 'false'.
 
                 * **and_labels** --
                   If set to *true*, the result of the query has entities that
@@ -36752,35 +36932,13 @@ class GPUdbTable( object ):
         name according to 7.1 schema and collection backward compatibility
         rules.  Return the qualified name."""
 
-        # Check if the given name has the schema embedded in it
-        if ( len( name.split( "." ) ) > 1 ):
-            # The user given name already contains the schema name
-            if ( ( self._collection_name is not None )
-                 and ( name.split( "." )[0] != self._collection_name ) ):
-                # But the user also specified a collection name; error out
-                # The embedded schema and the given collection name don't match
-                raise GPUdbException( "User given name '{}' contains a period ("
-                                      "indicating it has an embedded schema name), "
-                                      "but the options also include a collection "
-                                      "name ('{}') that does not match.  Should "
-                                      "specify one or the other, but if both, then "
-                                      "they need to match!"
-                                      "".format( self._name,
-                                                 self._collection_name ) )
-            # No collection name given, so use the given name (with the schema)
-            qualified_name = name
+        # Check if the given name is unqualified and a default schema is available
+        if ( len( name.split( "." ) ) == 1 and self._collection_name is not None ):
+            # The GPUdbTable has a collection name; use it for schema name
+            qualified_name = "{coll}.{table}".format( coll = self._collection_name, table = name )
         else:
-            # The user given name does not have any schema in it
-            if ( self._collection_name is not None ):
-                # The user has specified a collection name, treat that as
-                # the schema name
-                qualified_name = ( "{coll}.{table}"
-                                "".format( coll = self._collection_name,
-                                           table = name ) )
-            else:
-                # No collection name given
-                qualified_name = name
-            # end inner if
+            # Use the name given
+            qualified_name = name
         # end if
 
         return qualified_name

@@ -2,6 +2,27 @@
 
 ## Version 7.1
 
+### Version 7.1.8.2 - 2022-12-14
+
+#### Added
+-   Re-added support for username/password in the URL
+-   Re-added support for 7.0 protocol & port overrides
+-   Re-added support for numeric log levels
+
+#### Changed
+-   Removed default HTTP protocol assignment in Options
+
+#### Fixed
+-   Result tables can now be created from GPUdbTable in schemas other than the
+    one associated with the GPUdbTable table
+
+
+### Version 7.1.8.1 - 2022-12-08
+
+#### Added
+-   Support for more varieties of Mac OS
+
+
 ### Version 7.1.8.0 - 2022-10-18
 
 #### Fixed
