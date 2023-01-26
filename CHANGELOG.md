@@ -2,6 +2,14 @@
 
 ## Version 7.1
 
+### Version 7.1.8.3 - 2023-01-26
+
+#### Added
+-   Added conversion to DataFrame functions:
+    -  `GPUdb.to_df()` - convert SQL result set to DataFrame
+    -  `GPUdbTable.to_df()` - convert table data to DataFrame
+
+
 ### Version 7.1.8.2 - 2022-12-14
 
 #### Added

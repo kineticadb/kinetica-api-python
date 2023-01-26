@@ -3,6 +3,12 @@
 
 ## Version 7.1
 
+### Version 7.1.8.7
+
+#### Added
+-  Added ignore_existing_pk option to all endpoints that accept update_on_existing_pk
+
+
 ### Version 7.1.8.0
 
 #### Added
@@ -13,11 +19,15 @@
 -   Added new options ``resource_group`` and ``default_schema`` to ``/create/user/external`` endpoint
 -   Added new option ``directory_data_limit`` to ``/create/user/internal`` and ``/create/user/external`` endpoints
 -   Added new option ``data_limit`` to ``/create/directory`` endpoint
+-   Added new options ``jdbc_session_init_statement``, ``jdbc_connection_init_statement``, ``remote_table``, ``use_st_geomfrom_casts``, ``use_indexed_parameters`` to ``/export/records/totable`` endpoint
+-   Added new options ``jdbc_session_init_statement``, ``remote_query_order_by``, ``num_splits_per_rank`` to ``/insert/records/fromquery`` endpoint
+
 
 ##### Non-breaking Changes
 -   Added support for Azure, HDFS, S3 and Google Cloud storage providers to ``/create/datasink`` and ``/alter/datasink`` endpoints
 -   Added rank option to ``/alter/tier``
 -   Added delete_orphaned_tables option to ``/admin/verify_db``
+-   Added new option compression_type for external files endpoints.
 
 ##### Breaking Changes
 

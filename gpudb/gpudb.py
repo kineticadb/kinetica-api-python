@@ -4698,7 +4698,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.8.2"
+    api_version = "7.1.8.3"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -9547,7 +9547,7 @@ class GPUdb(object):
                 data_str = json.loads( _Util.ensure_str(encoded_datum) )
                 return data_str
         except (Exception, RuntimeError) as ex:
-            self.__log_debug( "Encountred problem for encoded_datum: {}"
+            self.__log_debug( "Encountered problem for encoded_datum: {}"
                               "".format( encoded_datum ) )
             msg = ( "Unable to parse server response; "
                     "please check that the client and server "
@@ -10207,6 +10207,68 @@ class GPUdb(object):
         response = http_conn.getresponse()
         return response.read()
     # end get_server_debug_information
+
+
+    def to_df(self, sql, batch_size = 10000):
+        """Runs the given query and converts the result to a Pandas Data Frame.
+
+        Parameters:
+            sql (str)
+                The SQL query to run
+            batch_size (int)
+                The number of records to retrieve at a time from the database
+
+        Returns:
+            A Pandas Data Frame containing the result set of the SQL query.
+        """
+        import pandas
+
+        # Generate a schema-less paging table name for quick record retrieval;
+        #   Need to get the fully-qualified name from the 1st round response
+        paging_table_name = GPUdbTable.random_name()
+        options = {"paging_table" : paging_table_name}
+
+        # Run the query for the first batch of records
+        ret_obj = self.execute_sql_and_decode(sql, 0, batch_size, options = options)
+
+        # Return immediately if all records fit into one batch
+        if(ret_obj["has_more_records"] == False):
+            return pandas.DataFrame.from_dict(ret_obj["records"])
+
+
+        # More records than will fit in one batch encountered
+        # 1. Get paging table info
+        # 2. Retrieve records
+        # 3. Remove paging tables
+
+        # Get fully-qualified paging table names; the supporting list is only
+        #   returned in the 1st round call
+        paging_table_name = ret_obj["paging_table"]
+        supporting_paging_table_names = None
+        if "result_table_list" in ret_obj["info"]:
+            supporting_paging_table_names = ret_obj["info"]["result_table_list"]
+
+        # Add 1st batch of records
+        record_count = 0
+        pd_arr = []
+        pd_arr.append(pandas.DataFrame.from_dict(ret_obj["records"]))
+
+        # Loop for remainder of records
+        while(ret_obj["has_more_records"]):
+            record_count += batch_size
+            ret_obj = self.execute_sql_and_decode(sql, record_count, batch_size, options = options)
+            pd_arr.append(pandas.DataFrame.from_dict(ret_obj["records"]))
+
+        # Remove paging table and supporting tables, if any
+        if paging_table_name:
+            self.clear_table(paging_table_name)
+
+            if supporting_paging_table_names:
+                for support_paging_table_name in supporting_paging_table_names.split(','):
+                    self.clear_table(support_paging_table_name)
+
+        return pandas.concat(pd_arr)
+    # end to_df
 
 
 
@@ -16986,7 +17048,7 @@ class GPUdb(object):
 
     # begin alter_directory
     def alter_directory( self, directory_name = None, directory_updates_map = None,
-                         options = None ):
+                         options = {} ):
         """Alters an existing directory in `KiFS <../../../../tools/kifs/>`__.
 
         Parameters:
@@ -17004,7 +17066,8 @@ class GPUdb(object):
                   Set to -1 to indicate no upper limit.
 
             options (dict of str to str)
-                Optional parameters.
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
 
         Returns:
             A dict with the following entries--
@@ -17382,15 +17445,6 @@ class GPUdb(object):
                   of the messages to send; check_values=[enabled] where if
                   enabled is true the value of the messages received are
                   verified.
-
-                * **set_message_timers_enabled** --
-                  Enables the communicator test to collect additional timing
-                  statistics when the value string is *true*. Disables
-                  collecting statistics when the value string is *false*
-                  Allowed values are:
-
-                  * true
-                  * false
 
                 * **network_speed** --
                   Invoke the network speed test and report timing results.
@@ -18374,7 +18428,25 @@ class GPUdb(object):
                   values that match those of a source table record being
                   inserted will remain unchanged and the new record discarded.
                   If the specified table does not have a primary key, then this
-                  option is ignored.
+                  option has no effect.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **ignore_existing_pk** --
+                  Specifies the record collision policy for inserting the
+                  source table records (specified by input parameter
+                  *source_table_name*) into the target table (specified by
+                  input parameter *table_name*) table with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__.  If set to
+                  *true*, any source table records being inserted with primary
+                  key values that match those of an existing target table
+                  record will be ignored with no error generated.  If the
+                  specified table does not have a primary key, then this option
+                  has no affect.
                   Allowed values are:
 
                   * true
@@ -23549,6 +23621,17 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **ignore_existing_pk** --
+                  Can be used to customize behavior when the updated primary
+                  key value already exists as described in
+                  :meth:`GPUdb.insert_records`.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **preserve_dict_encoding** --
                   If *true*, then columns that were dict encoded in the source
                   table will be dict encoded in the projection table.
@@ -23837,6 +23920,17 @@ class GPUdb(object):
                   intermediate result tables used in query execution.
 
                 * **update_on_existing_pk** --
+                  Can be used to customize behavior when the updated primary
+                  key value already exists as described in
+                  :meth:`GPUdb.insert_records`.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **ignore_existing_pk** --
                   Can be used to customize behavior when the updated primary
                   key value already exists as described in
                   :meth:`GPUdb.insert_records`.
@@ -24240,8 +24334,8 @@ class GPUdb(object):
 
 
     # begin export_records_to_table
-    def export_records_to_table( self, table_name = None, remote_query = None,
-                                 options = {} ):
+    def export_records_to_table( self, table_name = None, remote_query = '', options
+                                 = {} ):
         """Exports records from source table to  specified target table in an
         external database
 
@@ -24256,7 +24350,7 @@ class GPUdb(object):
 
             remote_query (str)
                 Parameterized insert query to export gpudb table data into
-                remote database
+                remote database.  The default value is ''.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -24270,6 +24364,39 @@ class GPUdb(object):
                 * **datasink_name** --
                   Name of an existing external data sink to which table name
                   specified in input parameter *table_name* will be exported
+
+                * **jdbc_session_init_statement** --
+                  Executes the statement per each jdbc session before doing
+                  actual load.  The default value is ''.
+
+                * **jdbc_connection_init_statement** --
+                  Executes the statement once before doing actual load.  The
+                  default value is ''.
+
+                * **remote_table** --
+                  Name of the target table to which source table is exported.
+                  When this option is specified remote_query cannot be
+                  specified.  The default value is ''.
+
+                * **use_st_geomfrom_casts** --
+                  Wraps parametrized variables with st_geomfromtext or
+                  st_geomfromwkb based on source column type.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **use_indexed_parameters** --
+                  Uses $n style syntax when generating insert query for
+                  remote_table option.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
         Returns:
             A dict with the following entries--
@@ -28669,7 +28796,22 @@ class GPUdb(object):
                   record with primary key values that match those of a record
                   being inserted will remain unchanged and the new record
                   discarded.  If the specified table does not have a primary
-                  key, then this option is ignored.
+                  key, then this option has no affect.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **ignore_existing_pk** --
+                  Specifies the record collision policy for inserting into a
+                  table with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__.  If set to
+                  *true*, any record being inserted with primary key values
+                  that match those of an existing table record will be ignored
+                  with no error generated.  If the specified table does not
+                  have a primary key, then this option has no affect.
                   Allowed values are:
 
                   * true
@@ -30315,6 +30457,15 @@ class GPUdb(object):
                   The JDBC fetch size, which determines how many rows to fetch
                   per round trip.
 
+                * **jdbc_session_init_statement** --
+                  Executes the statement per each jdbc session before doing
+                  actual load.  The default value is ''.
+
+                * **num_splits_per_rank** --
+                  Optional: number of splits for reading data per rank. Default
+                  will be external_file_reader_num_tasks.  The default value is
+                  ''.
+
                 * **num_tasks_per_rank** --
                   Optional: number of tasks for reading data per rank. Default
                   will be external_file_reader_num_tasks
@@ -30341,6 +30492,11 @@ class GPUdb(object):
 
                 * **remote_query** --
                   Remote SQL query from which data will be sourced
+
+                * **remote_query_order_by** --
+                  Name of column to be used for splitting the query into
+                  multiple sub-queries using ordering of given column.  The
+                  default value is ''.
 
                 * **remote_query_filter_column** --
                   Name of column to be used for splitting the query into
@@ -30940,6 +31096,10 @@ class GPUdb(object):
                   Matches the intersection set(s) by computing the Jaccard
                   similarity score between node pairs.
 
+                * **match_pickup_dropoff** --
+                  Matches the pickups and dropoffs by optimizing the total trip
+                  costs
+
                 The default value is 'markov_chain'.
 
             solution_table (str)
@@ -31067,12 +31227,13 @@ class GPUdb(object):
                   originating depots.  The default value is 'false'.
 
                 * **max_trip_cost** --
-                  For the *match_supply_demand* solver only. If this constraint
-                  is greater than zero (default) then the trucks will skip
-                  travelling from one demand location to another if the cost
-                  between them is greater than this number (distance or time).
-                  Zero (default) value means no check is performed.  The
-                  default value is '0.0'.
+                  For the *match_supply_demand* and *match_pickup_dropoff*
+                  solvers only. If this constraint is greater than zero
+                  (default) then the trucks/rides will skip travelling from one
+                  demand/pick location to another if the cost between them is
+                  greater than this number (distance or time). Zero (default)
+                  value means no check is performed.  The default value is
+                  '0.0'.
 
                 * **filter_folding_paths** --
                   For the *markov_chain* solver only. When true (non-default),
@@ -31137,10 +31298,11 @@ class GPUdb(object):
                   use of the same truck.  The default value is '0'.
 
                 * **service_radius** --
-                  For the *match_supply_demand* solver only. If specified
-                  (greater than zero), it filters the demands outside this
-                  radius centered around the supply actor's originating
-                  location (distance or time).  The default value is '0.0'.
+                  For the *match_supply_demand* and *match_pickup_dropoff*
+                  solvers only. If specified (greater than zero), it filters
+                  the demands/picks outside this radius centered around the
+                  supply actor/ride's originating location (distance or time).
+                  The default value is '0.0'.
 
                 * **permute_supplies** --
                   For the *match_supply_demand* solver only. If specified
@@ -34870,6 +35032,23 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **ignore_existing_pk** --
+                  Specifies the record collision policy for tables with a
+                  `primary key <../../../../concepts/tables/#primary-keys>`__
+                  when updating columns of the `primary key
+                  <../../../../concepts/tables/#primary-keys>`__ or inserting
+                  new records.  If set to *true*, any record being updated or
+                  inserted with primary key values that match those of an
+                  existing record will be ignored with no error generated.  If
+                  the specified table does not have a primary key, then this
+                  option has no affect.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **update_partition** --
                   Force qualifying records to be deleted and reinserted so
                   their partition membership will be reevaluated.
@@ -35190,6 +35369,21 @@ class GPUdb(object):
                   multipart upload. Part numbers start at 1, increment by 1,
                   and must be uploaded
                   sequentially
+
+                * **delete_if_exists** --
+                  If *true*,
+                  any existing files specified in input parameter *file_names*
+                  will be deleted prior to  start of upload.
+                  Otherwise the file is replaced once the upload completes.
+                  Rollback of the original file is
+                  no longer possible if the upload is cancelled, aborted or
+                  fails if the file was deleted beforehand.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -38239,6 +38433,43 @@ class GPUdbTable( object ):
     # end get_geo_json
 
 
+    def to_df(self, batch_size = 10000):
+        """Converts the table data to a Pandas Data Frame.
+
+        Parameters:
+            batch_size (int)
+                The number of records to retrieve at a time from the database
+
+        Returns:
+            A Pandas Data Frame containing the table data.
+        """
+        import pandas
+
+        sql = "SELECT * FROM {}".format(self.qualified_name)
+
+        # Get the table data for the first batch of records
+        ret_obj = self.db.execute_sql_and_decode(sql, 0, batch_size)
+
+        # Return immediately if all records fit into one batch
+        if(ret_obj["has_more_records"] == False):
+            return pandas.DataFrame.from_dict(ret_obj["records"])
+
+
+        # Add 1st batch of records
+        record_count = 0
+        pd_arr = []
+        pd_arr.append(pandas.DataFrame.from_dict(ret_obj["records"]))
+
+        # Loop for remainder of records
+        while(ret_obj["has_more_records"]):
+            record_count += batch_size
+            ret_obj = self.db.execute_sql_and_decode(sql, record_count, batch_size)
+            pd_arr.append(pandas.DataFrame.from_dict(ret_obj["records"]))
+
+        return pandas.concat(pd_arr)
+    # end to_df
+
+
 
     @staticmethod
     def create_join_table( db, join_table_name = None, table_names = None,
@@ -40837,7 +41068,25 @@ class GPUdbTable( object ):
                   values that match those of a source table record being
                   inserted will remain unchanged and the new record discarded.
                   If the specified table does not have a primary key, then this
-                  option is ignored.
+                  option has no effect.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **ignore_existing_pk** --
+                  Specifies the record collision policy for inserting the
+                  source table records (specified by input parameter
+                  *source_table_name*) into the target table (specified by
+                  input parameter *table_name*) table with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__.  If set to
+                  *true*, any source table records being inserted with primary
+                  key values that match those of an existing target table
+                  record will be ignored with no error generated.  If the
+                  specified table does not have a primary key, then this option
+                  has no affect.
                   Allowed values are:
 
                   * true
@@ -43352,6 +43601,23 @@ class GPUdbTable( object ):
                   * **false** --
                     Discard updated and inserted records when the same primary
                     keys already exist
+
+                  The default value is 'false'.
+
+                * **ignore_existing_pk** --
+                  Specifies the record collision policy for tables with a
+                  `primary key <../../../../concepts/tables/#primary-keys>`__
+                  when updating columns of the `primary key
+                  <../../../../concepts/tables/#primary-keys>`__ or inserting
+                  new records.  If set to *true*, any record being updated or
+                  inserted with primary key values that match those of an
+                  existing record will be ignored with no error generated.  If
+                  the specified table does not have a primary key, then this
+                  option has no affect.
+                  Allowed values are:
+
+                  * true
+                  * false
 
                   The default value is 'false'.
 
