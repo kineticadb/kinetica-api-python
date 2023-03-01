@@ -105,7 +105,7 @@ try:
 except ImportError:
     HAVE_SNAPPY = False
 
-from tabulate import tabulate
+from kinetica_tabulate import tabulate
 
 # -----------------------------------------------------------------
 # Logging -- Add a trace method
@@ -4698,7 +4698,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.8.3"
+    api_version = "7.1.8.4"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -35373,7 +35373,7 @@ class GPUdb(object):
                 * **delete_if_exists** --
                   If *true*,
                   any existing files specified in input parameter *file_names*
-                  will be deleted prior to  start of upload.
+                  will be deleted prior to start of upload.
                   Otherwise the file is replaced once the upload completes.
                   Rollback of the original file is
                   no longer possible if the upload is cancelled, aborted or

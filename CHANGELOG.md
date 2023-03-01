@@ -2,6 +2,12 @@
 
 ## Version 7.1
 
+### Version 7.1.8.4 - 2023-02-28
+
+#### Changed
+-   Move included `tabulate` library to avoid version conflicts
+
+
 ### Version 7.1.8.3 - 2023-01-26
 
 #### Added
