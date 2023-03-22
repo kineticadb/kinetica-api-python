@@ -2,6 +2,18 @@
 
 ## Version 7.1
 
+### Version 7.1.9.1 - 2023-03-19
+
+#### Added
+-   Examples of secure/unsecure connections; improved SSL failure error message
+
+#### Changed
+-   `GPUdb` object construction will error out if connection attempts fail
+
+#### Notes
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
+
+
 ### Version 7.1.8.4 - 2023-02-28
 
 #### Changed

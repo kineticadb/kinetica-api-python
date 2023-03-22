@@ -3,17 +3,37 @@
 
 ## Version 7.1
 
+### Version 7.1.9.0
+
+#### Changed Endpoints
+-   Added option ``dependencies`` to ``/show/table`` endpoint to list the DDLs of the dependencies of a view
+-   Added options ``POINTCOLOR_ATTR`` & ``SHAPEFILLCOLOR_ATTR`` to ``/wms`` endpoint
+-   Renamed ``/alter/system/properties`` option ``kafka_timeout`` to ``kafka_poll_timeout``
+-   Added new Louvain clustering algorithm solver type ``match_clusters`` and related options to ``/match/graph``
+-   Added option ``query_parameters`` to ``/execute/sql`` endpoint, allowing data to be passed in JSON format
+-   Added option ``offset`` to ``/create/projection`` endpoint
+-   Added options ``refresh_span`` and ``refresh_stop_time`` to ``/create/materializedview`` endpoint
+-   Added options ``set_refresh_stop_time`` and ``set_refresh_span`` to ``/alter/table`` endpoint
+-   Added additional_info map item ``execute_stop_time`` to response for endpoint ``/show/sql/proc``
+-   Added additional_info map item ``refresh_stop_time`` to response for endpoint ``/show/table``
+-   Added options ``compression_type``, ``truncate_strings``, & ``max_records_to_load`` to endpoints capable of loading data from files:
+    -  ``/create/table/external``
+    -  ``/insert/records/fromfiles``
+    -  ``/insert/records/frompayload``
+-   Added options``remote_query_increasing_column`` & ``subscribe`` for remote table/query subscriptions via JDBC data sources
+
+
 ### Version 7.1.8.7
 
 #### Added
--  Added ignore_existing_pk option to all endpoints that accept update_on_existing_pk
+-   Added ``ignore_existing_pk`` option to all endpoints that accept ``update_on_existing_pk``
 
 
 ### Version 7.1.8.0
 
 #### Added
--  Added new endpoint /export/records/tofiles
--  Added new endpoint /alter/directory
+-   Added new endpoint ``/export/records/tofiles``
+-   Added new endpoint ``/alter/directory``
 
 #### Changed Endpoints
 -   Added new options ``resource_group`` and ``default_schema`` to ``/create/user/external`` endpoint
@@ -25,9 +45,8 @@
 
 ##### Non-breaking Changes
 -   Added support for Azure, HDFS, S3 and Google Cloud storage providers to ``/create/datasink`` and ``/alter/datasink`` endpoints
--   Added rank option to ``/alter/tier``
--   Added delete_orphaned_tables option to ``/admin/verify_db``
--   Added new option compression_type for external files endpoints.
+-   Added ``rank`` option to ``/alter/tier``
+-   Added ``delete_orphaned_tables`` option to ``/admin/verify_db``
 
 ##### Breaking Changes
 
@@ -35,35 +54,41 @@
 ### Version 7.1.7.0
 
 #### Added
--  Added support for Google Cloud Storage as a backend for cold storage and external data sources
--  Added new endpoint /insert/records/fromquery
--  Added new endpoint /export/records/totable
--  Added new endpoint /upload/files/fromurl
+-   Added support for Google Cloud Storage as a backend for cold storage and external data sources
+-   Added new endpoint ``/insert/records/fromquery``
+-   Added new endpoint ``/export/records/totable``
+-   Added new endpoint ``/upload/files/fromurl``
 
 #### Changed Endpoints
--  Added new options ``gcs_bucket_name``, ``gcs_project_id`` and ``gcs_service_account_keys`` to endpoints ``/create/datasource`` and ``/alter/datasource``
--  Added new options ``gcs_service_account_id`` and ``gcs_service_account_keys`` to endpoints ``/create/credential`` and ``/alter/credential``
--  Added new options ``jdbc_driver_jar_path`` and ``jdbc_driver_class_name`` to endpoints ``/create/datasource`` and ``/create/datasink``
--  Added new options ``remote_query`` and  ``remote_query_filter_column`` to ``/create/table/external`` endpoint 
--  Added new options ``tcs_per_tom``, ``tps_per_tom``, and ``max_concurrent_kernels`` to ``/alter/system/properties`` endpoint 
--  Added new option ``expression`` to ``/get/records/fromcollection`` endpoint 
--  Added new options ``create_temp_table``, ``result_table``, ``result_table_persist``, and ``ttl`` to endpoint ``/aggregate/k_means`` 
--  Added new info item ``qualified_result_table_item`` to response for endpoint ``/aggregate/k_means``
--  Added new solve method and its options, ``match_charging_stations`` for endpoint ``/match/graph/``
--  Added new internal option ``simplify`` to /create/graph and /modify/graph endpoints
--  Added new options ``track_id_column_name`` and ``track_order_column_name`` to ``/visualize/image`` and ``/visualize/image/classbreak``
+-   Added new options ``gcs_bucket_name``, ``gcs_project_id`` and ``gcs_service_account_keys`` to endpoints ``/create/datasource`` and ``/alter/datasource``
+-   Added new options ``gcs_service_account_id`` and ``gcs_service_account_keys`` to endpoints ``/create/credential`` and ``/alter/credential``
+-   Added new options ``jdbc_driver_jar_path`` and ``jdbc_driver_class_name`` to endpoints ``/create/datasource`` and ``/create/datasink``
+-   Added new options ``remote_query`` and  ``remote_query_filter_column`` to ``/create/table/external`` endpoint
+-   Added new options ``tcs_per_tom``, ``tps_per_tom``, and ``max_concurrent_kernels`` to ``/alter/system/properties`` endpoint
+-   Added new option ``expression`` to ``/get/records/fromcollection`` endpoint
+-   Added new options ``create_temp_table``, ``result_table``, ``result_table_persist``, and ``ttl`` to endpoint ``/aggregate/k_means``
+-   Added new info item ``qualified_result_table_item`` to response for endpoint ``/aggregate/k_means``
+-   Added new solve method and its options, ``match_charging_stations`` for endpoint ``/match/graph/``
+-   Added new internal option ``simplify`` to ``/create/graph`` and ``/modify/graph`` endpoints
+-   Added new options ``track_id_column_name`` and ``track_order_column_name`` to ``/visualize/image`` and ``/visualize/image/classbreak``
 
 ##### Breaking Changes
--  Added new option ``persist`` to endpoints ``/alter/system/properties``, ``/alter/resourcegroup``, and ``/alter/tier``, which defaults to true
+-   Added new option ``persist`` to endpoints ``/alter/system/properties``, ``/alter/resourcegroup``, and ``/alter/tier``, which defaults to true
 
 
 ### Version 7.1.6.0 -- 2022-01-27
 
 #### Added
--   Added new endpoint /repartition/graph
--   Added new endpoint /show/resource/objects
--   Existing option in insert/records/fromfiles, frompayload & create/table/external: bad_record_table_limit was per rank and now global
--   Added new option in insert/records/fromfiles, frompayload & create/table/external: bad_record_table_limit_per_input: limit bad records to insert into bad_record_table_name when inserting from subscription or from multiple files
+-   Added new endpoint ``/repartition/graph``
+-   Added new endpoint ``/show/resource/objects``
+-   Existing option ``bad_record_table_limit`` was per rank and now global in endpoints:
+    -  ``/create/table/external``
+    -  ``/insert/records/fromfiles``
+    -  ``/insert/records/frompayload``
+-   Added option ``bad_record_table_limit_per_input``, limiting bad records to insert into ``bad_record_table_name`` when inserting from subscription or from multiple files, to endpoints:
+    -  ``/create/table/external``
+    -  ``/insert/records/fromfiles``
+    -  ``/insert/records/frompayload``
 
 #### Changed Endpoints
 
