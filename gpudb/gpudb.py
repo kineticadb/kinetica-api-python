@@ -22,6 +22,8 @@ try:
 except:
     import http.client as httplib
 
+import socket
+
 import base64
 import copy
 import os
@@ -2567,6 +2569,54 @@ class GPUdbRecord( object ):
 
 class GPUdb(object):
 
+    """
+    This is the main class to be used to provide the client functionality to
+    interact with the server.
+
+    Usage patterns
+
+    * Secured setup (Default)
+    This code given below will set up a secured connection. The property 'skip_ssl_cert_verification'
+    is set to 'False' by default. SSL certificate check will be enforced by default.
+
+    ::
+
+        options = GPUdb.Options()
+        options.username = "user"
+        options.password = "password"
+        options.logging_level = "debug"
+
+        gpudb = GPUdb(host='https://your_server_ip_or_FQDN:8082/gpudb-0', options=options )
+
+    * Unsecured setup
+    The code given below will set up an unsecured connection to the server. The property 'skip_ssl_cert_verification'
+    has been set explicitly to 'True'. So, irrespective of whether an SSL setup is there or not all certificate checks
+    will be bypassed.
+
+    ::
+
+        options = GPUdb.Options()
+        options.username = "user"
+        options.password = "password"
+        options.skip_ssl_cert_verification = True
+        options.logging_level = "debug"
+
+        gpudb = GPUdb(host='https://your_server_ip_or_FQDN:8082/gpudb-0', options=options )
+
+    Another way of setting up an unsecured connection is as given by the code below. In this case, the URL
+    is not a secured one so no SSL setup comes into play.
+
+    ::
+
+        options = GPUdb.Options()
+        options.username = "user"
+        options.password = "password"
+        options.logging_level = "debug"
+
+        gpudb = GPUdb(host='http://your_server_ip_or_FQDN:9191', options=options )
+
+    """
+
     # Logging related string constants
     # Note that the millisecond is put in the message format due to a shortcoming
     # of the python datetime format shortcoming
@@ -4692,13 +4742,20 @@ class GPUdb(object):
     # loop
     __HOST_MANAGER_SUBMIT_REQUEST_RETRY_COUNT = 3
 
+    __SSL_ERROR_MESSAGE_TEMPLATE = """
+    <{}>.  To fix, either:
+    * Add the server's certificate or a CA cert to the system CA certificates file
+    * Skip the certificate check using the skip_ssl_cert_verification option
+      Examples:  https://docs.kinetica.com/7.1/api/concepts/#https-without-certificate-validation
+    """
+
     END_OF_SET = -9999
     """(int) Used for indicating that all of the records (till the end of the
     set are desired)--generally used for /get/records/\* functions.
     """
 
     # The version of this API
-    api_version = "7.1.8.4"
+    api_version = "7.1.9.1"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -4967,8 +5024,9 @@ class GPUdb(object):
 
         # Check version compatibility with the server
         # -------------------------------------------
-        if not self.__disable_auto_discovery:
-            self.__perform_version_check()
+        self.__update_server_version()
+        if( not self.__perform_version_check() ):
+            self.__log_warn("API and server versions don't match")
     # end __construct
 
 
@@ -5972,6 +6030,10 @@ class GPUdb(object):
             # Also propagate special connection or exit errors
             self.__log_debug("Caught conn/exit exception: {}".format( str(ex) ))
             raise
+        except socket.timeout as ex:
+            # A socket error means we could not reach the system
+            self.__log_error( "{} caught exception: {}"
+                              "".format( str(url), str(ex) ) )
         except GPUdbException as ex:
             # Any error means we don't know whether the system is running
             self.__log_debug( "{} caught exception: {}"
@@ -6036,7 +6098,20 @@ class GPUdb(object):
         return property_map
     # end __get_system_properties
 
+    def __update_server_version(self):
+        """
+        Retrieves the server version by calling `__getsystem_properties` and updates
 
+        """
+        if self.server_version is not None:
+            return
+        try:
+            sys_props = self.__get_system_properties(GPUdb.URL(self.gpudb_full_url))
+            if C._SYSTEM_PROPERTIES_RESPONSE_SERVER_VERSION in sys_props:
+                self.server_version = sys_props[C._SYSTEM_PROPERTIES_RESPONSE_SERVER_VERSION]
+        except GPUdbException as ex:
+            msg = "Failed to get database version from the server; " + str(ex)
+            raise GPUdbException(msg)
 
     def __is_intra_cluster_failover_enabled( self, sys_properties ):
         """Given system properties, deduce if the given cluster has N+1 failover
@@ -7097,6 +7172,10 @@ class GPUdb(object):
         the *currently active* cluster of the Kinetica server."""
         return self.current_cluster_info.server_version
 
+    @server_version.setter
+    def server_version(self, value):
+        self.current_cluster_info.server_version = value
+
     @property
     def connection(self):
         return self.__protocol
@@ -7702,8 +7781,9 @@ class GPUdb(object):
             msg = ("Unable to execute SSL handshake with '{}' due to: {}"
                    "".format( url.url,
                               GPUdbException.stringify_exception( ex ) ))
-            self.__log_debug( msg )
-            raise GPUdbUnauthorizedAccessException( msg )
+            final_msg = self.__SSL_ERROR_MESSAGE_TEMPLATE.format(msg)
+            self.__log_debug( final_msg )
+            raise GPUdbUnauthorizedAccessException( final_msg )
         except Exception as ex:
             msg = ("Error posting to '{}' due to: {}"
                    "".format( url.url,
@@ -8413,45 +8493,47 @@ class GPUdb(object):
         # If there is only one URL, then we can't switch URLs
         if ( self.__get_ha_ring_size() == 1 ):
             self.__log_debug( "Ring size is 1")
-            try:
-                # Try to find out the new cluster configuration and all
-                # the relevant URLs; may take a long while
-                curr_cluster_index = self.__get_curr_cluster_index()
-                self.__log_debug( "curr_cluster_index {}; attempting intra "
-                                  "cluster failover..."
-                                  "".format( curr_cluster_index ) )
-                if ( self.__do_intra_cluster_failover( curr_cluster_index ) ):
-                    new_url = self.get_url( stringified = False )
-                    self.__log_debug( "Intra cluster failover succeeded; "
-                                      "switched to url: {}"
-                                      "".format( str(new_url) ) )
-                    # We have updated all the addresses; return the
-                    # current/new head rank URL
-                    return new_url
-                else:
-                    self.__log_debug( "N+1 failover recovery failed; throwing error" )
-                    msg = ( "N+1 failover at cluster with (possibly stale) "
-                            "rank-0 URL {} did not complete successfully "
-                            "( no backup clusters available to fall back on)"
-                            "".format( self.get_url() ) )
-                    raise GPUdbHAUnavailableException( msg )
-                # end if
-            except GPUdbHAUnavailableException as ex:
-                raise
-            except GPUdbUnauthorizedAccessException as ex:
-                # Any permission related problem should get propagated
-                self.__log_debug( "Caught GPUdb UNAUTHORIZED exception: "
-                                  "{}".format( str(ex) ) )
-                raise
-            except GPUdbException as ex:
-                self.__log_debug( "N+1 failover recovery had exception: {}"
-                                  "".format( str(ex) ) )
-                msg = ("N+1 failover at cluster with (possibly stale) "
-                       "rank-0 URL {} did not complete successfully ("
-                       "no backup clusters available to fall back on);"
-                       " error: {}".format( self.get_url(), str(ex) ) )
-                raise GPUdbHAUnavailableException( msg )
-            # end try
+            raise GPUdbHAUnavailableException("Ring size set to 1; HA Unavailable")
+
+            # try:
+            #     # Try to find out the new cluster configuration and all
+            #     # the relevant URLs; may take a long while
+            #     curr_cluster_index = self.__get_curr_cluster_index()
+            #     self.__log_debug( "curr_cluster_index {}; attempting intra "
+            #                       "cluster failover..."
+            #                       "".format( curr_cluster_index ) )
+            #     if ( self.__do_intra_cluster_failover( curr_cluster_index ) ):
+            #         new_url = self.get_url( stringified = False )
+            #         self.__log_debug( "Intra cluster failover succeeded; "
+            #                           "switched to url: {}"
+            #                           "".format( str(new_url) ) )
+            #         # We have updated all the addresses; return the
+            #         # current/new head rank URL
+            #         return new_url
+            #     else:
+            #         self.__log_debug( "N+1 failover recovery failed; throwing error" )
+            #         msg = ( "N+1 failover at cluster with (possibly stale) "
+            #                 "rank-0 URL {} did not complete successfully "
+            #                 "( no backup clusters available to fall back on)"
+            #                 "".format( self.get_url() ) )
+            #         raise GPUdbHAUnavailableException( msg )
+            #     # end if
+            # except GPUdbHAUnavailableException as ex:
+            #     raise
+            # except GPUdbUnauthorizedAccessException as ex:
+            #     # Any permission related problem should get propagated
+            #     self.__log_debug( "Caught GPUdb UNAUTHORIZED exception: "
+            #                       "{}".format( str(ex) ) )
+            #     raise
+            # except GPUdbException as ex:
+            #     self.__log_debug( "N+1 failover recovery had exception: {}"
+            #                       "".format( str(ex) ) )
+            #     msg = ("N+1 failover at cluster with (possibly stale) "
+            #            "rank-0 URL {} did not complete successfully ("
+            #            "no backup clusters available to fall back on);"
+            #            " error: {}".format( self.get_url(), str(ex) ) )
+            #     raise GPUdbHAUnavailableException( msg )
+            # # end try
         # end if
 
         # Get how many times we've switched clusters since the caller called
@@ -8561,45 +8643,46 @@ class GPUdb(object):
         # If there is only one URL, then we can't switch URLs
         if ( self.__get_ha_ring_size() == 1 ):
             self.__log_debug( "Ring size is 1")
-            try:
-                # Try to find out the new cluster configuration and all
-                # the relevant URLs; may take a long while
-                curr_cluster_index = self.__get_curr_cluster_index()
-                self.__log_debug( "curr_cluster_index {}; attempting intra "
-                                  "cluster failover..."
-                                  "".format( curr_cluster_index ) )
-                if ( self.__do_intra_cluster_failover( curr_cluster_index ) ):
-                    new_url = self.get_hm_url( stringified = False )
-                    self.__log_debug( "Intra cluster failover succeeded; "
-                                      "switched to url: {}"
-                                      "".format( str(new_url) ) )
-                    # We have updated all the addresses; return the
-                    # current/new head rank URL
-                    return new_url
-                else:
-                    self.__log_debug( "N+1 failover recovery failed; throwing error" )
-                    msg = ( "N+1 failover at cluster with (possibly stale) "
-                            "rank-0 URL {} did not complete successfully "
-                            "( no backup clusters available to fall back on)"
-                            "".format( self.get_hm_url() ) )
-                    raise GPUdbHAUnavailableException( msg )
-                # end if
-            except GPUdbHAUnavailableException as ex:
-                raise
-            except GPUdbUnauthorizedAccessException as ex:
-                # Any permission related problem should get propagated
-                self.__log_debug( "Caught GPUdb UNAUTHORIZED exception: "
-                                  "{}".format( str(ex) ) )
-                raise
-            except GPUdbException as ex:
-                self.__log_debug( "N+1 failover recovery had exception: {}"
-                                  "".format( str(ex) ) )
-                msg = ("N+1 failover at cluster with (possibly stale) "
-                       "rank-0 URL {} did not complete successfully ("
-                       "no backup clusters available to fall back on);"
-                       " error: {}".format( self.get_hm_url(), str(ex) ) )
-                raise GPUdbHAUnavailableException( msg )
-            # end try
+            raise GPUdbHAUnavailableException("Ring size set to 1; HA Unavailable")
+            # try:
+            #     # Try to find out the new cluster configuration and all
+            #     # the relevant URLs; may take a long while
+            #     curr_cluster_index = self.__get_curr_cluster_index()
+            #     self.__log_debug( "curr_cluster_index {}; attempting intra "
+            #                       "cluster failover..."
+            #                       "".format( curr_cluster_index ) )
+            #     if ( self.__do_intra_cluster_failover( curr_cluster_index ) ):
+            #         new_url = self.get_hm_url( stringified = False )
+            #         self.__log_debug( "Intra cluster failover succeeded; "
+            #                           "switched to url: {}"
+            #                           "".format( str(new_url) ) )
+            #         # We have updated all the addresses; return the
+            #         # current/new head rank URL
+            #         return new_url
+            #     else:
+            #         self.__log_debug( "N+1 failover recovery failed; throwing error" )
+            #         msg = ( "N+1 failover at cluster with (possibly stale) "
+            #                 "rank-0 URL {} did not complete successfully "
+            #                 "( no backup clusters available to fall back on)"
+            #                 "".format( self.get_hm_url() ) )
+            #         raise GPUdbHAUnavailableException( msg )
+            #     # end if
+            # except GPUdbHAUnavailableException as ex:
+            #     raise
+            # except GPUdbUnauthorizedAccessException as ex:
+            #     # Any permission related problem should get propagated
+            #     self.__log_debug( "Caught GPUdb UNAUTHORIZED exception: "
+            #                       "{}".format( str(ex) ) )
+            #     raise
+            # except GPUdbException as ex:
+            #     self.__log_debug( "N+1 failover recovery had exception: {}"
+            #                       "".format( str(ex) ) )
+            #     msg = ("N+1 failover at cluster with (possibly stale) "
+            #            "rank-0 URL {} did not complete successfully ("
+            #            "no backup clusters available to fall back on);"
+            #            " error: {}".format( self.get_hm_url(), str(ex) ) )
+            #     raise GPUdbHAUnavailableException( msg )
+            # # end try
         # end if
 
         # Get how many times we've switched clusters since the caller called
@@ -8805,7 +8888,10 @@ class GPUdb(object):
 
 
     def __do_intra_cluster_failover( self, cluster_index ):
-        """For the given cluster in the HA ring, try to recover the new set of
+        """
+        THIS METHOD IS NOT USED ANYMORE SINCE N+1 IS NOT HANDLED NOW.
+
+        For the given cluster in the HA ring, try to recover the new set of
         addresses for all the ranks etc.  If N+1 failover is in progress, spin
         and wait until it is in a good state and return the result.
 
@@ -17500,16 +17586,16 @@ class GPUdb(object):
                   'true'.
 
                 * **kafka_batch_size** --
-                  Maximum number of records to be read in a single kafka
-                  batched request.  The default value is '1000'.
+                  Maximum number of records to be ingested in a single batch.
+                  The default value is '1000'.
+
+                * **kafka_poll_timeout** --
+                  Maximum time (milliseconds) for each poll to get records from
+                  kafka.  The default value is '0'.
 
                 * **kafka_wait_time** --
-                  Maximum number of seconds to wait in a single kafka batched
-                  request.  The default value is '30'.
-
-                * **kafka_timeout** --
-                  Number of seconds after which kakfa poll will timeout if
-                  datasource has no records.  The default value is '5'.
+                  Maximum time (seconds) to buffer records received from kafka
+                  before ingestion.  The default value is '30'.
 
                 * **egress_single_file_max_size** --
                   Max file size (in MB) to allow saving to a single file. May
@@ -17777,12 +17863,23 @@ class GPUdb(object):
                   'YYYY-MM-DD HH:MM:SS'.  Subsequent refreshes occur at the
                   specified time + N * the refresh period.
 
+                * **set_refresh_stop_time** --
+                  Sets the time to stop periodic refreshes of this
+                  `materialized view
+                  <../../../../concepts/materialized_views/>`__ to the datetime
+                  string specified in input parameter *value* with format
+                  'YYYY-MM-DD HH:MM:SS'.
+
                 * **set_refresh_period** --
                   Sets the time interval in seconds at which to refresh this
                   `materialized view
                   <../../../../concepts/materialized_views/>`__ to the value
                   specified in input parameter *value*.  Also, sets the refresh
                   method to periodic if not already set.
+
+                * **set_refresh_span** --
+                  Sets the future time-offset(in seconds) for the view refresh
+                  to stop.
 
                 * **set_refresh_execute_as** --
                   Sets the user name to refresh this `materialized view
@@ -19803,9 +19900,8 @@ class GPUdb(object):
                   created view. If the schema provided is non-existent, it will
                   be automatically created.
 
-                * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
-                  specified in input parameter *table_name*.
+                * **execute_as** --
+                  User name to use to run the refresh job
 
                 * **persist** --
                   If *true*, then the materialized view specified in input
@@ -19819,6 +19915,15 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                * **refresh_span** --
+                  Sets the future time-offset(in seconds) at which periodic
+                  refresh stops
+
+                * **refresh_stop_time** --
+                  When *refresh_method* is *periodic*, specifies the time at
+                  which a periodic refresh is stopped.  Value is a datetime
+                  string with format 'YYYY-MM-DD HH:MM:SS'.
 
                 * **refresh_method** --
                   Method by which the join can be refreshed when the data in
@@ -19853,8 +19958,9 @@ class GPUdb(object):
                   at which a refresh is to be done.  Value is a datetime string
                   with format 'YYYY-MM-DD HH:MM:SS'.
 
-                * **execute_as** --
-                  User name to use to run the refresh job
+                * **ttl** --
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
+                  specified in input parameter *table_name*.
 
         Returns:
             A dict with the following entries--
@@ -20112,8 +20218,12 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **offset** --
+                  The number of initial results to skip (this can be useful for
+                  paging through the results).  The default value is '0'.
+
                 * **limit** --
-                  The number of records to keep.  The default value is ''.
+                  The number of records to keep.  The default value is '-9999'.
 
                 * **order_by** --
                   Comma-separated list of the columns to be sorted by; e.g.
@@ -20954,6 +21064,14 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **avro_num_records** --
+                  Optional number of avro records, if data includes only
+                  records.
+
+                * **avro_schema** --
+                  Optional string representing avro schema, for insert records
+                  in avro format, that does not include is schema.
+
                 * **bad_record_table_name** --
                   Optional name of a table to which records that were rejected
                   are written.  The bad-record-table has the following columns:
@@ -21026,6 +21144,24 @@ class GPUdb(object):
                   Specifies a comma-delimited list of columns from the source
                   data to
                   skip.  Mutually exclusive with *columns_to_load*.
+
+                * **compression_type** --
+                  Optional: compression type.
+                  Allowed values are:
+
+                  * **none** --
+                    Uncompressed
+
+                  * **auto** --
+                    Default. Auto detect compression type
+
+                  * **gzip** --
+                    gzip file compression.
+
+                  * **bzip2** --
+                    bzip2 file compression.
+
+                  The default value is 'auto'.
 
                 * **datasource_name** --
                   Name of an existing external data source from which data
@@ -21211,6 +21347,12 @@ class GPUdb(object):
                 * **local_time_offset** --
                   For Avro local timestamp columns
 
+                * **max_records_to_load** --
+                  Limit the number of records to load in this request: If this
+                  number is larger than a batch_size, then the number of
+                  records loaded will be limited to the next whole number of
+                  batch_size (per working thread).  The default value is ''.
+
                 * **num_tasks_per_rank** --
                   Optional: number of tasks for reading file per rank. Default
                   will be external_file_reader_num_tasks
@@ -21355,6 +21497,16 @@ class GPUdb(object):
                   Set minimum column size. Used only when 'text_search_columns'
                   has a value.
 
+                * **truncate_strings** --
+                  If set to *true*, truncate string values that are longer than
+                  the column's type size.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **truncate_table** --
                   If set to *true*, truncates the table specified by input
                   parameter *table_name* prior to loading the file(s).
@@ -21386,6 +21538,10 @@ class GPUdb(object):
                   Name of column to be used for splitting the query into
                   multiple sub-queries using the data distribution of given
                   column.  The default value is ''.
+
+                * **remote_query_increasing_column** --
+                  Column on subscribed remote query result that will increase
+                  for new records (e.g., TIMESTAMP).  The default value is ''.
 
                 * **remote_query_partition_column** --
                   Alias name for remote_query_filter_column.  The default value
@@ -23492,7 +23648,8 @@ class GPUdb(object):
 
             data (list of str)
                 An array of binary-encoded data for the records to be binded to
-                the SQL query.  The default value is an empty list ( [] ).  The
+                the SQL query.  Or use *query_parameters* to pass the data in
+                JSON format.  The default value is an empty list ( [] ).  The
                 user can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
 
@@ -23500,16 +23657,6 @@ class GPUdb(object):
                 Optional parameters.  The default value is an empty dict ( {}
                 ).
                 Allowed keys are:
-
-                * **parallel_execution** --
-                  If *false*, disables the parallel step execution of the given
-                  query.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
 
                 * **cost_based_optimization** --
                   If *false*, disables the cost-based optimization of the given
@@ -23520,46 +23667,6 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
-
-                * **plan_cache** --
-                  If *false*, disables plan caching for the given query.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
-                * **rule_based_optimization** --
-                  If *false*, disables rule-based rewrite optimizations for the
-                  given query.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
-                * **results_caching** --
-                  If *false*, disables caching of the results of the given
-                  query.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
-                * **paging_table** --
-                  When empty or the specified paging table not exists, the
-                  system will create a paging table and return when query
-                  output has more records than the user asked. If the paging
-                  table exists in the system, the records from the paging table
-                  are returned without evaluating the query.
-
-                * **paging_table_ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`__ of the paging
-                  table.
 
                 * **distributed_joins** --
                   If *true*, enables the use of distributed joins in servicing
@@ -23587,40 +23694,6 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-                * **ssq_optimization** --
-                  If *false*, scalar subqueries will be translated into joins.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
-                * **late_materialization** --
-                  If *true*, Joins/Filters results  will always be materialized
-                  ( saved to result tables format).
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
-                * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`__ of the
-                  intermediate result tables used in query execution.
-
-                * **update_on_existing_pk** --
-                  Can be used to customize behavior when the updated primary
-                  key value already exists as described in
-                  :meth:`GPUdb.insert_records`.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
                 * **ignore_existing_pk** --
                   Can be used to customize behavior when the updated primary
                   key value already exists as described in
@@ -23632,9 +23705,30 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-                * **preserve_dict_encoding** --
-                  If *true*, then columns that were dict encoded in the source
-                  table will be dict encoded in the projection table.
+                * **late_materialization** --
+                  If *true*, Joins/Filters results  will always be materialized
+                  ( saved to result tables format).
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **paging_table** --
+                  When empty or the specified paging table not exists, the
+                  system will create a paging table and return when query
+                  output has more records than the user asked. If the paging
+                  table exists in the system, the records from the paging table
+                  are returned without evaluating the query.
+
+                * **paging_table_ttl** --
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the paging
+                  table.
+
+                * **parallel_execution** --
+                  If *false*, disables the parallel step execution of the given
+                  query.
                   Allowed values are:
 
                   * true
@@ -23642,12 +23736,8 @@ class GPUdb(object):
 
                   The default value is 'true'.
 
-                * **validate_change_column** --
-                  When changing a column using alter table, validate the change
-                  before applying it. If *true*, then validate all values. A
-                  value too large (or too long) for the new type will prevent
-                  any change. If *false*, then when a value is too large or
-                  long, it will be truncated.
+                * **plan_cache** --
+                  If *false*, disables plan caching for the given query.
                   Allowed values are:
 
                   * true
@@ -23665,6 +23755,78 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                * **preserve_dict_encoding** --
+                  If *true*, then columns that were dict encoded in the source
+                  table will be dict encoded in the projection table.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **query_parameters** --
+                  Query parameters in JSON array or arrays (for inserting
+                  multiple rows).  This can be used instead of input parameter
+                  *data* and input parameter *request_schema_str*.
+
+                * **results_caching** --
+                  If *false*, disables caching of the results of the given
+                  query.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **rule_based_optimization** --
+                  If *false*, disables rule-based rewrite optimizations for the
+                  given query.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **ssq_optimization** --
+                  If *false*, scalar subqueries will be translated into joins.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **ttl** --
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the
+                  intermediate result tables used in query execution.
+
+                * **update_on_existing_pk** --
+                  Can be used to customize behavior when the updated primary
+                  key value already exists as described in
+                  :meth:`GPUdb.insert_records`.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **validate_change_column** --
+                  When changing a column using alter table, validate the change
+                  before applying it. If *true*, then validate all values. A
+                  value too large (or too long) for the new type will prevent
+                  any change. If *false*, then when a value is too large or
+                  long, it will be truncated.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
         Returns:
             A dict with the following entries--
@@ -23801,7 +23963,8 @@ class GPUdb(object):
 
             data (list of str)
                 An array of binary-encoded data for the records to be binded to
-                the SQL query.  The default value is an empty list ( [] ).  The
+                the SQL query.  Or use *query_parameters* to pass the data in
+                JSON format.  The default value is an empty list ( [] ).  The
                 user can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
 
@@ -23809,16 +23972,6 @@ class GPUdb(object):
                 Optional parameters.  The default value is an empty dict ( {}
                 ).
                 Allowed keys are:
-
-                * **parallel_execution** --
-                  If *false*, disables the parallel step execution of the given
-                  query.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
 
                 * **cost_based_optimization** --
                   If *false*, disables the cost-based optimization of the given
@@ -23829,46 +23982,6 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
-
-                * **plan_cache** --
-                  If *false*, disables plan caching for the given query.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
-                * **rule_based_optimization** --
-                  If *false*, disables rule-based rewrite optimizations for the
-                  given query.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
-                * **results_caching** --
-                  If *false*, disables caching of the results of the given
-                  query.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
-                * **paging_table** --
-                  When empty or the specified paging table not exists, the
-                  system will create a paging table and return when query
-                  output has more records than the user asked. If the paging
-                  table exists in the system, the records from the paging table
-                  are returned without evaluating the query.
-
-                * **paging_table_ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`__ of the paging
-                  table.
 
                 * **distributed_joins** --
                   If *true*, enables the use of distributed joins in servicing
@@ -23896,40 +24009,6 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-                * **ssq_optimization** --
-                  If *false*, scalar subqueries will be translated into joins.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
-                * **late_materialization** --
-                  If *true*, Joins/Filters results  will always be materialized
-                  ( saved to result tables format).
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
-                * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`__ of the
-                  intermediate result tables used in query execution.
-
-                * **update_on_existing_pk** --
-                  Can be used to customize behavior when the updated primary
-                  key value already exists as described in
-                  :meth:`GPUdb.insert_records`.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
                 * **ignore_existing_pk** --
                   Can be used to customize behavior when the updated primary
                   key value already exists as described in
@@ -23941,9 +24020,30 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-                * **preserve_dict_encoding** --
-                  If *true*, then columns that were dict encoded in the source
-                  table will be dict encoded in the projection table.
+                * **late_materialization** --
+                  If *true*, Joins/Filters results  will always be materialized
+                  ( saved to result tables format).
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **paging_table** --
+                  When empty or the specified paging table not exists, the
+                  system will create a paging table and return when query
+                  output has more records than the user asked. If the paging
+                  table exists in the system, the records from the paging table
+                  are returned without evaluating the query.
+
+                * **paging_table_ttl** --
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the paging
+                  table.
+
+                * **parallel_execution** --
+                  If *false*, disables the parallel step execution of the given
+                  query.
                   Allowed values are:
 
                   * true
@@ -23951,12 +24051,8 @@ class GPUdb(object):
 
                   The default value is 'true'.
 
-                * **validate_change_column** --
-                  When changing a column using alter table, validate the change
-                  before applying it. If *true*, then validate all values. A
-                  value too large (or too long) for the new type will prevent
-                  any change. If *false*, then when a value is too large or
-                  long, it will be truncated.
+                * **plan_cache** --
+                  If *false*, disables plan caching for the given query.
                   Allowed values are:
 
                   * true
@@ -23974,6 +24070,78 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                * **preserve_dict_encoding** --
+                  If *true*, then columns that were dict encoded in the source
+                  table will be dict encoded in the projection table.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **query_parameters** --
+                  Query parameters in JSON array or arrays (for inserting
+                  multiple rows).  This can be used instead of input parameter
+                  *data* and input parameter *request_schema_str*.
+
+                * **results_caching** --
+                  If *false*, disables caching of the results of the given
+                  query.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **rule_based_optimization** --
+                  If *false*, disables rule-based rewrite optimizations for the
+                  given query.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **ssq_optimization** --
+                  If *false*, scalar subqueries will be translated into joins.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **ttl** --
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the
+                  intermediate result tables used in query execution.
+
+                * **update_on_existing_pk** --
+                  Can be used to customize behavior when the updated primary
+                  key value already exists as described in
+                  :meth:`GPUdb.insert_records`.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **validate_change_column** --
+                  When changing a column using alter table, validate the change
+                  before applying it. If *true*, then validate all values. A
+                  value too large (or too long) for the new type will prevent
+                  any change. If *false*, then when a value is too large or
+                  long, it will be truncated.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
             record_type (:class:`RecordType` or None)
                 The record type expected in the results, or None to
@@ -29179,6 +29347,14 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **avro_num_records** --
+                  Optional number of avro records, if data includes only
+                  records.
+
+                * **avro_schema** --
+                  Optional string representing avro schema, if data includes
+                  only records.
+
                 * **bad_record_table_name** --
                   Optional name of a table to which records that were rejected
                   are written.  The bad-record-table has the following columns:
@@ -29252,6 +29428,24 @@ class GPUdb(object):
                   Specifies a comma-delimited list of columns from the source
                   data to
                   skip.  Mutually exclusive with *columns_to_load*.
+
+                * **compression_type** --
+                  Optional: compression type.
+                  Allowed values are:
+
+                  * **none** --
+                    Uncompressed file
+
+                  * **auto** --
+                    Default. Auto detect compression type
+
+                  * **gzip** --
+                    gzip file compression.
+
+                  * **bzip2** --
+                    bzip2 file compression.
+
+                  The default value is 'auto'.
 
                 * **datasource_name** --
                   Name of an existing external data source from which data
@@ -29417,6 +29611,12 @@ class GPUdb(object):
                 * **local_time_offset** --
                   For Avro local timestamp columns
 
+                * **max_records_to_load** --
+                  Limit the number of records to load in this request: If this
+                  number is larger than a batch_size, then the number of
+                  records loaded will be limited to the next whole number of
+                  batch_size (per working thread).  The default value is ''.
+
                 * **num_tasks_per_rank** --
                   Optional: number of tasks for reading file per rank. Default
                   will be external_file_reader_num_tasks
@@ -29544,6 +29744,16 @@ class GPUdb(object):
                 * **text_search_min_column_length** --
                   Set minimum column size. Used only when 'text_search_columns'
                   has a value.
+
+                * **truncate_strings** --
+                  If set to *true*, truncate string values that are longer than
+                  the column's type size.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **truncate_table** --
                   If set to *true*, truncates the table specified by input
@@ -29804,6 +30014,14 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **avro_num_records** --
+                  Optional number of avro records, if data includes only
+                  records.
+
+                * **avro_schema** --
+                  Optional string representing avro schema, for insert records
+                  in avro format, that does not include is schema.
+
                 * **bad_record_table_name** --
                   Optional name of a table to which records that were rejected
                   are written.  The bad-record-table has the following columns:
@@ -29876,6 +30094,24 @@ class GPUdb(object):
                   Specifies a comma-delimited list of columns from the source
                   data to
                   skip.  Mutually exclusive with *columns_to_load*.
+
+                * **compression_type** --
+                  Optional: payload compression type.
+                  Allowed values are:
+
+                  * **none** --
+                    Uncompressed
+
+                  * **auto** --
+                    Default. Auto detect compression type
+
+                  * **gzip** --
+                    gzip file compression.
+
+                  * **bzip2** --
+                    bzip2 file compression.
+
+                  The default value is 'auto'.
 
                 * **default_column_formats** --
                   Specifies the default format to be applied to source data
@@ -30018,6 +30254,12 @@ class GPUdb(object):
                 * **local_time_offset** --
                   For Avro local timestamp columns
 
+                * **max_records_to_load** --
+                  Limit the number of records to load in this request: If this
+                  number is larger than a batch_size, then the number of
+                  records loaded will be limited to the next whole number of
+                  batch_size (per working thread).  The default value is ''.
+
                 * **num_tasks_per_rank** --
                   Optional: number of tasks for reading file per rank. Default
                   will be external_file_reader_num_tasks
@@ -30145,6 +30387,16 @@ class GPUdb(object):
                 * **text_search_min_column_length** --
                   Set minimum column size. Used only when 'text_search_columns'
                   has a value.
+
+                * **truncate_strings** --
+                  If set to *true*, truncate string values that are longer than
+                  the column's type size.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **truncate_table** --
                   If set to *true*, truncates the table specified by input
@@ -30480,6 +30732,16 @@ class GPUdb(object):
                   primary keys, when not specified in the type.  The default
                   value is ''.
 
+                * **subscribe** --
+                  Continuously poll the data source to check for new data and
+                  load it into the table.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **truncate_table** --
                   If set to *true*, truncates the table specified by input
                   parameter *table_name* prior to loading the data.
@@ -30502,6 +30764,10 @@ class GPUdb(object):
                   Name of column to be used for splitting the query into
                   multiple sub-queries using the data distribution of given
                   column.  The default value is ''.
+
+                * **remote_query_increasing_column** --
+                  Column on subscribed remote query result that will increase
+                  for new records (e.g., TIMESTAMP).  The default value is ''.
 
                 * **remote_query_partition_column** --
                   Alias name for remote_query_filter_column.  The default value
@@ -31100,6 +31366,10 @@ class GPUdb(object):
                   Matches the pickups and dropoffs by optimizing the total trip
                   costs
 
+                * **match_clusters** --
+                  Matches the graph nodes with a cluster index using Louvain
+                  clustering algorithm
+
                 The default value is 'markov_chain'.
 
             solution_table (str)
@@ -31354,6 +31624,39 @@ class GPUdb(object):
                     finished at the final dropoff.
 
                   The default value is 'true'.
+
+                * **num_cycles** --
+                  For the *match_clusters* solver only. Terminates the cluster
+                  exchange iterations across 2-step-cycles (outer loop) when
+                  quality does not improve during iterations.  The default
+                  value is '10'.
+
+                * **num_loops_per_cycle** --
+                  For the *match_clusters* solver only. Terminates the cluster
+                  exchanges within the first step iterations of a cycle (inner
+                  loop) unless convergence is reached.  The default value is
+                  '10'.
+
+                * **num_output_clusters** --
+                  For the *match_clusters* solver only.  Limits the output to
+                  the top 'num_output_clusters' clusters based on density.
+                  Default value of zero outputs all clusters.  The default
+                  value is '0'.
+
+                * **max_num_clusters** --
+                  For the *match_clusters* solver only. If set (value greater
+                  than zero), it terminates when the number of clusters goes
+                  below than this number.  The default value is '0'.
+
+                * **cluster_quality_metric** --
+                  For the *match_clusters* solver only. The quality metric for
+                  Louvain modularity optimization solver.
+                  Allowed values are:
+
+                  * **girwan** --
+                    Uses the Newman Girwan quality metric for cluster solver
+
+                  The default value is 'girwan'.
 
                 * **restricted_type** --
                   For the *match_supply_demand* solver only. Optimization is
@@ -40704,12 +41007,23 @@ class GPUdbTable( object ):
                   'YYYY-MM-DD HH:MM:SS'.  Subsequent refreshes occur at the
                   specified time + N * the refresh period.
 
+                * **set_refresh_stop_time** --
+                  Sets the time to stop periodic refreshes of this
+                  `materialized view
+                  <../../../../concepts/materialized_views/>`__ to the datetime
+                  string specified in input parameter *value* with format
+                  'YYYY-MM-DD HH:MM:SS'.
+
                 * **set_refresh_period** --
                   Sets the time interval in seconds at which to refresh this
                   `materialized view
                   <../../../../concepts/materialized_views/>`__ to the value
                   specified in input parameter *value*.  Also, sets the refresh
                   method to periodic if not already set.
+
+                * **set_refresh_span** --
+                  Sets the future time-offset(in seconds) for the view refresh
+                  to stop.
 
                 * **set_refresh_execute_as** --
                   Sets the user name to refresh this `materialized view
@@ -41370,8 +41684,12 @@ class GPUdbTable( object ):
 
                   The default value is 'false'.
 
+                * **offset** --
+                  The number of initial results to skip (this can be useful for
+                  paging through the results).  The default value is '0'.
+
                 * **limit** --
-                  The number of records to keep.  The default value is ''.
+                  The number of records to keep.  The default value is '-9999'.
 
                 * **order_by** --
                   Comma-separated list of the columns to be sorted by; e.g.
