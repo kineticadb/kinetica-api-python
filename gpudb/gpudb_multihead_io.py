@@ -2375,7 +2375,9 @@ class GPUdbIngestor:
                   batch_size,
                   options = None,
                   workers = None,
-                  is_table_replicated = False ):
+                  is_table_replicated = False,
+                  json_ingestion = False
+                  ):
         """Initializes the GPUdbIngestor instance.
 
         Parameters:
@@ -2405,9 +2407,23 @@ class GPUdbIngestor:
                 (but the head node would be used for ingestion instead).  This
                 is due to GPUdb not supporting multi-head ingestion on
                 replicated tables.
+            json_ingestion (bool)
+                Indicates whether the `GPUdbIngestor` instance is being used to
+                insert JSON records or not. Default has been set to `False`. To
+                use `GPUdbIngestor` for inserting JSON records it must be set to
+                True.
+
+                `Example`
+
+                ::
+
+                    gpudb_ingestor = GPUdbIngestor(gpudb, table_name, record_type, ingestor_batch_size, ingestor_options, workers, json_ingestion=True)
+
         """
 
         # Validate input parameter 'gpudb'
+        self.json_ingestion = json_ingestion
+
         if not isinstance(gpudb, GPUdb):
             raise GPUdbException( "Parameter 'gpudb' must be of "
                                   "type GPUdb; given %s"
@@ -2517,7 +2533,7 @@ class GPUdbIngestor:
         if not self.worker_list:
             # If the table is replicated, then we use only the head node
             self.worker_list = GPUdbWorkerList( self.gpudb,
-                                                use_head_node_only = self.is_table_replicated )
+                                                use_head_node_only = (self.is_table_replicated or self.gpudb.disable_auto_discovery))
 
         # Create worker queues per worker URL
         for worker in self.worker_list.get_worker_urls():
@@ -2548,7 +2564,8 @@ class GPUdbIngestor:
 
         # Flag for whether to use sharding or not
         self.use_head_node = ( (not self.is_multihead_enabled)
-                               or self.is_table_replicated )
+                               or self.is_table_replicated
+                               or self.gpudb.disable_auto_discovery )
 
         # Set the routing table, iff multi-head I/O is turned on
         # AND the table is not replicated
@@ -2568,8 +2585,7 @@ class GPUdbIngestor:
 
 
     def __force_failover( self, curr_url, curr_count_cluster_switches ):
-        """Force a high-availability cluster (inter-cluster) or ring-resiliency
-        (intra-cluster) failover over, as appropriate.  Check the health of the
+        """Force a high-availability cluster failover.  Check the health of the
         cluster (either head node only, or head node and worker ranks, based on
         the retriever configuration), and use it if healthy.  If no healthy
         cluster is found, then throw an error.  Otherwise, stop at the first
@@ -2693,8 +2709,6 @@ class GPUdbIngestor:
                     self.__log_debug( "# cluster switches and shard versions "
                                       "the same" )
 
-                    # Still using the same cluster; but may have done an N+1
-                    # failover
                     if reconstruct_worker_queues:
                         # The caller needs to know if we ended up updating the
                         # queues
@@ -3034,9 +3048,17 @@ class GPUdbIngestor:
                                   "boolean; given '{}'"
                                   "".format( str(type( is_data_encoded )) ) )
 
-        if not isinstance(record, (list, GPUdbRecord, collections.OrderedDict)):
+        record_is_json = None
+
+        if self.json_ingestion:
+            record_is_json = GPUdb.valid_json(record)
+            is_array = GPUdb.is_json_array(record)
+            if is_array:
+                raise GPUdbException("Input parameter 'record' cannot be a JSON array, must be a single JSON record")
+
+        if not isinstance(record, (list, GPUdbRecord, collections.OrderedDict)) and not record_is_json:
             raise GPUdbException( "Input parameter 'record' must be a GPUdbRecord or an "
-                                  "OrderedDict; given %s" % str(type(record)) )
+                                  "OrderedDict or a valid JSON; given %s" % str(type(record)) )
 
         if record_encoding.lower() not in ("json", "binary"):
             raise GPUdbException( "Input parameter 'record_encoding' must be "
@@ -3046,25 +3068,30 @@ class GPUdbIngestor:
         primary_key = None
         shard_key   = None
 
-        # Build the primary key
-        if self.primary_key_builder:
-            primary_key = self.primary_key_builder.build( record )
+        if not self.json_ingestion:
+            # Build the primary key
+            if self.primary_key_builder:
+                primary_key = self.primary_key_builder.build( record )
 
-        # Build the shard key
-        if self.shard_key_builder:
-            shard_key = self.shard_key_builder.build( record )
+            # Build the shard key
+            if self.shard_key_builder:
+                shard_key = self.shard_key_builder.build( record )
+        # end if not self.json_ingestion
 
         # Create a worker queue
         worker_queue = None
 
         # Get the index of the worker to be used
-        if self.use_head_node:
-            worker_index = 0
-        elif (not shard_key):
+        if self.json_ingestion:
             worker_index = random.randint( 0, (self.num_ranks - 1) )
         else:
-            # Use the routing table and the shard key to find the right worker
-            worker_index = shard_key.route( self.routing_table )
+            if self.use_head_node:
+                worker_index = 0
+            elif (not shard_key):
+                worker_index = random.randint( 0, (self.num_ranks - 1) )
+            else:
+                # Use the routing table and the shard key to find the right worker
+                worker_index = shard_key.route( self.routing_table )
         # end if-else
 
         # Log which rank this record is going to at the trace level.  Note that
@@ -3090,8 +3117,7 @@ class GPUdbIngestor:
 
         # Flush, if necessary (when the worker queue returns a non-empty queue)
         if queue:
-            self.__flush( queue, worker_queue.get_url(),
-                          is_data_encoded = is_data_encoded )
+            self.__flush( queue, worker_queue.get_url(), is_data_encoded = is_data_encoded )
     # end insert_record
 
 
@@ -3125,7 +3151,7 @@ class GPUdbIngestor:
                 encoded.  Default is False.
 
         Raises:
-            :class:`InserttionException`
+            :class:`InsertionException`
                 If an error occurs while inserting
         """
         if not records:
@@ -3180,7 +3206,7 @@ class GPUdbIngestor:
                 encoded.  Default is False.
 
         Raises:
-            :class:`InserttionException`
+            :class:`InsertionException`
                 If an error occurs while inserting records.
         """
         for worker in self.worker_queues:
@@ -3188,9 +3214,11 @@ class GPUdbIngestor:
                 continue # skipping empty workers
 
             queue = worker.flush()
-            # Actually insert the records
-            self.__flush( queue, worker.get_url(), forced_flush = forced_flush,
-                          is_data_encoded = is_data_encoded )
+
+            if len(queue) > 0:
+                # Actually insert the records
+                self.__flush( queue, worker.get_url(), forced_flush = forced_flush,
+                              is_data_encoded = is_data_encoded )
     # end flush
 
 
@@ -3200,49 +3228,53 @@ class GPUdbIngestor:
         stored :class:`GPUdb` object.  The returns value is the same as
         :meth:`GPUdb.insert_records`.
         """
-        data = data if isinstance( data, list ) else ( [] if (data is None) else [ data ] )
-        assert isinstance( encoding, (basestring, type( None ))), "__insert_records_to_url(): Argument 'encoding' must be (one) of type(s) '(basestring, type( None ))'; given %s" % type( encoding ).__name__
-        assert isinstance( options, (dict)), "__insert_records_to_url(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+        response = None
 
-        obj = {}
-        obj['table_name'] = self.table_name
-        obj['list_encoding'] = encoding
-        obj['options'] = self.gpudb._GPUdb__sanitize_dicts( options )
+        if not self.json_ingestion:
+            data = data if isinstance( data, list ) else ( [] if (data is None) else [ data ] )
+            assert isinstance( encoding, (basestring, type( None ))), "__insert_records_to_url(): Argument 'encoding' must be (one) of type(s) '(basestring, type( None ))'; given %s" % type( encoding ).__name__
+            assert isinstance( options, (dict)), "__insert_records_to_url(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
-        record_type = self.record_type.record_type
-        if (encoding == 'binary'):
-            # Convert the objects to proper Records
-            use_object_array, data = _Util.convert_binary_data_to_cext_records( self.gpudb,
-                                                                                self.table_name,
-                                                                                data,
-                                                                                record_type )
+            obj = {}
+            obj['table_name'] = self.table_name
+            obj['list_encoding'] = encoding
+            obj['options'] = self.gpudb._GPUdb__sanitize_dicts( options )
+
+            record_type = self.record_type.record_type
+            if (encoding == 'binary'):
+                # Convert the objects to proper Records
+                use_object_array, data = _Util.convert_binary_data_to_cext_records( self.gpudb,
+                                                                                    self.table_name,
+                                                                                    data,
+                                                                                    record_type )
+
+                if use_object_array:
+                    # First tuple element must be a RecordType or a Schema from the c-extension
+                    obj['list'] = (data[0].type, data) if data else ()
+                else: # use avro-encoded bytes for the data
+                    obj['list'] = data
+
+                obj['list_str'] = []
+            else:
+                obj['list_str'] = data
+                obj['list'] = () # needs a tuple for the c-extension
+                use_object_array = True
+            # end if
+
 
             if use_object_array:
-                # First tuple element must be a RecordType or a Schema from the c-extension
-                obj['list'] = (data[0].type, data) if data else ()
-            else: # use avro-encoded bytes for the data
-                obj['list'] = data
-
-            obj['list_str'] = []
+                response = self.gpudb._GPUdb__submit_request( '/insert/records', obj,
+                                                              url = url,
+                                                              convert_to_attr_dict = True,
+                                                              get_req_cext = True )
+            else:
+                response = self.gpudb._GPUdb__submit_request( '/insert/records', obj,
+                                                              url = url,
+                                                              convert_to_attr_dict = True )
         else:
-            obj['list_str'] = data
-            obj['list'] = () # needs a tuple for the c-extension
-            use_object_array = True
-        # end if
-
-
-        if use_object_array:
-            response = self.gpudb._GPUdb__submit_request( '/insert/records', obj,
-                                                          url = url,
-                                                          convert_to_attr_dict = True,
-                                                          get_req_cext = True )
-        else:
-            response = self.gpudb._GPUdb__submit_request( '/insert/records', obj,
-                                                          url = url,
-                                                          convert_to_attr_dict = True )
-
-        if not response.is_ok():
-            return response
+            response = self.gpudb.insert_records_from_json(data, self.table_name,
+                                                      json_options={'validate': True},
+                                                      create_table_options=self.gpudb._GPUdb__sanitize_dicts( options ))
 
         return response
     # end __insert_records_to_url
@@ -3287,13 +3319,16 @@ class GPUdbIngestor:
 
         retries = self.__retry_count
         try:
-            # Encode the data, if necessary
-            if not is_data_encoded:
-                encoded_data = self.__encode_data_for_insertion( queue,
-                                                                 record_encoding = record_encoding )
+            if not self.json_ingestion:
+                # Encode the data, if necessary
+                if not is_data_encoded:
+                    encoded_data = self.__encode_data_for_insertion( queue,
+                                                                     record_encoding = record_encoding )
+                else:
+                    # The data is already encoded
+                    encoded_data = queue
             else:
-                # The data is already encoded
-                encoded_data = queue
+                encoded_data = GPUdb.convert_json_list_to_json_array(queue)
             # end if
 
             while True:
@@ -3319,23 +3354,36 @@ class GPUdbIngestor:
 
                     # Throw an error if there was any problem (the exception
                     # blocks will handle retrying)
-                    if not insert_rsp.is_ok():
-                        raise GPUdbException( insert_rsp.get_error_msg() )
-                    # end if
+                    if not self.json_ingestion:
+                        if not insert_rsp.is_ok():
+                            raise GPUdbException( insert_rsp.get_error_msg() )
+                        # end if
 
-                    # Update the insert and update counts
-                    self.count_inserted += insert_rsp[ C._count_inserted ]
-                    self.count_updated  += insert_rsp[ C._count_updated  ]
+                        # Update the insert and update counts
+                        self.count_inserted += insert_rsp[ C._count_inserted ]
+                        self.count_updated  += insert_rsp[ C._count_updated  ]
 
-                    # Check if shard re-balancing is under way at the server; if so,
-                    # we need to update the shard mapping
-                    if ( (C._data_rerouted in insert_rsp.info)
-                         and (insert_rsp.info[ C._data_rerouted ] ==  C._true) ) :
+                        # Check if shard re-balancing is under way at the server; if so,
+                        # we need to update the shard mapping
+                        if ( (C._data_rerouted in insert_rsp.info)
+                             and (insert_rsp.info[ C._data_rerouted ] ==  C._true) ) :
 
-                        self.__update_worker_queues( current_count_cluster_switches )
-                    # end inner if
+                            self.__update_worker_queues( current_count_cluster_switches )
+                        # end inner if
 
-                    break # out of the while loop
+                        break # out of the while loop
+                    else:
+                        # response is in JSON format
+                        resp = json.loads(insert_rsp)
+                        if resp['status'].upper() == 'ERROR':
+                            error_message = resp['message']
+                            raise GPUdbException(error_message)
+
+                        if resp['status'].upper() == 'OK':
+                            self.count_inserted += resp['data'][C._count_inserted]
+                            self.count_updated += resp['data'][C._count_updated]
+                        break
+
                 except GPUdbUnauthorizedAccessException as ex:
                     # Any permission related problem should get propagated
                     self.__log_debug( "Caught GPUdb UNAUTHORIZED exception: "
@@ -3607,7 +3655,7 @@ class RecordRetriever:
         # If no worker URLs are provided, get them from the server
         if not self.worker_list:
             self.worker_list = GPUdbWorkerList( self.gpudb,
-                                                use_head_node_only = self.is_table_replicated )
+                                                use_head_node_only = (self.is_table_replicated or self.gpudb.disable_auto_discovery))
 
         # Create worker queues per worker URL
         self.worker_queues = []
@@ -3637,7 +3685,8 @@ class RecordRetriever:
 
         # Flag for whether to use sharding or not
         self.use_head_node = ( (not self.is_multihead_enabled)
-                               or self.is_table_replicated )
+                               or self.is_table_replicated
+                               or self.gpudb.disable_auto_discovery )
 
         self.routing_table = None
         self._shard_version = None
@@ -3717,8 +3766,7 @@ class RecordRetriever:
 
 
     def __force_failover( self, old_url, curr_count_cluster_switches ):
-        """Force a high-availability cluster (inter-cluster) or ring-resiliency
-        (intra-cluster) failover over, as appropriate.  Check the health of the
+        """Force a high-availability cluster failover.  Check the health of the
         cluster (either head node only, or head node and worker ranks, based on
         the retriever configuration), and use it if healthy.  If no healthy cluster
         is found, then throw an error.  Otherwise, stop at the first healthy cluster.
@@ -3855,8 +3903,6 @@ class RecordRetriever:
                     self.__log_debug( "# cluster switches and shard versions "
                                       "the same" )
 
-                    # Still using the same cluster; but may have done an N+1
-                    # failover
                     if reconstruct_worker_queues:
                         # The caller needs to know if we ended up updating the
                         # queues
@@ -3988,7 +4034,7 @@ class RecordRetriever:
         obj[ 'table_name'] = self.table_name
         obj[ 'offset'    ] = 0
         obj[ 'limit'     ] = self.gpudb.END_OF_SET
-        obj[ 'encoding'  ] = self.gpudb.encoding
+        obj[ 'encoding'  ] = self.gpudb.encoding.lower()
         obj[ 'options'   ] = self.gpudb._GPUdb__sanitize_dicts( options )
 
         response = self.gpudb._GPUdb__submit_request( '/get/records', obj,
@@ -4025,7 +4071,7 @@ class RecordRetriever:
         # Validate input parameter 'options'
         if not isinstance( options, (dict, type(None)) ):
             raise GPUdbException( "Parameter 'options' must be a"
-                                  "dicitonary, if given; given %s"
+                                  "dictionary, if given; given %s"
                                   % str( type( options ) ) )
 
 
