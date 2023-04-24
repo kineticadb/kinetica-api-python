@@ -2,6 +2,20 @@
 
 ## Version 7.1
 
+### Version 7.1.9.2 - 2023-04-23
+
+#### Added
+-   Batch and multi-head ingestion support for JSON-formatted data
+-   Support for HA failover when user-specified connection URLs don't match the
+    server-known URLs; multi-head operations will still be disabled
+
+#### Changed
+-   Removed N+1 features & references
+
+#### Fixed
+-   Several logging-related issues
+
+
 ### Version 7.1.9.1 - 2023-03-19
 
 #### Added
