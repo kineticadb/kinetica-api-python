@@ -2476,6 +2476,9 @@ class GPUdbIngestor:
         # Prevent logging statements from being duplicated
         self.log.propagate = False
 
+        if (gpudb.logging_level):
+            self.log.setLevel(gpudb.logging_level)
+
         # Save the parameter values
         self.gpudb                = gpudb
         self.table_name           = table_name
@@ -2625,6 +2628,8 @@ class GPUdbIngestor:
                 continue # try the next cluster because this head node is down
             # end if
 
+            # Check that all the rank URLs are functional for the new cluster if
+            # using multi-head
             is_cluster_healthy = True
             if self.is_multihead_enabled:
                 # Obtain the worker rank addresses
@@ -2671,6 +2676,11 @@ class GPUdbIngestor:
     def __update_worker_queues( self, count_cluster_switches,
                                 do_reconstruct_worker_queues = True ):
         """Update the shard mapping for the ingestor.
+        
+        Note:  This needs to reconstruct the worker queues even in head
+               node-only mode, as the flush call will use the
+               worker URL regardless of what mode it's in.  In head node-only
+               mode, there will be one "worker" with the rank 0 URL.
 
         Parameters:
             count_cluster_switches (int)
@@ -2685,11 +2695,7 @@ class GPUdbIngestor:
         Returns:
             A boolean flag indicating if the shard mapping was updated.
         """
-        # Decide if the worker queues will need to be reconstructed (they will
-        # only if multi-head is enabled, it is not a replicated table, and if
-        # the user wants to)
-        reconstruct_worker_queues = ( do_reconstruct_worker_queues
-                                      and (not self.use_head_node) )
+
         try:
             # Get the sharding assignment ranks
             shard_info = self.gpudb.admin_show_shards()
@@ -2709,7 +2715,7 @@ class GPUdbIngestor:
                     self.__log_debug( "# cluster switches and shard versions "
                                       "the same" )
 
-                    if reconstruct_worker_queues:
+                    if do_reconstruct_worker_queues:
                         # The caller needs to know if we ended up updating the
                         # queues
                         return self.__reconstruct_worker_queues_and_requeue_records()
@@ -2760,9 +2766,7 @@ class GPUdbIngestor:
         self.__curr_head_node_url = self.gpudb.get_url( stringified = False )
         self.num_cluster_switches      = self.gpudb.get_num_cluster_switches()
 
-        # The worker queues need to be re-constructed when asked for
-        # iff multi-head i/o is enabled and the table is not replicated
-        if reconstruct_worker_queues:
+        if do_reconstruct_worker_queues:
             self.__reconstruct_worker_queues_and_requeue_records()
 
         self.__log_debug( "Returning true" )
@@ -3624,6 +3628,9 @@ class RecordRetriever:
         # Prevent logging statements from being duplicated
         self.log.propagate = False
 
+        if (gpudb.logging_level):
+            self.log.setLevel(gpudb.logging_level)
+
         # Save the parameter values
         self.gpudb       = gpudb
         self.table_name  = table_name
@@ -3815,6 +3822,8 @@ class RecordRetriever:
             # Check if we switched the rank-0 URL
             did_switch_url = (curr_url != old_url)
 
+            # Check that all the rank URLs are functional for the new cluster if
+            # using multi-head
             is_cluster_healthy = True
             if self.is_multihead_enabled:
                 # Obtain the worker rank addresses
@@ -3863,6 +3872,11 @@ class RecordRetriever:
         Optionally, also reconstructs the worker queues based on the new
         sharding.
 
+        Note:  This needs to reconstruct the worker queues even in head
+               node-only mode, as the get_records_by_key call will use the
+               worker URL regardless of what mode it's in.  In head node-only
+               mode, there will be one "worker" with the rank 0 URL.
+
         Parameters:
             count_cluster_switches (int)
                 Integer keeping track of how many times inter-cluster failover
@@ -3876,13 +3890,6 @@ class RecordRetriever:
         Returns:
             A boolean flag indicating if the shard mapping was updated.
         """
-        # Decide if the worker queues will need to be reconstructed (they will
-        # only if multi-head is enabled, it is not a replicated table, and if
-        # the user wants to)
-        reconstruct_worker_queues = ( do_reconstruct_worker_queues
-                                      and (not self.use_head_node) )
-        self.__log_debug( "Reconstruct worker URLs?: {}"
-                          "".format( reconstruct_worker_queues ) )
 
         try:
             # Get the sharding assignment ranks
@@ -3903,7 +3910,7 @@ class RecordRetriever:
                     self.__log_debug( "# cluster switches and shard versions "
                                       "the same" )
 
-                    if reconstruct_worker_queues:
+                    if do_reconstruct_worker_queues:
                         # The caller needs to know if we ended up updating the
                         # queues
                         return self.__reconstruct_worker_queues()
@@ -3947,9 +3954,7 @@ class RecordRetriever:
         self.__curr_head_node_url = self.gpudb.get_url( stringified = False )
         self.num_cluster_switches = self.gpudb.get_num_cluster_switches()
 
-        # The worker queues need to be re-constructed when asked for
-        # iff multi-head i/o is enabled and the table is not replicated
-        if reconstruct_worker_queues:
+        if do_reconstruct_worker_queues:
             self.__reconstruct_worker_queues()
 
         self.__log_debug( "Returning true" )
