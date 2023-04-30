@@ -2,6 +2,15 @@
 
 ## Version 7.1
 
+### Version 7.1.9.3 - 2023-04-30
+
+#### Changed
+-   Propagated connection logging level to `GPUdbIngestor` & `RecordRetriever`
+
+#### Fixed
+-   Multi-head I/O during a failover when using head node only
+
+
 ### Version 7.1.9.2 - 2023-04-23
 
 #### Added
