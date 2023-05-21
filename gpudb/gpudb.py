@@ -4745,7 +4745,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.9.3"
+    api_version = "7.1.9.4"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -20455,6 +20455,15 @@ class GPUdb(object):
                   Optional string representing avro schema, for insert records
                   in avro format, that does not include is schema.
 
+                * **avro_schemaless** --
+                  When user provides 'avro_schema', avro data is assumed to be
+                  schemaless, unless specified. Default is 'true' when given
+                  avro_schema. Igonred when avro_schema is not given.
+                  Allowed values are:
+
+                  * true
+                  * false
+
                 * **bad_record_table_name** --
                   Optional name of a table to which records that were rejected
                   are written.  The bad-record-table has the following columns:
@@ -23835,11 +23844,12 @@ class GPUdb(object):
                   Save records to a single file. This option may be ignored if
                   file
                   size exceeds internal file size limits (this limit will
-                  differ on different targets).
+                  differ on different targets). Values: true/false/overwrite.
                   Allowed values are:
 
                   * true
                   * false
+                  * overwrite
 
                   The default value is 'true'.
 
@@ -28763,6 +28773,15 @@ class GPUdb(object):
                   Optional string representing avro schema, if data includes
                   only records.
 
+                * **avro_schemaless** --
+                  When user provides 'avro_schema', avro data is assumed to be
+                  schemaless, unless specified. Default is 'true' when given
+                  avro_schema. Igonred when avro_schema is not given.
+                  Allowed values are:
+
+                  * true
+                  * false
+
                 * **bad_record_table_name** --
                   Optional name of a table to which records that were rejected
                   are written.  The bad-record-table has the following columns:
@@ -29429,6 +29448,15 @@ class GPUdb(object):
                 * **avro_schema** --
                   Optional string representing avro schema, for insert records
                   in avro format, that does not include is schema.
+
+                * **avro_schemaless** --
+                  When user provides 'avro_schema', avro data is assumed to be
+                  schemaless, unless specified. Default is 'true' when given
+                  avro_schema. Igonred when avro_schema is not given.
+                  Allowed values are:
+
+                  * true
+                  * false
 
                 * **bad_record_table_name** --
                   Optional name of a table to which records that were rejected
