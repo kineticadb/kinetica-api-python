@@ -485,6 +485,7 @@ class GPUdbWorkerList:
 class _ColumnTypeSize:
     """Contains type size information in bytes.
     """
+    BOOLEAN   =   1
     CHAR1     =   1
     CHAR2     =   2
     CHAR4     =   4
@@ -512,6 +513,7 @@ class _ColumnTypeSize:
 
     # A dict mapping column types to its size in bytes
     column_type_sizes = collections.OrderedDict()
+    column_type_sizes[ "boolean"  ] =   1
     column_type_sizes[ "char1"    ] =   1
     column_type_sizes[ "char2"    ] =   2
     column_type_sizes[ "char4"    ] =   4
@@ -707,6 +709,13 @@ class _RecordKey:
 
     # end if-else for python version
 
+
+
+    def add_boolean( self, val ):
+        """Add a boolean value to the buffer (can be null)--one byte.
+        """
+        self.add_int8( val )
+    # end add_boolean
 
 
     def add_char1( self, val ):
@@ -1796,6 +1805,7 @@ class _RecordKeyBuilder:
 
     # A dict mapping column type to _RecordKey appropriate add functions
     _column_type_add_functions = collections.OrderedDict()
+    _column_type_add_functions[ "boolean"   ] = _RecordKey.add_boolean
     _column_type_add_functions[ "char1"     ] = _RecordKey.add_char1
     _column_type_add_functions[ "char2"     ] = _RecordKey.add_char2
     _column_type_add_functions[ "char4"     ] = _RecordKey.add_char4
@@ -2107,7 +2117,7 @@ class _RecordKeyBuilder:
 
 
     def build_expression_with_key_values_only( self, key_values ):
-        """Builds an expressiong of the format "(x = 1) and is_null(y) and ..."
+        """Builds an expression of the format "(x = 1) and is_null(y) and ..."
         where the column names would be the key's column names, and the values
         would be key's values, using the function 'is_null()' for null values.
 

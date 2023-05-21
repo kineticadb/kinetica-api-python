@@ -2,6 +2,12 @@
 
 ## Version 7.1
 
+### Version 7.1.9.4 - 2023-05-21
+
+#### Added
+-   Multi-head I/O support for Booean column type
+
+
 ### Version 7.1.9.3 - 2023-04-30
 
 #### Changed
