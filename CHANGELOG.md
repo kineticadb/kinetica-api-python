@@ -2,10 +2,16 @@
 
 ## Version 7.1
 
+### Version 7.1.9.5 - 2023-08-20
+
+#### Added
+-   Support for data egress in JSON format
+
+
 ### Version 7.1.9.4 - 2023-05-21
 
 #### Added
--   Multi-head I/O support for Booean column type
+-   Multi-head I/O support for Boolean column type
 
 
 ### Version 7.1.9.3 - 2023-04-30

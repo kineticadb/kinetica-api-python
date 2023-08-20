@@ -30,6 +30,7 @@ if IS_PYTHON_3:
     class unicode:
         pass
 
+# ---------------------------------------------------------------------------
 # The absolute path of this gpudb.py module for importing local packages
 gpudb_module_path = __file__
 if gpudb_module_path[

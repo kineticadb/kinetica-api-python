@@ -25,6 +25,8 @@
     -  ``/show/files``
     -  ``/download/files``
     -  ``/delete/files``
+-   Added ``/admin/ha/refresh``
+-   Added ``evict_to_cold`` option to ``/alter/system/properties``
 
 
 ### Version 7.1.8.7
