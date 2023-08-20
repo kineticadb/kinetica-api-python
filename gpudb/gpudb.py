@@ -81,13 +81,11 @@ if not GPUDB_MODULE_PATH in sys.path :
 if not GPUDB_MODULE_PATH + "/packages" in sys.path :
     sys.path.insert(1, GPUDB_MODULE_PATH + "/packages")
 
-
 # ---------------------------------------------------------------------------
 # Local imports after adding our module search path
 
 
 # C-extension classes for avro encoding/decoding
-from protocol import RecordColumn
 from protocol import RecordType
 from protocol import Record
 from protocol import Schema
@@ -4745,7 +4743,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.9.4"
+    api_version = "7.1.9.5"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -7566,6 +7564,169 @@ class GPUdb(object):
 
     # end __submit_request_raw
 
+    def __submit_request_raw_json_without_body( self, url = None, endpoint = None,
+                                  timeout = None,
+                                  ):
+        """Submits an arbitrary request to GPUdb via the specified URL and
+        decodes and returns response.  This method is called from the `submit_request_json`
+        generally which handles the *HA Failover* and hence failover is not handled here.
+        The main purpose of this method is to execute a request over HTTP/S to a specific
+        URL and send the response back.
+
+        Parameters:
+            url (GPUdb.URL)
+                The URL to send the request to
+
+            endpoint (str)
+                The endpoint to use (needed for looking up the appropriate
+                request and response avro schema).
+
+            timeout (int)
+                Optional argument.  If given, then the positive integer would be
+                used for the timeout for the request connection (in seconds).
+                If not given, then the currently configured timeout for this
+                GPUdb object would be used instead.
+
+        Returns:
+            The full JSON (str) response returned by the server. The part carrying relevant information
+            about the output of the operation is the 'data' object.
+        """
+        # Validate the input arguments
+        if not isinstance( url, GPUdb.URL ):
+            msg = ("Argument 'url' must be a GPUdb.URL object; given '{}'"
+                   "".format( str(type(url)) ) )
+            self.__log_debug( msg )
+            raise GPUdbException( msg )
+        # end if
+
+        if not isinstance( endpoint, (basestring, unicode) ):
+            msg = ("Argument 'endpoint' must be a string; given '{}'"
+                   "".format( str(type(endpoint)) ) )
+            self.__log_debug( msg )
+            raise GPUdbException( msg )
+        # end if
+
+        # If no user given timeout given, just use the cached one
+        if timeout is None:
+            # Use the cached one
+            timeout = self.timeout
+        else:
+            # The given timeout must be a positive integer
+            try:
+                timeout = int( timeout )
+            except:
+                msg = ("Argument 'timeout' must be an integer value; "
+                       "given '{}'".format( str(type(timeout)) ) )
+                self.__log_debug( msg )
+                raise GPUdbException( msg )
+            # end inner if
+
+            if timeout < 0:
+                msg = ("Argument 'timeout' must be a positive integer value; "
+                       "given '{}'".format( timeout ) )
+                self.__log_debug( msg )
+                raise GPUdbException( msg )
+        # end if
+
+        http_conn = self.__initialize_http_connection( url, timeout )
+
+        headers = {}
+        headers[C._HEADER_CONTENT_TYPE] = "application/json"
+        headers[C._HEADER_ACCEPT] = "text/plain"
+        if self.auth:
+            headers[C._HEADER_AUTHORIZATION] = self.auth
+
+        try:
+            # Post the request
+            path = "{url_path}{endpoint}".format( url_path = url.path,
+                                                  endpoint = endpoint )
+            http_conn.request( C._REQUEST_POST, path, None, headers )
+        except ssl.SSLError as ex:
+            msg = ("Unable to execute SSL handshake with '{}' due to: {}"
+                   "".format( url.url,
+                              GPUdbException.stringify_exception( ex ) ))
+            final_msg = self.__SSL_ERROR_MESSAGE_TEMPLATE.format(msg)
+            self.__log_debug( final_msg )
+            raise GPUdbUnauthorizedAccessException( final_msg )
+        except Exception as ex:
+            msg = ("Error posting to '{}' due to: {}"
+                   "".format( url.url,
+                              GPUdbException.stringify_exception( ex ) ) )
+            self.__log_debug( msg )
+            # TODO: In the Java API, this is an GPUdbExitException; decide what this should be here
+            raise GPUdbConnectionException( msg )
+        # end try
+
+        # Get the response
+        try:
+            response = http_conn.getresponse()
+        except Exception as ex: # some error occurred; return a message
+            msg = ( "No response received from {} due to {}"
+                    "".format( url.url,
+                               GPUdbException.stringify_exception( ex ) ) )
+            self.__log_debug( msg )
+            raise GPUdbConnectionException( msg )
+        # end try
+
+        # Read and decode the response, handling any error
+        try:
+            response_data = response.read()
+            response_time = response.getheader('x-request-time-secs', None)
+
+            # Check the HTTP status code and throw an exit exception as appropriate
+            status_code = response.status
+            response_msg = response.reason
+            if ( status_code == httplib.UNAUTHORIZED ):
+                # Unauthorized access gets a different exception
+                msg = ( "Unauthorized access: '{}'".format( response_msg ) )
+                self.__log_debug( msg )
+                raise GPUdbUnauthorizedAccessException( msg )
+            elif ( status_code in self.__http_response_triggering_failover ):
+                msg = ( "Could not connect to database at '{}' due to status "
+                        "code {}: {}".format( url.url, status_code, response_msg ) )
+                self.__log_debug( "Throwing EXIT exception; {}".format( msg ) )
+                raise GPUdbExitException( msg )
+            elif ( status_code == httplib.NOT_FOUND ):
+                msg = ( "Endpoint not found ({}) due to status "
+                        "code {}: {}".format( url.url, status_code,
+                                              response_msg ) )
+                self.__log_debug( "Throwing GPUdb exception; {}".format( msg ) )
+                raise GPUdbException( msg )
+            # end if
+
+            return str(response_data, "UTF-8")
+        except GPUdbUnauthorizedAccessException as ex:
+                # Any permission related problem should get propagated
+            raise
+        except (GPUdbConnectionException, GPUdbExitException) as ex:
+            # For special connection or exit errors, just pass them on
+            self.__log_debug("Caught conn/exit exception: {}".format( str(ex) ))
+            raise
+        except GPUdbException as ex:
+            # An end-of-file problem from the server is also a failover trigger
+            if C._DB_EOF_FROM_SERVER_ERROR_MESSAGE in str(ex):
+                msg = ( "Received failover triggering error when trying to "
+                        "connect to {}: {}"
+                        "".format( url.url, str(ex) ) )
+                self.__log_debug( "Throwing EXIT exception; {}".format( msg ) )
+                raise GPUdbExitException( msg )
+            else:
+                # All other errors are legitimate, and to be passed on to the
+                # user
+                self.__log_debug( "Throwing GPUdb exception; {}".format( str(ex) ) )
+                raise
+            # end if
+        except Exception as ex: # some error occurred; return a message
+            msg = ("Error reading response from {} for endpoint {}: {}"
+                   "".format( url.url, endpoint,
+                              GPUdbException.stringify_exception( ex ) ) )
+            # TODO: Or should this be an exit exception also??
+            self.__log_debug( "Throwing GPUdb exception; {}".format( msg ) )
+            raise GPUdbException( msg )
+        # end try
+
+    # end __submit_request_raw_json
+
 
     def __submit_request_raw_json( self, url = None, endpoint = None,
                                   request_body = None,
@@ -7963,6 +8124,159 @@ class GPUdb(object):
             # end try
         # end while
     # end __submit_request
+
+    def __submit_request_json_without_body( self, endpoint,
+                          url = None,
+                          timeout = None,
+                          ):
+        """Submits an arbitrary request to the database server and returns
+        the response.  If a failover trigger is encountered, then either an
+        HA failover occurs (if an HA ring has been set up), or in the case
+        of a stand-alone cluster, a failover recovery is attempted (which
+        may continue indefinitely, based on relevant options set the by the
+        user).  In the case of a successful failover, the internally cached
+        URL will be updated to point to the new URL being used.
+
+        Parameters:
+            endpoint (str)
+                The GPUdb endpoint to send the request to; must be a string.
+                Must be provided.
+
+            url (GPUdb.URL)
+                Optional argument.  If given, this URL would be used to connect
+                to the database.  If none given, then the current URL cached
+                internally would be used instead.  If given, then **no failover
+                will be attempted**.
+
+            timeout (int)
+                Optional argument.  If given, then the positive integer would be
+                used for the timeout for the request connection (in seconds).
+                If not given, then the currently configured timeout for this
+                GPUdb object would be used instead.
+
+        Returns:
+            The full JSON (str) response returned by the server. The part carrying relevant information
+            about the output of the operation is the 'data' object.
+        """
+        # Validate input arguments
+        if not isinstance( endpoint, (basestring, unicode) ):
+            msg = ("Argument 'endpoint' must be a string; given '{}'"
+                   "".format( str(type(endpoint)) ) )
+            self.__log_debug( msg )
+            raise GPUdbException( msg )
+        # end if
+
+        if timeout is None:
+            # Use the cached one
+            timeout = self.timeout
+        else:
+            # The given timeout must be a positive integer
+            try:
+                timeout = int( timeout )
+            except:
+                msg = ("Argument 'timeout' must be an integer value; "
+                       "given '{}'".format( str(type(timeout)) ) )
+                self.__log_debug( msg )
+                raise GPUdbException( msg )
+            # end inner if
+
+            if timeout < 0:
+                msg = ("Argument 'timeout' must be a positive integer value; "
+                       "given '{}'".format( timeout ) )
+                self.__log_debug( msg )
+                raise GPUdbException( msg )
+        # end if
+
+
+        # If any URL is given, then no failover would be attempted!  The easiest
+        # way to do this is to just call submit request raw, and propagate any
+        # exceptions that that method may throw
+        if url is not None:
+            # First validate it
+            if not isinstance( url, GPUdb.URL ):
+                msg = ("Argument 'url' must be a GPUdb.URL object; given '{}'"
+                       "".format( str(type(url)) ) )
+                self.__log_debug( msg )
+                raise GPUdbException( msg )
+            # end inner if
+
+            response = self.__submit_request_raw_json_without_body( url         = url,
+                                                      endpoint     = endpoint,
+                                                      timeout      = timeout,
+                                                    )
+            return response
+        # end if
+
+        # We need to send the request to the database server head node
+        url = self.get_url( stringified = False )
+        original_url = url
+
+        while True:
+            # We need a snapshot of the current state re: HA failover.  When
+            # multiple threads work on this object, we'll need to know how
+            # many times we've switched clusters *before* attempting another
+            # request submission.
+            current_cluster_switch_count = self.get_num_cluster_switches()
+
+            try:
+                response = self.__submit_request_json_without_body( endpoint,
+                                                  url = url,
+                                                  timeout = timeout,
+                                                 )
+
+                return response
+            except GPUdbUnauthorizedAccessException as ex:
+                # Any permission related problem should get propagated
+                raise
+            except (GPUdbConnectionException, GPUdbExitException) as ex:
+                self.__log_debug( "Got EXIT or Connection exception when trying"
+                                  " endpoint {} at {}: {}; switch URL..."
+                                  "".format( endpoint, str(url), str(ex ) ) )
+                # Handle our special exit exception
+                try:
+                    url = self.__switch_url( original_url, current_cluster_switch_count )
+                    self.__log_debug( "Switched to {}".format( str(url ) ) )
+                except GPUdbHAUnavailableException as ha_ex:
+                    # We've now tried all the HA clusters and circled back
+                    # Get the original cause to propagate to the user
+                    error_message  = ("{orig}; {new}".format( orig = str(ex),
+                                                              new  = str(ha_ex) ) )
+                    raise GPUdbException( error_message, True )
+                except GPUdbFailoverDisabledException as ha_ex:
+                    # Failover is disabled; return the original cause
+                    error_message  = ("{orig}; {new}".format( orig = str(ex),
+                                                              new  = str(ha_ex) ) )
+                    raise GPUdbException( error_message, True )
+                # end try
+            except GPUdbException as ex:
+                # Any other GPUdbException is a valid failure
+                self.__log_debug( "Got GPUdbException, so propagating: {}"
+                                  "".format( str(ex) ) )
+                raise
+            except Exception as ex:
+                orig_ex_str = GPUdbException.stringify_exception( ex )
+                self.__log_debug( "Got regular exception when trying endpoint {}"
+                                  " at {}: {}; switch URL..."
+                                  "".format( endpoint, str(url), orig_ex_str ) )
+                # And other random exceptions probably are also connection errors
+                try:
+                    url = self.__switch_url( original_url, current_cluster_switch_count )
+                    self.__log_debug( "Switched to {}".format( str(url) ) )
+                except GPUdbHAUnavailableException as ha_ex:
+                    # We've now tried all the HA clusters and circled back
+                    # Get the original cause to propagate to the user
+                    error_message  = ("{orig}; {new}".format( orig = orig_ex_str,
+                                                              new  = str(ha_ex) ) )
+                    raise GPUdbException( error_message, True )
+                except GPUdbFailoverDisabledException as ha_ex:
+                    # Failover is disabled; return the original cause
+                    error_message  = ("{orig}; {new}".format( orig = orig_ex_str,
+                                                              new  = str(ha_ex) ) )
+                    raise GPUdbException( error_message, True )
+                # end try
+            # end try
+        # end while
+    # end __submit_request_json
 
 
     def __submit_request_json( self, endpoint, request_body,
@@ -9349,6 +9663,83 @@ class GPUdb(object):
         return self.__submit_request_json( final_endpoint, json_records )
 
 
+    def get_records_json(self, table_name, column_names = None, offset = 0, limit = -9999, expression = None, orderby_columns = None, having_clause = None):
+        """ This method is used to retrieve records from a Kinetica table in the form of
+        a JSON array (stringified). The only mandatory parameter is the 'tableName'.
+        The rest are all optional with suitable defaults wherever applicable.
+
+
+        Args:
+            table_name (str): Name of the table
+            column_names (list): the columns names to retrieve
+            offset (int): the offset to start from - default 0
+            limit (int): the maximum number of records - default GPUdb.END_OF_SET
+            expression (str): the filter expression
+            orderby_columns (list): the list of columns to order by
+            having_clause (str): the having clause
+
+        Returns:
+            The response string (JSON)
+
+        Raises:
+            GPUdbException: On detecting invalid parameters or some other internal errors
+
+        Example
+        ::
+
+            resp = gpudb.get_records_json("table_name")
+            json_object = json.loads(resp)
+            print(json_object["data"]["records"])
+
+        """
+
+        if table_name is None or type(table_name) != str or len(table_name) == 0:
+            raise GPUdbException("'table_name' must be a valid non-empty string")
+
+        if column_names is not None and type(column_names) != list:
+            raise GPUdbException("'column_names' must be of type 'list'")
+
+        if orderby_columns is not None and type(orderby_columns) != list:
+            raise GPUdbException("'orderby_columns' must be of type 'list'")
+
+        if offset is not None and type(offset) != int:
+            raise GPUdbException("'offset' must be of type 'int'")
+
+        if limit is not None and type(limit) != int:
+            raise GPUdbException("'limit' must be of type 'int'")
+
+        if expression is not None and type(expression) != str:
+            raise GPUdbException("'expression' must be of type 'str'")
+
+        if having_clause is not None and type(having_clause) != str:
+            raise GPUdbException("'having_clause' must be of type 'str'")
+
+        get_records_json_options = {'table_name': table_name}
+
+        if column_names is not None and len(column_names) != 0:
+            get_records_json_options['column_names'] = ','.join(column_names)
+
+        offset = 0 if (offset is None or offset < 0) else offset
+        limit = GPUdb.END_OF_SET if (limit is None or limit < 0) else limit
+
+        get_records_json_options['offset'] = offset
+        get_records_json_options['limit'] = limit
+
+        if expression is not None and expression != "":
+            get_records_json_options['expression'] = expression
+
+        if orderby_columns is not None and len(orderby_columns) != 0:
+            get_records_json_options['order_by'] = ','.join(orderby_columns)
+
+        if having_clause is not None and having_clause != "":
+            get_records_json_options['having'] = having_clause
+
+        query_string = urlencode(get_records_json_options)
+        final_endpoint = "/get/records/json?{}".format(query_string)
+
+        return self.__submit_request_json_without_body( final_endpoint )
+
+
     # Helper for dynamic schema responses
     def parse_dynamic_response(self, retobj, do_print=False, convert_nulls = True):
 
@@ -9840,6 +10231,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("info", "map", [("string")])] )
         ENDPOINT = "/admin/backup/end"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/admin/ha/refresh"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_ha_refresh_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_ha_refresh_response","fields":[{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("info", "map", [("string")])] )
+        ENDPOINT = "/admin/ha/refresh"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -12003,6 +12405,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["admin_alter_shards"] = "/admin/alter/shards"
         self.gpudb_func_to_endpoint_map["admin_backup_begin"] = "/admin/backup/begin"
         self.gpudb_func_to_endpoint_map["admin_backup_end"] = "/admin/backup/end"
+        self.gpudb_func_to_endpoint_map["admin_ha_refresh"] = "/admin/ha/refresh"
         self.gpudb_func_to_endpoint_map["admin_offline"] = "/admin/offline"
         self.gpudb_func_to_endpoint_map["admin_rebalance"] = "/admin/rebalance"
         self.gpudb_func_to_endpoint_map["admin_remove_host"] = "/admin/remove/host"
@@ -12580,6 +12983,35 @@ class GPUdb(object):
 
         return response
     # end admin_backup_end
+
+
+    # begin admin_ha_refresh
+    def admin_ha_refresh( self, options = {} ):
+        """Restarts the HA processing on the given cluster as a mechanism of
+        accepting breaking HA conf changes. Additionally the cluster is put
+        into read-only while HA is restarting.
+
+        Parameters:
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+
+        Returns:
+            A dict with the following entries--
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( options, (dict)), "admin_ha_refresh(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/admin/ha/refresh', obj, convert_to_attr_dict = True )
+
+        return response
+    # end admin_ha_refresh
 
 
     # begin admin_offline
@@ -16999,6 +17431,14 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **evict_to_cold** --
+                  If *true* and evict_columns is specified, the given objects
+                  will be evicted to cold storage (if such a tier exists).
+                  Allowed values are:
+
+                  * true
+                  * false
+
                 * **persist** --
                   If *true* the system configuration will be written to disk
                   upon successful application of this request. This will commit
@@ -17693,6 +18133,10 @@ class GPUdb(object):
                   crossing the *high_watermark*, will cease watermark-based
                   eviction from this tier.
 
+                * **wait_timeout** --
+                  Timeout in seconds for reading from or writing to this
+                  resource. Applies to cold storage tiers only.
+
                 * **persist** --
                   If *true* the system configuration will be written to disk
                   upon successful application of this request. This will commit
@@ -17896,41 +18340,63 @@ class GPUdb(object):
                   parameter *field_map*.  The default value is ''.
 
                 * **update_on_existing_pk** --
-                  Specifies the record collision policy for inserting the
-                  source table records (specified by input parameter
-                  *source_table_name*) into the target table (specified by
-                  input parameter *table_name*) table with a `primary key
-                  <../../../../concepts/tables/#primary-keys>`__.  If set to
-                  *true*, any existing target table record with primary key
-                  values that match those of a source table record being
-                  inserted will be replaced by that new record.  If set to
-                  *false*, any existing target table record with primary key
-                  values that match those of a source table record being
-                  inserted will remain unchanged and the new record discarded.
-                  If the specified table does not have a primary key, then this
-                  option has no effect.
+                  Specifies the record collision policy for inserting source
+                  table
+                  records (specified by input parameter *source_table_name*)
+                  into a target table
+                  (specified by input parameter *table_name*) with a `primary
+                  key <../../../../concepts/tables/#primary-keys>`__. If
+                  set to *true*, any existing table record with
+                  primary key values that match those of a source table record
+                  being inserted will be replaced by that
+                  new record (the new data will be "upserted"). If set to
+                  *false*, any existing table record with primary
+                  key values that match those of a source table record being
+                  inserted will remain unchanged, while the
+                  source record will be rejected and an error handled as
+                  determined by
+                  *ignore_existing_pk*.  If the specified table does not have a
+                  primary key,
+                  then this option has no effect.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Upsert new records when primary keys match existing records
+
+                  * **false** --
+                    Reject new records when primary keys match existing records
 
                   The default value is 'false'.
 
                 * **ignore_existing_pk** --
-                  Specifies the record collision policy for inserting the
-                  source table records (specified by input parameter
-                  *source_table_name*) into the target table (specified by
-                  input parameter *table_name*) table with a `primary key
-                  <../../../../concepts/tables/#primary-keys>`__.  If set to
-                  *true*, any source table records being inserted with primary
-                  key values that match those of an existing target table
-                  record will be ignored with no error generated.  If the
-                  specified table does not have a primary key, then this option
-                  has no affect.
+                  Specifies the record collision error-suppression policy for
+                  inserting source table records (specified by input parameter
+                  *source_table_name*) into a target table
+                  (specified by input parameter *table_name*) with a `primary
+                  key <../../../../concepts/tables/#primary-keys>`__, only
+                  used when not in upsert mode (upsert mode is disabled when
+                  *update_on_existing_pk* is
+                  *false*).  If set to
+                  *true*, any source table record being inserted that
+                  is rejected for having primary key values that match those of
+                  an existing target table record will
+                  be ignored with no error generated.  If *false*,
+                  the rejection of any source table record for having primary
+                  key values matching an existing target
+                  table record will result in an error being raised.  If the
+                  specified table does not have a primary
+                  key or if upsert mode is in effect (*update_on_existing_pk*
+                  is
+                  *true*), then this option has no effect.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Ignore source table records whose primary key values
+                    collide with those of target table records
+
+                  * **false** --
+                    Raise an error for any source table record whose primary
+                    key values collide with those of a target table record
 
                   The default value is 'false'.
 
@@ -17952,7 +18418,8 @@ class GPUdb(object):
 
 
             info (dict of str to str)
-                Additional information.
+                Additional information.  The default value is an empty dict (
+                {} ).
         """
         assert isinstance( table_name, (basestring)), "append_records(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( source_table_name, (basestring)), "append_records(): Argument 'source_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( source_table_name ).__name__
@@ -18364,6 +18831,18 @@ class GPUdb(object):
                   Name of the Amazon S3 region where the given bucket is
                   located
 
+                * **s3_use_virtual_addressing** --
+                  When true (default), the requests URI should be specified in
+                  virtual-hosted-style format where the bucket name is part of
+                  the domain name in the URL.
+                  Otherwise set to false to use path-style URI for requests.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
                 * **s3_aws_role_arn** --
                   Amazon IAM Role ARN which has required S3 permissions that
                   can be assumed for the given S3 IAM user
@@ -18555,6 +19034,18 @@ class GPUdb(object):
                 * **s3_region** --
                   Name of the Amazon S3 region where the given bucket is
                   located
+
+                * **s3_use_virtual_addressing** --
+                  When true (default), the requests URI should be specified in
+                  virtual-hosted-style format where the bucket name is part of
+                  the domain name in the URL.
+                  Otherwise set to false to use path-style URI for requests.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
                 * **s3_aws_role_arn** --
                   Amazon IAM Role ARN which has required S3 permissions that
@@ -20447,6 +20938,9 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **avro_header_bytes** --
+                  Optional number of bytes to skip when reading an avro record.
+
                 * **avro_num_records** --
                   Optional number of avro records, if data includes only
                   records.
@@ -20648,6 +21142,37 @@ class GPUdb(object):
                     ShapeFile file format
 
                   The default value is 'delimited_text'.
+
+                * **ignore_existing_pk** --
+                  Specifies the record collision error-suppression policy for
+                  inserting into a table with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__, only used
+                  when
+                  not in upsert mode (upsert mode is disabled when
+                  *update_on_existing_pk* is
+                  *false*).  If set to
+                  *true*, any record being inserted that is rejected
+                  for having primary key values that match those of an existing
+                  table record will be ignored with no
+                  error generated.  If *false*, the rejection of any
+                  record for having primary key values matching an existing
+                  record will result in an error being
+                  reported, as determined by *error_handling*.  If the
+                  specified table does not
+                  have a primary key or if upsert mode is in effect
+                  (*update_on_existing_pk* is
+                  *true*), then this option has no effect.
+                  Allowed values are:
+
+                  * **true** --
+                    Ignore new records whose primary key values collide with
+                    those of existing records
+
+                  * **false** --
+                    Treat as errors any new records whose primary key values
+                    collide with those of existing records
+
+                  The default value is 'false'.
 
                 * **ingestion_mode** --
                   Whether to do a full load, dry run, or perform a type
@@ -20914,12 +21439,12 @@ class GPUdb(object):
                   Allowed values are:
 
                   * **accuracy** --
-                    scans all data to get exactly-typed & sized columns for all
-                    data present
+                    Scans data to get exactly-typed & sized columns for all
+                    data scanned.
 
                   * **speed** --
-                    picks the widest possible column types so that 'all' values
-                    will fit with minimum data scanned
+                    Scans data and picks the widest possible column types so
+                    that 'all' values will fit with minimum data scanned
 
                   The default value is 'speed'.
 
@@ -20938,6 +21463,32 @@ class GPUdb(object):
                 * **remote_query_partition_column** --
                   Alias name for remote_query_filter_column.  The default value
                   is ''.
+
+                * **update_on_existing_pk** --
+                  Specifies the record collision policy for inserting into a
+                  table
+                  with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__. If set to
+                  *true*, any existing table record with primary
+                  key values that match those of a record being inserted will
+                  be replaced by that new record (the new
+                  data will be "upserted"). If set to *false*,
+                  any existing table record with primary key values that match
+                  those of a record being inserted will
+                  remain unchanged, while the new record will be rejected and
+                  the error handled as determined by
+                  *ignore_existing_pk* & *error_handling*.  If the
+                  specified table does not have a primary key, then this option
+                  has no effect.
+                  Allowed values are:
+
+                  * **true** --
+                    Upsert new records when primary keys match existing records
+
+                  * **false** --
+                    Reject new records when primary keys match existing records
+
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -23100,13 +23651,30 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **ignore_existing_pk** --
-                  Can be used to customize behavior when the updated primary
-                  key value already exists as described in
-                  :meth:`GPUdb.insert_records`.
+                  Specifies the record collision error-suppression policy for
+                  inserting into or updating a table with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__, only
+                  used when primary key record collisions are rejected
+                  (*update_on_existing_pk*
+                  is *false*).  If set to
+                  *true*, any record insert/update that is rejected
+                  for resulting in a primary key collision with an existing
+                  table record will be ignored with no error
+                  generated.  If *false*, the rejection of any
+                  insert/update for resulting in a primary key collision will
+                  cause an error to be reported.  If the
+                  specified table does not have a primary key or if
+                  *update_on_existing_pk* is
+                  *true*, then this option has no effect.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Ignore inserts/updates that result in primary key
+                    collisions with existing records
+
+                  * **false** --
+                    Treat as errors any inserts/updates that result in primary
+                    key collisions with existing records
 
                   The default value is 'false'.
 
@@ -23210,13 +23778,29 @@ class GPUdb(object):
                   intermediate result tables used in query execution.
 
                 * **update_on_existing_pk** --
-                  Can be used to customize behavior when the updated primary
-                  key value already exists as described in
-                  :meth:`GPUdb.insert_records`.
+                  Specifies the record collision policy for inserting into or
+                  updating
+                  a table with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__. If set to
+                  *true*, any existing table record with primary
+                  key values that match those of a record being inserted or
+                  updated will be replaced by that record.
+                  If set to *false*, any such primary key
+                  collision will result in the insert/update being rejected and
+                  the error handled as determined by
+                  *ignore_existing_pk*.  If the specified table does not have a
+                  primary key,
+                  then this option has no effect.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Replace the collided-into record with the record inserted
+                    or updated when a new/modified record causes a primary key
+                    collision with an existing record
+
+                  * **false** --
+                    Reject the insert or update when it results in a primary
+                    key collision with an existing record
 
                   The default value is 'false'.
 
@@ -23232,6 +23816,11 @@ class GPUdb(object):
                   * false
 
                   The default value is 'true'.
+
+                * **current_schema** --
+                  Use the supplied value as the `default schema
+                  <../../../../concepts/schemas/#default-schema>`__ when
+                  processing this SQL command.
 
         Returns:
             A dict with the following entries--
@@ -23415,13 +24004,30 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **ignore_existing_pk** --
-                  Can be used to customize behavior when the updated primary
-                  key value already exists as described in
-                  :meth:`GPUdb.insert_records`.
+                  Specifies the record collision error-suppression policy for
+                  inserting into or updating a table with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__, only
+                  used when primary key record collisions are rejected
+                  (*update_on_existing_pk*
+                  is *false*).  If set to
+                  *true*, any record insert/update that is rejected
+                  for resulting in a primary key collision with an existing
+                  table record will be ignored with no error
+                  generated.  If *false*, the rejection of any
+                  insert/update for resulting in a primary key collision will
+                  cause an error to be reported.  If the
+                  specified table does not have a primary key or if
+                  *update_on_existing_pk* is
+                  *true*, then this option has no effect.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Ignore inserts/updates that result in primary key
+                    collisions with existing records
+
+                  * **false** --
+                    Treat as errors any inserts/updates that result in primary
+                    key collisions with existing records
 
                   The default value is 'false'.
 
@@ -23525,13 +24131,29 @@ class GPUdb(object):
                   intermediate result tables used in query execution.
 
                 * **update_on_existing_pk** --
-                  Can be used to customize behavior when the updated primary
-                  key value already exists as described in
-                  :meth:`GPUdb.insert_records`.
+                  Specifies the record collision policy for inserting into or
+                  updating
+                  a table with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__. If set to
+                  *true*, any existing table record with primary
+                  key values that match those of a record being inserted or
+                  updated will be replaced by that record.
+                  If set to *false*, any such primary key
+                  collision will result in the insert/update being rejected and
+                  the error handled as determined by
+                  *ignore_existing_pk*.  If the specified table does not have a
+                  primary key,
+                  then this option has no effect.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Replace the collided-into record with the record inserted
+                    or updated when a new/modified record causes a primary key
+                    collision with an existing record
+
+                  * **false** --
+                    Reject the insert or update when it results in a primary
+                    key collision with an existing record
 
                   The default value is 'false'.
 
@@ -23547,6 +24169,11 @@ class GPUdb(object):
                   * false
 
                   The default value is 'true'.
+
+                * **current_schema** --
+                  Use the supplied value as the `default schema
+                  <../../../../concepts/schemas/#default-schema>`__ when
+                  processing this SQL command.
 
             record_type (:class:`RecordType` or None)
                 The record type expected in the results, or None to
@@ -23830,8 +24457,8 @@ class GPUdb(object):
 
                 * **compression_type** --
                   File compression type. Different file types support different
-                  compresion types. text: uncompressed. parquet: uncompressed,
-                  snappy, gzip.
+                  compresion types. text: uncompressed, gzip. parquet:
+                  uncompressed, snappy, gzip.
                   Allowed values are:
 
                   * uncompressed
@@ -23844,7 +24471,7 @@ class GPUdb(object):
                   Save records to a single file. This option may be ignored if
                   file
                   size exceeds internal file size limits (this limit will
-                  differ on different targets). Values: true/false/overwrite.
+                  differ on different targets).
                   Allowed values are:
 
                   * true
@@ -28374,34 +29001,59 @@ class GPUdb(object):
 
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting into a
-                  table with a `primary key
-                  <../../../../concepts/tables/#primary-keys>`__.  If set to
-                  *true*, any existing table record with primary key values
-                  that match those of a record being inserted will be replaced
-                  by that new record.  If set to *false*, any existing table
-                  record with primary key values that match those of a record
-                  being inserted will remain unchanged and the new record
-                  discarded.  If the specified table does not have a primary
-                  key, then this option has no affect.
+                  table
+                  with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__. If set to
+                  *true*, any existing table record with primary
+                  key values that match those of a record being inserted will
+                  be replaced by that new record (the new
+                  data will be "upserted"). If set to *false*,
+                  any existing table record with primary key values that match
+                  those of a record being inserted will
+                  remain unchanged, while the new record will be rejected and
+                  the error handled as determined by
+                  *ignore_existing_pk*, *allow_partial_batch*, &
+                  *return_individual_errors*.  If the specified table does not
+                  have a primary
+                  key, then this option has no effect.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Upsert new records when primary keys match existing records
+
+                  * **false** --
+                    Reject new records when primary keys match existing records
 
                   The default value is 'false'.
 
                 * **ignore_existing_pk** --
-                  Specifies the record collision policy for inserting into a
-                  table with a `primary key
-                  <../../../../concepts/tables/#primary-keys>`__.  If set to
-                  *true*, any record being inserted with primary key values
-                  that match those of an existing table record will be ignored
-                  with no error generated.  If the specified table does not
-                  have a primary key, then this option has no affect.
+                  Specifies the record collision error-suppression policy for
+                  inserting into a table with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__, only used
+                  when
+                  not in upsert mode (upsert mode is disabled when
+                  *update_on_existing_pk* is
+                  *false*).  If set to
+                  *true*, any record being inserted that is rejected
+                  for having primary key values that match those of an existing
+                  table record will be ignored with no
+                  error generated.  If *false*, the rejection of any
+                  record for having primary key values matching an existing
+                  record will result in an error being
+                  reported, as determined by *allow_partial_batch* &
+                  *return_individual_errors*.  If the specified table does not
+                  have a primary key or if upsert mode is in effect
+                  (*update_on_existing_pk* is
+                  *true*), then this option has no effect.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Ignore new records whose primary key values collide with
+                    those of existing records
+
+                  * **false** --
+                    Treat as errors any new records whose primary key values
+                    collide with those of existing records
 
                   The default value is 'false'.
 
@@ -28765,6 +29417,9 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **avro_header_bytes** --
+                  Optional number of bytes to skip when reading an avro record.
+
                 * **avro_num_records** --
                   Optional number of avro records, if data includes only
                   records.
@@ -28951,6 +29606,37 @@ class GPUdb(object):
                     ShapeFile file format
 
                   The default value is 'delimited_text'.
+
+                * **ignore_existing_pk** --
+                  Specifies the record collision error-suppression policy for
+                  inserting into a table with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__, only used
+                  when
+                  not in upsert mode (upsert mode is disabled when
+                  *update_on_existing_pk* is
+                  *false*).  If set to
+                  *true*, any record being inserted that is rejected
+                  for having primary key values that match those of an existing
+                  table record will be ignored with no
+                  error generated.  If *false*, the rejection of any
+                  record for having primary key values matching an existing
+                  record will result in an error being
+                  reported, as determined by *error_handling*.  If the
+                  specified table does not
+                  have a primary key or if upsert mode is in effect
+                  (*update_on_existing_pk* is
+                  *true*), then this option has no effect.
+                  Allowed values are:
+
+                  * **true** --
+                    Ignore new records whose primary key values collide with
+                    those of existing records
+
+                  * **false** --
+                    Treat as errors any new records whose primary key values
+                    collide with those of existing records
+
+                  The default value is 'false'.
 
                 * **ingestion_mode** --
                   Whether to do a full load, dry run, or perform a type
@@ -29197,14 +29883,40 @@ class GPUdb(object):
                   Allowed values are:
 
                   * **accuracy** --
-                    scans all data to get exactly-typed & sized columns for all
-                    data present
+                    Scans data to get exactly-typed & sized columns for all
+                    data scanned.
 
                   * **speed** --
-                    picks the widest possible column types so that 'all' values
-                    will fit with minimum data scanned
+                    Scans data and picks the widest possible column types so
+                    that 'all' values will fit with minimum data scanned
 
                   The default value is 'speed'.
+
+                * **update_on_existing_pk** --
+                  Specifies the record collision policy for inserting into a
+                  table
+                  with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__. If set to
+                  *true*, any existing table record with primary
+                  key values that match those of a record being inserted will
+                  be replaced by that new record (the new
+                  data will be "upserted"). If set to *false*,
+                  any existing table record with primary key values that match
+                  those of a record being inserted will
+                  remain unchanged, while the new record will be rejected and
+                  the error handled as determined by
+                  *ignore_existing_pk* & *error_handling*.  If the
+                  specified table does not have a primary key, then this option
+                  has no effect.
+                  Allowed values are:
+
+                  * **true** --
+                    Upsert new records when primary keys match existing records
+
+                  * **false** --
+                    Reject new records when primary keys match existing records
+
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -29441,6 +30153,9 @@ class GPUdb(object):
                 ).
                 Allowed keys are:
 
+                * **avro_header_bytes** --
+                  Optional number of bytes to skip when reading an avro record.
+
                 * **avro_num_records** --
                   Optional number of avro records, if data includes only
                   records.
@@ -29621,6 +30336,37 @@ class GPUdb(object):
                     ShapeFile file format
 
                   The default value is 'delimited_text'.
+
+                * **ignore_existing_pk** --
+                  Specifies the record collision error-suppression policy for
+                  inserting into a table with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__, only used
+                  when
+                  not in upsert mode (upsert mode is disabled when
+                  *update_on_existing_pk* is
+                  *false*).  If set to
+                  *true*, any record being inserted that is rejected
+                  for having primary key values that match those of an existing
+                  table record will be ignored with no
+                  error generated.  If *false*, the rejection of any
+                  record for having primary key values matching an existing
+                  record will result in an error being
+                  reported, as determined by *error_handling*.  If the
+                  specified table does not
+                  have a primary key or if upsert mode is in effect
+                  (*update_on_existing_pk* is
+                  *true*), then this option has no effect.
+                  Allowed values are:
+
+                  * **true** --
+                    Ignore new records whose primary key values collide with
+                    those of existing records
+
+                  * **false** --
+                    Treat as errors any new records whose primary key values
+                    collide with those of existing records
+
+                  The default value is 'false'.
 
                 * **ingestion_mode** --
                   Whether to do a full load, dry run, or perform a type
@@ -29849,14 +30595,40 @@ class GPUdb(object):
                   Allowed values are:
 
                   * **accuracy** --
-                    scans all data to get exactly-typed & sized columns for all
-                    data present
+                    Scans data to get exactly-typed & sized columns for all
+                    data scanned.
 
                   * **speed** --
-                    picks the widest possible column types so that 'all' values
-                    will fit with minimum data scanned
+                    Scans data and picks the widest possible column types so
+                    that 'all' values will fit with minimum data scanned
 
                   The default value is 'speed'.
+
+                * **update_on_existing_pk** --
+                  Specifies the record collision policy for inserting into a
+                  table
+                  with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__. If set to
+                  *true*, any existing table record with primary
+                  key values that match those of a record being inserted will
+                  be replaced by that new record (the new
+                  data will be "upserted"). If set to *false*,
+                  any existing table record with primary key values that match
+                  those of a record being inserted will
+                  remain unchanged, while the new record will be rejected and
+                  the error handled as determined by
+                  *ignore_existing_pk* & *error_handling*.  If the
+                  specified table does not have a primary key, then this option
+                  has no effect.
+                  Allowed values are:
+
+                  * **true** --
+                    Upsert new records when primary keys match existing records
+
+                  * **false** --
+                    Reject new records when primary keys match existing records
+
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -30120,6 +30892,37 @@ class GPUdb(object):
 
                   The default value is 'abort'.
 
+                * **ignore_existing_pk** --
+                  Specifies the record collision error-suppression policy for
+                  inserting into a table with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__, only used
+                  when
+                  not in upsert mode (upsert mode is disabled when
+                  *update_on_existing_pk* is
+                  *false*).  If set to
+                  *true*, any record being inserted that is rejected
+                  for having primary key values that match those of an existing
+                  table record will be ignored with no
+                  error generated.  If *false*, the rejection of any
+                  record for having primary key values matching an existing
+                  record will result in an error being
+                  reported, as determined by *error_handling*.  If the
+                  specified table does not
+                  have a primary key or if upsert mode is in effect
+                  (*update_on_existing_pk* is
+                  *true*), then this option has no effect.
+                  Allowed values are:
+
+                  * **true** --
+                    Ignore new records whose primary key values collide with
+                    those of existing records
+
+                  * **false** --
+                    Treat as errors any new records whose primary key values
+                    collide with those of existing records
+
+                  The default value is 'false'.
+
                 * **ingestion_mode** --
                   Whether to do a full load, dry run, or perform a type
                   inference on the source data.
@@ -30208,6 +31011,32 @@ class GPUdb(object):
                 * **remote_query_partition_column** --
                   Alias name for remote_query_filter_column.  The default value
                   is ''.
+
+                * **update_on_existing_pk** --
+                  Specifies the record collision policy for inserting into a
+                  table
+                  with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__. If set to
+                  *true*, any existing table record with primary
+                  key values that match those of a record being inserted will
+                  be replaced by that new record (the new
+                  data will be "upserted"). If set to *false*,
+                  any existing table record with primary key values that match
+                  those of a record being inserted will
+                  remain unchanged, while the new record will be rejected and
+                  the error handled as determined by
+                  *ignore_existing_pk* & *error_handling*.  If the
+                  specified table does not have a primary key, then this option
+                  has no effect.
+                  Allowed values are:
+
+                  * **true** --
+                    Upsert new records when primary keys match existing records
+
+                  * **false** --
+                    Reject new records when primary keys match existing records
+
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -31089,10 +31918,14 @@ class GPUdb(object):
                   Louvain modularity optimization solver.
                   Allowed values are:
 
-                  * **girwan** --
-                    Uses the Newman Girwan quality metric for cluster solver
+                  * **girvan** --
+                    Uses the Newman Girvan quality metric for cluster solver
 
-                  The default value is 'girwan'.
+                  * **spectral** --
+                    Applies recursive spectral bisection (RSB) partitioning
+                    solver
+
+                  The default value is 'girvan'.
 
                 * **restricted_type** --
                   For the *match_supply_demand* solver only. Optimization is
@@ -34664,18 +35497,24 @@ class GPUdb(object):
         restrictions can be removed by utilizing some available options through
         input parameter *options*.
 
-        The *update_on_existing_pk* option specifies the record
-        collision policy for tables with a `primary key
-        <../../../../concepts/tables/#primary-keys>`__, and
-        is ignored on tables with no primary key.
+        The *update_on_existing_pk* option specifies the record primary key
+        collision
+        policy for tables with a `primary key
+        <../../../../concepts/tables/#primary-keys>`__, while
+        *ignore_existing_pk* specifies the record primary key collision
+        error-suppression policy when those collisions result in the update
+        being rejected.  Both are
+        ignored on tables with no primary key.
 
         Parameters:
 
             table_name (str)
                 Name of table to be updated, in [schema_name.]table_name
-                format, using standard `name resolution rules
+                format, using standard
+                `name resolution rules
                 <../../../../concepts/tables/#table-name-resolution>`__.  Must
-                be a currently existing table and not a view.
+                be a currently
+                existing table and not a view.
 
             expressions (list of str)
                 A list of the actual predicates, one for each update; format
@@ -34687,22 +35526,24 @@ class GPUdb(object):
 
             new_values_maps (list of dicts of str to str and/or None)
                 List of new values for the matching records.  Each element is a
-                map with (key, value) pairs where the keys are the names of the
-                columns whose values are to be updated; the values are the new
-                values.  The number of elements in the list should match the
-                length of input parameter *expressions*.    The user can
-                provide a single element (which will be automatically promoted
-                to a list internally) or a list.  The user can provide a single
-                element (which will be automatically promoted to a list
-                internally) or a list.
+                map with
+                (key, value) pairs where the keys are the names of the columns
+                whose values are to be updated; the
+                values are the new values.  The number of elements in the list
+                should match the length of input parameter *expressions*.
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.  The
+                user can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
 
             records_to_insert (list of str)
                 An *optional* list of new binary-avro encoded records to
-                insert, one for each update.  If one of input parameter
-                *expressions* does not yield a matching record to be updated,
-                then the corresponding element from this list will be added to
-                the table.  The default value is an empty list ( [] ).  The
-                user can provide a single element (which will be automatically
+                insert, one for each
+                update.  If one of input parameter *expressions* does not yield
+                a matching record to be updated, then the
+                corresponding element from this list will be added to the
+                table.  The default value is an empty list ( [] ).  The user
+                can provide a single element (which will be automatically
                 promoted to a list internally) or a list.  The user can provide
                 a single element (which will be automatically promoted to a
                 list internally) or a list.
@@ -34737,13 +35578,15 @@ class GPUdb(object):
                   default value is ''.
 
                 * **bypass_safety_checks** --
-                  When set to *true*, all predicates are available for primary
-                  key updates.  Keep in mind that it is possible to destroy
+                  When set to *true*,
+                  all predicates are available for primary key updates.  Keep
+                  in mind that it is possible to destroy
                   data in this case, since a single predicate may match
-                  multiple objects (potentially all of records of a table), and
-                  then updating all of those records to have the same primary
-                  key will, due to the primary key uniqueness constraints,
-                  effectively delete all but one of those updated records.
+                  multiple objects (potentially all of records
+                  of a table), and then updating all of those records to have
+                  the same primary key will, due to the
+                  primary key uniqueness constraints, effectively delete all
+                  but one of those updated records.
                   Allowed values are:
 
                   * true
@@ -34752,44 +35595,79 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **update_on_existing_pk** --
-                  Specifies the record collision policy for tables with a
-                  `primary key <../../../../concepts/tables/#primary-keys>`__
-                  when updating columns of the `primary key
-                  <../../../../concepts/tables/#primary-keys>`__ or inserting
-                  new records.  If *true*, existing records with primary key
-                  values that match those of a record being updated or inserted
-                  will be replaced by the updated and new records.  If *false*,
-                  existing records with matching primary key values will remain
-                  unchanged, and the updated or new records with primary key
-                  values that match those of existing records will be
-                  discarded.  If the specified table does not have a primary
-                  key, then this option has no effect.
+                  Specifies the record collision policy for updating a table
+                  with a
+                  `primary key <../../../../concepts/tables/#primary-keys>`__.
+                  There are two ways that a record collision can
+                  occur.
+                  The first is an "update collision", which happens when the
+                  update changes the value of the updated
+                  record's primary key, and that new primary key already exists
+                  as the primary key of another record
+                  in the table.
+                  The second is an "insert collision", which occurs when a
+                  given filter in input parameter *expressions*
+                  finds no records to update, and the alternate insert record
+                  given in input parameter *records_to_insert* (or
+                  input parameter *records_to_insert_str*) contains a primary
+                  key matching that of an existing record in the
+                  table.
+                  If *update_on_existing_pk* is set to
+                  *true*, "update collisions" will result in the
+                  existing record collided into being removed and the record
+                  updated with values specified in
+                  input parameter *new_values_maps* taking its place; "insert
+                  collisions" will result in the collided-into
+                  record being updated with the values in input parameter
+                  *records_to_insert*/input parameter *records_to_insert_str*
+                  (if given).
+                  If set to *false*, the existing collided-into
+                  record will remain unchanged, while the update will be
+                  rejected and the error handled as determined
+                  by *ignore_existing_pk*.  If the specified table does not
+                  have a primary key,
+                  then this option has no effect.
                   Allowed values are:
 
                   * **true** --
-                    Overwrite existing records when updated and inserted
-                    records have the same primary keys
+                    Overwrite the collided-into record when updating a
+                    record's primary key or inserting an alternate record
+                    causes a primary key collision between the
+                    record being updated/inserted and another existing record
+                    in the table
 
                   * **false** --
-                    Discard updated and inserted records when the same primary
-                    keys already exist
+                    Reject updates which cause primary key collisions
+                    between the record being updated/inserted and an existing
+                    record in the table
 
                   The default value is 'false'.
 
                 * **ignore_existing_pk** --
-                  Specifies the record collision policy for tables with a
-                  `primary key <../../../../concepts/tables/#primary-keys>`__
-                  when updating columns of the `primary key
-                  <../../../../concepts/tables/#primary-keys>`__ or inserting
-                  new records.  If set to *true*, any record being updated or
-                  inserted with primary key values that match those of an
-                  existing record will be ignored with no error generated.  If
-                  the specified table does not have a primary key, then this
-                  option has no affect.
+                  Specifies the record collision error-suppression policy for
+                  updating a table with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__, only used
+                  when primary
+                  key record collisions are rejected (*update_on_existing_pk*
+                  is
+                  *false*).  If set to
+                  *true*, any record update that is rejected for
+                  resulting in a primary key collision with an existing table
+                  record will be ignored with no error
+                  generated.  If *false*, the rejection of any update
+                  for resulting in a primary key collision will cause an error
+                  to be reported.  If the specified table
+                  does not have a primary key or if *update_on_existing_pk* is
+                  *true*, then this option has no effect.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Ignore updates that result in primary key collisions with
+                    existing records
+
+                  * **false** --
+                    Treat as errors any updates that result in primary key
+                    collisions with existing records
 
                   The default value is 'false'.
 
@@ -34814,12 +35692,14 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **use_expressions_in_new_values_maps** --
-                  When set to *true*, all new values in input parameter
-                  *new_values_maps* are considered as expression values. When
-                  set to *false*, all new values in input parameter
-                  *new_values_maps* are considered as constants.  NOTE:  When
-                  *true*, string constants will need to be quoted to avoid
-                  being evaluated as expressions.
+                  When set to *true*,
+                  all new values in input parameter *new_values_maps* are
+                  considered as expression values. When set to
+                  *false*, all new values in
+                  input parameter *new_values_maps* are considered as
+                  constants.  NOTE:  When
+                  *true*, string constants will need
+                  to be quoted to avoid being evaluated as expressions.
                   Allowed values are:
 
                   * true
@@ -35877,7 +36757,6 @@ class GPUdb(object):
         `Network Graphs & Solvers
         <../../../../graph_solver/network_graph_solver/>`__
         for more information on graphs.
-        .
 
         Parameters:
 
@@ -40811,41 +41690,63 @@ class GPUdbTable( object ):
                   parameter *field_map*.  The default value is ''.
 
                 * **update_on_existing_pk** --
-                  Specifies the record collision policy for inserting the
-                  source table records (specified by input parameter
-                  *source_table_name*) into the target table (specified by
-                  input parameter *table_name*) table with a `primary key
-                  <../../../../concepts/tables/#primary-keys>`__.  If set to
-                  *true*, any existing target table record with primary key
-                  values that match those of a source table record being
-                  inserted will be replaced by that new record.  If set to
-                  *false*, any existing target table record with primary key
-                  values that match those of a source table record being
-                  inserted will remain unchanged and the new record discarded.
-                  If the specified table does not have a primary key, then this
-                  option has no effect.
+                  Specifies the record collision policy for inserting source
+                  table
+                  records (specified by input parameter *source_table_name*)
+                  into a target table
+                  (specified by input parameter *table_name*) with a `primary
+                  key <../../../../concepts/tables/#primary-keys>`__. If
+                  set to *true*, any existing table record with
+                  primary key values that match those of a source table record
+                  being inserted will be replaced by that
+                  new record (the new data will be "upserted"). If set to
+                  *false*, any existing table record with primary
+                  key values that match those of a source table record being
+                  inserted will remain unchanged, while the
+                  source record will be rejected and an error handled as
+                  determined by
+                  *ignore_existing_pk*.  If the specified table does not have a
+                  primary key,
+                  then this option has no effect.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Upsert new records when primary keys match existing records
+
+                  * **false** --
+                    Reject new records when primary keys match existing records
 
                   The default value is 'false'.
 
                 * **ignore_existing_pk** --
-                  Specifies the record collision policy for inserting the
-                  source table records (specified by input parameter
-                  *source_table_name*) into the target table (specified by
-                  input parameter *table_name*) table with a `primary key
-                  <../../../../concepts/tables/#primary-keys>`__.  If set to
-                  *true*, any source table records being inserted with primary
-                  key values that match those of an existing target table
-                  record will be ignored with no error generated.  If the
-                  specified table does not have a primary key, then this option
-                  has no affect.
+                  Specifies the record collision error-suppression policy for
+                  inserting source table records (specified by input parameter
+                  *source_table_name*) into a target table
+                  (specified by input parameter *table_name*) with a `primary
+                  key <../../../../concepts/tables/#primary-keys>`__, only
+                  used when not in upsert mode (upsert mode is disabled when
+                  *update_on_existing_pk* is
+                  *false*).  If set to
+                  *true*, any source table record being inserted that
+                  is rejected for having primary key values that match those of
+                  an existing target table record will
+                  be ignored with no error generated.  If *false*,
+                  the rejection of any source table record for having primary
+                  key values matching an existing target
+                  table record will result in an error being raised.  If the
+                  specified table does not have a primary
+                  key or if upsert mode is in effect (*update_on_existing_pk*
+                  is
+                  *true*), then this option has no effect.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Ignore source table records whose primary key values
+                    collide with those of target table records
+
+                  * **false** --
+                    Raise an error for any source table record whose primary
+                    key values collide with those of a target table record
 
                   The default value is 'false'.
 
@@ -40868,7 +41769,8 @@ class GPUdbTable( object ):
 
 
             info (dict of str to str)
-                Additional information.
+                Additional information.  The default value is an empty dict (
+                {} ).
 
         Raises:
 
@@ -43273,10 +44175,14 @@ class GPUdbTable( object ):
         restrictions can be removed by utilizing some available options through
         input parameter *options*.
 
-        The *update_on_existing_pk* option specifies the record
-        collision policy for tables with a `primary key
-        <../../../../concepts/tables/#primary-keys>`__, and
-        is ignored on tables with no primary key.
+        The *update_on_existing_pk* option specifies the record primary key
+        collision
+        policy for tables with a `primary key
+        <../../../../concepts/tables/#primary-keys>`__, while
+        *ignore_existing_pk* specifies the record primary key collision
+        error-suppression policy when those collisions result in the update
+        being rejected.  Both are
+        ignored on tables with no primary key.
 
         Parameters:
 
@@ -43286,17 +44192,19 @@ class GPUdbTable( object ):
 
             new_values_maps (list of dicts of str to str and/or None)
                 List of new values for the matching records.  Each element is a
-                map with (key, value) pairs where the keys are the names of the
-                columns whose values are to be updated; the values are the new
-                values.  The number of elements in the list should match the
-                length of input parameter *expressions*.
+                map with
+                (key, value) pairs where the keys are the names of the columns
+                whose values are to be updated; the
+                values are the new values.  The number of elements in the list
+                should match the length of input parameter *expressions*.
 
             records_to_insert (list of str)
                 An *optional* list of new binary-avro encoded records to
-                insert, one for each update.  If one of input parameter
-                *expressions* does not yield a matching record to be updated,
-                then the corresponding element from this list will be added to
-                the table.  The default value is an empty list ( [] ).
+                insert, one for each
+                update.  If one of input parameter *expressions* does not yield
+                a matching record to be updated, then the
+                corresponding element from this list will be added to the
+                table.  The default value is an empty list ( [] ).
 
             records_to_insert_str (list of str)
                 An optional list of JSON encoded objects to insert, one for
@@ -43324,13 +44232,15 @@ class GPUdbTable( object ):
                   default value is ''.
 
                 * **bypass_safety_checks** --
-                  When set to *true*, all predicates are available for primary
-                  key updates.  Keep in mind that it is possible to destroy
+                  When set to *true*,
+                  all predicates are available for primary key updates.  Keep
+                  in mind that it is possible to destroy
                   data in this case, since a single predicate may match
-                  multiple objects (potentially all of records of a table), and
-                  then updating all of those records to have the same primary
-                  key will, due to the primary key uniqueness constraints,
-                  effectively delete all but one of those updated records.
+                  multiple objects (potentially all of records
+                  of a table), and then updating all of those records to have
+                  the same primary key will, due to the
+                  primary key uniqueness constraints, effectively delete all
+                  but one of those updated records.
                   Allowed values are:
 
                   * true
@@ -43339,44 +44249,79 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **update_on_existing_pk** --
-                  Specifies the record collision policy for tables with a
-                  `primary key <../../../../concepts/tables/#primary-keys>`__
-                  when updating columns of the `primary key
-                  <../../../../concepts/tables/#primary-keys>`__ or inserting
-                  new records.  If *true*, existing records with primary key
-                  values that match those of a record being updated or inserted
-                  will be replaced by the updated and new records.  If *false*,
-                  existing records with matching primary key values will remain
-                  unchanged, and the updated or new records with primary key
-                  values that match those of existing records will be
-                  discarded.  If the specified table does not have a primary
-                  key, then this option has no effect.
+                  Specifies the record collision policy for updating a table
+                  with a
+                  `primary key <../../../../concepts/tables/#primary-keys>`__.
+                  There are two ways that a record collision can
+                  occur.
+                  The first is an "update collision", which happens when the
+                  update changes the value of the updated
+                  record's primary key, and that new primary key already exists
+                  as the primary key of another record
+                  in the table.
+                  The second is an "insert collision", which occurs when a
+                  given filter in input parameter *expressions*
+                  finds no records to update, and the alternate insert record
+                  given in input parameter *records_to_insert* (or
+                  input parameter *records_to_insert_str*) contains a primary
+                  key matching that of an existing record in the
+                  table.
+                  If *update_on_existing_pk* is set to
+                  *true*, "update collisions" will result in the
+                  existing record collided into being removed and the record
+                  updated with values specified in
+                  input parameter *new_values_maps* taking its place; "insert
+                  collisions" will result in the collided-into
+                  record being updated with the values in input parameter
+                  *records_to_insert*/input parameter *records_to_insert_str*
+                  (if given).
+                  If set to *false*, the existing collided-into
+                  record will remain unchanged, while the update will be
+                  rejected and the error handled as determined
+                  by *ignore_existing_pk*.  If the specified table does not
+                  have a primary key,
+                  then this option has no effect.
                   Allowed values are:
 
                   * **true** --
-                    Overwrite existing records when updated and inserted
-                    records have the same primary keys
+                    Overwrite the collided-into record when updating a
+                    record's primary key or inserting an alternate record
+                    causes a primary key collision between the
+                    record being updated/inserted and another existing record
+                    in the table
 
                   * **false** --
-                    Discard updated and inserted records when the same primary
-                    keys already exist
+                    Reject updates which cause primary key collisions
+                    between the record being updated/inserted and an existing
+                    record in the table
 
                   The default value is 'false'.
 
                 * **ignore_existing_pk** --
-                  Specifies the record collision policy for tables with a
-                  `primary key <../../../../concepts/tables/#primary-keys>`__
-                  when updating columns of the `primary key
-                  <../../../../concepts/tables/#primary-keys>`__ or inserting
-                  new records.  If set to *true*, any record being updated or
-                  inserted with primary key values that match those of an
-                  existing record will be ignored with no error generated.  If
-                  the specified table does not have a primary key, then this
-                  option has no affect.
+                  Specifies the record collision error-suppression policy for
+                  updating a table with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__, only used
+                  when primary
+                  key record collisions are rejected (*update_on_existing_pk*
+                  is
+                  *false*).  If set to
+                  *true*, any record update that is rejected for
+                  resulting in a primary key collision with an existing table
+                  record will be ignored with no error
+                  generated.  If *false*, the rejection of any update
+                  for resulting in a primary key collision will cause an error
+                  to be reported.  If the specified table
+                  does not have a primary key or if *update_on_existing_pk* is
+                  *true*, then this option has no effect.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Ignore updates that result in primary key collisions with
+                    existing records
+
+                  * **false** --
+                    Treat as errors any updates that result in primary key
+                    collisions with existing records
 
                   The default value is 'false'.
 
@@ -43401,12 +44346,14 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **use_expressions_in_new_values_maps** --
-                  When set to *true*, all new values in input parameter
-                  *new_values_maps* are considered as expression values. When
-                  set to *false*, all new values in input parameter
-                  *new_values_maps* are considered as constants.  NOTE:  When
-                  *true*, string constants will need to be quoted to avoid
-                  being evaluated as expressions.
+                  When set to *true*,
+                  all new values in input parameter *new_values_maps* are
+                  considered as expression values. When set to
+                  *false*, all new values in
+                  input parameter *new_values_maps* are considered as
+                  constants.  NOTE:  When
+                  *true*, string constants will need
+                  to be quoted to avoid being evaluated as expressions.
                   Allowed values are:
 
                   * true
