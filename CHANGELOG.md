@@ -2,6 +2,12 @@
 
 ## Version 7.1
 
+### Version 7.1.9.6 - 2023-09-17
+
+#### Added
+-   Support for file upload & download from KiFS
+
+
 ### Version 7.1.9.5 - 2023-08-20
 
 #### Added

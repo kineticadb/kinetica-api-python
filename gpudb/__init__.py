@@ -30,6 +30,7 @@ if (sys.version_info[0] == 3):  # checking the major component
     from gpudb.gpudb_multihead_io import GPUdbWorkerList, GPUdbIngestor, InsertionException, RecordRetriever
 
     from gpudb.gpudb_table_monitor import GPUdbTableMonitor
+    from gpudb.gpudb_file_handler import GPUdbFileHandler, OpMode, MultipartOperation
 
     from gpudb.gpudb import collections
 else:
