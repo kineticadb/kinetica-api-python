@@ -28,6 +28,13 @@
 -   Added ``/admin/ha/refresh``
 -   Added ``evict_to_cold`` option to ``/alter/system/properties``
 
+#### Added
+-   Added new endpoints to support UDF python environment management:
+    -   ``/alter/environment``
+    -   ``/create/environment``
+    -   ``/drop/environment``
+    -   ``/show/environment``
+-   Added option ``set_environment`` to ``/create/proc`` endpoint
 
 ### Version 7.1.8.7
 

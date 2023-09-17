@@ -4743,7 +4743,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.9.5"
+    api_version = "7.1.9.6"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -10539,6 +10539,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/alter/environment"
+        REQ_SCHEMA_STR = """{"type":"record","name":"alter_environment_request","fields":[{"name":"environment_name","type":"string"},{"name":"action","type":"string"},{"name":"value","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_environment_response","fields":[{"name":"environment_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("environment_name", "string"), ("action", "string"), ("value", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("environment_name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/alter/environment"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/alter/graph"
         REQ_SCHEMA_STR = """{"name":"alter_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"action","type":"string"},{"name":"action_arg","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"name":"alter_graph_response","type":"record","fields":[{"name":"action","type":"string"},{"name":"action_arg","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -10820,6 +10831,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("directory_name", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("directory_name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/directory"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/create/environment"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_environment_request","fields":[{"name":"environment_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_environment_response","fields":[{"name":"environment_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("environment_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("environment_name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/create/environment"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -11194,6 +11216,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("name", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("name", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/drop/datasource"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/drop/environment"
+        REQ_SCHEMA_STR = """{"type":"record","name":"drop_environment_request","fields":[{"name":"environment_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"drop_environment_response","fields":[{"name":"environment_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("environment_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("environment_name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/drop/environment"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -11981,6 +12014,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/show/environment"
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_environment_request","fields":[{"name":"environment_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_environment_response","fields":[{"name":"environment_names","type":{"type":"array","items":"string"}},{"name":"packages","type":{"type":"array","items":{"type":"array","items":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("environment_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("environment_names", "array", [("string")]), ("packages", "array", [("array", [("string")])]), ("info", "map", [("string")])] )
+        ENDPOINT = "/show/environment"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/show/files"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_files_request","fields":[{"name":"paths","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"show_files_response","fields":[{"name":"file_names","type":{"type":"array","items":"string"}},{"name":"sizes","type":{"type":"array","items":"long"}},{"name":"users","type":{"type":"array","items":"string"}},{"name":"creation_times","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -12432,6 +12476,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["alter_datasink"] = "/alter/datasink"
         self.gpudb_func_to_endpoint_map["alter_datasource"] = "/alter/datasource"
         self.gpudb_func_to_endpoint_map["alter_directory"] = "/alter/directory"
+        self.gpudb_func_to_endpoint_map["alter_environment"] = "/alter/environment"
         self.gpudb_func_to_endpoint_map["alter_graph"] = "/alter/graph"
         self.gpudb_func_to_endpoint_map["alter_model"] = "/alter/model"
         self.gpudb_func_to_endpoint_map["alter_resource_group"] = "/alter/resourcegroup"
@@ -12458,6 +12503,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["create_datasource"] = "/create/datasource"
         self.gpudb_func_to_endpoint_map["create_delta_table"] = "/create/deltatable"
         self.gpudb_func_to_endpoint_map["create_directory"] = "/create/directory"
+        self.gpudb_func_to_endpoint_map["create_environment"] = "/create/environment"
         self.gpudb_func_to_endpoint_map["create_graph"] = "/create/graph"
         self.gpudb_func_to_endpoint_map["create_job"] = "/create/job"
         self.gpudb_func_to_endpoint_map["create_join_table"] = "/create/jointable"
@@ -12492,6 +12538,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["drop_credential"] = "/drop/credential"
         self.gpudb_func_to_endpoint_map["drop_datasink"] = "/drop/datasink"
         self.gpudb_func_to_endpoint_map["drop_datasource"] = "/drop/datasource"
+        self.gpudb_func_to_endpoint_map["drop_environment"] = "/drop/environment"
         self.gpudb_func_to_endpoint_map["drop_model"] = "/drop/model"
         self.gpudb_func_to_endpoint_map["drop_schema"] = "/drop/schema"
         self.gpudb_func_to_endpoint_map["evaluate_model"] = "/evaluate/model"
@@ -12562,6 +12609,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["show_datasink"] = "/show/datasink"
         self.gpudb_func_to_endpoint_map["show_datasource"] = "/show/datasource"
         self.gpudb_func_to_endpoint_map["show_directories"] = "/show/directories"
+        self.gpudb_func_to_endpoint_map["show_environment"] = "/show/environment"
         self.gpudb_func_to_endpoint_map["show_files"] = "/show/files"
         self.gpudb_func_to_endpoint_map["show_functions"] = "/show/functions"
         self.gpudb_func_to_endpoint_map["show_graph"] = "/show/graph"
@@ -16984,6 +17032,87 @@ class GPUdb(object):
     # end alter_directory
 
 
+    # begin alter_environment
+    def alter_environment( self, environment_name = None, action = None, value =
+                           None, options = {} ):
+        """Alters an existing environment which can be referenced by a
+        `user-defined function <../../../../concepts/udf/>`__ (UDF).
+
+        Parameters:
+
+            environment_name (str)
+                Name of the environment to be altered.
+
+            action (str)
+                Modification operation to be applied
+                Allowed values are:
+
+                * **install_package** --
+                  Install a python package
+
+                * **install_requirements** --
+                  Install packages from a requirements file
+
+                * **uninstall_package** --
+                  Uninstall a python package.
+
+                * **uninstall_requirements** --
+                  Uninstall packages from a requirements file
+
+                * **reset** --
+                  Uninstalls all packages in the environment and resets it to
+                  the original state at time of creation
+
+            value (str)
+                The value of the modification, depending on input parameter
+                *action*.  For example, if input parameter *action* is
+                *install_package*, this would be the python package name.
+
+                If input parameter *action* is *install_requirements*, this
+                would be the path of a requirements file from which to install
+                packages.
+
+                If an external data source is specified in *datasource_name*,
+                this can be the path to a wheel file or source archive.
+                Alternatively, if installing from a file (wheel or source
+                archive), the value may be a reference to a file in `KiFS
+                <../../../../tools/kifs/>`__.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **datasource_name** --
+                  Name of an existing external data source from which packages
+                  specified in input parameter *value* can be loaded
+
+        Returns:
+            A dict with the following entries--
+
+            environment_name (str)
+                Value of input parameter *environment_name*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( environment_name, (basestring)), "alter_environment(): Argument 'environment_name' must be (one) of type(s) '(basestring)'; given %s" % type( environment_name ).__name__
+        assert isinstance( action, (basestring)), "alter_environment(): Argument 'action' must be (one) of type(s) '(basestring)'; given %s" % type( action ).__name__
+        assert isinstance( value, (basestring)), "alter_environment(): Argument 'value' must be (one) of type(s) '(basestring)'; given %s" % type( value ).__name__
+        assert isinstance( options, (dict)), "alter_environment(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['environment_name'] = environment_name
+        obj['action'] = action
+        obj['value'] = value
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/alter/environment', obj, convert_to_attr_dict = True )
+
+        return response
+    # end alter_environment
+
+
     # begin alter_graph
     def alter_graph( self, graph_name = None, action = None, action_arg = None,
                      options = {} ):
@@ -17713,6 +17842,11 @@ class GPUdb(object):
                   Removes `text search
                   <../../../../concepts/full_text_search/>`__ attribute from
                   all columns.
+
+                * **remove_shard_keys** --
+                  Removes the shard key property from all columns, so that the
+                  table will be considered randomly sharded.  The data is not
+                  moved.  The input parameter *value* is ignored.
 
                 * **set_strategy_definition** --
                   Sets the `tier strategy
@@ -19256,6 +19390,42 @@ class GPUdb(object):
     # end create_directory
 
 
+    # begin create_environment
+    def create_environment( self, environment_name = None, options = {} ):
+        """Creates a new environment which can be used by `user-defined functions
+        <../../../../concepts/udf/>`__ (UDF).
+
+        Parameters:
+
+            environment_name (str)
+                Name of the environment to be created.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+
+        Returns:
+            A dict with the following entries--
+
+            environment_name (str)
+                Value of input parameter *environment_name*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( environment_name, (basestring)), "create_environment(): Argument 'environment_name' must be (one) of type(s) '(basestring)'; given %s" % type( environment_name ).__name__
+        assert isinstance( options, (dict)), "create_environment(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['environment_name'] = environment_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/create/environment', obj, convert_to_attr_dict = True )
+
+        return response
+    # end create_environment
+
+
     # begin create_graph
     def create_graph( self, graph_name = None, directed_graph = True, nodes = None,
                       edges = None, weights = None, restrictions = None, options
@@ -19954,6 +20124,11 @@ class GPUdb(object):
                   The maximum number of concurrent instances of the proc that
                   will be executed per node. 0 allows unlimited concurrency.
                   The default value is '0'.
+
+                * **set_environment** --
+                  A python environment to use when executing the proc. Must be
+                  an existing environment, else an error will be returned.  The
+                  default value is ''.
 
         Returns:
             A dict with the following entries--
@@ -23295,6 +23470,56 @@ class GPUdb(object):
     # end drop_datasource
 
 
+    # begin drop_environment
+    def drop_environment( self, environment_name = None, options = {} ):
+        """Drop an existing `user-defined function <../../../../concepts/udf/>`__
+        (UDF) environment.
+
+        Parameters:
+
+            environment_name (str)
+                Name of the environment to be dropped. Must be an existing
+                environment.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **no_error_if_not_exists** --
+                  If *true* and if the environment specified in input parameter
+                  *environment_name* does not exist, no error is returned. If
+                  *false* and if the environment specified in input parameter
+                  *environment_name* does not exist, then an error is returned.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            environment_name (str)
+                Value of input parameter *environment_name*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( environment_name, (basestring)), "drop_environment(): Argument 'environment_name' must be (one) of type(s) '(basestring)'; given %s" % type( environment_name ).__name__
+        assert isinstance( options, (dict)), "drop_environment(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['environment_name'] = environment_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/drop/environment', obj, convert_to_attr_dict = True )
+
+        return response
+    # end drop_environment
+
+
     # begin drop_model
     def drop_model( self, model_name = None, options = {} ):
 
@@ -24456,16 +24681,14 @@ class GPUdb(object):
                   default value is '|'.
 
                 * **compression_type** --
-                  File compression type. Different file types support different
-                  compresion types. text: uncompressed, gzip. parquet:
-                  uncompressed, snappy, gzip.
+                  File compression type. GZip can be applied to text and
+                  Parquet files.  Snappy can only be applied to Parquet files,
+                  and is the default compression for them.
                   Allowed values are:
 
                   * uncompressed
                   * snappy
                   * gzip
-
-                  The default value is 'snappy'.
 
                 * **single_file** --
                   Save records to a single file. This option may be ignored if
@@ -33556,6 +33779,63 @@ class GPUdb(object):
     # end show_directories
 
 
+    # begin show_environment
+    def show_environment( self, environment_name = None, options = {} ):
+        """Shows information about a specified `user-defined function
+        <../../../../concepts/udf/>`__ (UDF) environment or all environments.
+        Returns detailed information about existing environments.
+
+        Parameters:
+
+            environment_name (str)
+                Name of the environment on which to retrieve information. The
+                name must refer to a currently existing environment. If '*' or
+                an empty value is specified, information about all environments
+                will be returned.
+
+            options (dict of str to str)
+                Optional parameters.  The default value is an empty dict ( {}
+                ).
+                Allowed keys are:
+
+                * **no_error_if_not_exists** --
+                  If *true* and if the environment specified in input parameter
+                  *environment_name* does not exist, no error is returned. If
+                  *false* and if the environment specified in input parameter
+                  *environment_name* does not exist, then an error is returned.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+        Returns:
+            A dict with the following entries--
+
+            environment_names (list of str)
+                A list of all credential names.
+
+            packages (list of lists of str)
+                Information about the installed packages in the respective
+                environments in output parameter *environment_names*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( environment_name, (basestring)), "show_environment(): Argument 'environment_name' must be (one) of type(s) '(basestring)'; given %s" % type( environment_name ).__name__
+        assert isinstance( options, (dict)), "show_environment(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['environment_name'] = environment_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/show/environment', obj, convert_to_attr_dict = True )
+
+        return response
+    # end show_environment
+
+
     # begin show_files
     def show_files( self, paths = None, options = {} ):
         """Shows information about files in `KiFS <../../../../tools/kifs/>`__.
@@ -41354,6 +41634,11 @@ class GPUdbTable( object ):
                   Removes `text search
                   <../../../../concepts/full_text_search/>`__ attribute from
                   all columns.
+
+                * **remove_shard_keys** --
+                  Removes the shard key property from all columns, so that the
+                  table will be considered randomly sharded.  The data is not
+                  moved.  The input parameter *value* is ignored.
 
                 * **set_strategy_definition** --
                   Sets the `tier strategy
