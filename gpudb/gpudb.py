@@ -64,34 +64,31 @@ else:
     from collections import Iterator
 # end if
 
+
 # ---------------------------------------------------------------------------
 # The absolute path of this gpudb.py module for importing local packages
-GPUDB_MODULE_PATH = __file__
-if GPUDB_MODULE_PATH[len(GPUDB_MODULE_PATH)-3:] == "pyc": # allow symlinks to gpudb.py
-    GPUDB_MODULE_PATH = GPUDB_MODULE_PATH[0:len(GPUDB_MODULE_PATH)-1]
-if os.path.islink(GPUDB_MODULE_PATH): # allow symlinks to gpudb.py
-    GPUDB_MODULE_PATH = os.readlink(GPUDB_MODULE_PATH)
-if not os.path.isabs(GPUDB_MODULE_PATH): # take care of relative symlinks
-    GPUDB_MODULE_PATH = os.path.join(os.path.dirname(__file__), GPUDB_MODULE_PATH)
-GPUDB_MODULE_PATH = os.path.dirname(os.path.abspath(GPUDB_MODULE_PATH))
+gpudb_module_path = os.path.dirname(os.path.abspath(__file__))
 
 # Search for our modules first, probably don't need imp or virt envs.
-if not GPUDB_MODULE_PATH in sys.path :
-    sys.path.insert(1, GPUDB_MODULE_PATH)
-if not GPUDB_MODULE_PATH + "/packages" in sys.path :
-    sys.path.insert(1, GPUDB_MODULE_PATH + "/packages")
+for gpudb_path in [gpudb_module_path, gpudb_module_path + "/packages"]:
+    if not gpudb_path in sys.path:
+        sys.path.append(gpudb_path)
+
 
 # ---------------------------------------------------------------------------
-# Local imports after adding our module search path
-
+# Local imports
 
 # C-extension classes for avro encoding/decoding
-from protocol import RecordType
-from protocol import Record
-from protocol import Schema
+from .protocol import RecordType
+from .protocol import Record
+from .protocol import Schema
 
-from avro import schema, datafile, io
-import enum34 as enum
+try:                   # Installed
+    from gpudb.packages.avro import schema, datafile, io
+    import gpudb.packages.enum34 as enum
+except ImportError:
+    from packages.avro import schema, datafile, io
+    import packages.enum34 as enum
 
 
 if IS_PYTHON_27_OR_ABOVE:
@@ -114,7 +111,10 @@ try:
 except ImportError:
     HAVE_SNAPPY = False
 
-from kinetica_tabulate import tabulate
+try:                   # Installed
+    from gpudb.packages.kinetica_tabulate import tabulate
+except ImportError:    # Local
+    from packages.kinetica_tabulate import tabulate
 
 # -----------------------------------------------------------------
 # Logging -- Add a trace method
@@ -4730,12 +4730,13 @@ class GPUdb(object):
     # loop
     __HOST_MANAGER_SUBMIT_REQUEST_RETRY_COUNT = 3
 
-    __SSL_ERROR_MESSAGE_TEMPLATE = """
-    <{}>.  To fix, either:
-    * Add the server's certificate or a CA cert to the system CA certificates file
-    * Skip the certificate check using the skip_ssl_cert_verification option
-      Examples:  https://docs.kinetica.com/7.1/api/concepts/#https-without-certificate-validation
-    """
+    __SSL_ERROR_MESSAGE_TEMPLATE = (
+        "<{}>.  "
+        "To fix, either:  "
+        "1) Add the server's certificate or a CA cert to the system CA certificates file, or "
+        "2) Skip the certificate check using the skip_ssl_cert_verification option.  "
+        "Examples:  https://docs.kinetica.com/7.1/api/concepts/#https-without-certificate-validation"
+    )
 
     END_OF_SET = -9999
     """(int) Used for indicating that all of the records (till the end of the
@@ -4743,7 +4744,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.9.6"
+    api_version = "7.1.9.7"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5775,7 +5776,6 @@ class GPUdb(object):
                                       "".format( sys_status.get_error_msg() ) )
         except GPUdbUnauthorizedAccessException as ex:
             # Any permission related problem should get propagated
-            self.__log_debug("Caught unauthorized exception: {}".format( str(ex) ))
             raise
         except (GPUdbConnectionException, GPUdbExitException) as ex:
             # Also propagate special connection or exit errors
@@ -5890,7 +5890,6 @@ class GPUdb(object):
                                                    convert_to_attr_dict = True )
         except GPUdbUnauthorizedAccessException as ex:
             # Any permission related problem should get propagated
-            self.__log_debug("Caught unauthorized exception: {}".format( str(ex) ))
             raise
         except (GPUdbConnectionException, GPUdbExitException) as ex:
             # Also propagate special connection or exit errors
@@ -14253,6 +14252,11 @@ class GPUdb(object):
 
                   The default value is 'value'.
 
+                * **strategy_definition** --
+                  The `tier strategy
+                  <../../../../rm/concepts/#tier-strategies>`__ for the table
+                  and its columns.
+
                 * **result_table** --
                   The name of a table used to store the results, in
                   [schema_name.]table_name format, using standard `name
@@ -14592,6 +14596,11 @@ class GPUdb(object):
                     aggregate, etc.
 
                   The default value is 'value'.
+
+                * **strategy_definition** --
+                  The `tier strategy
+                  <../../../../rm/concepts/#tier-strategies>`__ for the table
+                  and its columns.
 
                 * **result_table** --
                   The name of a table used to store the results, in
@@ -19852,6 +19861,11 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **strategy_definition** --
+                  The `tier strategy
+                  <../../../../rm/concepts/#tier-strategies>`__ for the table
+                  and its columns.
+
                 * **ttl** --
                   Sets the `TTL <../../../../concepts/ttl/>`__ of the join
                   table specified in input parameter *join_table_name*.
@@ -20396,6 +20410,11 @@ class GPUdb(object):
                 * **view_id** --
                   ID of view of which this projection is a member.  The default
                   value is ''.
+
+                * **strategy_definition** --
+                  The `tier strategy
+                  <../../../../rm/concepts/#tier-strategies>`__ for the table
+                  and its columns.
 
         Returns:
             A dict with the following entries--
@@ -21307,6 +21326,9 @@ class GPUdb(object):
                   * **delimited_text** --
                     Delimited text file format; e.g., CSV, TSV, PSV, etc.
 
+                  * **gdb** --
+                    Esri/GDB file format
+
                   * **json** --
                     Json file format
 
@@ -21391,6 +21413,10 @@ class GPUdb(object):
                 * **kafka_subscription_cancel_after** --
                   Sets the subscription lifespan (in minutes). Expired
                   subscription will be cancelled automatically.
+
+                * **layer** --
+                  Optional: geo files layer(s) name(s): comma separated.  The
+                  default value is ''.
 
                 * **loading_mode** --
                   Scheme for distributing the extraction and loading of data
@@ -22530,6 +22556,11 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                * **strategy_definition** --
+                  The `tier strategy
+                  <../../../../rm/concepts/#tier-strategies>`__ for the table
+                  and its columns.
 
         Returns:
             A dict with the following entries--
@@ -29819,6 +29850,9 @@ class GPUdb(object):
                   * **delimited_text** --
                     Delimited text file format; e.g., CSV, TSV, PSV, etc.
 
+                  * **gdb** --
+                    Esri/GDB file format
+
                   * **json** --
                     Json file format
 
@@ -29899,6 +29933,10 @@ class GPUdb(object):
                 * **kafka_subscription_cancel_after** --
                   Sets the subscription lifespan (in minutes). Expired
                   subscription will be cancelled automatically.
+
+                * **layer** --
+                  Optional: geo files layer(s) name(s): comma separated.  The
+                  default value is ''.
 
                 * **loading_mode** --
                   Scheme for distributing the extraction and loading of data
@@ -30549,6 +30587,9 @@ class GPUdb(object):
                   * **delimited_text** --
                     Delimited text file format; e.g., CSV, TSV, PSV, etc.
 
+                  * **gdb** --
+                    Esri/GDB file format
+
                   * **json** --
                     Json file format
 
@@ -30611,6 +30652,10 @@ class GPUdb(object):
                     response.
 
                   The default value is 'full'.
+
+                * **layer** --
+                  Optional: geo files layer(s) name(s): comma separated.  The
+                  default value is ''.
 
                 * **loading_mode** --
                   Scheme for distributing the extraction and loading of data
@@ -37489,19 +37534,18 @@ class GPUdb(object):
 # ---------------------------------------------------------------------------
 # Import GPUdbIngestor; try from an installed package first, if not, try local
 if IS_PYTHON_3:
-    try:
-        from gpudb.gpudb import GPUdbIngestor, RecordRetriever
-    except:
-        if GPUDB_MODULE_PATH not in sys.path :
-            sys.path.insert(1, GPUDB_MODULE_PATH)
+    try:                   # Installed
+        from gpudb.gpudb_multihead_io import GPUdbIngestor, RecordRetriever
+    except ImportError:    # Local
         from gpudb_multihead_io import GPUdbIngestor, RecordRetriever
 else:
-    try:
+    try:                   # Installed
         from gpudb import GPUdbIngestor, RecordRetriever
-    except:
-        if GPUDB_MODULE_PATH not in sys.path :
-            sys.path.insert(1, GPUDB_MODULE_PATH)
-        from gpudb_multihead_io import GPUdbIngestor, RecordRetriever
+    except ImportError:    # Local
+        try:
+            from gpudb.gpudb_multihead_io import GPUdbIngestor, RecordRetriever
+        except ImportError:  # Failsafe
+            from gpudb_multihead_io import GPUdbIngestor, RecordRetriever
 # done importing GPUdbIngestor
 
 
@@ -39464,6 +39508,11 @@ class GPUdbTable( object ):
 
                   The default value is 'false'.
 
+                * **strategy_definition** --
+                  The `tier strategy
+                  <../../../../rm/concepts/#tier-strategies>`__ for the table
+                  and its columns.
+
                 * **ttl** --
                   Sets the `TTL <../../../../concepts/ttl/>`__ of the join
                   table specified in input parameter *join_table_name*.
@@ -39685,6 +39734,11 @@ class GPUdbTable( object ):
                   * false
 
                   The default value is 'false'.
+
+                * **strategy_definition** --
+                  The `tier strategy
+                  <../../../../rm/concepts/#tier-strategies>`__ for the table
+                  and its columns.
 
         Returns:
             A read-only GPUdbTable object.
@@ -40106,6 +40160,11 @@ class GPUdbTable( object ):
                     aggregate, etc.
 
                   The default value is 'value'.
+
+                * **strategy_definition** --
+                  The `tier strategy
+                  <../../../../rm/concepts/#tier-strategies>`__ for the table
+                  and its columns.
 
                 * **result_table** --
                   The name of a table used to store the results, in
@@ -42441,6 +42500,11 @@ class GPUdbTable( object ):
                 * **view_id** --
                   ID of view of which this projection is a member.  The default
                   value is ''.
+
+                * **strategy_definition** --
+                  The `tier strategy
+                  <../../../../rm/concepts/#tier-strategies>`__ for the table
+                  and its columns.
 
             projection_name (str)
                 Name of the projection to be created, in

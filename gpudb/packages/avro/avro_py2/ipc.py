@@ -21,9 +21,9 @@ try:
   from cStringIO import StringIO
 except ImportError:
   from StringIO import StringIO
-from avro import io
-from avro import protocol
-from avro import schema
+from . import io
+from . import protocol
+from . import schema
 
 #
 # Constants

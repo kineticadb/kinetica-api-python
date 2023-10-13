@@ -2,6 +2,13 @@
 
 ## Version 7.1
 
+### Version 7.1.9.7 - 2023-10-12
+
+#### Changed
+-   Cleaned up unauthorized access exception handling
+-   Dependency reference scheme modified to avoid collisions with user imports
+
+
 ### Version 7.1.9.6 - 2023-09-17
 
 #### Added

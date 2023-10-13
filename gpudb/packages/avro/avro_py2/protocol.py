@@ -24,7 +24,7 @@ try:
   import json
 except ImportError:
   import simplejson as json
-from avro import schema
+from . import schema
 
 #
 # Constants

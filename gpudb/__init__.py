@@ -1,9 +1,14 @@
 import sys
 
 # C-extension package for avro encoding
-from .protocol import RecordColumn
-from .protocol import RecordType
-from .protocol import Record
+try:                   # Installed
+    from .protocol import RecordType
+    from .protocol import Record
+    from .protocol import Schema
+except ImportError:    # Local
+    from protocol import RecordType
+    from protocol import Record
+    from protocol import Schema
 
 
 if (sys.version_info[0] == 3):  # checking the major component

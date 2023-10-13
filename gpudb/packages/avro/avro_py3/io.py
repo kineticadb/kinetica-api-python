@@ -58,7 +58,7 @@ import logging
 import struct
 import sys
 
-from avro import schema
+from . import schema
 
 logger = logging.getLogger(__name__)
 

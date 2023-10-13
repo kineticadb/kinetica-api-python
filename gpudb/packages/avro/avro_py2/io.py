@@ -37,7 +37,7 @@ uses the following mapping:
   * Schema booleans are implemented as bool. 
 """
 import struct
-from avro import schema
+from . import schema
 import sys
 from binascii import crc32
 

@@ -21,14 +21,20 @@ IS_PYTHON_3 = (sys.version_info[0] >= 3) # checking the major component
 IS_PYTHON_27_OR_ABOVE = sys.version_info >= (2, 7)
 
 
-try:
+try:                   # Installed
     from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, RecordType, _Util
     from gpudb.gpudb import GPUdbException, GPUdbConnectionException, GPUdbExitException, GPUdbFailoverDisabledException, GPUdbHAUnavailableException, GPUdbUnauthorizedAccessException
-except:
+    from gpudb.protocol import Record
+except:                # Local
     from gpudb       import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, RecordType, _Util
     from gpudb       import GPUdbException, GPUdbConnectionException, GPUdbExitException, GPUdbFailoverDisabledException, GPUdbHAUnavailableException, GPUdbUnauthorizedAccessException
+    from protocol import Record
 
-from avro import schema, datafile, io
+try:
+    from gpudb.packages.avro import schema, datafile, io
+except ImportError:
+    from packages.avro import schema, datafile, io
+
 import builtins
 import datetime
 import json
@@ -39,7 +45,6 @@ import struct
 import time
 import uuid
 
-from protocol import Record
 
 
 try:
@@ -50,19 +55,17 @@ except:
 
     import os
     # The absolute path of this gpudb.py module for importing local packages
-    gpudb_module_path = __file__
-    if gpudb_module_path[len(gpudb_module_path)-3:] == "pyc": # allow symlinks to gpudb.py
-        gpudb_module_path = gpudb_module_path[0:len(gpudb_module_path)-1]
-    if os.path.islink(gpudb_module_path): # allow symlinks to gpudb.py
-        gpudb_module_path = os.readlink(gpudb_module_path)
-    gpudb_module_path = os.path.dirname(os.path.abspath(gpudb_module_path))
+    gpudb_module_path = os.path.dirname(os.path.abspath(__file__))
 
     # Search for our modules first, probably don't need imp or virt envs.
     if not gpudb_module_path + "/packages" in sys.path :
-        sys.path.insert(1, gpudb_module_path + "/packages")
+        sys.path.append(gpudb_module_path + "/packages")
 
     # pure python implementation
-    import pymmh3 as mmh3
+    try:                   # Installed
+        import gpudb.packages.pymmh3 as mmh3
+    except:                # Local
+        import packages.pymmh3 as mmh3
 # end try block
 
 
