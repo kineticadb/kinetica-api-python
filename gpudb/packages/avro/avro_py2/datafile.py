@@ -28,8 +28,8 @@ try:
   from cStringIO import StringIO
 except ImportError:
   from StringIO import StringIO
-from avro import schema
-from avro import io
+from . import schema
+from . import io
 try:
   import snappy
   has_snappy = True

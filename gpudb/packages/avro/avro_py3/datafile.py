@@ -35,8 +35,8 @@ import logging
 import os
 import zlib
 
-from avro import schema
-from avro import io as avro_io
+from . import schema
+from . import io as avro_io
 
 try:
   import snappy

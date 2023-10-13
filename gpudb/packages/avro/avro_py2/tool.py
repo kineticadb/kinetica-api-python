@@ -23,10 +23,10 @@ from __future__ import print_function
 import sys
 from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
 import urlparse
-from avro import io
-from avro import datafile
-from avro import protocol
-from avro import ipc
+from . import io
+from . import datafile
+from . import protocol
+from . import ipc
 
 class GenericResponder(ipc.Responder):
   def __init__(self, proto, msg, datum):

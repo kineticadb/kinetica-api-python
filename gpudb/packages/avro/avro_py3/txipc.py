@@ -26,8 +26,8 @@ from future import standard_library
 standard_library.install_aliases()
 import io
 
-from avro import io as avro_io
-from avro import ipc
+from . import io as avro_io
+from . import ipc
 
 from zope.interface import implements
 

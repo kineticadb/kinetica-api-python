@@ -35,7 +35,7 @@ import hashlib
 import json
 import logging
 
-from avro import schema
+from . import schema
 
 ImmutableDict = schema.ImmutableDict
 

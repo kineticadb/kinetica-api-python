@@ -36,10 +36,10 @@ import urllib
 #from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-from avro import io
-from avro import datafile
-from avro import protocol
-from avro import ipc
+from . import io
+from . import datafile
+from . import protocol
+from . import ipc
 
 class GenericResponder(ipc.Responder):
   def __init__(self, proto, msg, datum):

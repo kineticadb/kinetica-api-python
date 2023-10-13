@@ -30,26 +30,21 @@ if IS_PYTHON_3:
     class unicode:
         pass
 
+
 # ---------------------------------------------------------------------------
 # The absolute path of this gpudb.py module for importing local packages
-gpudb_module_path = __file__
-if gpudb_module_path[
-   len(gpudb_module_path) - 3:] == "pyc":  # allow symlinks to gpudb.py
-    gpudb_module_path = gpudb_module_path[0:len(gpudb_module_path) - 1]
-if os.path.islink(gpudb_module_path):  # allow symlinks to gpudb.py
-    gpudb_module_path = os.readlink(gpudb_module_path)
-if not os.path.isabs(gpudb_module_path):  # take care of relative symlinks
-    gpudb_module_path = os.path.join(os.path.dirname(__file__),
-                                     gpudb_module_path)
-gpudb_module_path = os.path.dirname(os.path.abspath(gpudb_module_path))
+gpudb_module_path = os.path.dirname(os.path.abspath(__file__))
 
 # Search for our modules first, probably don't need imp or virt envs.
-if not gpudb_module_path in sys.path:
-    sys.path.insert(1, gpudb_module_path)
-if not gpudb_module_path + "/packages" in sys.path:
-    sys.path.insert(1, gpudb_module_path + "/packages")
+for gpudb_path in [gpudb_module_path, gpudb_module_path + "/packages"]:
+    if not gpudb_path in sys.path:
+        sys.path.append(gpudb_path)
 
-from protocol import RecordType
+
+try:
+    from gpudb.protocol import RecordType
+except ImportError:
+    from protocol import RecordType
 
 try:
     from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbException, \
@@ -58,7 +53,10 @@ except:
     from gpudb import GPUdb, GPUdbRecord, GPUdbException, \
         GPUdbConnectionException
 
-import enum34 as enum
+try:
+    import gpudb.packages.enum34 as enum
+except ImportError:
+    import packages.enum34 as enum
 
 try:
     import queue

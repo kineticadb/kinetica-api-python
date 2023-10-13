@@ -4,6 +4,7 @@
 ## Version 7.1
 
 ### Version 7.1.9.0
+-   Added value 'gdb' to file_type option in external files endpoints (insert_records_from_files, create_table_external)
 
 #### Changed Endpoints
 -   Added option ``dependencies`` to ``/show/table`` endpoint to list the DDLs of the dependencies of a view

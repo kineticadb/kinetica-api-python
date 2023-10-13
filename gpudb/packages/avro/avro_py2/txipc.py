@@ -19,8 +19,8 @@ try:
   from cStringIO import StringIO
 except ImportError:
   from StringIO import StringIO
-from avro import ipc
-from avro import io
+from . import ipc
+from . import io
 
 from zope.interface import implements
 
