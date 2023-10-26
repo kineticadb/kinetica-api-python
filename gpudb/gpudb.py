@@ -1702,10 +1702,10 @@ class GPUdbRecordType(object):
 
         # Generate the avro schema string
         schema_string = """{{
-	"type" : "record",
-	"name" : "{_label}",
-	"fields" : [ {_fields} ]}}
-	""".format( _label  = self.name,
+    "type" : "record",
+    "name" : "{_label}",
+    "fields" : [ {_fields} ]}}
+    """.format( _label  = self.name,
                     _fields = fields )
         schema_string = schema_string.replace( "\t", "" ).replace( "\n", "" )
 
@@ -4744,7 +4744,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.9.7"
+    api_version = "7.1.9.8"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5886,7 +5886,6 @@ class GPUdb(object):
             sys_prop_resp = self.__submit_request( C._ENDPOINT_SHOW_SYSTEM_PROPERTIES,
                                                    {"options": {}},
                                                    url = url,
-                                                   timeout = self.__DEFAULT_INTERNAL_ENDPOINT_CALL_TIMEOUT,
                                                    convert_to_attr_dict = True )
         except GPUdbUnauthorizedAccessException as ex:
             # Any permission related problem should get propagated
@@ -7402,7 +7401,7 @@ class GPUdb(object):
             # Use the cached one
             timeout = self.timeout
         else:
-            # The given timeout must be a positive integer
+            # The given timeout must be a non-negative integer
             try:
                 timeout = int( timeout )
             except:
@@ -7413,7 +7412,7 @@ class GPUdb(object):
             # end inner if
 
             if timeout < 0:
-                msg = ("Argument 'timeout' must be a positive integer value; "
+                msg = ("Argument 'timeout' must be a non-negative integer value; "
                        "given '{}'".format( timeout ) )
                 self.__log_debug( msg )
                 raise GPUdbException( msg )
@@ -7610,7 +7609,7 @@ class GPUdb(object):
             # Use the cached one
             timeout = self.timeout
         else:
-            # The given timeout must be a positive integer
+            # The given timeout must be a non-negative integer
             try:
                 timeout = int( timeout )
             except:
@@ -7621,7 +7620,7 @@ class GPUdb(object):
             # end inner if
 
             if timeout < 0:
-                msg = ("Argument 'timeout' must be a positive integer value; "
+                msg = ("Argument 'timeout' must be a non-negative integer value; "
                        "given '{}'".format( timeout ) )
                 self.__log_debug( msg )
                 raise GPUdbException( msg )
@@ -7787,7 +7786,7 @@ class GPUdb(object):
             # Use the cached one
             timeout = self.timeout
         else:
-            # The given timeout must be a positive integer
+            # The given timeout must be a non-negative integer
             try:
                 timeout = int( timeout )
             except:
@@ -7798,7 +7797,7 @@ class GPUdb(object):
             # end inner if
 
             if timeout < 0:
-                msg = ("Argument 'timeout' must be a positive integer value; "
+                msg = ("Argument 'timeout' must be a non-negative integer value; "
                        "given '{}'".format( timeout ) )
                 self.__log_debug( msg )
                 raise GPUdbException( msg )
@@ -8005,7 +8004,7 @@ class GPUdb(object):
             # Use the cached one
             timeout = self.timeout
         else:
-            # The given timeout must be a positive integer
+            # The given timeout must be a non-negative integer
             try:
                 timeout = int( timeout )
             except:
@@ -8016,7 +8015,7 @@ class GPUdb(object):
             # end inner if
 
             if timeout < 0:
-                msg = ("Argument 'timeout' must be a positive integer value; "
+                msg = ("Argument 'timeout' must be a non-negative integer value; "
                        "given '{}'".format( timeout ) )
                 self.__log_debug( msg )
                 raise GPUdbException( msg )
@@ -8169,7 +8168,7 @@ class GPUdb(object):
             # Use the cached one
             timeout = self.timeout
         else:
-            # The given timeout must be a positive integer
+            # The given timeout must be a non-negative integer
             try:
                 timeout = int( timeout )
             except:
@@ -8180,7 +8179,7 @@ class GPUdb(object):
             # end inner if
 
             if timeout < 0:
-                msg = ("Argument 'timeout' must be a positive integer value; "
+                msg = ("Argument 'timeout' must be a non-negative integer value; "
                        "given '{}'".format( timeout ) )
                 self.__log_debug( msg )
                 raise GPUdbException( msg )
@@ -8335,7 +8334,7 @@ class GPUdb(object):
             # Use the cached one
             timeout = self.timeout
         else:
-            # The given timeout must be a positive integer
+            # The given timeout must be a non-negative integer
             try:
                 timeout = int( timeout )
             except:
@@ -8346,7 +8345,7 @@ class GPUdb(object):
             # end inner if
 
             if timeout < 0:
-                msg = ("Argument 'timeout' must be a positive integer value; "
+                msg = ("Argument 'timeout' must be a non-negative integer value; "
                        "given '{}'".format( timeout ) )
                 self.__log_debug( msg )
                 raise GPUdbException( msg )
@@ -8525,7 +8524,7 @@ class GPUdb(object):
             # Use the cached one
             timeout = self.timeout
         else:
-            # The given timeout must be a positive integer
+            # The given timeout must be a non-negative integer
             try:
                 timeout = int( timeout )
             except:
@@ -8536,7 +8535,7 @@ class GPUdb(object):
             # end inner if
 
             if timeout < 0:
-                msg = ("Argument 'timeout' must be a positive integer value; "
+                msg = ("Argument 'timeout' must be a non-negative integer value; "
                        "given '{}'".format( timeout ) )
                 self.__log_debug( msg )
                 raise GPUdbException( msg )
@@ -21340,6 +21339,10 @@ class GPUdb(object):
 
                   The default value is 'delimited_text'.
 
+                * **gdal_configuration_options** --
+                  Comma separated list of gdal conf options, for the specific
+                  requets: key=value.  The default value is ''.
+
                 * **ignore_existing_pk** --
                   Specifies the record collision error-suppression policy for
                   inserting into a table with a `primary key
@@ -28195,6 +28198,9 @@ class GPUdb(object):
                 The type of object being granted to
                 Allowed values are:
 
+                * **context** --
+                  Context
+
                 * **credential** --
                   Credential
 
@@ -28391,6 +28397,9 @@ class GPUdb(object):
                 Permission to grant to the user or role
                 Allowed values are:
 
+                * **admin** --
+                  Admin access on the given data source
+
                 * **connect** --
                   Connect access on the given data source
 
@@ -28515,6 +28524,9 @@ class GPUdb(object):
             permission (str)
                 Permission to grant to the user or role.
                 Allowed values are:
+
+                * **proc_admin** --
+                  Admin access to the proc.
 
                 * **proc_execute** --
                   Execute access to the proc.
@@ -28773,6 +28785,9 @@ class GPUdb(object):
             object_type (str)
                 The type of object being checked
                 Allowed values are:
+
+                * **context** --
+                  Context
 
                 * **credential** --
                   Credential
@@ -29864,6 +29879,10 @@ class GPUdb(object):
 
                   The default value is 'delimited_text'.
 
+                * **gdal_configuration_options** --
+                  Comma separated list of gdal conf options, for the specific
+                  requets: key=value.  The default value is ''.
+
                 * **ignore_existing_pk** --
                   Specifies the record collision error-suppression policy for
                   inserting into a table with a `primary key
@@ -30600,6 +30619,10 @@ class GPUdb(object):
                     ShapeFile file format
 
                   The default value is 'delimited_text'.
+
+                * **gdal_configuration_options** --
+                  Comma separated list of gdal conf options, for the specific
+                  requets: key=value.  The default value is ''.
 
                 * **ignore_existing_pk** --
                   Specifies the record collision error-suppression policy for
@@ -33048,6 +33071,9 @@ class GPUdb(object):
                 The type of object being revoked
                 Allowed values are:
 
+                * **context** --
+                  Context
+
                 * **credential** --
                   Credential
 
@@ -33239,6 +33265,9 @@ class GPUdb(object):
                 Permission to revoke from the user or role
                 Allowed values are:
 
+                * **admin** --
+                  Admin access on the given data source
+
                 * **connect** --
                   Connect access on the given data source
 
@@ -33362,6 +33391,9 @@ class GPUdb(object):
             permission (str)
                 Permission to revoke from the user or role.
                 Allowed values are:
+
+                * **proc_admin** --
+                  Admin access to the proc.
 
                 * **proc_execute** --
                   Execute access to the proc.
