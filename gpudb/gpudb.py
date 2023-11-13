@@ -17563,6 +17563,18 @@ class GPUdb(object):
                 * **tps_per_tom** --
                   Sets the tps_per_tom value of the conf.
 
+                * **ai_api_provider** --
+                  AI API provider type
+
+                * **ai_api_url** --
+                  AI API URL
+
+                * **ai_api_key** --
+                  AI API key
+
+                * **ai_api_connection_timeout** --
+                  AI API connection timeout in seconds
+
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
                 ).
@@ -39412,7 +39424,7 @@ class GPUdbTable( object ):
     # end get_geo_json
 
 
-    def to_df(self, batch_size = 10000):
+    def to_df(self, **kwargs):
         """Converts the table data to a Pandas Data Frame.
 
         Parameters:
@@ -39422,32 +39434,33 @@ class GPUdbTable( object ):
         Returns:
             A Pandas Data Frame containing the table data.
         """
-        import pandas
-
-        sql = "SELECT * FROM {}".format(self.qualified_name)
-
-        # Get the table data for the first batch of records
-        ret_obj = self.db.execute_sql_and_decode(sql, 0, batch_size)
-
-        # Return immediately if all records fit into one batch
-        if(ret_obj["has_more_records"] == False):
-            return pandas.DataFrame.from_dict(ret_obj["records"])
-
-
-        # Add 1st batch of records
-        record_count = 0
-        pd_arr = []
-        pd_arr.append(pandas.DataFrame.from_dict(ret_obj["records"]))
-
-        # Loop for remainder of records
-        while(ret_obj["has_more_records"]):
-            record_count += batch_size
-            ret_obj = self.db.execute_sql_and_decode(sql, record_count, batch_size)
-            pd_arr.append(pandas.DataFrame.from_dict(ret_obj["records"]))
-
-        return pandas.concat(pd_arr)
+        from . import gpudb_dataframe
+        return gpudb_dataframe.DataFrameUtils.table_to_df(self.db, self.qualified_name, **kwargs)
     # end to_df
 
+    @classmethod
+    def from_df(cls, df, db, table_name, **kwargs):
+        """
+        Load a table from a dataframe, optionally creating it if it doesn’t exist,
+        and returning a GPUdbTable reference to the table.
+        """
+        from . import gpudb_dataframe
+        return gpudb_dataframe.DataFrameUtils.df_to_table(df, db, table_name, **kwargs)
+    # end from_df
+
+
+    def type_as_df(self):
+        """ Return table columns as a dataframe for inspection. """
+        from . import gpudb_dataframe
+        return gpudb_dataframe.DataFrameUtils.table_type_as_df(self)
+    # end type_as_df
+
+
+    def insert_df(self, df, **kwargs):
+        """ Insert into a GPUdbTable from a dataframe. """
+        from . import gpudb_dataframe
+        return gpudb_dataframe.DataFrameUtils.df_insert_into_table(df, self, **kwargs)
+    # end insert_df
 
 
     @staticmethod
