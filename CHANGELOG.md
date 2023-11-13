@@ -2,6 +2,12 @@
 
 ## Version 7.1
 
+### Version 7.1.9.9 - 2023-11-12
+
+#### Added
+-   New Pandas DataFrame functions
+
+
 ### Version 7.1.9.8 - 2023-10-26
 
 #### Changed

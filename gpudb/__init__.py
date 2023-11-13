@@ -38,6 +38,7 @@ if (sys.version_info[0] == 3):  # checking the major component
     from gpudb.gpudb_file_handler import GPUdbFileHandler, OpMode, MultipartOperation
 
     from gpudb.gpudb import collections
+    from gpudb.gpudb_sql_iterator import GPUdbSqlIterator
 else:
     from gpudb import GPUdb
     from gpudb import GPUdbException
@@ -64,3 +65,4 @@ else:
     from gpudb_table_monitor import GPUdbTableMonitor
 
     from gpudb import collections
+    from gpudb_sql_iterator import GPUdbSqlIterator
