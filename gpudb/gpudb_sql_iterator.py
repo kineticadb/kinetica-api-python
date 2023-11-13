@@ -6,7 +6,6 @@
 # ---------------------------------------------------------------------------
 
 import logging
-from typing import Optional
 
 from . import GPUdb
 from . import GPUdbTable

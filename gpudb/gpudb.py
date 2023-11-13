@@ -4744,7 +4744,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.9.8"
+    api_version = "7.1.9.10"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -10059,7 +10059,7 @@ class GPUdb(object):
     # end get_server_debug_information
 
 
-    def to_df(self, sql, batch_size = 10000):
+    def to_df(self, sql, **kwargs):
         """Runs the given query and converts the result to a Pandas Data Frame.
 
         Parameters:
@@ -10071,56 +10071,10 @@ class GPUdb(object):
         Returns:
             A Pandas Data Frame containing the result set of the SQL query.
         """
-        import pandas
+        from . import gpudb_dataframe
+        return gpudb_dataframe.DataFrameUtils.sql_to_df(self, sql, **kwargs)
 
-        # Generate a schema-less paging table name for quick record retrieval;
-        #   Need to get the fully-qualified name from the 1st round response
-        paging_table_name = GPUdbTable.random_name()
-        options = {"paging_table" : paging_table_name}
-
-        # Run the query for the first batch of records
-        ret_obj = self.execute_sql_and_decode(sql, 0, batch_size, options = options)
-
-        # Return immediately if all records fit into one batch
-        if(ret_obj["has_more_records"] == False):
-            return pandas.DataFrame.from_dict(ret_obj["records"])
-
-
-        # More records than will fit in one batch encountered
-        # 1. Get paging table info
-        # 2. Retrieve records
-        # 3. Remove paging tables
-
-        # Get fully-qualified paging table names; the supporting list is only
-        #   returned in the 1st round call
-        paging_table_name = ret_obj["paging_table"]
-        supporting_paging_table_names = None
-        if "result_table_list" in ret_obj["info"]:
-            supporting_paging_table_names = ret_obj["info"]["result_table_list"]
-
-        # Add 1st batch of records
-        record_count = 0
-        pd_arr = []
-        pd_arr.append(pandas.DataFrame.from_dict(ret_obj["records"]))
-
-        # Loop for remainder of records
-        while(ret_obj["has_more_records"]):
-            record_count += batch_size
-            ret_obj = self.execute_sql_and_decode(sql, record_count, batch_size, options = options)
-            pd_arr.append(pandas.DataFrame.from_dict(ret_obj["records"]))
-
-        # Remove paging table and supporting tables, if any
-        if paging_table_name:
-            self.clear_table(paging_table_name)
-
-            if supporting_paging_table_names:
-                for support_paging_table_name in supporting_paging_table_names.split(','):
-                    self.clear_table(support_paging_table_name)
-
-        return pandas.concat(pd_arr)
     # end to_df
-
-
 
     # ------------- END convenience functions ------------------------------------
 
@@ -39441,7 +39395,7 @@ class GPUdbTable( object ):
     @classmethod
     def from_df(cls, df, db, table_name, **kwargs):
         """
-        Load a table from a dataframe, optionally creating it if it doesn’t exist,
+        Load a table from a dataframe, optionally creating it if it doesn't exist,
         and returning a GPUdbTable reference to the table.
         """
         from . import gpudb_dataframe
