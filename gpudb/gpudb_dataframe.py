@@ -7,15 +7,17 @@
 import logging
 import pandas as pd
 import numpy as np
-from math import ceil, log
+try:
+    from math import ceil, log
+except:
+    from math import ceil, log2
+
 import json
 from tqdm.auto import tqdm
 
-from typing import Optional, List
 
 from . import GPUdbRecordColumn
 from . import GPUdbColumnProperty
-from . import GPUdb
 from . import GPUdbTable
 from . import GPUdbSqlIterator
 from . import GPUdbException
@@ -24,7 +26,7 @@ from . import GPUdbException
 class DataFrameUtils:
     _COL_TYPE = GPUdbRecordColumn._ColumnType
     _LOG = logging.getLogger("gpudb.DataFrameUtils")
-    TQDM_NCOLS = 100
+    TQDM_NCOLS = None
     BATCH_SIZE = 5000
 
     @classmethod
@@ -157,7 +159,7 @@ class DataFrameUtils:
             show_progress (bool): whether to display progress or not. Defaults to False.
 
         Returns:
-            _type_: _description_
+            pd.Dataframe: Returns a Pandas dataframe created from the Kinetica table
         """
 
         sql = "SELECT * FROM {}".format(table_name)
@@ -168,13 +170,13 @@ class DataFrameUtils:
 
     @classmethod
     def table_type_as_df(cls, gpudb_table):
-        """Convert a GPUdbTable’s type schema (column list) into a dataframe. 
+        """Convert a GPUdbTable's type schema (column list) into a dataframe. 
 
         Args:
             gpudb_table (GPUdbTable): a GPUdbTable instance
 
         Returns:
-            pd.DataFrame: a Pandas dataframe
+            pd.DataFrame: a Pandas dataframe created by analyzing the table column types
         """        
 
         table_type = gpudb_table.get_table_type()
@@ -196,7 +198,7 @@ class DataFrameUtils:
                     batch_size = BATCH_SIZE,
                     **kwargs):
         """ Load a dataframe into a table; optionally dropping any existing table,
-        creating it if it doesn’t exist, and loading data into it; and then returning a
+        creating it if it doesn't exist, and loading data into it; and then returning a
         GPUdbTable reference to the table.
 
 
@@ -214,7 +216,7 @@ class DataFrameUtils:
             GPUdbException: 
 
         Returns:
-            GPUdbTable: a GPUdbTable instance
+            GPUdbTable: a GPUdbTable instance created from the dataframe passed in 
         """        
 
         has_table_resp = db.has_table(table_name)
@@ -259,7 +261,7 @@ class DataFrameUtils:
             show_progress (bool): whether to show progress of the operation. Defaults to False.
 
         Returns:
-            _type_: _description_
+            int: the number of rows of the dataframe actually inserted into the Kinetica table
         """        
 
         total_rows = df.shape[0]
@@ -320,6 +322,10 @@ class DataFrameUtils:
                              col_type_override = None):
         """ Create GPUdb column types from a DataFrame. """
         type_list = []
+
+        # create a copy because we will be modifying this.
+        col_type_override = col_type_override.copy()
+
         for col_name, col_data in df.items():
             np_type = col_data.dtype.name
             col_type = cls.TYPE_NUMPY_TO_GPUDB.get(np_type)
@@ -329,7 +335,12 @@ class DataFrameUtils:
                 ref_val = col_data[0]
                 if isinstance(ref_val, str):
                     max_len = col_data.map(len).max()
-                    spow = 2 ** ceil(log(max_len,2))
+                    spow = None
+                    try:
+                        spow = 2 ** ceil(log(max_len,2))
+                    except:
+                        spow = 2 ** ceil(log2(max_len))
+
                     col_type = [cls._COL_TYPE.STRING, 'char{}'.format(spow)]
 
                 elif isinstance(ref_val, list) or isinstance(ref_val, np.ndarray):

@@ -2,6 +2,12 @@
 
 ## Version 7.1
 
+### Version 7.1.9.10 - 2023-11-13
+
+#### Fixed
+-   Special characters in comments
+
+
 ### Version 7.1.9.9 - 2023-11-12
 
 #### Added
@@ -11,7 +17,7 @@
 ### Version 7.1.9.8 - 2023-10-26
 
 #### Changed
--   Timeout in get_system_properties to user-defined (default infinite)
+-   Timeout in `get_system_properties` to user-defined (default infinite)
 
 
 ### Version 7.1.9.7 - 2023-10-12
