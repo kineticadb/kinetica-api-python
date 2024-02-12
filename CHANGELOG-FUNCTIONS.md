@@ -1,6 +1,33 @@
 # Kinetica REST API Changelog
 
 
+## Version 7.2
+
+### Version 7.2.0.0 -- 2024-02-11
+
+#### Added
+-   Added ``/export/query/metrics``
+-   Added the following endpoints to support write ahead logging
+    -  ``/alter/wal``
+    -  ``/show/wal``
+    -  ``/admin/repair/table``
+-   Added ``/admin/ha/refresh``
+
+#### Changed Endpoints
+
+##### Non-breaking Changes
+-   Added ``primary_key_type`` option to ``/create/table`` endpoint and ``/show/table`` response
+-   Added ``chunk_column_max_memory`` option where ``chunk_size`` option is currently in various endpoints
+-   Added ``chunk_max_memory`` option where ``chunk_size`` option is currently in various endpoints
+-   Added ``evict_to_cold`` option to ``/alter/system/properties``
+-   Added ``array``, ``json`` and ``vector`` to ``properties`` list in ``/create/type``
+
+##### Breaking Changes
+-   A new endpoint /repartition/graph is added
+
+
+
+
 ## Version 7.1
 
 ### Version 7.1.9.0
@@ -26,8 +53,12 @@
     -  ``/show/files``
     -  ``/download/files``
     -  ``/delete/files``
--   Added ``/admin/ha/refresh``
--   Added ``evict_to_cold`` option to ``/alter/system/properties``
+-   Added options ``execute_at_startup`` and ``execute_at_startup_as``  to ``/execute/proc`` endpoint to facilitate running procs (UDFs) on startup
+-   Added option ``clear_execute_at_startup`` to ``/kill/proc`` endpoint to remove a startup proc (UDF) instance
+-   Added option ``verify_orphaned_tables_only`` to ``/admin/verifydb`` endpoint
+-   Added 'orphaned_tables_total_size' to response for endpoint ``/admin/verifydb``
+-   Added new action ``rebuild`` to ``/alter/environment``
+-   Added option ``show_current_user`` to ``/show/security`` endpoint
 
 #### Added
 -   Added new endpoints to support UDF python environment management:

@@ -12,8 +12,10 @@
 # ---------------------------------------------------------------------------
 
 from __future__ import print_function
+import struct
+from typing import Any, List, Union
+import typing
 
-import string
 
 try:
     from io import BytesIO
@@ -30,8 +32,6 @@ try:
 except ImportError:
     #python3
     from urllib.parse import urlencode
-
-import socket
 
 import base64
 import copy
@@ -71,7 +71,7 @@ gpudb_module_path = os.path.dirname(os.path.abspath(__file__))
 
 # Search for our modules first, probably don't need imp or virt envs.
 for gpudb_path in [gpudb_module_path, gpudb_module_path + "/packages"]:
-    if not gpudb_path in sys.path:
+    if gpudb_path not in sys.path:
         sys.path.append(gpudb_path)
 
 
@@ -102,6 +102,12 @@ if IS_PYTHON_3:
     schema.parse = schema.Parse
     schema.RecordSchema.fields_dict = schema.RecordSchema.field_map
 
+
+# Python 3.6 & below have re._pattern_type; 3.7 & above have re.Pattern
+try:
+    from re import Pattern
+except ImportError:
+    from re import _pattern_type as Pattern
 
 
 HAVE_SNAPPY = False
@@ -576,10 +582,84 @@ class _ConnectionToken(object):
 # end class _ConnectionToken
 
 
+# Forward declaration for the `GPUdbRecordColumn` class declared later
+GPUdbRecordColumn = typing.NewType("GPUdbRecordColumn", object)
+GPUdbRecordType = typing.NewType("GPUdbRecordType", object)
+
 # ---------------------------------------------------------------------------
 # Utility Functions
 # ---------------------------------------------------------------------------
 class _Util(object):
+
+    @staticmethod
+    def _convert_value_on_insertion(column_value: Any, column: GPUdbRecordColumn) -> object:
+        """Convert column value for insertion into table for array, json and vector types
+        JSON - str or dict (server needs it as string, so dict => str)
+        Array - str or list (server needs it as string, so list => str)
+        Vector - bytes or list[float] (pack if list)
+
+        Args:
+            column_value (Any): the value to be converted
+            column (GPUdbRecordColumn): the column specification
+
+        Returns:
+            object: the converted value
+        """        
+        converted_column_value: Any = None
+        if column.is_json():
+            if isinstance(column_value, dict):
+                # convert to string
+                converted_column_value = json.dumps(column_value)
+        elif column.is_array():
+            if isinstance(column_value, list):
+                if all(isinstance(e, (int, float)) for e in column_value):
+                    converted_column_value = '[{}]'.format(','.join(str(e) for e in column_value))
+                elif all(isinstance(e, str) for e in column_value):
+                    converted_column_value = "[{}]".format(','.join('{}'.format(str(e)) for e in column_value))
+        elif column.is_vector():
+            if not isinstance(column_value, bytes):
+                dims = column.get_vector_dimensions()
+                # pack as bytes
+                converted_column_value = struct.pack("%sf" % dims, *column_value)
+
+        if converted_column_value:
+            column_value = converted_column_value
+        return column_value
+    
+    @staticmethod
+    def _convert_value_on_retrieval(column_value: Any, column: GPUdbRecordColumn) -> object:
+        """Convert column value after reading from table for array, json and vector types
+        JSON - dict, regardless of whether it's returned as a dict or string from the server
+        Array - list
+        Vector - list[float]
+
+        Args:
+            column_value (Any): the value to be converted
+            column (GPUdbRecordColumn): the column specification
+
+        Returns:
+            object: the converted value
+        """        
+        converted_column_value: Any = None
+        if column.is_json():
+            if isinstance(column_value, str):
+                # convert to dict
+                converted_column_value = column_value
+        elif column.is_array():
+            if isinstance(column_value, str):
+                # convert to list
+                converted_column_value = eval(column_value)
+        elif column.is_vector():
+            if isinstance(column_value, bytes):
+                dims = column.get_vector_dimensions()
+                # convert to List[float] represented as bytes
+                converted_column_value = bytes(','.join(
+                    str(e) for e in [*struct.unpack("%sf" % dims, column_value)]), 'utf-8'
+                )
+
+        if converted_column_value:
+            column_value = converted_column_value
+        return column_value
 
     @staticmethod
     def is_ok( response_object ):
@@ -1151,40 +1231,35 @@ class GPUdbColumnProperty(object):
     column available for GPU queries.
     """
 
-
     TEXT_SEARCH = "text_search"
-    """str: Valid only for select 'string' columns. Enables full text search--see
-    `Full Text Search <../../../../concepts/full_text_search/>`__ for details
-    and applicable string column types. Can be set independently of *data* and
-    *store_only*.
+    """str: Valid only for select 'string' columns. Enables full text
+    search--see `Full Text Search <../../../../concepts/full_text_search/>`__
+    for details and applicable string column types. Can be set independently of
+    *data* and *store_only*.
     """
-
 
     STORE_ONLY = "store_only"
-    """str: Persist the column value but do not make it available to queries (e.g.
-    :meth:`GPUdb.filter`)-i.e. it is mutually exclusive to the *data* property.
-    Any 'bytes' type column must have a *store_only* property. This property
-    reduces system memory usage.
+    """str: Persist the column value but do not make it available to queries
+    (e.g. :meth:`GPUdb.filter`)-i.e. it is mutually exclusive to the *data*
+    property. Any 'bytes' type column must have a *store_only* property. This
+    property reduces system memory usage.
     """
 
-
     DISK_OPTIMIZED = "disk_optimized"
-    """str: Works in conjunction with the *data* property for string columns. This
-    property reduces system disk usage by disabling reverse string lookups.
-    Queries like :meth:`GPUdb.filter`, :meth:`GPUdb.filter_by_list`, and
-    :meth:`GPUdb.filter_by_value` work as usual but
+    """str: Works in conjunction with the *data* property for string columns.
+    This property reduces system disk usage by disabling reverse string
+    lookups. Queries like :meth:`GPUdb.filter`, :meth:`GPUdb.filter_by_list`,
+    and :meth:`GPUdb.filter_by_value` work as usual but
     :meth:`GPUdb.aggregate_unique` and :meth:`GPUdb.aggregate_group_by` are not
     allowed on columns with this property.
     """
 
-
     TIMESTAMP = "timestamp"
-    """str: Valid only for 'long' columns. Indicates that this field represents a
-    timestamp and will be provided in milliseconds since the Unix epoch:
+    """str: Valid only for 'long' columns. Indicates that this field represents
+    a timestamp and will be provided in milliseconds since the Unix epoch:
     00:00:00 Jan 1 1970.  Dates represented by a timestamp must fall between
     the year 1000 and the year 2900.
     """
-
 
     ULONG = "ulong"
     """str: Valid only for 'string' columns.  It represents an unsigned long
@@ -1193,46 +1268,40 @@ class GPUdbColumnProperty(object):
     18446744073709551615.
     """
 
-
     UUID = "uuid"
     """str: Valid only for 'string' columns.  It represents an uuid data type.
     Internally, it is stored as a 128-bit integer.
     """
 
-
     DECIMAL = "decimal"
-    """str: Valid only for 'string' columns.  It represents a SQL type NUMERIC(19,
-    4) data type.  There can be up to 15 digits before the decimal point and up
-    to four digits in the fractional part.  The value can be positive or
-    negative (indicated by a minus sign at the beginning).  This property is
-    mutually exclusive with the *text_search* property.
+    """str: Valid only for 'string' columns.  It represents a SQL type
+    NUMERIC(19, 4) data type.  There can be up to 15 digits before the decimal
+    point and up to four digits in the fractional part.  The value can be
+    positive or negative (indicated by a minus sign at the beginning).  This
+    property is mutually exclusive with the *text_search* property.
     """
-
 
     DATE = "date"
-    """str: Valid only for 'string' columns.  Indicates that this field represents
-    a date and will be provided in the format 'YYYY-MM-DD'.  The allowable
-    range is 1000-01-01 through 2900-01-01.  This property is mutually
-    exclusive with the *text_search* property.
-    """
-
-
-    TIME = "time"
-    """str: Valid only for 'string' columns.  Indicates that this field represents
-    a time-of-day and will be provided in the format 'HH:MM:SS.mmm'.  The
-    allowable range is 00:00:00.000 through 23:59:59.999.  This property is
+    """str: Valid only for 'string' columns.  Indicates that this field
+    represents a date and will be provided in the format 'YYYY-MM-DD'.  The
+    allowable range is 1000-01-01 through 2900-01-01.  This property is
     mutually exclusive with the *text_search* property.
     """
 
-
-    DATETIME = "datetime"
-    """str: Valid only for 'string' columns.  Indicates that this field represents
-    a datetime and will be provided in the format 'YYYY-MM-DD HH:MM:SS.mmm'.
-    The allowable range is 1000-01-01 00:00:00.000 through 2900-01-01
-    23:59:59.999.  This property is mutually exclusive with the *text_search*
-    property.
+    TIME = "time"
+    """str: Valid only for 'string' columns.  Indicates that this field
+    represents a time-of-day and will be provided in the format 'HH:MM:SS.mmm'.
+    The allowable range is 00:00:00.000 through 23:59:59.999.  This property is
+    mutually exclusive with the *text_search* property.
     """
 
+    DATETIME = "datetime"
+    """str: Valid only for 'string' columns.  Indicates that this field
+    represents a datetime and will be provided in the format 'YYYY-MM-DD
+    HH:MM:SS.mmm'.  The allowable range is 1000-01-01 00:00:00.000 through
+    2900-01-01 23:59:59.999.  This property is mutually exclusive with the
+    *text_search* property.
+    """
 
     CHAR1 = "char1"
     """str: This property provides optimized memory, disk and query performance
@@ -1240,13 +1309,11 @@ class GPUdbColumnProperty(object):
     character.
     """
 
-
     CHAR2 = "char2"
     """str: This property provides optimized memory, disk and query performance
     for string columns. Strings with this property must be no longer than 2
     characters.
     """
-
 
     CHAR4 = "char4"
     """str: This property provides optimized memory, disk and query performance
@@ -1254,13 +1321,11 @@ class GPUdbColumnProperty(object):
     characters.
     """
 
-
     CHAR8 = "char8"
     """str: This property provides optimized memory, disk and query performance
     for string columns. Strings with this property must be no longer than 8
     characters.
     """
-
 
     CHAR16 = "char16"
     """str: This property provides optimized memory, disk and query performance
@@ -1268,13 +1333,11 @@ class GPUdbColumnProperty(object):
     characters.
     """
 
-
     CHAR32 = "char32"
     """str: This property provides optimized memory, disk and query performance
     for string columns. Strings with this property must be no longer than 32
     characters.
     """
-
 
     CHAR64 = "char64"
     """str: This property provides optimized memory, disk and query performance
@@ -1282,13 +1345,11 @@ class GPUdbColumnProperty(object):
     characters.
     """
 
-
     CHAR128 = "char128"
     """str: This property provides optimized memory, disk and query performance
     for string columns. Strings with this property must be no longer than 128
     characters.
     """
-
 
     CHAR256 = "char256"
     """str: This property provides optimized memory, disk and query performance
@@ -1296,25 +1357,22 @@ class GPUdbColumnProperty(object):
     characters.
     """
 
-
     BOOLEAN = "boolean"
-    """str: This property provides optimized memory and query performance for int
-    columns. Ints with this property must be between 0 and 1(inclusive)
+    """str: This property provides optimized memory and query performance for
+    int columns. Ints with this property must be between 0 and 1(inclusive)
     """
-
 
     INT8 = "int8"
-    """str: This property provides optimized memory and query performance for int
-    columns. Ints with this property must be between -128 and +127 (inclusive)
-    """
-
-
-    INT16 = "int16"
-    """str: This property provides optimized memory and query performance for int
-    columns. Ints with this property must be between -32768 and +32767
+    """str: This property provides optimized memory and query performance for
+    int columns. Ints with this property must be between -128 and +127
     (inclusive)
     """
 
+    INT16 = "int16"
+    """str: This property provides optimized memory and query performance for
+    int columns. Ints with this property must be between -32768 and +32767
+    (inclusive)
+    """
 
     IPV4 = "ipv4"
     """str: This property provides optimized memory, disk and query performance
@@ -1323,25 +1381,41 @@ class GPUdbColumnProperty(object):
     the range of 0-255.
     """
 
-
-    WKT = "wkt"
-    """str: Valid only for 'string' and 'bytes' columns. Indicates that this field
-    contains geospatial geometry objects in Well-Known Text (WKT) or Well-Known
-    Binary (WKB) format.
+    ARRAY = "array"
+    """str: Valid only for 'string' columns. Indicates that this field contains
+    an array.  The value type and (optionally) the item count should be
+    specified in parenthesis; e.g., 'array(int, 10)' for a 10-integer array.
+    Both 'array(int)' and 'array(int, -1)' will designate an unlimited-length
+    integer array, though no bounds checking is performed on arrays of any
+    length.
     """
 
+    JSON = "json"
+    """str: Valid only for 'string' columns. Indicates that this field contains
+    values in JSON format.
+    """
+
+    VECTOR = "vector"
+    """str: Valid only for 'bytes' columns. Indicates that this field contains
+    a vector of floats.  The length should be specified in parenthesis, e.g.,
+    'vector(1000)'.
+    """
+
+    WKT = "wkt"
+    """str: Valid only for 'string' and 'bytes' columns. Indicates that this
+    field contains geospatial geometry objects in Well-Known Text (WKT) or
+    Well-Known Binary (WKB) format.
+    """
 
     PRIMARY_KEY = "primary_key"
     """str: This property indicates that this column will be part of (or the
     entire) `primary key <../../../../concepts/tables/#primary-keys>`__.
     """
 
-
     SHARD_KEY = "shard_key"
     """str: This property indicates that this column will be part of (or the
     entire) `shard key <../../../../concepts/tables/#shard-keys>`__.
     """
-
 
     NULLABLE = "nullable"
     """str: This property indicates that this column is nullable.  However,
@@ -1358,22 +1432,19 @@ class GPUdbColumnProperty(object):
     record.
     """
 
-
     DICT = "dict"
-    """str: This property indicates that this column should be `dictionary encoded
-    <../../../../concepts/dictionary_encoding/>`__. It can only be used in
-    conjunction with restricted string (charN), int, long or date columns.
+    """str: This property indicates that this column should be `dictionary
+    encoded <../../../../concepts/dictionary_encoding/>`__. It can only be used
+    in conjunction with restricted string (charN), int, long or date columns.
     Dictionary encoding is best for columns where the cardinality (the number
     of unique values) is expected to be low. This property can save a large
     amount of memory.
     """
 
-
     INIT_WITH_NOW = "init_with_now"
-    """str: For 'date', 'time', 'datetime', or 'timestamp' column types, replace
-    empty strings and invalid timestamps with 'NOW()' upon insert.
+    """str: For 'date', 'time', 'datetime', or 'timestamp' column types,
+    replace empty strings and invalid timestamps with 'NOW()' upon insert.
     """
-
 
     INIT_WITH_UUID = "init_with_uuid"
     """str: For 'uuid' type, replace empty strings and invalid UUID values with
@@ -1381,6 +1452,8 @@ class GPUdbColumnProperty(object):
     """
 
 # end class GPUdbColumnProperty
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -1537,6 +1610,63 @@ class GPUdbRecordColumn(object):
     # end is_nullable
 
 
+    def is_array(self):
+        for prop in self._column_properties:
+            if prop.startswith(GPUdbColumnProperty.ARRAY):
+                return True
+
+        return False
+
+    def all_numeric_array_types(self):
+        return [GPUdbRecordColumn._ColumnType.INT, 
+                GPUdbRecordColumn._ColumnType.LONG, 
+                GPUdbRecordColumn._ColumnType.FLOAT, 
+                GPUdbRecordColumn._ColumnType.DOUBLE]
+    
+    def get_array_type(self):
+        for prop in self._column_properties:
+            if prop.startswith(GPUdbColumnProperty.ARRAY):
+                open_index = prop.index("(")
+                close_index = prop.rindex(")")
+                if 0 < open_index < close_index:
+                    sub_type = prop[open_index+1:close_index].lower()
+                    if sub_type.startswith("int"):
+                        return GPUdbRecordColumn._ColumnType.INT
+                    elif sub_type == "long":
+                        return GPUdbRecordColumn._ColumnType.LONG
+                    elif sub_type == "float":
+                        return GPUdbRecordColumn._ColumnType.FLOAT
+                    elif sub_type == "double":
+                        return GPUdbRecordColumn._ColumnType.DOUBLE
+                    elif sub_type == "string":
+                        return GPUdbRecordColumn._ColumnType.STRING
+                    else:
+                        raise GPUdbException("Unknown array type: " + sub_type)
+
+    def is_json(self):
+        for prop in self._column_properties:
+            if prop.startswith(GPUdbColumnProperty.JSON):
+                return True
+
+        return False
+
+    def is_vector(self):
+        for prop in self._column_properties:
+            if prop.startswith(GPUdbColumnProperty.VECTOR):
+                return True
+
+        return False
+
+    def get_vector_dimensions(self):
+        dimensions: int = -1
+        for prop in self._column_properties:
+            if prop.startswith(GPUdbColumnProperty.VECTOR):
+                open_index = prop.index("(")
+                close_index = prop.rindex(")")
+                if 0 < open_index < close_index:
+                    dimensions = int(prop[open_index+1:close_index])
+        return dimensions
+
     def __eq__( self, other ):
         if isinstance(other, self.__class__):
             if ( self._name != other.name ):
@@ -1605,6 +1735,9 @@ class GPUdbRecordType(object):
         if not isinstance( label, basestring ):
             raise GPUdbException( "Column label must be a string; given " + str(type( label )) )
         self._label = label
+        self._vector_type_names: dict[int, str] = {}
+        self._array_type_names: dict[int, str] = {}
+        self._json_type_names: dict[int, str] = {}
 
         # The server always uses this hardcoded name and trumps any label
         self.name = "type_name"
@@ -1678,7 +1811,7 @@ class GPUdbRecordType(object):
         fields = []
 
         # Validate each column and deduce its properties
-        for col in self._columns:
+        for col_index, col in enumerate(self._columns):
             # Check that each element is a GPUdbRecordColumn object
             if not isinstance( col, GPUdbRecordColumn ):
                 raise GPUdbException( "columns must contain only GPUdbRecordColumn objects.  Given " + str(type( col )) )
@@ -1695,6 +1828,13 @@ class GPUdbRecordType(object):
                 field_type = ('[{_type}, "null"]'.format( _type = field_type ))
             field = ('{{"name": "{_name}", "type": {_type} }}'.format( _name = col.name, _type = field_type ))
             fields.append( field )
+
+            if col.is_array():
+                self._array_type_names[col_index] = col.name
+            elif col.is_json():
+                self._json_type_names[col_index] = col.name
+            elif col.is_vector():
+                self._vector_type_names[col_index] = col.name
         # end for loop
 
         # Put the fields together
@@ -1752,7 +1892,7 @@ class GPUdbRecordType(object):
         # Now, deduce the columns from the schema string
         schema_json = self._record_schema.to_json()
         columns = []
-        for field in schema_json["fields"]:
+        for col_index, field in enumerate(schema_json["fields"]):
             # Get the field's type
             field_type = field["type"]
 
@@ -1776,6 +1916,13 @@ class GPUdbRecordType(object):
             # Create the column object and to the list
             column = GPUdbRecordColumn( field["name"], field_type, col_props,
                                         is_nullable = is_nullable )
+            if column.is_array():
+                self._array_type_names[col_index] = column.name
+            elif column.is_json():
+                self._json_type_names[col_index] = column.name
+            elif column.is_vector():
+                self._vector_type_names[col_index] = column.name
+
             columns.append( column )
         # end for
 
@@ -1850,6 +1997,42 @@ class GPUdbRecordType(object):
         return self._type_id
     # end type_id
 
+
+    @property
+    def array_type_names(self) -> dict:
+        return self._array_type_names
+    
+    @property
+    def array_type_names_indices(self) -> set:
+        return self._array_type_names.keys()
+    
+    @property
+    def array_type_names_values(self) -> list:
+        return list(self._array_type_names.values())
+    
+    @property
+    def json_type_names(self) -> dict:
+        return self._json_type_names
+
+    @property
+    def json_type_names_indices(self) -> set:
+        return self._json_type_names.keys()
+    
+    @property
+    def json_type_names_values(self) -> list:
+        return list(self._json_type_names.values())
+
+    @property
+    def vector_type_names(self) -> dict:
+        return self._vector_type_names
+
+    @property
+    def vector_type_names_indices(self) -> set:
+        return self._vector_type_names.keys()
+    
+    @property
+    def vector_type_names_values(self) -> list:
+        return list(self._vector_type_names.values())
 
     def create_type( self, gpudb, options = None ):
         """Create the record type in GPUdb so that users can create
@@ -3211,7 +3394,7 @@ class GPUdb(object):
                     raise GPUdbException( "Property 'hostname_regex' must be a "
                                           "valid regex; given '{}'; error: {}"
                                           "".format( value, str( ex ) ) )
-            elif isinstance( value, re._pattern_type ):
+            elif isinstance( value, Pattern ):
                 # No extra processing is needed since we're givne a compiled regex
                 self.__hostname_regex = value
             else:
@@ -4744,7 +4927,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.9.10"
+    api_version = "7.2.0.0"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -10072,9 +10255,101 @@ class GPUdb(object):
             A Pandas Data Frame containing the result set of the SQL query.
         """
         from . import gpudb_dataframe
-        return gpudb_dataframe.DataFrameUtils.sql_to_df(self, sql, **kwargs)
 
+        return gpudb_dataframe.DataFrameUtils.sql_to_df(self, sql, **kwargs)
     # end to_df
+
+
+    def query(self, sql, batch_size = 5000, sql_params = [], sql_opts = {}):
+        """Execute a SQL query and return a GPUdbSqlIterator
+
+        Parameters:
+            sql (str)
+                The SQL to execute
+
+            batch_size(int)
+                The number of rows to retrieve per batch
+
+            sql_params(list of native types)
+                The SQL parameters that will be subsituted for tokens (e.g. $1 $2)
+
+            sql_opts(dict)
+                The parameters that will be passed to the /execute/sql endpoint
+
+        Returns: 
+            An instance of GPUdbSqlIterator.
+        """
+        from . import gpudb_sql_iterator
+
+        sql_iterator = gpudb_sql_iterator.GPUdbSqlIterator(db=self, 
+                sql=sql, 
+                batch_size=batch_size, 
+                sql_params=sql_params,
+                sql_opts=sql_opts)
+        
+        return sql_iterator
+    # end query
+
+
+    def query_one(self, sql, sql_params = [], sql_opts = {}):
+        """Execute a SQL query that returns only one row.
+
+        Parameters:
+            sql (str)
+                The SQL to execute
+
+            sql_params(list of native types)
+                The SQL parameters that will be subsituted for tokens (e.g. $1 $2)
+
+            sql_opts(dict)
+                The parameters that will be passed to the /execute/sql endpoint
+
+        Returns: 
+            The returned row or None.
+        """
+        from . import gpudb_sql_iterator
+
+        with gpudb_sql_iterator.GPUdbSqlIterator(db=self, 
+                sql=sql, 
+                sql_params=sql_params,
+                batch_size=2,
+                sql_opts=sql_opts) as sql_iterator:
+            
+            if(sql_iterator.total_count == 0):
+                return None
+            elif(sql_iterator.total_count > 1):
+                raise GPUdbException("More than one result was returned")
+
+            row = sql_iterator.__next__()
+            return row
+    # end query_one
+
+
+    def execute(self, sql, sql_params = [], sql_opts = {}):
+        """Execute a SQL query and return the rowcount.
+
+        Parameters:
+            sql (str)
+                The SQL to execute
+
+            sql_params(list of native types)
+                The SQL parameters that will be subsituted for tokens (e.g. $1 $2)
+
+            sql_opts(dict)
+                The parameters that will be passed to the /execute/sql endpoint
+
+        Returns:
+            Number of records affected
+        """
+        from . import gpudb_sql_iterator
+
+        gpudb_sql_iterator.GPUdbSqlIterator._set_sql_params(sql_opts, sql_params)
+        response = self.execute_sql(statement=sql, options=sql_opts)
+        gpudb_sql_iterator.GPUdbSqlIterator._check_error(response)
+        count_affected = response['count_affected']
+        return count_affected
+    # end execute
+
 
     # ------------- END convenience functions ------------------------------------
 
@@ -10243,6 +10518,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/admin/repair/table"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_repair_table_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_repair_table_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"repair_status","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("repair_status", "array", [("string")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/admin/repair/table"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/admin/show/alerts"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_show_alerts_request","fields":[{"name":"num_alerts","type":"int"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"admin_show_alerts_response","fields":[{"name":"timestamps","type":{"type":"array","items":"string"}},{"name":"types","type":{"type":"array","items":"string"}},{"name":"params","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -10322,9 +10608,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/admin/verifydb"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_verify_db_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_verify_db_response","fields":[{"name":"verified_ok","type":"boolean"},{"name":"error_list","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_verify_db_response","fields":[{"name":"verified_ok","type":"boolean"},{"name":"error_list","type":{"type":"array","items":"string"}},{"name":"orphaned_tables_total_size","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("verified_ok", "boolean"), ("error_list", "array", [("string")]), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("verified_ok", "boolean"), ("error_list", "array", [("string")]), ("orphaned_tables_total_size", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/verifydb"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -10503,8 +10789,8 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/alter/graph"
-        REQ_SCHEMA_STR = """{"name":"alter_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"action","type":"string"},{"name":"action_arg","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"alter_graph_response","type":"record","fields":[{"name":"action","type":"string"},{"name":"action_arg","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"alter_graph_request","fields":[{"name":"graph_name","type":"string"},{"name":"action","type":"string"},{"name":"action_arg","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_graph_response","fields":[{"name":"action","type":"string"},{"name":"action_arg","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("action", "string"), ("action_arg", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("action", "string"), ("action_arg", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/alter/graph"
@@ -10514,8 +10800,8 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/alter/model"
-        REQ_SCHEMA_STR = """{"name":"alter_model_request","type":"record","fields":[{"name":"model_name","type":"string"},{"name":"action","type":"string"},{"name":"value","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"alter_model_response","type":"record","fields":[{"name":"model_name","type":"string"},{"name":"action","type":"string"},{"name":"value","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"alter_model_request","fields":[{"name":"model_name","type":"string"},{"name":"action","type":"string"},{"name":"value","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_model_response","fields":[{"name":"model_name","type":"string"},{"name":"action","type":"string"},{"name":"value","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("model_name", "string"), ("action", "string"), ("value", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("model_name", "string"), ("action", "string"), ("value", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/alter/model"
@@ -10647,10 +10933,21 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/alter/video"
         REQ_SCHEMA_STR = """{"type":"record","name":"alter_video_request","fields":[{"name":"path","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"alter_video_response","type":"record","fields":[{"name":"path","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_video_response","fields":[{"name":"path","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("path", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("path", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/alter/video"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/alter/wal"
+        REQ_SCHEMA_STR = """{"type":"record","name":"alter_wal_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_wal_response","fields":[{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("info", "map", [("string")])] )
+        ENDPOINT = "/alter/wal"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -10800,8 +11097,8 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/create/graph"
-        REQ_SCHEMA_STR = """{"name":"create_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"directed_graph","type":"boolean"},{"name":"nodes","type":{"type":"array","items":"string"}},{"name":"edges","type":{"type":"array","items":"string"}},{"name":"weights","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"create_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"num_nodes","type":"long"},{"name":"num_edges","type":"long"},{"name":"edges_ids","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_graph_request","fields":[{"name":"graph_name","type":"string"},{"name":"directed_graph","type":"boolean"},{"name":"nodes","type":{"type":"array","items":"string"}},{"name":"edges","type":{"type":"array","items":"string"}},{"name":"weights","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_graph_response","fields":[{"name":"result","type":"boolean"},{"name":"num_nodes","type":"long"},{"name":"num_edges","type":"long"},{"name":"edges_ids","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("directed_graph", "boolean"), ("nodes", "array", [("string")]), ("edges", "array", [("string")]), ("weights", "array", [("string")]), ("restrictions", "array", [("string")]), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("num_nodes", "long"), ("num_edges", "long"), ("edges_ids", "array", [("long")]), ("info", "map", [("string")])] )
         ENDPOINT = "/create/graph"
@@ -11021,7 +11318,7 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/create/video"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_video_request","fields":[{"name":"attribute","type":"string"},{"name":"begin","type":"string"},{"name":"duration_seconds","type":"double"},{"name":"end","type":"string"},{"name":"frames_per_second","type":"double"},{"name":"style","type":"string"},{"name":"path","type":"string"},{"name":"style_parameters","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"create_video_response","type":"record","fields":[{"name":"job_id","type":"long"},{"name":"path","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_video_response","fields":[{"name":"job_id","type":"long"},{"name":"path","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("attribute", "string"), ("begin", "string"), ("duration_seconds", "double"), ("end", "string"), ("frames_per_second", "double"), ("style", "string"), ("path", "string"), ("style_parameters", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("job_id", "long"), ("path", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/create/video"
@@ -11053,8 +11350,8 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/delete/graph"
-        REQ_SCHEMA_STR = """{"name":"delete_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"delete_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"delete_graph_request","fields":[{"name":"graph_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"delete_graph_response","fields":[{"name":"result","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("info", "map", [("string")])] )
         ENDPOINT = "/delete/graph"
@@ -11240,6 +11537,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "RSP_SCHEMA_CEXT" : RSP_SCHEMA_CEXT,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/export/query/metrics"
+        REQ_SCHEMA_STR = """{"type":"record","name":"export_query_metrics_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"export_query_metrics_response","fields":[{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("info", "map", [("string")])] )
+        ENDPOINT = "/export/query/metrics"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/export/records/tofiles"
         REQ_SCHEMA_STR = """{"type":"record","name":"export_records_to_files_request","fields":[{"name":"table_name","type":"string"},{"name":"filepath","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
@@ -11736,8 +12044,8 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/list/graph"
-        REQ_SCHEMA_STR = """{"name":"list_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"list_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"graph_names","type":{"type":"array","items":"string"}},{"name":"num_nodes","type":{"type":"array","items":"long"}},{"name":"num_edges","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"list_graph_request","fields":[{"name":"graph_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"list_graph_response","fields":[{"name":"result","type":"boolean"},{"name":"graph_names","type":{"type":"array","items":"string"}},{"name":"num_nodes","type":{"type":"array","items":"long"}},{"name":"num_edges","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("graph_names", "array", [("string")]), ("num_nodes", "array", [("long")]), ("num_edges", "array", [("long")]), ("info", "map", [("string")])] )
         ENDPOINT = "/list/graph"
@@ -11758,8 +12066,8 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/match/graph"
-        REQ_SCHEMA_STR = """{"name":"match_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"sample_points","type":{"type":"array","items":"string"}},{"name":"solve_method","type":"string"},{"name":"solution_table","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"match_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"match_score","type":"float"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"match_graph_request","fields":[{"name":"graph_name","type":"string"},{"name":"sample_points","type":{"type":"array","items":"string"}},{"name":"solve_method","type":"string"},{"name":"solution_table","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"match_graph_response","fields":[{"name":"result","type":"boolean"},{"name":"match_score","type":"float"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("sample_points", "array", [("string")]), ("solve_method", "string"), ("solution_table", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("match_score", "float"), ("info", "map", [("string")])] )
         ENDPOINT = "/match/graph"
@@ -11780,8 +12088,8 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/modify/graph"
-        REQ_SCHEMA_STR = """{"name":"modify_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"nodes","type":{"type":"array","items":"string"}},{"name":"edges","type":{"type":"array","items":"string"}},{"name":"weights","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"modify_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"num_nodes","type":"long"},{"name":"num_edges","type":"long"},{"name":"edges_ids","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"modify_graph_request","fields":[{"name":"graph_name","type":"string"},{"name":"nodes","type":{"type":"array","items":"string"}},{"name":"edges","type":{"type":"array","items":"string"}},{"name":"weights","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"modify_graph_response","fields":[{"name":"result","type":"boolean"},{"name":"num_nodes","type":"long"},{"name":"num_edges","type":"long"},{"name":"edges_ids","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("nodes", "array", [("string")]), ("edges", "array", [("string")]), ("weights", "array", [("string")]), ("restrictions", "array", [("string")]), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("num_nodes", "long"), ("num_edges", "long"), ("edges_ids", "array", [("long")]), ("info", "map", [("string")])] )
         ENDPOINT = "/modify/graph"
@@ -11791,8 +12099,8 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/query/graph"
-        REQ_SCHEMA_STR = """{"name":"query_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"queries","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"adjacency_table","type":"string"},{"name":"rings","type":"int"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"query_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"adjacency_list_int_array","type":{"type":"array","items":"long"}},{"name":"adjacency_list_string_array","type":{"type":"array","items":"string"}},{"name":"adjacency_list_wkt_array","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"query_graph_request","fields":[{"name":"graph_name","type":"string"},{"name":"queries","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"adjacency_table","type":"string"},{"name":"rings","type":"int"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"query_graph_response","fields":[{"name":"result","type":"boolean"},{"name":"adjacency_list_int_array","type":{"type":"array","items":"long"}},{"name":"adjacency_list_string_array","type":{"type":"array","items":"string"}},{"name":"adjacency_list_wkt_array","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("queries", "array", [("string")]), ("restrictions", "array", [("string")]), ("adjacency_table", "string"), ("rings", "int"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("adjacency_list_int_array", "array", [("long")]), ("adjacency_list_string_array", "array", [("string")]), ("adjacency_list_wkt_array", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/query/graph"
@@ -11802,8 +12110,8 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/repartition/graph"
-        REQ_SCHEMA_STR = """{"name":"repartition_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"repartition_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"repartition_graph_request","fields":[{"name":"graph_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"repartition_graph_response","fields":[{"name":"result","type":"boolean"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("info", "map", [("string")])] )
         ENDPOINT = "/repartition/graph"
@@ -12000,8 +12308,8 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/graph"
-        REQ_SCHEMA_STR = """{"name":"show_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"show_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"load","type":{"type":"array","items":"int"}},{"name":"memory","type":{"type":"array","items":"long"}},{"name":"graph_names","type":{"type":"array","items":"string"}},{"name":"graph_server_ids","type":{"type":"array","items":"int"}},{"name":"graph_owner_user_names","type":{"type":"array","items":"string"}},{"name":"graph_owner_resource_groups","type":{"type":"array","items":"string"}},{"name":"directed","type":{"type":"array","items":"boolean"}},{"name":"num_nodes","type":{"type":"array","items":"long"}},{"name":"num_edges","type":{"type":"array","items":"long"}},{"name":"num_bytes","type":{"type":"array","items":"long"}},{"name":"resource_capacity","type":{"type":"array","items":"long"}},{"name":"is_persisted","type":{"type":"array","items":"boolean"}},{"name":"is_partitioned","type":{"type":"array","items":"boolean"}},{"name":"is_sync_db","type":{"type":"array","items":"boolean"}},{"name":"has_insert_table_monitor","type":{"type":"array","items":"boolean"}},{"name":"original_request","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_graph_request","fields":[{"name":"graph_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_graph_response","fields":[{"name":"result","type":"boolean"},{"name":"load","type":{"type":"array","items":"int"}},{"name":"memory","type":{"type":"array","items":"long"}},{"name":"graph_names","type":{"type":"array","items":"string"}},{"name":"graph_server_ids","type":{"type":"array","items":"int"}},{"name":"graph_owner_user_names","type":{"type":"array","items":"string"}},{"name":"graph_owner_resource_groups","type":{"type":"array","items":"string"}},{"name":"directed","type":{"type":"array","items":"boolean"}},{"name":"num_nodes","type":{"type":"array","items":"long"}},{"name":"num_edges","type":{"type":"array","items":"long"}},{"name":"num_bytes","type":{"type":"array","items":"long"}},{"name":"resource_capacity","type":{"type":"array","items":"long"}},{"name":"is_persisted","type":{"type":"array","items":"boolean"}},{"name":"is_partitioned","type":{"type":"array","items":"boolean"}},{"name":"is_sync_db","type":{"type":"array","items":"boolean"}},{"name":"has_insert_table_monitor","type":{"type":"array","items":"boolean"}},{"name":"original_request","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("load", "array", [("int")]), ("memory", "array", [("long")]), ("graph_names", "array", [("string")]), ("graph_server_ids", "array", [("int")]), ("graph_owner_user_names", "array", [("string")]), ("graph_owner_resource_groups", "array", [("string")]), ("directed", "array", [("boolean")]), ("num_nodes", "array", [("long")]), ("num_edges", "array", [("long")]), ("num_bytes", "array", [("long")]), ("resource_capacity", "array", [("long")]), ("is_persisted", "array", [("boolean")]), ("is_partitioned", "array", [("boolean")]), ("is_sync_db", "array", [("boolean")]), ("has_insert_table_monitor", "array", [("boolean")]), ("original_request", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/graph"
@@ -12011,8 +12319,8 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/graph/grammar"
-        REQ_SCHEMA_STR = """{"name":"show_graph_grammar_request","type":"record","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"show_graph_grammar_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"components_json","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_graph_grammar_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_graph_grammar_response","fields":[{"name":"result","type":"boolean"},{"name":"components_json","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("components_json", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/show/graph/grammar"
@@ -12232,7 +12540,7 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/video"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_video_request","fields":[{"name":"paths","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"show_video_response","type":"record","fields":[{"name":"creation_times","type":{"type":"array","items":"string"}},{"name":"elapsed_render_time_seconds","type":{"type":"array","items":"long"}},{"name":"job_ids","type":{"type":"array","items":"long"}},{"name":"paths","type":{"type":"array","items":"string"}},{"name":"rendered_bytes","type":{"type":"array","items":"long"}},{"name":"rendered_frames","type":{"type":"array","items":"long"}},{"name":"rendered_percents","type":{"type":"array","items":"long"}},{"name":"requests","type":{"type":"array","items":"string"}},{"name":"status","type":{"type":"array","items":"string"}},{"name":"ttls","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_video_response","fields":[{"name":"creation_times","type":{"type":"array","items":"string"}},{"name":"elapsed_render_time_seconds","type":{"type":"array","items":"long"}},{"name":"job_ids","type":{"type":"array","items":"long"}},{"name":"paths","type":{"type":"array","items":"string"}},{"name":"rendered_bytes","type":{"type":"array","items":"long"}},{"name":"rendered_frames","type":{"type":"array","items":"long"}},{"name":"rendered_percents","type":{"type":"array","items":"long"}},{"name":"requests","type":{"type":"array","items":"string"}},{"name":"status","type":{"type":"array","items":"string"}},{"name":"ttls","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("paths", "array", [("string")]), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("creation_times", "array", [("string")]), ("elapsed_render_time_seconds", "array", [("long")]), ("job_ids", "array", [("long")]), ("paths", "array", [("string")]), ("rendered_bytes", "array", [("long")]), ("rendered_frames", "array", [("long")]), ("rendered_percents", "array", [("long")]), ("requests", "array", [("string")]), ("status", "array", [("string")]), ("ttls", "array", [("long")]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/video"
@@ -12241,9 +12549,20 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/show/wal"
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_wal_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_wal_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"sizes","type":{"type":"array","items":{"type":"array","items":"long"}}},{"name":"capacities","type":{"type":"array","items":"long"}},{"name":"uncommitted","type":{"type":"array","items":{"type":"array","items":"long"}}},{"name":"settings","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("sizes", "array", [("array", [("long")])]), ("capacities", "array", [("long")]), ("uncommitted", "array", [("array", [("long")])]), ("settings", "array", [("map", [("string")])]), ("info", "map", [("string")])] )
+        ENDPOINT = "/show/wal"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/solve/graph"
-        REQ_SCHEMA_STR = """{"name":"solve_graph_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"weights_on_edges","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"solver_type","type":"string"},{"name":"source_nodes","type":{"type":"array","items":"string"}},{"name":"destination_nodes","type":{"type":"array","items":"string"}},{"name":"solution_table","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"name":"solve_graph_response","type":"record","fields":[{"name":"result","type":"boolean"},{"name":"result_per_destination_node","type":{"type":"array","items":"float"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"solve_graph_request","fields":[{"name":"graph_name","type":"string"},{"name":"weights_on_edges","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"solver_type","type":"string"},{"name":"source_nodes","type":{"type":"array","items":"string"}},{"name":"destination_nodes","type":{"type":"array","items":"string"}},{"name":"solution_table","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"solve_graph_response","fields":[{"name":"result","type":"boolean"},{"name":"result_per_destination_node","type":{"type":"array","items":"float"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("weights_on_edges", "array", [("string")]), ("restrictions", "array", [("string")]), ("solver_type", "string"), ("source_nodes", "array", [("string")]), ("destination_nodes", "array", [("string")]), ("solution_table", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("result_per_destination_node", "array", [("float")]), ("info", "map", [("string")])] )
         ENDPOINT = "/solve/graph"
@@ -12376,7 +12695,7 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/visualize/isochrone"
-        REQ_SCHEMA_STR = """{"name":"visualize_isochrone_request","type":"record","fields":[{"name":"graph_name","type":"string"},{"name":"source_node","type":"string"},{"name":"max_solution_radius","type":"double"},{"name":"weights_on_edges","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"num_levels","type":"int"},{"name":"generate_image","type":"boolean"},{"name":"levels_table","type":"string"},{"name":"style_options","type":{"type":"map","values":"string"}},{"name":"solve_options","type":{"type":"map","values":"string"}},{"name":"contour_options","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"visualize_isochrone_request","fields":[{"name":"graph_name","type":"string"},{"name":"source_node","type":"string"},{"name":"max_solution_radius","type":"double"},{"name":"weights_on_edges","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"num_levels","type":"int"},{"name":"generate_image","type":"boolean"},{"name":"levels_table","type":"string"},{"name":"style_options","type":{"type":"map","values":"string"}},{"name":"solve_options","type":{"type":"map","values":"string"}},{"name":"contour_options","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"visualize_isochrone_response","fields":[{"name":"width","type":"int"},{"name":"height","type":"int"},{"name":"bg_color","type":"long"},{"name":"image_data","type":"bytes"},{"name":"info","type":{"type":"map","values":"string"}},{"name":"solve_info","type":{"type":"map","values":"string"}},{"name":"contour_info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("source_node", "string"), ("max_solution_radius", "double"), ("weights_on_edges", "array", [("string")]), ("restrictions", "array", [("string")]), ("num_levels", "int"), ("generate_image", "boolean"), ("levels_table", "string"), ("style_options", "map", [("string")]), ("solve_options", "map", [("string")]), ("contour_options", "map", [("string")]), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("width", "int"), ("height", "int"), ("bg_color", "long"), ("image_data", "bytes"), ("info", "map", [("string")]), ("solve_info", "map", [("string")]), ("contour_info", "map", [("string")])] )
@@ -12406,6 +12725,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["admin_rebalance"] = "/admin/rebalance"
         self.gpudb_func_to_endpoint_map["admin_remove_host"] = "/admin/remove/host"
         self.gpudb_func_to_endpoint_map["admin_remove_ranks"] = "/admin/remove/ranks"
+        self.gpudb_func_to_endpoint_map["admin_repair_table"] = "/admin/repair/table"
         self.gpudb_func_to_endpoint_map["admin_show_alerts"] = "/admin/show/alerts"
         self.gpudb_func_to_endpoint_map["admin_show_cluster_operations"] = "/admin/show/cluster/operations"
         self.gpudb_func_to_endpoint_map["admin_show_configuration"] = "/admin/show/configuration"
@@ -12443,6 +12763,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["alter_user"] = "/alter/user"
         self.gpudb_func_to_endpoint_map["alter_user_reveal"] = "/alter/user/reveal"
         self.gpudb_func_to_endpoint_map["alter_video"] = "/alter/video"
+        self.gpudb_func_to_endpoint_map["alter_wal"] = "/alter/wal"
         self.gpudb_func_to_endpoint_map["append_records"] = "/append/records"
         self.gpudb_func_to_endpoint_map["clear_statistics"] = "/clear/statistics"
         self.gpudb_func_to_endpoint_map["clear_table"] = "/clear/table"
@@ -12496,6 +12817,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["evaluate_model"] = "/evaluate/model"
         self.gpudb_func_to_endpoint_map["execute_proc"] = "/execute/proc"
         self.gpudb_func_to_endpoint_map["execute_sql"] = "/execute/sql"
+        self.gpudb_func_to_endpoint_map["export_query_metrics"] = "/export/query/metrics"
         self.gpudb_func_to_endpoint_map["export_records_to_files"] = "/export/records/tofiles"
         self.gpudb_func_to_endpoint_map["export_records_to_table"] = "/export/records/totable"
         self.gpudb_func_to_endpoint_map["filter"] = "/filter"
@@ -12586,6 +12908,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["show_triggers"] = "/show/triggers"
         self.gpudb_func_to_endpoint_map["show_types"] = "/show/types"
         self.gpudb_func_to_endpoint_map["show_video"] = "/show/video"
+        self.gpudb_func_to_endpoint_map["show_wal"] = "/show/wal"
         self.gpudb_func_to_endpoint_map["solve_graph"] = "/solve/graph"
         self.gpudb_func_to_endpoint_map["update_records"] = "/update/records"
         self.gpudb_func_to_endpoint_map["update_records_by_series"] = "/update/records/byseries"
@@ -12616,8 +12939,7 @@ class GPUdb(object):
                 cluster to which it is being added.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **dry_run** --
@@ -12668,6 +12990,8 @@ class GPUdb(object):
                   eligible for running worker processes. If left blank, all
                   GPUs on the host being added will be eligible.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -12692,7 +13016,6 @@ class GPUdb(object):
         return response
     # end admin_add_host
 
-
     # begin admin_add_ranks
     def admin_add_ranks( self, hosts = None, config_params = None, options = {} ):
         """Add one or more ranks to an existing Kinetica cluster. The new ranks
@@ -12707,16 +13030,15 @@ class GPUdb(object):
         172.123.45.67 and one rank on host 172.123.45.68) to a Kinetica cluster
         with additional configuration parameters:
 
-        * input parameter *hosts*
-          would be an array including 172.123.45.67 in the first two indices
-          (signifying two ranks being added to host 172.123.45.67) and
-          172.123.45.68 in the last index (signifying one rank being added
-          to host 172.123.45.67)
-        * input parameter *config_params*
-          would be an array of maps, with each map corresponding to the ranks
-          being added in input parameter *hosts*. The key of each map would be
-          the configuration parameter name and the value would be the
-          parameter's value, e.g. '{"rank.gpu":"1"}'
+        * input parameter *hosts* would be an array including 172.123.45.67 in
+          the first two indices (signifying two ranks being added to host
+          172.123.45.67) and 172.123.45.68 in the last index (signifying one
+          rank being added to host 172.123.45.67)
+        * input parameter *config_params* would be an array of maps, with each
+          map corresponding to the ranks being added in input parameter
+          *hosts*. The key of each map would be the configuration parameter
+          name and the value would be the parameter's value, e.g.
+          '{"rank.gpu":"1"}'
 
         This endpoint's processing includes copying all replicated table data
         to the new rank(s) and therefore could take a long time. The API call
@@ -12740,45 +13062,38 @@ class GPUdb(object):
                 '["172.123.45.67", "172.123.45.67"]'. All ranks will be added
                 simultaneously, i.e. they're not added in the order of this
                 array. Each entry in this array corresponds to the entry at the
-                same index in the input parameter *config_params*.    The user
-                can provide a single element (which will be automatically
-                promoted to a list internally) or a list.
+                same index in the input parameter *config_params*. The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
 
             config_params (list of dicts of str to str)
                 Array of maps containing configuration parameters to apply to
-                the new ranks
-                found in input parameter *hosts*. For example,
+                the new ranks found in input parameter *hosts*. For example,
                 '{"rank.gpu":"2", "tier.ram.rank.limit":"10000000000"}'.
-                Currently, the available parameters
-                are rank-specific parameters in the `Network
-                <../../../../config/#config-main-network>`__,
-                `Hardware <../../../../config/#config-main-hardware>`__,
-                `Text Search <../../../../config/#config-main-text-search>`__,
-                and
-                `RAM Tiered Storage
-                <../../../../config/#config-main-ram-tier>`__ sections in the
-                gpudb.conf file, with the
-                key exception of the 'rankN.host' settings in the Network
-                section that will be determined by
-                input parameter *hosts* instead. Though many of these
-                configuration parameters typically are affixed with
+                Currently, the available parameters are rank-specific
+                parameters in the `Network
+                <../../../../config/#config-main-network>`__, `Hardware
+                <../../../../config/#config-main-hardware>`__, `Text Search
+                <../../../../config/#config-main-text-search>`__, and `RAM
+                Tiered Storage <../../../../config/#config-main-ram-tier>`__
+                sections in the gpudb.conf file, with the key exception of the
+                'rankN.host' settings in the Network section that will be
+                determined by input parameter *hosts* instead. Though many of
+                these configuration parameters typically are affixed with
                 'rankN' in the gpudb.conf file (where N is the rank number),
-                the 'N' should be omitted in
-                input parameter *config_params* as the new rank number(s) are
-                not allocated until the ranks have been added
-                to the cluster. Each entry in this array corresponds to the
-                entry at the same index in the
-                input parameter *hosts*. This array must either be completely
-                empty or have the same number of elements as
-                the input parameter *hosts*.  An empty input parameter
-                *config_params* array will result in the new ranks being set
-                with default parameters.    The user can provide a single
-                element (which will be automatically promoted to a list
+                the 'N' should be omitted in input parameter *config_params* as
+                the new rank number(s) are not allocated until the ranks have
+                been added to the cluster. Each entry in this array corresponds
+                to the entry at the same index in the input parameter *hosts*.
+                This array must either be completely empty or have the same
+                number of elements as the input parameter *hosts*.  An empty
+                input parameter *config_params* array will result in the new
+                ranks being set with default parameters. The user can provide a
+                single element (which will be automatically promoted to a list
                 internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **dry_run** --
@@ -12790,6 +13105,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -12816,7 +13133,6 @@ class GPUdb(object):
         return response
     # end admin_add_ranks
 
-
     # begin admin_alter_host
     def admin_alter_host( self, host = None, options = {} ):
         """Alter properties on an existing host in the cluster. Currently, the
@@ -12831,8 +13147,7 @@ class GPUdb(object):
                 in gpudb.conf
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **accepts_failover** --
@@ -12845,6 +13160,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -12864,21 +13181,19 @@ class GPUdb(object):
         return response
     # end admin_alter_host
 
-
     # begin admin_alter_jobs
     def admin_alter_jobs( self, job_ids = None, action = None, options = {} ):
         """Perform the requested action on a list of one or more job(s). Based
         on the type of job and the current state of execution, the action may
-        not be
-        successfully executed. The final result of the attempted actions for
-        each
-        specified job is returned in the status array of the response. See
-        `Job Manager <../../../../admin/job_manager/>`__ for more information.
+        not be successfully executed. The final result of the attempted actions
+        for each specified job is returned in the status array of the response.
+        See `Job Manager <../../../../admin/job_manager/>`__ for more
+        information.
 
         Parameters:
 
             job_ids (list of longs)
-                Jobs to be modified.    The user can provide a single element
+                Jobs to be modified. The user can provide a single element
                 (which will be automatically promoted to a list internally) or
                 a list.
 
@@ -12889,12 +13204,13 @@ class GPUdb(object):
                 * cancel
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **job_tag** --
                   Job tag returned in call to create the job
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -12925,11 +13241,10 @@ class GPUdb(object):
         return response
     # end admin_alter_jobs
 
-
     # begin admin_backup_begin
     def admin_backup_begin( self, options = {} ):
-        """Prepares the system for a backup by closing all open file handles after
-        allowing current active jobs to complete. When the database is in
+        """Prepares the system for a backup by closing all open file handles
+        after allowing current active jobs to complete. When the database is in
         backup mode, queries that result in a disk write operation will be
         blocked until backup mode has been completed by using
         :meth:`GPUdb.admin_backup_end`.
@@ -12937,8 +13252,7 @@ class GPUdb(object):
         Parameters:
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -12956,7 +13270,6 @@ class GPUdb(object):
         return response
     # end admin_backup_begin
 
-
     # begin admin_backup_end
     def admin_backup_end( self, options = {} ):
         """Restores the system to normal operating mode after a backup has
@@ -12965,8 +13278,7 @@ class GPUdb(object):
         Parameters:
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -12984,7 +13296,6 @@ class GPUdb(object):
         return response
     # end admin_backup_end
 
-
     # begin admin_ha_refresh
     def admin_ha_refresh( self, options = {} ):
         """Restarts the HA processing on the given cluster as a mechanism of
@@ -12994,8 +13305,7 @@ class GPUdb(object):
         Parameters:
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -13013,11 +13323,10 @@ class GPUdb(object):
         return response
     # end admin_ha_refresh
 
-
     # begin admin_offline
     def admin_offline( self, offline = None, options = {} ):
-        """Take the system offline. When the system is offline, no user operations
-        can be performed with the exception of a system shutdown.
+        """Take the system offline. When the system is offline, no user
+        operations can be performed with the exception of a system shutdown.
 
         Parameters:
 
@@ -13029,16 +13338,17 @@ class GPUdb(object):
                 * false
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **flush_to_disk** --
-                  Flush to disk when going offline
+                  Flush to disk when going offline.
                   Allowed values are:
 
                   * true
                   * false
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -13061,43 +13371,39 @@ class GPUdb(object):
         return response
     # end admin_offline
 
-
     # begin admin_rebalance
     def admin_rebalance( self, options = {} ):
         """Rebalance the data in the cluster so that all nodes contain an equal
         number of records approximately and/or rebalance the shards to be
-        equally
-        distributed (as much as possible) across all the ranks.
+        equally distributed (as much as possible) across all the ranks.
 
         The database must be offline for this operation, see
         :meth:`GPUdb.admin_offline`
 
-        * If :meth:`GPUdb.admin_rebalance` is invoked after a change is
-          made to the cluster, e.g., a host was added or removed,
-          `sharded data <../../../../concepts/tables/#sharding>`__ will be
-          evenly redistributed across the cluster by number of shards per rank
-          while unsharded data will be redistributed across the cluster by data
-          size per rank
-        * If :meth:`GPUdb.admin_rebalance`
-          is invoked at some point when unsharded data (a.k.a.
-          `randomly-sharded <../../../../concepts/tables/#random-sharding>`__)
-          in the cluster is unevenly distributed over time, sharded data will
-          not move while unsharded data will be redistributed across the
-          cluster by data size per rank
+        * If :meth:`GPUdb.admin_rebalance` is invoked after a change is made to
+          the cluster, e.g., a host was added or removed, `sharded data
+          <../../../../concepts/tables/#sharding>`__ will be evenly
+          redistributed across the cluster by number of shards per rank while
+          unsharded data will be redistributed across the cluster by data size
+          per rank
+        * If :meth:`GPUdb.admin_rebalance` is invoked at some point when
+          unsharded data (a.k.a. `randomly-sharded
+          <../../../../concepts/tables/#random-sharding>`__) in the cluster is
+          unevenly distributed over time, sharded data will not move while
+          unsharded data will be redistributed across the cluster by data size
+          per rank
 
         NOTE: Replicated data will not move as a result of this call
 
         This endpoint's processing time depends on the amount of data in the
-        system,
-        thus the API call may time out if run directly.  It is recommended to
-        run this
-        endpoint asynchronously via :meth:`GPUdb.create_job`.
+        system, thus the API call may time out if run directly.  It is
+        recommended to run this endpoint asynchronously via
+        :meth:`GPUdb.create_job`.
 
         Parameters:
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **rebalance_sharded_data** --
@@ -13191,6 +13497,8 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -13207,11 +13515,10 @@ class GPUdb(object):
         return response
     # end admin_rebalance
 
-
     # begin admin_remove_host
     def admin_remove_host( self, host = None, options = {} ):
-        """Removes a host from an existing cluster. If the host to be removed has
-        any ranks running on it, the ranks must be removed using
+        """Removes a host from an existing cluster. If the host to be removed
+        has any ranks running on it, the ranks must be removed using
         :meth:`GPUdb.admin_remove_ranks` or manually switched over to a new
         host using :meth:`GPUdb.admin_switchover` prior to host removal. If the
         host to be removed has the graph server or SQL planner running on it,
@@ -13229,8 +13536,7 @@ class GPUdb(object):
                 in gpudb.conf
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **dry_run** --
@@ -13242,6 +13548,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -13261,29 +13569,23 @@ class GPUdb(object):
         return response
     # end admin_remove_host
 
-
     # begin admin_remove_ranks
     def admin_remove_ranks( self, ranks = None, options = {} ):
         """Remove one or more ranks from an existing Kinetica cluster. All data
         will be rebalanced to other ranks before the rank(s) is removed unless
-        the
-        *rebalance_sharded_data* or
-        *rebalance_unsharded_data* parameters are set to
-        *false* in the
-        input parameter *options*, in which case the corresponding
-        `sharded data <../../../../concepts/tables/#sharding>`__ and/or
-        unsharded data (a.k.a.
-        `randomly-sharded <../../../../concepts/tables/#random-sharding>`__)
-        will be deleted.
+        the *rebalance_sharded_data* or *rebalance_unsharded_data* parameters
+        are set to *false* in the input parameter *options*, in which case the
+        corresponding `sharded data <../../../../concepts/tables/#sharding>`__
+        and/or unsharded data (a.k.a. `randomly-sharded
+        <../../../../concepts/tables/#random-sharding>`__) will be deleted.
 
         The database must be offline for this operation, see
         :meth:`GPUdb.admin_offline`
 
         This endpoint's processing time depends on the amount of data in the
-        system,
-        thus the API call may time out if run directly.  It is recommended to
-        run this
-        endpoint asynchronously via :meth:`GPUdb.create_job`.
+        system, thus the API call may time out if run directly.  It is
+        recommended to run this endpoint asynchronously via
+        :meth:`GPUdb.create_job`.
 
         .. note::
                 This method should be used for on-premise deployments only.
@@ -13299,12 +13601,11 @@ class GPUdb(object):
                 0 (the head rank) cannot be removed (but can be moved to
                 another host using :meth:`GPUdb.admin_switchover`). At least
                 one worker rank must be left in the cluster after the
-                operation.    The user can provide a single element (which will
-                be automatically promoted to a list internally) or a list.
+                operation. The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **rebalance_sharded_data** --
@@ -13343,6 +13644,8 @@ class GPUdb(object):
                   Valid values are constants from 1 (lowest) to 10 (highest).
                   The default value is '10'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -13365,11 +13668,65 @@ class GPUdb(object):
         return response
     # end admin_remove_ranks
 
+    # begin admin_repair_table
+    def admin_repair_table( self, table_names = None, options = {} ):
+        """Manually repair a corrupted table. Returns information about
+        affected tables.
+
+        Parameters:
+
+            table_names (list of str)
+                List of tables to query. An asterisk returns all tables. The
+                user can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.
+                Allowed keys are:
+
+                * **repair_policy** --
+                  Corrective action to take.
+                  Allowed values are:
+
+                  * **delete_chunks** --
+                    Deletes any corrupted chunks
+
+                  * **shrink_columns** --
+                    Shrinks corrupted chunks to the shortest column
+
+                  * **replay_wal** --
+                    Manually invokes wal replay on the table
+
+                The default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            table_names (list of str)
+                List of repaired tables.
+
+            repair_status (list of str)
+                List of repair status by table.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        assert isinstance( options, (dict)), "admin_repair_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['table_names'] = table_names
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/admin/repair/table', obj, convert_to_attr_dict = True )
+
+        return response
+    # end admin_repair_table
 
     # begin admin_show_alerts
     def admin_show_alerts( self, num_alerts = None, options = {} ):
-        """Requests a list of the most recent alerts.
-        Returns lists of alert data, including timestamp and type.
+        """Requests a list of the most recent alerts. Returns lists of alert
+        data, including timestamp and type.
 
         Parameters:
 
@@ -13380,8 +13737,7 @@ class GPUdb(object):
                 stored alerts.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -13418,12 +13774,11 @@ class GPUdb(object):
         return response
     # end admin_show_alerts
 
-
     # begin admin_show_cluster_operations
     def admin_show_cluster_operations( self, history_index = 0, options = {} ):
-        """Requests the detailed status of the current operation (by default) or a
-        prior cluster operation specified by input parameter *history_index*.
-        Returns details on the requested cluster operation.
+        """Requests the detailed status of the current operation (by default)
+        or a prior cluster operation specified by input parameter
+        *history_index*. Returns details on the requested cluster operation.
 
         The response will also indicate how many cluster operations are stored
         in the history.
@@ -13432,11 +13787,10 @@ class GPUdb(object):
 
             history_index (int)
                 Indicates which cluster operation to retrieve.  Use 0 for the
-                most recent.  The default value is 0.
+                most recent. The default value is 0.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -13631,7 +13985,6 @@ class GPUdb(object):
         return response
     # end admin_show_cluster_operations
 
-
     # begin admin_show_jobs
     def admin_show_jobs( self, options = {} ):
         """Get a list of the current jobs in GPUdb.
@@ -13639,8 +13992,7 @@ class GPUdb(object):
         Parameters:
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **show_async_jobs** --
@@ -13654,42 +14006,37 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
             job_id (list of longs)
 
-
             status (list of str)
-
 
             endpoint_name (list of str)
 
-
             time_received (list of longs)
-
 
             auth_id (list of str)
 
-
             source_ip (list of str)
-
 
             user_data (list of str)
 
-
             flags (list of str)
 
-
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **job_tag** --
                   The job tag specified by the user or if unspecified by user,
                   an internally generated unique identifier for the job across
                   clusters.
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( options, (dict)), "admin_show_jobs(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -13701,7 +14048,6 @@ class GPUdb(object):
         return response
     # end admin_show_jobs
 
-
     # begin admin_show_shards
     def admin_show_shards( self, options = {} ):
         """Show the mapping of shards to the corresponding rank and tom.  The
@@ -13711,8 +14057,7 @@ class GPUdb(object):
         Parameters:
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -13739,10 +14084,9 @@ class GPUdb(object):
         return response
     # end admin_show_shards
 
-
     # begin admin_shutdown
-    def admin_shutdown( self, exit_type = None, authorization = None, options = {}
-                        ):
+    def admin_shutdown( self, exit_type = None, authorization = None, options =
+                        {} ):
         """Exits the database server application.
 
         Parameters:
@@ -13754,8 +14098,7 @@ class GPUdb(object):
                 No longer used. User can pass an empty string.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -13780,12 +14123,11 @@ class GPUdb(object):
         return response
     # end admin_shutdown
 
-
     # begin admin_switchover
-    def admin_switchover( self, processes = None, destinations = None, options = {}
-                          ):
-        """Manually switch over one or more processes to another host. Individual
-        ranks or entire hosts may be moved to another host.
+    def admin_switchover( self, processes = None, destinations = None, options =
+                          {} ):
+        """Manually switch over one or more processes to another host.
+        Individual ranks or entire hosts may be moved to another host.
 
         .. note::
                 This method should be used for on-premise deployments only.
@@ -13794,35 +14136,31 @@ class GPUdb(object):
 
             processes (list of str)
                 Indicates the process identifier to switch over to another
-                host. Options are
-                'hostN' and 'rankN' where 'N' corresponds to the number
-                associated with a host or rank in the
-                `Network <../../../../config/#config-main-network>`__ section
-                of the gpudb.conf file; e.g.,
-                'host[N].address' or 'rank[N].host'. If 'hostN' is provided,
-                all processes on that host will be
-                moved to another host. Each entry in this array will be
-                switched over to the corresponding host
-                entry at the same index in input parameter *destinations*.
-                The user can provide a single element (which will be
-                automatically promoted to a list internally) or a list.
+                host. Options are 'hostN' and 'rankN' where 'N' corresponds to
+                the number associated with a host or rank in the `Network
+                <../../../../config/#config-main-network>`__ section of the
+                gpudb.conf file; e.g., 'host[N].address' or 'rank[N].host'. If
+                'hostN' is provided, all processes on that host will be moved
+                to another host. Each entry in this array will be switched over
+                to the corresponding host entry at the same index in input
+                parameter *destinations*. The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
 
             destinations (list of str)
                 Indicates to which host to switch over each corresponding
-                process given in
-                input parameter *processes*. Each index must be specified as
-                'hostN' where 'N' corresponds to the number
+                process given in input parameter *processes*. Each index must
+                be specified as 'hostN' where 'N' corresponds to the number
                 associated with a host or rank in the `Network
                 <../../../../config/#config-main-network>`__ section of the
                 gpudb.conf file; e.g., 'host[N].address'. Each entry in this
-                array will receive the corresponding
-                process entry at the same index in input parameter *processes*.
-                The user can provide a single element (which will be
-                automatically promoted to a list internally) or a list.
+                array will receive the corresponding process entry at the same
+                index in input parameter *processes*. The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **dry_run** --
@@ -13834,6 +14172,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -13855,7 +14195,6 @@ class GPUdb(object):
         return response
     # end admin_switchover
 
-
     # begin admin_verify_db
     def admin_verify_db( self, options = {} ):
         """Verify database is in a consistent state.  When inconsistencies or
@@ -13865,8 +14204,7 @@ class GPUdb(object):
         Parameters:
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **rebuild_on_error** --
@@ -13936,16 +14274,33 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **verify_orphaned_tables_only** --
+                  If *true*, only the presence of orphaned table directories
+                  will be checked, all persistence checks will be skipped.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
             verified_ok (bool)
-                True if no errors were found, false otherwise.  The default
+                True if no errors were found, false otherwise. The default
                 value is False.
 
             error_list (list of str)
                 List of errors found while validating the database internal
-                state.  The default value is an empty list ( [] ).
+                state. The default value is an empty list ( [] ).
+
+            orphaned_tables_total_size (long)
+                If *verify_persist* is *true*, *verify_orphaned_tables_only* is
+                *true* or *delete_orphaned_tables* is *true*, this is the sum
+                in bytes of all orphaned tables found.  Otherwise, -1.
 
             info (dict of str to str)
                 Additional information.
@@ -13959,7 +14314,6 @@ class GPUdb(object):
 
         return response
     # end admin_verify_db
-
 
     # begin aggregate_convex_hull
     def aggregate_convex_hull( self, table_name = None, x_column_name = None,
@@ -13984,8 +14338,7 @@ class GPUdb(object):
                 for the operation being performed.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -14000,7 +14353,6 @@ class GPUdb(object):
                 Count of the number of points in the convex set.
 
             is_valid (bool)
-
 
             info (dict of str to str)
                 Additional information.
@@ -14021,13 +14373,12 @@ class GPUdb(object):
         return response
     # end aggregate_convex_hull
 
-
     # begin aggregate_group_by
-    def aggregate_group_by( self, table_name = None, column_names = None, offset =
-                            0, limit = -9999, encoding = 'binary', options = {}
-                            ):
-        """Calculates unique combinations (groups) of values for the given columns
-        in a given table or view and computes aggregates on each unique
+    def aggregate_group_by( self, table_name = None, column_names = None, offset
+                            = 0, limit = -9999, encoding = 'binary', options =
+                            {} ):
+        """Calculates unique combinations (groups) of values for the given
+        columns in a given table or view and computes aggregates on each unique
         combination. This is somewhat analogous to an SQL-style SELECT...GROUP
         BY.
 
@@ -14101,29 +14452,26 @@ class GPUdb(object):
 
             column_names (list of str)
                 List of one or more column names, expressions, and aggregate
-                expressions.    The user can provide a single element (which
-                will be automatically promoted to a list internally) or a list.
+                expressions. The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
 
             offset (long)
                 A positive integer indicating the number of initial results to
-                skip (this can be useful for paging through the results).  The
-                default value is 0.The minimum allowed value is 0. The maximum
+                skip (this can be useful for paging through the results). The
+                default value is 0. The minimum allowed value is 0. The maximum
                 allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned, or
-                END_OF_SET (-9999) to indicate that the maximum number of
-                results allowed by the server should be
-                returned.  The number of records returned will never exceed the
-                server's own limit, defined by the
-                `max_get_records_size
+                be returned, or END_OF_SET (-9999) to indicate that the maximum
+                number of results allowed by the server should be returned.
+                The number of records returned will never exceed the server's
+                own limit, defined by the `max_get_records_size
                 <../../../../config/#config-main-general>`__ parameter in the
-                server configuration.
-                Use output parameter *has_more_records* to see if more records
-                exist in the result to be fetched, and
+                server configuration. Use output parameter *has_more_records*
+                to see if more records exist in the result to be fetched, and
                 input parameter *offset* & input parameter *limit* to request
-                subsequent pages of results.  The default value is -9999.
+                subsequent pages of results. The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records.
@@ -14138,8 +14486,7 @@ class GPUdb(object):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -14266,13 +14613,23 @@ class GPUdb(object):
                   result table. Must be used in combination with the
                   *result_table* option.
 
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for the result table. Must be used in
+                  combination with the *result_table* option.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for the result table. Must be used in
+                  combination with the *result_table* option.
+
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
                   the result table. Must be used in combination with the
                   *result_table* option.
 
                 * **view_id** --
-                  ID of view of which the result table will be a member.  The
+                  ID of view of which the result table will be a member. The
                   default value is ''.
 
                 * **pivot** --
@@ -14296,6 +14653,8 @@ class GPUdb(object):
                   This option is used to specify the multidimensional
                   aggregates.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -14316,18 +14675,20 @@ class GPUdb(object):
                 Too many records. Returned a partial set.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_result_table_name** --
                   The fully qualified name of the table (i.e. including the
                   schema) used to store the results.
 
+                The default value is an empty dict ( {} ).
+
             record_type (:class:`RecordType` or None)
                 A :class:`RecordType` object using which the user can decode
-                the binarydata by using :meth:`GPUdbRecord.decode_binary_data`.
-                If JSON encodingis used, then None.
+                the binary data by using
+                :meth:`GPUdbRecord.decode_binary_data`. If JSON encoding is
+                used, then None.
         """
         assert isinstance( table_name, (basestring)), "aggregate_group_by(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         column_names = column_names if isinstance( column_names, list ) else ( [] if (column_names is None) else [ column_names ] )
@@ -14364,15 +14725,14 @@ class GPUdb(object):
         return response
     # end aggregate_group_by
 
-
     # begin aggregate_group_by_and_decode
-    def aggregate_group_by_and_decode( self, table_name = None, column_names = None,
-                                       offset = 0, limit = -9999, encoding =
-                                       'binary', options = {}, record_type =
+    def aggregate_group_by_and_decode( self, table_name = None, column_names =
+                                       None, offset = 0, limit = -9999, encoding
+                                       = 'binary', options = {}, record_type =
                                        None, force_primitive_return_types =
                                        True, get_column_major = True ):
-        """Calculates unique combinations (groups) of values for the given columns
-        in a given table or view and computes aggregates on each unique
+        """Calculates unique combinations (groups) of values for the given
+        columns in a given table or view and computes aggregates on each unique
         combination. This is somewhat analogous to an SQL-style SELECT...GROUP
         BY.
 
@@ -14446,29 +14806,26 @@ class GPUdb(object):
 
             column_names (list of str)
                 List of one or more column names, expressions, and aggregate
-                expressions.    The user can provide a single element (which
-                will be automatically promoted to a list internally) or a list.
+                expressions. The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
 
             offset (long)
                 A positive integer indicating the number of initial results to
-                skip (this can be useful for paging through the results).  The
-                default value is 0.The minimum allowed value is 0. The maximum
+                skip (this can be useful for paging through the results). The
+                default value is 0. The minimum allowed value is 0. The maximum
                 allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned, or
-                END_OF_SET (-9999) to indicate that the maximum number of
-                results allowed by the server should be
-                returned.  The number of records returned will never exceed the
-                server's own limit, defined by the
-                `max_get_records_size
+                be returned, or END_OF_SET (-9999) to indicate that the maximum
+                number of results allowed by the server should be returned.
+                The number of records returned will never exceed the server's
+                own limit, defined by the `max_get_records_size
                 <../../../../config/#config-main-general>`__ parameter in the
-                server configuration.
-                Use output parameter *has_more_records* to see if more records
-                exist in the result to be fetched, and
+                server configuration. Use output parameter *has_more_records*
+                to see if more records exist in the result to be fetched, and
                 input parameter *offset* & input parameter *limit* to request
-                subsequent pages of results.  The default value is -9999.
+                subsequent pages of results. The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records.
@@ -14483,8 +14840,7 @@ class GPUdb(object):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -14611,13 +14967,23 @@ class GPUdb(object):
                   result table. Must be used in combination with the
                   *result_table* option.
 
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for the result table. Must be used in
+                  combination with the *result_table* option.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for the result table. Must be used in
+                  combination with the *result_table* option.
+
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
                   the result table. Must be used in combination with the
                   *result_table* option.
 
                 * **view_id** --
-                  ID of view of which the result table will be a member.  The
+                  ID of view of which the result table will be a member. The
                   default value is ''.
 
                 * **pivot** --
@@ -14641,11 +15007,13 @@ class GPUdb(object):
                   This option is used to specify the multidimensional
                   aggregates.
 
+                The default value is an empty dict ( {} ).
+
             record_type (:class:`RecordType` or None)
-                The record type expected in the results, or None to
-                determinethe appropriate type automatically. If known,
-                providing thismay improve performance in binary mode. Not used
-                in JSON mode.The default value is None.
+                The record type expected in the results, or None to determine
+                the appropriate type automatically. If known, providing this
+                may improve performance in binary mode. Not used in JSON mode.
+                The default value is None.
 
             force_primitive_return_types (bool)
                 If `True`, then `OrderedDict` objects will be returned, where
@@ -14664,7 +15032,7 @@ class GPUdb(object):
 
             get_column_major (bool)
                 Indicates if the decoded records will be transposed to be
-                column-major or returned as is (row-major).  Default value is
+                column-major or returned as is (row-major). Default value is
                 True.
 
         Returns:
@@ -14681,13 +15049,14 @@ class GPUdb(object):
                 Too many records. Returned a partial set.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_result_table_name** --
                   The fully qualified name of the table (i.e. including the
                   schema) used to store the results.
+
+                The default value is an empty dict ( {} ).
 
             records (list of :class:`Record`)
                 A list of :class:`Record` objects which contain the decoded
@@ -14752,28 +15121,22 @@ class GPUdb(object):
         return response
     # end aggregate_group_by_and_decode
 
-
     # begin aggregate_histogram
-    def aggregate_histogram( self, table_name = None, column_name = None, start =
-                             None, end = None, interval = None, options = {} ):
+    def aggregate_histogram( self, table_name = None, column_name = None, start
+                             = None, end = None, interval = None, options = {} ):
         """Performs a histogram calculation given a table, a column, and an
         interval function. The input parameter *interval* is used to produce
-        bins of that size
-        and the result, computed over the records falling within each bin, is
-        returned.
-        For each bin, the start value is inclusive, but the end value is
-        exclusive--except for the very last bin for which the end value is also
-        inclusive.  The value returned for each bin is the number of records in
-        it,
-        except when a column name is provided as a
-        *value_column*.  In this latter case the sum of the
-        values corresponding to the *value_column* is used as the
-        result instead.  The total number of bins requested cannot exceed
-        10,000.
+        bins of that size and the result, computed over the records falling
+        within each bin, is returned. For each bin, the start value is
+        inclusive, but the end value is exclusive--except for the very last bin
+        for which the end value is also inclusive.  The value returned for each
+        bin is the number of records in it, except when a column name is
+        provided as a *value_column*.  In this latter case the sum of the
+        values corresponding to the *value_column* is used as the result
+        instead.  The total number of bins requested cannot exceed 10,000.
 
         NOTE:  The Kinetica instance being accessed must be running a CUDA
-        (GPU-based)
-        build to service a request that specifies a *value_column*.
+        (GPU-based) build to service a request that specifies a *value_column*.
 
         Parameters:
 
@@ -14797,14 +15160,15 @@ class GPUdb(object):
                 The size of each bin within the start and end parameters.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **value_column** --
                   The name of the column to use when calculating the bin values
                   (values are summed).  The column must be a numerical type
                   (int, double, long, float).
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -14842,28 +15206,21 @@ class GPUdb(object):
         return response
     # end aggregate_histogram
 
-
     # begin aggregate_k_means
-    def aggregate_k_means( self, table_name = None, column_names = None, k = None,
-                           tolerance = None, options = {} ):
+    def aggregate_k_means( self, table_name = None, column_names = None, k =
+                           None, tolerance = None, options = {} ):
         """This endpoint runs the k-means algorithm - a heuristic algorithm
         that attempts to do k-means clustering.  An ideal k-means clustering
-        algorithm
-        selects k points such that the sum of the mean squared distances of
-        each member
-        of the set to the nearest of the k points is minimized.  The k-means
-        algorithm
-        however does not necessarily produce such an ideal cluster.   It begins
-        with a
-        randomly selected set of k points and then refines the location of the
-        points
-        iteratively and settles to a local minimum.  Various parameters and
-        options are
+        algorithm selects k points such that the sum of the mean squared
+        distances of each member of the set to the nearest of the k points is
+        minimized.  The k-means algorithm however does not necessarily produce
+        such an ideal cluster.   It begins with a randomly selected set of k
+        points and then refines the location of the points iteratively and
+        settles to a local minimum.  Various parameters and options are
         provided to control the heuristic search.
 
         NOTE:  The Kinetica instance being accessed must be running a CUDA
-        (GPU-based)
-        build to service this request.
+        (GPU-based) build to service this request.
 
         Parameters:
 
@@ -14876,9 +15233,9 @@ class GPUdb(object):
             column_names (list of str)
                 List of column names on which the operation would be performed.
                 If n columns are provided then each of the k result points will
-                have n dimensions corresponding to the n columns.    The user
-                can provide a single element (which will be automatically
-                promoted to a list internally) or a list.
+                have n dimensions corresponding to the n columns. The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
 
             k (int)
                 The number of mean points to be determined by the algorithm.
@@ -14888,8 +15245,7 @@ class GPUdb(object):
                 less than the given tolerance.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **whiten** --
@@ -14946,6 +15302,8 @@ class GPUdb(object):
                   Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in *result_table*.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -14976,13 +15334,14 @@ class GPUdb(object):
                 The number of iterations the algorithm executed before it quit.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_result_table_name** --
                   The fully qualified name of the result table (i.e. including
                   the schema) used to store the results.
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "aggregate_k_means(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         column_names = column_names if isinstance( column_names, list ) else ( [] if (column_names is None) else [ column_names ] )
@@ -15002,12 +15361,11 @@ class GPUdb(object):
         return response
     # end aggregate_k_means
 
-
     # begin aggregate_min_max
-    def aggregate_min_max( self, table_name = None, column_name = None, options = {}
-                           ):
-        """Calculates and returns the minimum and maximum values of a particular
-        column in a table.
+    def aggregate_min_max( self, table_name = None, column_name = None, options
+                           = {} ):
+        """Calculates and returns the minimum and maximum values of a
+        particular column in a table.
 
         Parameters:
 
@@ -15022,8 +15380,7 @@ class GPUdb(object):
                 which the min-max will be calculated.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -15051,7 +15408,6 @@ class GPUdb(object):
         return response
     # end aggregate_min_max
 
-
     # begin aggregate_min_max_geometry
     def aggregate_min_max_geometry( self, table_name = None, column_name = None,
                                     options = {} ):
@@ -15071,8 +15427,7 @@ class GPUdb(object):
                 be calculated.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -15110,70 +15465,48 @@ class GPUdb(object):
         return response
     # end aggregate_min_max_geometry
 
-
     # begin aggregate_statistics
-    def aggregate_statistics( self, table_name = None, column_name = None, stats =
-                              None, options = {} ):
+    def aggregate_statistics( self, table_name = None, column_name = None, stats
+                              = None, options = {} ):
         """Calculates the requested statistics of the given column(s) in a
         given table.
 
-        The available statistics are:
-          *count* (number of total objects),
-          *mean*,
-          *stdv* (standard deviation),
-          *variance*,
-          *skew*,
-          *kurtosis*,
-          *sum*,
-          *min*,
-          *max*,
-          *weighted_average*,
-          *cardinality* (unique count),
-          *estimated_cardinality*,
-          *percentile*, and
-          *percentile_rank*.
+        The available statistics are: *count* (number of total objects),
+        *mean*, *stdv* (standard deviation), *variance*, *skew*, *kurtosis*,
+        *sum*, *min*, *max*, *weighted_average*, *cardinality* (unique count),
+        *estimated_cardinality*, *percentile*, and *percentile_rank*.
 
         Estimated cardinality is calculated by using the hyperloglog
-        approximation
-        technique.
+        approximation technique.
 
         Percentiles and percentile ranks are approximate and are calculated
-        using the
-        t-digest algorithm. They must include the desired
-        *percentile*/*percentile_rank*.
-        To compute multiple percentiles each value must be specified separately
-        (i.e.
+        using the t-digest algorithm. They must include the desired
+        *percentile*/*percentile_rank*. To compute multiple percentiles each
+        value must be specified separately (i.e.
         'percentile(75.0),percentile(99.0),percentile_rank(1234.56),percentile_rank(-5)').
 
-        A second, comma-separated value can be added to the
-        *percentile* statistic to calculate percentile
-        resolution, e.g., a 50th percentile with 200 resolution would be
-        'percentile(50,200)'.
+        A second, comma-separated value can be added to the *percentile*
+        statistic to calculate percentile resolution, e.g., a 50th percentile
+        with 200 resolution would be 'percentile(50,200)'.
 
         The weighted average statistic requires a weight column to be specified
-        in
-        *weight_column_name*.  The weighted average is then
-        defined as the sum of the products of input parameter *column_name*
-        times the
+        in *weight_column_name*.  The weighted average is then defined as the
+        sum of the products of input parameter *column_name* times the
         *weight_column_name* values divided by the sum of the
         *weight_column_name* values.
 
         Additional columns can be used in the calculation of statistics via
-        *additional_column_names*.  Values in these columns will
-        be included in the overall aggregate calculation--individual aggregates
-        will not
-        be calculated per additional column.  For instance, requesting the
-        *count* & *mean* of
-        input parameter *column_name* x and *additional_column_names*
-        y & z, where x holds the numbers 1-10, y holds 11-20, and z holds
-        21-30, would
-        return the total number of x, y, & z values (30), and the single
-        average value
-        across all x, y, & z values (15.5).
+        *additional_column_names*.  Values in these columns will be included in
+        the overall aggregate calculation--individual aggregates will not be
+        calculated per additional column.  For instance, requesting the *count*
+        & *mean* of input parameter *column_name* x and
+        *additional_column_names* y & z, where x holds the numbers 1-10, y
+        holds 11-20, and z holds 21-30, would return the total number of x, y,
+        & z values (30), and the single average value across all x, y, & z
+        values (15.5).
 
         The response includes a list of key/value pairs of each statistic
-        requested and
-        its corresponding value.
+        requested and its corresponding value.
 
         Parameters:
 
@@ -15243,8 +15576,7 @@ class GPUdb(object):
                   approximately 50.0).
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **additional_column_names** --
@@ -15258,6 +15590,8 @@ class GPUdb(object):
                 * **weight_column_name** --
                   Name of column used as weighting attribute for the weighted
                   average statistic.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -15285,49 +15619,37 @@ class GPUdb(object):
         return response
     # end aggregate_statistics
 
-
     # begin aggregate_statistics_by_range
-    def aggregate_statistics_by_range( self, table_name = None, select_expression =
-                                       '', column_name = None, value_column_name
-                                       = None, stats = None, start = None, end =
-                                       None, interval = None, options = {} ):
+    def aggregate_statistics_by_range( self, table_name = None,
+                                       select_expression = '', column_name =
+                                       None, value_column_name = None, stats =
+                                       None, start = None, end = None, interval
+                                       = None, options = {} ):
         """Divides the given set into bins and calculates statistics of the
         values of a value-column in each bin.  The bins are based on the values
-        of a
-        given binning-column.  The statistics that may be requested are mean,
-        stdv
-        (standard deviation), variance, skew, kurtosis, sum, min, max, first,
-        last and
-        weighted average. In addition to the requested statistics the count of
-        total
-        samples in each bin is returned. This counts vector is just the
-        histogram of the
-        column used to divide the set members into bins. The weighted average
-        statistic
-        requires a weight column to be specified in
-        *weight_column_name*. The weighted average is then
-        defined as the sum of the products of the value column times the weight
-        column
-        divided by the sum of the weight column.
+        of a given binning-column.  The statistics that may be requested are
+        mean, stdv (standard deviation), variance, skew, kurtosis, sum, min,
+        max, first, last and weighted average. In addition to the requested
+        statistics the count of total samples in each bin is returned. This
+        counts vector is just the histogram of the column used to divide the
+        set members into bins. The weighted average statistic requires a weight
+        column to be specified in *weight_column_name*. The weighted average is
+        then defined as the sum of the products of the value column times the
+        weight column divided by the sum of the weight column.
 
         There are two methods for binning the set members. In the first, which
-        can be
-        used for numeric valued binning-columns, a min, max and interval are
-        specified.
-        The number of bins, nbins, is the integer upper bound of
-        (max-min)/interval.
-        Values that fall in the range [min+n*interval,min+(n+1)*interval) are
-        placed in
-        the nth bin where n ranges from 0..nbin-2. The final bin is
-        [min+(nbin-1)*interval,max]. In the second method,
-        *bin_values* specifies a list of binning column values.
-        Binning-columns whose value matches the nth member of the
-        *bin_values* list are placed in the nth bin. When a list
-        is provided, the binning-column must be of type string or int.
+        can be used for numeric valued binning-columns, a min, max and interval
+        are specified. The number of bins, nbins, is the integer upper bound of
+        (max-min)/interval. Values that fall in the range
+        [min+n*interval,min+(n+1)*interval) are placed in the nth bin where n
+        ranges from 0..nbin-2. The final bin is [min+(nbin-1)*interval,max]. In
+        the second method, *bin_values* specifies a list of binning column
+        values. Binning-columns whose value matches the nth member of the
+        *bin_values* list are placed in the nth bin. When a list is provided,
+        the binning-column must be of type string or int.
 
         NOTE:  The Kinetica instance being accessed must be running a CUDA
-        (GPU-based)
-        build to service this request.
+        (GPU-based) build to service this request.
 
         Parameters:
 
@@ -15339,7 +15661,7 @@ class GPUdb(object):
 
             select_expression (str)
                 For a non-empty expression statistics are calculated for those
-                records for which the expression is true.  The default value is
+                records for which the expression is true. The default value is
                 ''.
 
             column_name (str)
@@ -15367,8 +15689,7 @@ class GPUdb(object):
                 start+interval*(i+1)).
 
             options (dict of str to str)
-                Map of optional parameters:.  The default value is an empty
-                dict ( {} ).
+                Map of optional parameters:
                 Allowed keys are:
 
                 * **additional_column_names** --
@@ -15386,6 +15707,8 @@ class GPUdb(object):
 
                 * **order_column_name** --
                   Name of the column used for candlestick charting techniques.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -15425,54 +15748,43 @@ class GPUdb(object):
         return response
     # end aggregate_statistics_by_range
 
-
     # begin aggregate_unique
-    def aggregate_unique( self, table_name = None, column_name = None, offset = 0,
-                          limit = -9999, encoding = 'binary', options = {} ):
-        """Returns all the unique values from a particular column
-        (specified by input parameter *column_name*) of a particular table or
-        view
-        (specified by input parameter *table_name*). If input parameter
-        *column_name* is a numeric column,
-        the values will be in output parameter *binary_encoded_response*.
-        Otherwise if
-        input parameter *column_name* is a string column, the values will be in
-        output parameter *json_encoded_response*.  The results can be paged via
-        input parameter *offset*
-        and input parameter *limit* parameters.
+    def aggregate_unique( self, table_name = None, column_name = None, offset =
+                          0, limit = -9999, encoding = 'binary', options = {} ):
+        """Returns all the unique values from a particular column (specified by
+        input parameter *column_name*) of a particular table or view (specified
+        by input parameter *table_name*). If input parameter *column_name* is a
+        numeric column, the values will be in output parameter
+        *binary_encoded_response*. Otherwise if input parameter *column_name*
+        is a string column, the values will be in output parameter
+        *json_encoded_response*.  The results can be paged via input parameter
+        *offset* and input parameter *limit* parameters.
 
         Columns marked as `store-only
-        <../../../../concepts/types/#data-handling>`__
-        are unable to be used with this function.
+        <../../../../concepts/types/#data-handling>`__ are unable to be used
+        with this function.
 
         To get the first 10 unique values sorted in descending order input
-        parameter *options*
-        would be::
+        parameter *options* would be::
 
-        {"limit":"10","sort_order":"descending"}.
+            {"limit":"10","sort_order":"descending"}
 
-        The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation
-        <../../../../api/concepts/#dynamic-schemas>`__.
+        The response is returned as a dynamic schema. For details see: `dynamic
+        schemas documentation <../../../../api/concepts/#dynamic-schemas>`__.
 
-        If a *result_table* name is specified in the
-        input parameter *options*, the results are stored in a new table with
-        that name--no
-        results are returned in the response.  Both the table name and
-        resulting column
-        name must adhere to
-        `standard naming conventions <../../../../concepts/tables/#table>`__;
-        any column expression will need to be aliased.  If the source table's
-        `shard key <../../../../concepts/tables/#shard-keys>`__ is used as the
-        input parameter *column_name*, the result table will be sharded, in all
-        other cases it
-        will be replicated.  Sorting will properly function only if the result
-        table is
-        replicated or if there is only one processing node and should not be
-        relied upon
-        in other cases.  Not available if the value of input parameter
-        *column_name* is an
-        unrestricted-length string.
+        If a *result_table* name is specified in the input parameter *options*,
+        the results are stored in a new table with that name--no results are
+        returned in the response.  Both the table name and resulting column
+        name must adhere to `standard naming conventions
+        <../../../../concepts/tables/#table>`__; any column expression will
+        need to be aliased.  If the source table's `shard key
+        <../../../../concepts/tables/#shard-keys>`__ is used as the input
+        parameter *column_name*, the result table will be sharded, in all other
+        cases it will be replicated.  Sorting will properly function only if
+        the result table is replicated or if there is only one processing node
+        and should not be relied upon in other cases.  Not available if the
+        value of input parameter *column_name* is an unrestricted-length
+        string.
 
         Parameters:
 
@@ -15488,24 +15800,21 @@ class GPUdb(object):
 
             offset (long)
                 A positive integer indicating the number of initial results to
-                skip (this can be useful for paging through the results).  The
-                default value is 0.The minimum allowed value is 0. The maximum
+                skip (this can be useful for paging through the results). The
+                default value is 0. The minimum allowed value is 0. The maximum
                 allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned, or
-                END_OF_SET (-9999) to indicate that the maximum number of
-                results allowed by the server should be
-                returned.  The number of records returned will never exceed the
-                server's own limit, defined by the
-                `max_get_records_size
+                be returned, or END_OF_SET (-9999) to indicate that the maximum
+                number of results allowed by the server should be returned.
+                The number of records returned will never exceed the server's
+                own limit, defined by the `max_get_records_size
                 <../../../../config/#config-main-general>`__ parameter in the
-                server configuration.
-                Use output parameter *has_more_records* to see if more records
-                exist in the result to be fetched, and
+                server configuration. Use output parameter *has_more_records*
+                to see if more records exist in the result to be fetched, and
                 input parameter *offset* & input parameter *limit* to request
-                subsequent pages of results.  The default value is -9999.
+                subsequent pages of results. The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records.
@@ -15520,8 +15829,7 @@ class GPUdb(object):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -15611,9 +15919,21 @@ class GPUdb(object):
                   result table. Must be used in combination with the
                   *result_table* option.
 
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for the result table. Must be used in
+                  combination with the *result_table* option.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for the result table. Must be used in
+                  combination with the *result_table* option.
+
                 * **view_id** --
-                  ID of view of which the result table will be a member.  The
+                  ID of view of which the result table will be a member. The
                   default value is ''.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -15635,18 +15955,20 @@ class GPUdb(object):
                 Too many records. Returned a partial set.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_result_table_name** --
                   The fully qualified name of the table (i.e. including the
                   schema) used to store the results.
 
+                The default value is an empty dict ( {} ).
+
             record_type (:class:`RecordType` or None)
                 A :class:`RecordType` object using which the user can decode
-                the binarydata by using :meth:`GPUdbRecord.decode_binary_data`.
-                If JSON encodingis used, then None.
+                the binary data by using
+                :meth:`GPUdbRecord.decode_binary_data`. If JSON encoding is
+                used, then None.
         """
         assert isinstance( table_name, (basestring)), "aggregate_unique(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( column_name, (basestring)), "aggregate_unique(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
@@ -15683,57 +16005,46 @@ class GPUdb(object):
         return response
     # end aggregate_unique
 
-
     # begin aggregate_unique_and_decode
-    def aggregate_unique_and_decode( self, table_name = None, column_name = None,
-                                     offset = 0, limit = -9999, encoding =
+    def aggregate_unique_and_decode( self, table_name = None, column_name =
+                                     None, offset = 0, limit = -9999, encoding =
                                      'binary', options = {}, record_type = None,
                                      force_primitive_return_types = True,
                                      get_column_major = True ):
-        """Returns all the unique values from a particular column
-        (specified by input parameter *column_name*) of a particular table or
-        view
-        (specified by input parameter *table_name*). If input parameter
-        *column_name* is a numeric column,
-        the values will be in output parameter *binary_encoded_response*.
-        Otherwise if
-        input parameter *column_name* is a string column, the values will be in
-        output parameter *json_encoded_response*.  The results can be paged via
-        input parameter *offset*
-        and input parameter *limit* parameters.
+        """Returns all the unique values from a particular column (specified by
+        input parameter *column_name*) of a particular table or view (specified
+        by input parameter *table_name*). If input parameter *column_name* is a
+        numeric column, the values will be in output parameter
+        *binary_encoded_response*. Otherwise if input parameter *column_name*
+        is a string column, the values will be in output parameter
+        *json_encoded_response*.  The results can be paged via input parameter
+        *offset* and input parameter *limit* parameters.
 
         Columns marked as `store-only
-        <../../../../concepts/types/#data-handling>`__
-        are unable to be used with this function.
+        <../../../../concepts/types/#data-handling>`__ are unable to be used
+        with this function.
 
         To get the first 10 unique values sorted in descending order input
-        parameter *options*
-        would be::
+        parameter *options* would be::
 
-        {"limit":"10","sort_order":"descending"}.
+            {"limit":"10","sort_order":"descending"}
 
-        The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation
-        <../../../../api/concepts/#dynamic-schemas>`__.
+        The response is returned as a dynamic schema. For details see: `dynamic
+        schemas documentation <../../../../api/concepts/#dynamic-schemas>`__.
 
-        If a *result_table* name is specified in the
-        input parameter *options*, the results are stored in a new table with
-        that name--no
-        results are returned in the response.  Both the table name and
-        resulting column
-        name must adhere to
-        `standard naming conventions <../../../../concepts/tables/#table>`__;
-        any column expression will need to be aliased.  If the source table's
-        `shard key <../../../../concepts/tables/#shard-keys>`__ is used as the
-        input parameter *column_name*, the result table will be sharded, in all
-        other cases it
-        will be replicated.  Sorting will properly function only if the result
-        table is
-        replicated or if there is only one processing node and should not be
-        relied upon
-        in other cases.  Not available if the value of input parameter
-        *column_name* is an
-        unrestricted-length string.
+        If a *result_table* name is specified in the input parameter *options*,
+        the results are stored in a new table with that name--no results are
+        returned in the response.  Both the table name and resulting column
+        name must adhere to `standard naming conventions
+        <../../../../concepts/tables/#table>`__; any column expression will
+        need to be aliased.  If the source table's `shard key
+        <../../../../concepts/tables/#shard-keys>`__ is used as the input
+        parameter *column_name*, the result table will be sharded, in all other
+        cases it will be replicated.  Sorting will properly function only if
+        the result table is replicated or if there is only one processing node
+        and should not be relied upon in other cases.  Not available if the
+        value of input parameter *column_name* is an unrestricted-length
+        string.
 
         Parameters:
 
@@ -15749,24 +16060,21 @@ class GPUdb(object):
 
             offset (long)
                 A positive integer indicating the number of initial results to
-                skip (this can be useful for paging through the results).  The
-                default value is 0.The minimum allowed value is 0. The maximum
+                skip (this can be useful for paging through the results). The
+                default value is 0. The minimum allowed value is 0. The maximum
                 allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned, or
-                END_OF_SET (-9999) to indicate that the maximum number of
-                results allowed by the server should be
-                returned.  The number of records returned will never exceed the
-                server's own limit, defined by the
-                `max_get_records_size
+                be returned, or END_OF_SET (-9999) to indicate that the maximum
+                number of results allowed by the server should be returned.
+                The number of records returned will never exceed the server's
+                own limit, defined by the `max_get_records_size
                 <../../../../config/#config-main-general>`__ parameter in the
-                server configuration.
-                Use output parameter *has_more_records* to see if more records
-                exist in the result to be fetched, and
+                server configuration. Use output parameter *has_more_records*
+                to see if more records exist in the result to be fetched, and
                 input parameter *offset* & input parameter *limit* to request
-                subsequent pages of results.  The default value is -9999.
+                subsequent pages of results. The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records.
@@ -15781,8 +16089,7 @@ class GPUdb(object):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -15872,15 +16179,27 @@ class GPUdb(object):
                   result table. Must be used in combination with the
                   *result_table* option.
 
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for the result table. Must be used in
+                  combination with the *result_table* option.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for the result table. Must be used in
+                  combination with the *result_table* option.
+
                 * **view_id** --
-                  ID of view of which the result table will be a member.  The
+                  ID of view of which the result table will be a member. The
                   default value is ''.
 
+                The default value is an empty dict ( {} ).
+
             record_type (:class:`RecordType` or None)
-                The record type expected in the results, or None to
-                determinethe appropriate type automatically. If known,
-                providing thismay improve performance in binary mode. Not used
-                in JSON mode.The default value is None.
+                The record type expected in the results, or None to determine
+                the appropriate type automatically. If known, providing this
+                may improve performance in binary mode. Not used in JSON mode.
+                The default value is None.
 
             force_primitive_return_types (bool)
                 If `True`, then `OrderedDict` objects will be returned, where
@@ -15899,7 +16218,7 @@ class GPUdb(object):
 
             get_column_major (bool)
                 Indicates if the decoded records will be transposed to be
-                column-major or returned as is (row-major).  Default value is
+                column-major or returned as is (row-major). Default value is
                 True.
 
         Returns:
@@ -15916,13 +16235,14 @@ class GPUdb(object):
                 Too many records. Returned a partial set.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_result_table_name** --
                   The fully qualified name of the table (i.e. including the
                   schema) used to store the results.
+
+                The default value is an empty dict ( {} ).
 
             records (list of :class:`Record`)
                 A list of :class:`Record` objects which contain the decoded
@@ -15987,7 +16307,6 @@ class GPUdb(object):
         return response
     # end aggregate_unique_and_decode
 
-
     # begin aggregate_unpivot
     def aggregate_unpivot( self, table_name = None, column_names = None,
                            variable_column_name = '', value_column_name = '',
@@ -15995,25 +16314,19 @@ class GPUdb(object):
                            = {} ):
         """Rotate the column values into rows values.
 
-        For unpivot details and examples, see
-        `Unpivot <../../../../concepts/unpivot/>`__.  For limitations, see
-        `Unpivot Limitations <../../../../concepts/unpivot/#limitations>`__.
+        For unpivot details and examples, see `Unpivot
+        <../../../../concepts/unpivot/>`__.  For limitations, see `Unpivot
+        Limitations <../../../../concepts/unpivot/#limitations>`__.
 
         Unpivot is used to normalize tables that are built for cross tabular
-        reporting
-        purposes. The unpivot operator rotates the column values for all the
-        pivoted
-        columns. A variable column, value column and all columns from the
-        source table
-        except the unpivot columns are projected into the result table. The
-        variable
-        column and value columns in the result table indicate the pivoted
-        column name
-        and values respectively.
+        reporting purposes. The unpivot operator rotates the column values for
+        all the pivoted columns. A variable column, value column and all
+        columns from the source table except the unpivot columns are projected
+        into the result table. The variable column and value columns in the
+        result table indicate the pivoted column name and values respectively.
 
-        The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation
-        <../../../../api/concepts/#dynamic-schemas>`__.
+        The response is returned as a dynamic schema. For details see: `dynamic
+        schemas documentation <../../../../api/concepts/#dynamic-schemas>`__.
 
         Parameters:
 
@@ -16030,16 +16343,16 @@ class GPUdb(object):
                 automatically promoted to a list internally) or a list.
 
             variable_column_name (str)
-                Specifies the variable/parameter column name.  The default
-                value is ''.
+                Specifies the variable/parameter column name. The default value
+                is ''.
 
             value_column_name (str)
-                Specifies the value column name.  The default value is ''.
+                Specifies the value column name. The default value is ''.
 
             pivoted_columns (list of str)
                 List of one or more values typically the column names of the
                 input table. All the columns in the source table must have the
-                same data type.    The user can provide a single element (which
+                same data type. The user can provide a single element (which
                 will be automatically promoted to a list internally) or a list.
 
             encoding (str)
@@ -16055,8 +16368,7 @@ class GPUdb(object):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -16111,22 +16423,32 @@ class GPUdb(object):
                   'timestamp asc, x desc'.  The columns specified must be
                   present in input table.  If any alias is given for any column
                   name, the alias must be used, rather than the original column
-                  name.  The default value is ''.
+                  name. The default value is ''.
 
                 * **chunk_size** --
                   Indicates the number of records per chunk to be used for the
                   result table. Must be used in combination with the
                   *result_table* option.
 
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for the result table. Must be used in
+                  combination with the *result_table* option.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for the result table. Must be used in
+                  combination with the *result_table* option.
+
                 * **limit** --
-                  The number of records to keep.  The default value is ''.
+                  The number of records to keep. The default value is ''.
 
                 * **ttl** --
                   Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in *result_table*.
 
                 * **view_id** --
-                  view this result table is part of.  The default value is ''.
+                  view this result table is part of. The default value is ''.
 
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
@@ -16145,6 +16467,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -16170,18 +16494,20 @@ class GPUdb(object):
                 Too many records. Returned a partial set.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_result_table_name** --
                   The fully qualified name of the table (i.e. including the
                   schema) used to store the results.
 
+                The default value is an empty dict ( {} ).
+
             record_type (:class:`RecordType` or None)
                 A :class:`RecordType` object using which the user can decode
-                the binarydata by using :meth:`GPUdbRecord.decode_binary_data`.
-                If JSON encodingis used, then None.
+                the binary data by using
+                :meth:`GPUdbRecord.decode_binary_data`. If JSON encoding is
+                used, then None.
         """
         assert isinstance( table_name, (basestring)), "aggregate_unpivot(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         column_names = column_names if isinstance( column_names, list ) else ( [] if (column_names is None) else [ column_names ] )
@@ -16220,10 +16546,9 @@ class GPUdb(object):
         return response
     # end aggregate_unpivot
 
-
     # begin aggregate_unpivot_and_decode
-    def aggregate_unpivot_and_decode( self, table_name = None, column_names = None,
-                                      variable_column_name = '',
+    def aggregate_unpivot_and_decode( self, table_name = None, column_names =
+                                      None, variable_column_name = '',
                                       value_column_name = '', pivoted_columns =
                                       None, encoding = 'binary', options = {},
                                       record_type = None,
@@ -16231,25 +16556,19 @@ class GPUdb(object):
                                       get_column_major = True ):
         """Rotate the column values into rows values.
 
-        For unpivot details and examples, see
-        `Unpivot <../../../../concepts/unpivot/>`__.  For limitations, see
-        `Unpivot Limitations <../../../../concepts/unpivot/#limitations>`__.
+        For unpivot details and examples, see `Unpivot
+        <../../../../concepts/unpivot/>`__.  For limitations, see `Unpivot
+        Limitations <../../../../concepts/unpivot/#limitations>`__.
 
         Unpivot is used to normalize tables that are built for cross tabular
-        reporting
-        purposes. The unpivot operator rotates the column values for all the
-        pivoted
-        columns. A variable column, value column and all columns from the
-        source table
-        except the unpivot columns are projected into the result table. The
-        variable
-        column and value columns in the result table indicate the pivoted
-        column name
-        and values respectively.
+        reporting purposes. The unpivot operator rotates the column values for
+        all the pivoted columns. A variable column, value column and all
+        columns from the source table except the unpivot columns are projected
+        into the result table. The variable column and value columns in the
+        result table indicate the pivoted column name and values respectively.
 
-        The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation
-        <../../../../api/concepts/#dynamic-schemas>`__.
+        The response is returned as a dynamic schema. For details see: `dynamic
+        schemas documentation <../../../../api/concepts/#dynamic-schemas>`__.
 
         Parameters:
 
@@ -16266,16 +16585,16 @@ class GPUdb(object):
                 automatically promoted to a list internally) or a list.
 
             variable_column_name (str)
-                Specifies the variable/parameter column name.  The default
-                value is ''.
+                Specifies the variable/parameter column name. The default value
+                is ''.
 
             value_column_name (str)
-                Specifies the value column name.  The default value is ''.
+                Specifies the value column name. The default value is ''.
 
             pivoted_columns (list of str)
                 List of one or more values typically the column names of the
                 input table. All the columns in the source table must have the
-                same data type.    The user can provide a single element (which
+                same data type. The user can provide a single element (which
                 will be automatically promoted to a list internally) or a list.
 
             encoding (str)
@@ -16291,8 +16610,7 @@ class GPUdb(object):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -16347,22 +16665,32 @@ class GPUdb(object):
                   'timestamp asc, x desc'.  The columns specified must be
                   present in input table.  If any alias is given for any column
                   name, the alias must be used, rather than the original column
-                  name.  The default value is ''.
+                  name. The default value is ''.
 
                 * **chunk_size** --
                   Indicates the number of records per chunk to be used for the
                   result table. Must be used in combination with the
                   *result_table* option.
 
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for the result table. Must be used in
+                  combination with the *result_table* option.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for the result table. Must be used in
+                  combination with the *result_table* option.
+
                 * **limit** --
-                  The number of records to keep.  The default value is ''.
+                  The number of records to keep. The default value is ''.
 
                 * **ttl** --
                   Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in *result_table*.
 
                 * **view_id** --
-                  view this result table is part of.  The default value is ''.
+                  view this result table is part of. The default value is ''.
 
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
@@ -16382,11 +16710,13 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                The default value is an empty dict ( {} ).
+
             record_type (:class:`RecordType` or None)
-                The record type expected in the results, or None to
-                determinethe appropriate type automatically. If known,
-                providing thismay improve performance in binary mode. Not used
-                in JSON mode.The default value is None.
+                The record type expected in the results, or None to determine
+                the appropriate type automatically. If known, providing this
+                may improve performance in binary mode. Not used in JSON mode.
+                The default value is None.
 
             force_primitive_return_types (bool)
                 If `True`, then `OrderedDict` objects will be returned, where
@@ -16405,7 +16735,7 @@ class GPUdb(object):
 
             get_column_major (bool)
                 Indicates if the decoded records will be transposed to be
-                column-major or returned as is (row-major).  Default value is
+                column-major or returned as is (row-major). Default value is
                 True.
 
         Returns:
@@ -16426,13 +16756,14 @@ class GPUdb(object):
                 Too many records. Returned a partial set.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_result_table_name** --
                   The fully qualified name of the table (i.e. including the
                   schema) used to store the results.
+
+                The default value is an empty dict ( {} ).
 
             records (list of :class:`Record`)
                 A list of :class:`Record` objects which contain the decoded
@@ -16499,7 +16830,6 @@ class GPUdb(object):
         return response
     # end aggregate_unpivot_and_decode
 
-
     # begin alter_credential
     def alter_credential( self, credential_name = None, credential_updates_map =
                           None, options = None ):
@@ -16540,10 +16870,9 @@ class GPUdb(object):
                   New password for the credential
 
                 * **schema_name** --
-                  Updates the schema name.  If *schema_name*
-                  doesn't exist, an error will be thrown. If *schema_name* is
-                  empty, then the user's
-                  default schema will be used.
+                  Updates the schema name.  If *schema_name* doesn't exist, an
+                  error will be thrown. If *schema_name* is empty, then the
+                  user's default schema will be used.
 
             options (dict of str to str)
                 Optional parameters.
@@ -16571,10 +16900,9 @@ class GPUdb(object):
         return response
     # end alter_credential
 
-
     # begin alter_datasink
-    def alter_datasink( self, name = None, datasink_updates_map = None, options =
-                        None ):
+    def alter_datasink( self, name = None, datasink_updates_map = None, options
+                        = None ):
         """Alters the properties of an existing `data sink
         <../../../../concepts/data_sinks/>`__
 
@@ -16592,6 +16920,7 @@ class GPUdb(object):
                 * **destination** --
                   Destination for the output data in format
                   'destination_type://path[:port]'.
+
                   Supported destination types are 'http', 'https' and 'kafka'.
 
                 * **connection_timeout** --
@@ -16700,17 +17029,18 @@ class GPUdb(object):
                   The default value is 'true'.
 
                 * **max_batch_size** --
-                  Maximum number of records per notification message.  The
+                  Maximum number of records per notification message. The
                   default value is '1'.
 
                 * **max_message_size** --
-                  Maximum size in bytes of each notification message.  The
+                  Maximum size in bytes of each notification message. The
                   default value is '1000000'.
 
                 * **json_format** --
                   The desired format of JSON encoded notifications message.
-                  If *nested*, records are returned as an array.
-                  Otherwise, only a single record per messages is returned.
+
+                  If *nested*, records are returned as an array. Otherwise,
+                  only a single record per messages is returned.
                   Allowed values are:
 
                   * flat
@@ -16728,10 +17058,9 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **schema_name** --
-                  Updates the schema name.  If *schema_name*
-                  doesn't exist, an error will be thrown. If *schema_name* is
-                  empty, then the user's
-                  default schema will be used.
+                  Updates the schema name.  If *schema_name* doesn't exist, an
+                  error will be thrown. If *schema_name* is empty, then the
+                  user's default schema will be used.
 
             options (dict of str to str)
                 Optional parameters.
@@ -16759,10 +17088,9 @@ class GPUdb(object):
         return response
     # end alter_datasink
 
-
     # begin alter_datasource
-    def alter_datasource( self, name = None, datasource_updates_map = None, options
-                          = None ):
+    def alter_datasource( self, name = None, datasource_updates_map = None,
+                          options = None ):
         """Alters the properties of an existing `data source
         <../../../../concepts/data_sources/>`__
 
@@ -16781,6 +17109,7 @@ class GPUdb(object):
                   Location of the remote storage in
                   'storage_provider_type://[storage_path[:storage_port]]'
                   format.
+
                   Supported storage provider types are
                   'azure','gcs','hdfs','kafka' and 's3'.
 
@@ -16915,10 +17244,9 @@ class GPUdb(object):
                   The default value is 'true'.
 
                 * **schema_name** --
-                  Updates the schema name.  If *schema_name*
-                  doesn't exist, an error will be thrown. If *schema_name* is
-                  empty, then the user's
-                  default schema will be used.
+                  Updates the schema name.  If *schema_name* doesn't exist, an
+                  error will be thrown. If *schema_name* is empty, then the
+                  user's default schema will be used.
 
             options (dict of str to str)
                 Optional parameters.
@@ -16946,10 +17274,9 @@ class GPUdb(object):
         return response
     # end alter_datasource
 
-
     # begin alter_directory
-    def alter_directory( self, directory_name = None, directory_updates_map = None,
-                         options = {} ):
+    def alter_directory( self, directory_name = None, directory_updates_map =
+                         None, options = {} ):
         """Alters an existing directory in `KiFS <../../../../tools/kifs/>`__.
 
         Parameters:
@@ -16967,8 +17294,7 @@ class GPUdb(object):
                   Set to -1 to indicate no upper limit.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -16993,7 +17319,6 @@ class GPUdb(object):
         return response
     # end alter_directory
 
-
     # begin alter_environment
     def alter_environment( self, environment_name = None, action = None, value =
                            None, options = {} ):
@@ -17006,7 +17331,7 @@ class GPUdb(object):
                 Name of the environment to be altered.
 
             action (str)
-                Modification operation to be applied
+                Modification operation to be applied.
                 Allowed values are:
 
                 * **install_package** --
@@ -17025,6 +17350,10 @@ class GPUdb(object):
                   Uninstalls all packages in the environment and resets it to
                   the original state at time of creation
 
+                * **rebuild** --
+                  Recreates the environment and re-installs all packages,
+                  upgrades the packages if necessary based on dependencies
+
             value (str)
                 The value of the modification, depending on input parameter
                 *action*.  For example, if input parameter *action* is
@@ -17041,13 +17370,14 @@ class GPUdb(object):
                 <../../../../tools/kifs/>`__.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **datasource_name** --
                   Name of an existing external data source from which packages
                   specified in input parameter *value* can be loaded
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -17074,11 +17404,9 @@ class GPUdb(object):
         return response
     # end alter_environment
 
-
     # begin alter_graph
     def alter_graph( self, graph_name = None, action = None, action_arg = None,
                      options = {} ):
-
         assert isinstance( graph_name, (basestring)), "alter_graph(): Argument 'graph_name' must be (one) of type(s) '(basestring)'; given %s" % type( graph_name ).__name__
         assert isinstance( action, (basestring)), "alter_graph(): Argument 'action' must be (one) of type(s) '(basestring)'; given %s" % type( action ).__name__
         assert isinstance( action_arg, (basestring)), "alter_graph(): Argument 'action_arg' must be (one) of type(s) '(basestring)'; given %s" % type( action_arg ).__name__
@@ -17095,11 +17423,9 @@ class GPUdb(object):
         return response
     # end alter_graph
 
-
     # begin alter_model
-    def alter_model( self, model_name = None, action = None, value = None, options =
-                     {} ):
-
+    def alter_model( self, model_name = None, action = None, value = None,
+                     options = {} ):
         assert isinstance( model_name, (basestring)), "alter_model(): Argument 'model_name' must be (one) of type(s) '(basestring)'; given %s" % type( model_name ).__name__
         assert isinstance( action, (basestring)), "alter_model(): Argument 'action' must be (one) of type(s) '(basestring)'; given %s" % type( action ).__name__
         assert isinstance( value, (basestring)), "alter_model(): Argument 'value' must be (one) of type(s) '(basestring)'; given %s" % type( value ).__name__
@@ -17116,10 +17442,9 @@ class GPUdb(object):
         return response
     # end alter_model
 
-
     # begin alter_resource_group
-    def alter_resource_group( self, name = None, tier_attributes = {}, ranking = '',
-                              adjoining_resource_group = '', options = {} ):
+    def alter_resource_group( self, name = None, tier_attributes = {}, ranking =
+                              '', adjoining_resource_group = '', options = {} ):
         """Alters the properties of an exisiting resource group to facilitate
         resource management.
 
@@ -17137,13 +17462,14 @@ class GPUdb(object):
 
                 For instance, to set max VRAM capacity to 1GB and max RAM
                 capacity to 10GB, use:  {'VRAM':{'max_memory':'1000000000'},
-                'RAM':{'max_memory':'10000000000'}}.  The default value is an
-                empty dict ( {} ).
+                'RAM':{'max_memory':'10000000000'}}.
                 Allowed keys are:
 
                 * **max_memory** --
                   Maximum amount of memory usable in the given tier at one time
                   for this group.
+
+                The default value is an empty dict ( {} ).
 
             ranking (str)
                 If the resource group ranking is to be updated, this indicates
@@ -17165,27 +17491,31 @@ class GPUdb(object):
             adjoining_resource_group (str)
                 If input parameter *ranking* is *before* or *after*, this field
                 indicates the resource group before or after which the current
-                group will be placed; otherwise, leave blank.  The default
-                value is ''.
+                group will be placed; otherwise, leave blank. The default value
+                is ''.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **max_cpu_concurrency** --
                   Maximum number of simultaneous threads that will be used to
-                  execute a request for this group.
+                  execute a request for this group. The minimum allowed value
+                  is '4'.
 
                 * **max_data** --
                   Maximum amount of cumulative ram usage regardless of tier
-                  status for this group.
+                  status for this group. The minimum allowed value is '-1'.
 
                 * **max_scheduling_priority** --
-                  Maximum priority of a scheduled task for this group.
+                  Maximum priority of a scheduled task for this group. The
+                  minimum allowed value is '1'. The maximum allowed value is
+                  '100'.
 
                 * **max_tier_priority** --
-                  Maximum priority of a tiered object for this group.
+                  Maximum priority of a tiered object for this group. The
+                  minimum allowed value is '1'. The maximum allowed value is
+                  '10'.
 
                 * **is_default_group** --
                   If *true*, this request applies to the global default
@@ -17209,6 +17539,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'true'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -17237,7 +17569,6 @@ class GPUdb(object):
         return response
     # end alter_resource_group
 
-
     # begin alter_role
     def alter_role( self, name = None, action = None, value = None, options = {} ):
         """Alters a Role.
@@ -17251,6 +17582,9 @@ class GPUdb(object):
                 Modification operation to be applied to the role.
                 Allowed values are:
 
+                * **set_comment** --
+                  Sets the comment for an internal role.
+
                 * **set_resource_group** --
                   Sets the resource group for an internal role. The resource
                   group must exist, otherwise, an empty string assigns the role
@@ -17261,8 +17595,7 @@ class GPUdb(object):
                 *action*.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -17289,10 +17622,9 @@ class GPUdb(object):
         return response
     # end alter_role
 
-
     # begin alter_schema
-    def alter_schema( self, schema_name = None, action = None, value = None, options
-                      = {} ):
+    def alter_schema( self, schema_name = None, action = None, value = None,
+                      options = {} ):
         """Used to change the name of a SQL-style `schema
         <../../../../concepts/schemas/>`__, specified in input parameter
         *schema_name*.
@@ -17303,8 +17635,11 @@ class GPUdb(object):
                 Name of the schema to be altered.
 
             action (str)
-                Modification operation to be applied
+                Modification operation to be applied.
                 Allowed values are:
+
+                * **add_comment** --
+                  Adds a comment describing the schema
 
                 * **rename_schema** --
                   Renames a schema to input parameter *value*. Has the same
@@ -17318,8 +17653,7 @@ class GPUdb(object):
                 the schema.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -17346,11 +17680,10 @@ class GPUdb(object):
         return response
     # end alter_schema
 
-
     # begin alter_system_properties
     def alter_system_properties( self, property_updates_map = None, options = {} ):
-        """The :meth:`GPUdb.alter_system_properties` endpoint is primarily used to
-        simplify the testing of the system and is not expected to be used
+        """The :meth:`GPUdb.alter_system_properties` endpoint is primarily used
+        to simplify the testing of the system and is not expected to be used
         during normal execution.  Commands are given through the input
         parameter *property_updates_map* whose keys are commands and values are
         strings representing integer values (for example '8000') or boolean
@@ -17388,6 +17721,14 @@ class GPUdb(object):
                 * **chunk_size** --
                   Sets the number of records per chunk to be used for all new
                   tables.
+
+                * **chunk_column_max_memory** --
+                  Sets the target maximum data size for each column in a chunk
+                  to be used for all new tables.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for all new tables.
 
                 * **evict_columns** --
                   Attempts to evict columns from memory to the persistent
@@ -17443,12 +17784,18 @@ class GPUdb(object):
                 * **request_timeout** --
                   Number of minutes after which filtering (e.g.,
                   :meth:`GPUdb.filter`) and aggregating (e.g.,
-                  :meth:`GPUdb.aggregate_group_by`) queries will timeout.  The
-                  default value is '20'.
+                  :meth:`GPUdb.aggregate_group_by`) queries will timeout. The
+                  default value is '20'. The minimum allowed value is '0'. The
+                  maximum allowed value is '1440'.
 
                 * **max_get_records_size** --
                   The maximum number of records the database will serve for a
-                  given data retrieval call.  The default value is '20000'.
+                  given data retrieval call. The default value is '20000'. The
+                  minimum allowed value is '0'. The maximum allowed value is
+                  '1000000'.
+
+                * **max_grbc_batch_size** --
+                  <DEVELOPER>
 
                 * **enable_audit** --
                   Enable or disable auditing.
@@ -17466,32 +17813,37 @@ class GPUdb(object):
                   Enable or disable auditing of response information.
 
                 * **shadow_agg_size** --
-                  Size of the shadow aggregate chunk cache in bytes.  The
-                  default value is '10000000'.
+                  Size of the shadow aggregate chunk cache in bytes. The
+                  default value is '10000000'. The minimum allowed value is
+                  '0'. The maximum allowed value is '2147483647'.
 
                 * **shadow_filter_size** --
-                  Size of the shadow filter chunk cache in bytes.  The default
-                  value is '10000000'.
+                  Size of the shadow filter chunk cache in bytes. The default
+                  value is '10000000'. The minimum allowed value is '0'. The
+                  maximum allowed value is '2147483647'.
 
                 * **synchronous_compression** --
                   compress vector on set_compression (instead of waiting for
-                  background thread).  The default value is 'false'.
+                  background thread). The default value is 'false'.
 
                 * **enable_overlapped_equi_join** --
-                  Enable overlapped-equi-join filter.  The default value is
+                  Enable overlapped-equi-join filter. The default value is
                   'true'.
 
                 * **kafka_batch_size** --
                   Maximum number of records to be ingested in a single batch.
-                  The default value is '1000'.
+                  The default value is '1000'. The minimum allowed value is
+                  '1'. The maximum allowed value is '10000000'.
 
                 * **kafka_poll_timeout** --
                   Maximum time (milliseconds) for each poll to get records from
-                  kafka.  The default value is '0'.
+                  kafka. The default value is '0'. The minimum allowed value is
+                  '0'. The maximum allowed value is '1000'.
 
                 * **kafka_wait_time** --
                   Maximum time (seconds) to buffer records received from kafka
-                  before ingestion.  The default value is '30'.
+                  before ingestion. The default value is '30'. The minimum
+                  allowed value is '1'. The maximum allowed value is '120'.
 
                 * **egress_parquet_compression** --
                   Parquet file compression type.
@@ -17505,17 +17857,26 @@ class GPUdb(object):
 
                 * **egress_single_file_max_size** --
                   Max file size (in MB) to allow saving to a single file. May
-                  be overridden by target limitations.  The default value is
-                  '100'.
+                  be overridden by target limitations. The default value is
+                  '100'. The minimum allowed value is '1'. The maximum allowed
+                  value is '200'.
 
                 * **max_concurrent_kernels** --
-                  Sets the max_concurrent_kernels value of the conf.
+                  Sets the max_concurrent_kernels value of the conf. The
+                  minimum allowed value is '0'. The maximum allowed value is
+                  '256'.
+
+                * **system_metadata_retention_period** --
+                  Sets the system_metadata.retention_period value of the conf.
+                  The minimum allowed value is '1'.
 
                 * **tcs_per_tom** --
-                  Sets the tcs_per_tom value of the conf.
+                  Sets the tcs_per_tom value of the conf. The minimum allowed
+                  value is '2'. The maximum allowed value is '8192'.
 
                 * **tps_per_tom** --
-                  Sets the tps_per_tom value of the conf.
+                  Sets the tps_per_tom value of the conf. The minimum allowed
+                  value is '2'. The maximum allowed value is '8192'.
 
                 * **ai_api_provider** --
                   AI API provider type
@@ -17529,9 +17890,11 @@ class GPUdb(object):
                 * **ai_api_connection_timeout** --
                   AI API connection timeout in seconds
 
+                * **telm_persist_query_metrics** --
+                  Enable or disable persisting of query metrics.
+
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **evict_to_cold** --
@@ -17553,6 +17916,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'true'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -17576,59 +17941,49 @@ class GPUdb(object):
         return response
     # end alter_system_properties
 
-
     # begin alter_table
-    def alter_table( self, table_name = None, action = None, value = None, options =
-                     {} ):
-        """Apply various modifications to a table or view.  The
-        available modifications include the following:
+    def alter_table( self, table_name = None, action = None, value = None,
+                     options = {} ):
+        """Apply various modifications to a table or view.  The available
+        modifications include the following:
 
         Manage a table's columns--a column can be added, removed, or have its
         `type and properties <../../../../concepts/types/>`__ modified,
-        including whether it is
-        `dictionary encoded <../../../../concepts/dictionary_encoding/>`__ or
-        not.
+        including whether it is `dictionary encoded
+        <../../../../concepts/dictionary_encoding/>`__ or not.
 
         External tables cannot be modified except for their refresh method.
 
         Create or delete an `index
-        <../../../../concepts/indexes/#column-index>`__ on a
-        particular column. This can speed up certain operations when using
-        expressions
-        containing equality or relational operators on indexed columns. This
-        only
-        applies to tables.
+        <../../../../concepts/indexes/#column-index>`__ on a particular column.
+        This can speed up certain operations when using expressions containing
+        equality or relational operators on indexed columns. This only applies
+        to tables.
 
         Create or delete a `foreign key
-        <../../../../concepts/tables/#foreign-key>`__
-        on a particular column.
+        <../../../../concepts/tables/#foreign-key>`__ on a particular column.
 
-        Manage a
-        `range-partitioned
-        <../../../../concepts/tables/#partitioning-by-range>`__ or a
-        `manual list-partitioned
-        <../../../../concepts/tables/#partitioning-by-list-manual>`__
-        table's partitions.
+        Manage a `range-partitioned
+        <../../../../concepts/tables/#partitioning-by-range>`__ or a `manual
+        list-partitioned
+        <../../../../concepts/tables/#partitioning-by-list-manual>`__ table's
+        partitions.
 
         Set (or reset) the `tier strategy
-        <../../../../rm/concepts/#tier-strategies>`__
-        of a table or view.
+        <../../../../rm/concepts/#tier-strategies>`__ of a table or view.
 
-        Refresh and manage the refresh mode of a
-        `materialized view <../../../../concepts/materialized_views/>`__ or an
-        `external table <../../../../concepts/external_tables/>`__.
+        Refresh and manage the refresh mode of a `materialized view
+        <../../../../concepts/materialized_views/>`__ or an `external table
+        <../../../../concepts/external_tables/>`__.
 
         Set the `time-to-live (TTL) <../../../../concepts/ttl/>`__. This can be
-        applied
-        to tables or views.
+        applied to tables or views.
 
         Set the global access mode (i.e. locking) for a table. This setting
-        trumps any
-        role-based access controls that may be in place; e.g., a user with
-        write access
-        to a table marked read-only will not be able to insert records into it.
-        The mode
-        can be set to read-only, write-only, read/write, and no access.
+        trumps any role-based access controls that may be in place; e.g., a
+        user with write access to a table marked read-only will not be able to
+        insert records into it. The mode can be set to read-only, write-only,
+        read/write, and no access.
 
         Parameters:
 
@@ -17640,7 +17995,7 @@ class GPUdb(object):
                 be an existing table or view.
 
             action (str)
-                Modification operation to be applied
+                Modification operation to be applied.
                 Allowed values are:
 
                 * **allow_homogeneous_tables** --
@@ -17691,6 +18046,11 @@ class GPUdb(object):
                   Sets the `time-to-live <../../../../concepts/ttl/>`__ in
                   minutes of the table or view specified in input parameter
                   *table_name*.
+
+                * **add_comment** --
+                  Adds the comment specified in input parameter *value* to the
+                  table specified in input parameter *table_name*.  Use
+                  *column_name* to set the comment for a column.
 
                 * **add_column** --
                   Adds the column specified in input parameter *value* to the
@@ -17858,9 +18218,12 @@ class GPUdb(object):
                 field would be blank.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
+
+                * action
+                * column_name
+                * table_name
 
                 * **column_default_value** --
                   When adding a column, set a default value for existing
@@ -17956,6 +18319,8 @@ class GPUdb(object):
 
                   The default value is 'column'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -18003,26 +18368,22 @@ class GPUdb(object):
         return response
     # end alter_table
 
-
     # begin alter_table_columns
     def alter_table_columns( self, table_name = None, column_alterations = None,
                              options = None ):
-        """Apply various modifications to columns in a table, view.  The available
-        modifications include the following:
+        """Apply various modifications to columns in a table, view.  The
+        available modifications include the following:
 
         Create or delete an `index
-        <../../../../concepts/indexes/#column-index>`__ on a
-        particular column. This can speed up certain operations when using
-        expressions
-        containing equality or relational operators on indexed columns. This
-        only
-        applies to tables.
+        <../../../../concepts/indexes/#column-index>`__ on a particular column.
+        This can speed up certain operations when using expressions containing
+        equality or relational operators on indexed columns. This only applies
+        to tables.
 
         Manage a table's columns--a column can be added, removed, or have its
         `type and properties <../../../../concepts/types/>`__ modified,
-        including whether it is
-        `dictionary encoded <../../../../concepts/dictionary_encoding/>`__ or
-        not.
+        including whether it is `dictionary encoded
+        <../../../../concepts/dictionary_encoding/>`__ or not.
 
         Parameters:
 
@@ -18040,7 +18401,7 @@ class GPUdb(object):
                 but in the same map as the column name and the action. For
                 example:
                 [{'column_name':'col_1','action':'change_column','rename_column':'col_2'},{'column_name':'col_1','action':'add_column',
-                'type':'int','default_value':'1'}]    The user can provide a
+                'type':'int','default_value':'1'}]. The user can provide a
                 single element (which will be automatically promoted to a list
                 internally) or a list.
 
@@ -18096,16 +18457,13 @@ class GPUdb(object):
         return response
     # end alter_table_columns
 
-
     # begin alter_table_metadata
-    def alter_table_metadata( self, table_names = None, metadata_map = None, options
-                              = {} ):
+    def alter_table_metadata( self, table_names = None, metadata_map = None,
+                              options = {} ):
         """Updates (adds or changes) metadata for tables. The metadata key and
         values must both be strings. This is an easy way to annotate whole
-        tables rather
-        than single records within tables.  Some examples of metadata are owner
-        of the
-        table, table creation timestamp etc.
+        tables rather than single records within tables.  Some examples of
+        metadata are owner of the table, table creation timestamp etc.
 
         Parameters:
 
@@ -18114,9 +18472,9 @@ class GPUdb(object):
                 [schema_name.]table_name format, using standard `name
                 resolution rules
                 <../../../../concepts/tables/#table-name-resolution>`__.  All
-                specified tables must exist, or an error will be returned.
-                The user can provide a single element (which will be
-                automatically promoted to a list internally) or a list.
+                specified tables must exist, or an error will be returned. The
+                user can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
 
             metadata_map (dict of str to str)
                 A map which contains the metadata of the tables that are to be
@@ -18126,8 +18484,7 @@ class GPUdb(object):
                 be cleared.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -18155,7 +18512,6 @@ class GPUdb(object):
         return response
     # end alter_table_metadata
 
-
     # begin alter_table_monitor
     def alter_table_monitor( self, topic_id = None, monitor_updates_map = None,
                              options = None ):
@@ -18173,10 +18529,9 @@ class GPUdb(object):
                 Allowed keys are:
 
                 * **schema_name** --
-                  Updates the schema name.  If *schema_name*
-                  doesn't exist, an error will be thrown. If *schema_name* is
-                  empty, then the user's
-                  default schema will be used.
+                  Updates the schema name.  If *schema_name* doesn't exist, an
+                  error will be thrown. If *schema_name* is empty, then the
+                  user's default schema will be used.
 
             options (dict of str to str)
                 Optional parameters.
@@ -18204,18 +18559,15 @@ class GPUdb(object):
         return response
     # end alter_table_monitor
 
-
     # begin alter_tier
     def alter_tier( self, name = None, options = {} ):
-        """Alters properties of an exisiting
-        `tier <../../../../rm/concepts/#storage-tiers>`__ to facilitate
-        `resource management <../../../../rm/concepts/>`__.
+        """Alters properties of an exisiting `tier
+        <../../../../rm/concepts/#storage-tiers>`__ to facilitate `resource
+        management <../../../../rm/concepts/>`__.
 
-        To disable
-        `watermark-based eviction
-        <../../../../rm/concepts/#watermark-based-eviction>`__,
-        set both *high_watermark* and
-        *low_watermark* to 100.
+        To disable `watermark-based eviction
+        <../../../../rm/concepts/#watermark-based-eviction>`__, set both
+        *high_watermark* and *low_watermark* to 100.
 
         Parameters:
 
@@ -18224,8 +18576,7 @@ class GPUdb(object):
                 name.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **capacity** --
@@ -18234,12 +18585,14 @@ class GPUdb(object):
                 * **high_watermark** --
                   Threshold of usage of this tier's resource that once
                   exceeded, will trigger watermark-based eviction from this
-                  tier.
+                  tier. The minimum allowed value is '0'. The maximum allowed
+                  value is '100'.
 
                 * **low_watermark** --
                   Threshold of resource usage that once fallen below after
                   crossing the *high_watermark*, will cease watermark-based
-                  eviction from this tier.
+                  eviction from this tier. The minimum allowed value is '0'.
+                  The maximum allowed value is '100'.
 
                 * **wait_timeout** --
                   Timeout in seconds for reading from or writing to this
@@ -18258,7 +18611,11 @@ class GPUdb(object):
                   The default value is 'true'.
 
                 * **rank** --
-                  Apply the requested change only to a specific rank.
+                  Apply the requested change only to a specific rank. The
+                  minimum allowed value is '0'. The maximum allowed value is
+                  '10000'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -18281,7 +18638,6 @@ class GPUdb(object):
         return response
     # end alter_tier
 
-
     # begin alter_user
     def alter_user( self, name = None, action = None, value = None, options = {} ):
         """Alters a user.
@@ -18294,6 +18650,9 @@ class GPUdb(object):
             action (str)
                 Modification operation to be applied to the user.
                 Allowed values are:
+
+                * **set_comment** --
+                  Sets the comment for an internal user.
 
                 * **set_password** --
                   Sets the password of the user. The user must be an internal
@@ -18313,8 +18672,7 @@ class GPUdb(object):
                 *action*.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -18341,7 +18699,6 @@ class GPUdb(object):
         return response
     # end alter_user
 
-
     # begin alter_video
     def alter_video( self, path = None, options = {} ):
         """Alters a video.
@@ -18353,12 +18710,13 @@ class GPUdb(object):
                 video to be altered.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **ttl** --
                   Sets the `TTL <../../../../concepts/ttl/>`__ of the video.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -18381,17 +18739,122 @@ class GPUdb(object):
         return response
     # end alter_video
 
+    # begin alter_wal
+    def alter_wal( self, table_names = None, options = {} ):
+        """Alters table wal settings. Returns information about the requested
+        table wal modifications.
+
+        Parameters:
+
+            table_names (list of str)
+                List of tables to modify. An asterisk changes the system
+                settings. The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.
+                Allowed keys are:
+
+                * **max_segment_size** --
+                  Maximum size of an individual segment file
+
+                * **segment_count** --
+                  Approximate number of segment files to split the wal across.
+                  Must be at least two.
+
+                * **sync_policy** --
+                  Maximum size of an individual segment file.
+                  Allowed values are:
+
+                  * **none** --
+                    Disables the wal
+
+                  * **background** --
+                    Wal entries are periodically written instead of immediately
+                    after each operation
+
+                  * **flush** --
+                    Protects entries in the event of a database crash
+
+                  * **fsync** --
+                    Protects entries in the event of an OS crash
+
+                * **flush_frequency** --
+                  Specifies how frequently wal entries are written with
+                  background sync. This is a global setting and can only be
+                  used with the system {options.table_names} specifier '*'.
+
+                * **checksum** --
+                  If *true* each entry will be checked against a protective
+                  checksum.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **override_non_default** --
+                  If *true* tables with unique wal settings will be overridden
+                  when applying a system level change.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **restore_system_settings** --
+                  If *true* tables with unique wal settings will be reverted to
+                  the current global settings. Cannot be used in conjunction
+                  with any other option.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **persist** --
+                  If *true* and a system-level change was requested, the system
+                  configuration will be written to disk upon successful
+                  application of this request. This will commit the changes
+                  from this request and any additional in-memory modifications.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                The default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            info (dict of str to str)
+                Additional information.
+        """
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        assert isinstance( options, (dict)), "alter_wal(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['table_names'] = table_names
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/alter/wal', obj, convert_to_attr_dict = True )
+
+        return response
+    # end alter_wal
 
     # begin append_records
-    def append_records( self, table_name = None, source_table_name = None, field_map
-                        = None, options = {} ):
-        """Append (or insert) all records from a source table
-        (specified by input parameter *source_table_name*) to a particular
-        target table
-        (specified by input parameter *table_name*). The field map
-        (specified by input parameter *field_map*) holds the user specified map
-        of target table
-        column names with their mapped source column names.
+    def append_records( self, table_name = None, source_table_name = None,
+                        field_map = None, options = {} ):
+        """Append (or insert) all records from a source table (specified by
+        input parameter *source_table_name*) to a particular target table
+        (specified by input parameter *table_name*). The field map (specified
+        by input parameter *field_map*) holds the user specified map of target
+        table column names with their mapped source column names.
 
         Parameters:
 
@@ -18420,52 +18883,47 @@ class GPUdb(object):
                 <../../../../concepts/expressions/>`__.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **offset** --
                   A positive integer indicating the number of initial results
                   to skip from input parameter *source_table_name*. Default is
                   0. The minimum allowed value is 0. The maximum allowed value
-                  is MAX_INT.  The default value is '0'.
+                  is MAX_INT. The default value is '0'.
 
                 * **limit** --
                   A positive integer indicating the maximum number of results
                   to be returned from input parameter *source_table_name*. Or
                   END_OF_SET (-9999) to indicate that the max number of results
-                  should be returned.  The default value is '-9999'.
+                  should be returned. The default value is '-9999'.
 
                 * **expression** --
                   Optional filter expression to apply to the input parameter
-                  *source_table_name*.  The default value is ''.
+                  *source_table_name*. The default value is ''.
 
                 * **order_by** --
                   Comma-separated list of the columns to be sorted by from
                   source table (specified by input parameter
                   *source_table_name*), e.g., 'timestamp asc, x desc'. The
                   *order_by* columns do not have to be present in input
-                  parameter *field_map*.  The default value is ''.
+                  parameter *field_map*. The default value is ''.
 
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting source
-                  table
-                  records (specified by input parameter *source_table_name*)
-                  into a target table
-                  (specified by input parameter *table_name*) with a `primary
-                  key <../../../../concepts/tables/#primary-keys>`__. If
-                  set to *true*, any existing table record with
-                  primary key values that match those of a source table record
-                  being inserted will be replaced by that
-                  new record (the new data will be "upserted"). If set to
-                  *false*, any existing table record with primary
-                  key values that match those of a source table record being
-                  inserted will remain unchanged, while the
-                  source record will be rejected and an error handled as
-                  determined by
+                  table records (specified by input parameter
+                  *source_table_name*) into a target table (specified by input
+                  parameter *table_name*) with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__. If set to
+                  *true*, any existing table record with primary key values
+                  that match those of a source table record being inserted will
+                  be replaced by that new record (the new data will be
+                  "upserted"). If set to *false*, any existing table record
+                  with primary key values that match those of a source table
+                  record being inserted will remain unchanged, while the source
+                  record will be rejected and an error handled as determined by
                   *ignore_existing_pk*.  If the specified table does not have a
-                  primary key,
-                  then this option has no effect.
+                  primary key, then this option has no effect.
                   Allowed values are:
 
                   * **true** --
@@ -18479,23 +18937,20 @@ class GPUdb(object):
                 * **ignore_existing_pk** --
                   Specifies the record collision error-suppression policy for
                   inserting source table records (specified by input parameter
-                  *source_table_name*) into a target table
-                  (specified by input parameter *table_name*) with a `primary
-                  key <../../../../concepts/tables/#primary-keys>`__, only
-                  used when not in upsert mode (upsert mode is disabled when
-                  *update_on_existing_pk* is
-                  *false*).  If set to
-                  *true*, any source table record being inserted that
-                  is rejected for having primary key values that match those of
-                  an existing target table record will
-                  be ignored with no error generated.  If *false*,
-                  the rejection of any source table record for having primary
-                  key values matching an existing target
-                  table record will result in an error being raised.  If the
-                  specified table does not have a primary
-                  key or if upsert mode is in effect (*update_on_existing_pk*
-                  is
-                  *true*), then this option has no effect.
+                  *source_table_name*) into a target table (specified by input
+                  parameter *table_name*) with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__, only used
+                  when not in upsert mode (upsert mode is disabled when
+                  *update_on_existing_pk* is *false*).  If set to *true*, any
+                  source table record being inserted that is rejected for
+                  having primary key values that match those of an existing
+                  target table record will be ignored with no error generated.
+                  If *false*, the rejection of any source table record for
+                  having primary key values matching an existing target table
+                  record will result in an error being raised.  If the
+                  specified table does not have a primary key or if upsert mode
+                  is in effect (*update_on_existing_pk* is *true*), then this
+                  option has no effect.
                   Allowed values are:
 
                   * **true** --
@@ -18519,15 +18974,16 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
             table_name (str)
 
-
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information. The default value is an empty dict ( {}
+                ).
         """
         assert isinstance( table_name, (basestring)), "append_records(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( source_table_name, (basestring)), "append_records(): Argument 'source_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( source_table_name ).__name__
@@ -18545,7 +19001,6 @@ class GPUdb(object):
         return response
     # end append_records
 
-
     # begin clear_statistics
     def clear_statistics( self, table_name = '', column_name = '', options = {} ):
         """Clears statistics (cardinality, mean value, etc.) for a column in a
@@ -18557,7 +19012,7 @@ class GPUdb(object):
                 Name of a table, in [schema_name.]table_name format, using
                 standard `name resolution rules
                 <../../../../concepts/tables/#table-name-resolution>`__. Must
-                be an existing table.  The default value is ''.
+                be an existing table. The default value is ''.
 
             column_name (str)
                 Name of the column in input parameter *table_name* for which to
@@ -18566,8 +19021,7 @@ class GPUdb(object):
                 The default value is ''.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -18595,15 +19049,12 @@ class GPUdb(object):
         return response
     # end clear_statistics
 
-
     # begin clear_table
     def clear_table( self, table_name = '', authorization = '', options = {} ):
         """Clears (drops) one or all tables in the database cluster. The
         operation is synchronous meaning that the table will be cleared before
-        the
-        function returns. The response payload returns the status of the
-        operation along
-        with the name of the table that was cleared.
+        the function returns. The response payload returns the status of the
+        operation along with the name of the table that was cleared.
 
         Parameters:
 
@@ -18613,15 +19064,14 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-name-resolution>`__. Must
                 be an existing table. Empty string clears all available tables,
                 though this behavior is be prevented by default via gpudb.conf
-                parameter 'disable_clear_all'.  The default value is ''.
+                parameter 'disable_clear_all'. The default value is ''.
 
             authorization (str)
-                No longer used. User can pass an empty string.  The default
+                No longer used. User can pass an empty string. The default
                 value is ''.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **no_error_if_not_exists** --
@@ -18635,6 +19085,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -18660,7 +19112,6 @@ class GPUdb(object):
         return response
     # end clear_table
 
-
     # begin clear_table_monitor
     def clear_table_monitor( self, topic_id = None, options = {} ):
         """Deactivates a table monitor previously created with
@@ -18672,8 +19123,7 @@ class GPUdb(object):
                 The topic ID returned by :meth:`GPUdb.create_table_monitor`.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **keep_autogenerated_sink** --
@@ -18699,6 +19149,8 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -18720,12 +19172,11 @@ class GPUdb(object):
         return response
     # end clear_table_monitor
 
-
     # begin clear_trigger
     def clear_trigger( self, trigger_id = None, options = {} ):
-        """Clears or cancels the trigger identified by the specified handle. The
-        output returns the handle of the trigger cleared as well as indicating
-        success or failure of the trigger deactivation.
+        """Clears or cancels the trigger identified by the specified handle.
+        The output returns the handle of the trigger cleared as well as
+        indicating success or failure of the trigger deactivation.
 
         Parameters:
 
@@ -18733,8 +19184,7 @@ class GPUdb(object):
                 ID for the trigger to be deactivated.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -18757,10 +19207,9 @@ class GPUdb(object):
         return response
     # end clear_trigger
 
-
     # begin collect_statistics
-    def collect_statistics( self, table_name = None, column_names = None, options =
-                            {} ):
+    def collect_statistics( self, table_name = None, column_names = None,
+                            options = {} ):
         """Collect statistics for a column(s) in a specified table.
 
         Parameters:
@@ -18774,12 +19223,11 @@ class GPUdb(object):
             column_names (list of str)
                 List of one or more column names in input parameter
                 *table_name* for which to collect statistics (cardinality, mean
-                value, etc.).    The user can provide a single element (which
-                will be automatically promoted to a list internally) or a list.
+                value, etc.). The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -18807,11 +19255,9 @@ class GPUdb(object):
         return response
     # end collect_statistics
 
-
     # begin create_container_registry
     def create_container_registry( self, registry_name = None, uri = None,
                                    credential = None, options = {} ):
-
         assert isinstance( registry_name, (basestring)), "create_container_registry(): Argument 'registry_name' must be (one) of type(s) '(basestring)'; given %s" % type( registry_name ).__name__
         assert isinstance( uri, (basestring)), "create_container_registry(): Argument 'uri' must be (one) of type(s) '(basestring)'; given %s" % type( uri ).__name__
         assert isinstance( credential, (basestring)), "create_container_registry(): Argument 'credential' must be (one) of type(s) '(basestring)'; given %s" % type( credential ).__name__
@@ -18827,7 +19273,6 @@ class GPUdb(object):
 
         return response
     # end create_container_registry
-
 
     # begin create_credential
     def create_credential( self, credential_name = None, type = None, identity =
@@ -18857,6 +19302,7 @@ class GPUdb(object):
                 * hdfs
                 * jdbc
                 * kafka
+                * confluent
 
             identity (str)
                 User of the credential to be created.
@@ -18865,8 +19311,7 @@ class GPUdb(object):
                 Password of the credential to be created.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -18895,13 +19340,11 @@ class GPUdb(object):
         return response
     # end create_credential
 
-
     # begin create_datasink
     def create_datasink( self, name = None, destination = None, options = {} ):
         """Creates a `data sink <../../../../concepts/data_sinks/>`__, which
-        contains the
-        destination information for a data sink that is external to the
-        database.
+        contains the destination information for a data sink that is external
+        to the database.
 
         Parameters:
 
@@ -18916,8 +19359,7 @@ class GPUdb(object):
                 'http', 'https', 'jdbc', 'kafka' and 's3'.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **connection_timeout** --
@@ -18943,6 +19385,7 @@ class GPUdb(object):
                   When true (default), the requests URI should be specified in
                   virtual-hosted-style format where the bucket name is part of
                   the domain name in the URL.
+
                   Otherwise set to false to use path-style URI for requests.
                   Allowed values are:
 
@@ -19016,15 +19459,16 @@ class GPUdb(object):
                   *destination* is a Kafka broker
 
                 * **max_batch_size** --
-                  Maximum number of records per notification message.  The
+                  Maximum number of records per notification message. The
                   default value is '1'.
 
                 * **max_message_size** --
-                  Maximum size in bytes of each notification message.  The
+                  Maximum size in bytes of each notification message. The
                   default value is '1000000'.
 
                 * **json_format** --
                   The desired format of JSON encoded notifications message.
+
                   If *nested*, records are returned as an array. Otherwise,
                   only a single record per messages is returned.
                   Allowed values are:
@@ -19063,6 +19507,8 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -19086,14 +19532,12 @@ class GPUdb(object):
         return response
     # end create_datasink
 
-
     # begin create_datasource
     def create_datasource( self, name = None, location = None, user_name = None,
                            password = None, options = {} ):
-        """Creates a `data source <../../../../concepts/data_sources/>`__, which
-        contains the
-        location and connection information for a data store that is external
-        to the database.
+        """Creates a `data source <../../../../concepts/data_sources/>`__,
+        which contains the location and connection information for a data store
+        that is external to the database.
 
         Parameters:
 
@@ -19105,7 +19549,7 @@ class GPUdb(object):
                 'storage_provider_type://[storage_path[:storage_port]]' format.
 
                 Supported storage provider types are
-                'azure','gcs','hdfs','jdbc','kafka' and 's3'.
+                'azure','gcs','hdfs','jdbc','kafka', 'confluent' and 's3'.
 
             user_name (str)
                 Name of the remote system user; may be an empty string
@@ -19114,8 +19558,7 @@ class GPUdb(object):
                 Password for the remote system user; may be an empty string
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **skip_validation** --
@@ -19147,6 +19590,7 @@ class GPUdb(object):
                   When true (default), the requests URI should be specified in
                   virtual-hosted-style format where the bucket name is part of
                   the domain name in the URL.
+
                   Otherwise set to false to use path-style URI for requests.
                   Allowed values are:
 
@@ -19259,6 +19703,15 @@ class GPUdb(object):
 
                   The default value is 'true'.
 
+                * **schema_registry_location** --
+                  Location of Confluent Schema registry in
+                  '[storage_path[:storage_port]]' format.
+
+                * **schema_registry_credential** --
+                  Confluent Schema registry Credential object name.
+
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -19286,11 +19739,9 @@ class GPUdb(object):
         return response
     # end create_datasource
 
-
     # begin create_delta_table
     def create_delta_table( self, delta_table_name = None, table_name = None,
                             options = {} ):
-
         assert isinstance( delta_table_name, (basestring)), "create_delta_table(): Argument 'delta_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( delta_table_name ).__name__
         assert isinstance( table_name, (basestring)), "create_delta_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( options, (dict)), "create_delta_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -19305,12 +19756,11 @@ class GPUdb(object):
         return response
     # end create_delta_table
 
-
     # begin create_directory
     def create_directory( self, directory_name = None, options = {} ):
-        """Creates a new directory in `KiFS <../../../../tools/kifs/>`__. The new
-        directory serves as a location in which the user can upload files using
-        :meth:`GPUdb.upload_files`.
+        """Creates a new directory in `KiFS <../../../../tools/kifs/>`__. The
+        new directory serves as a location in which the user can upload files
+        using :meth:`GPUdb.upload_files`.
 
         Parameters:
 
@@ -19318,8 +19768,7 @@ class GPUdb(object):
                 Name of the directory in KiFS to be created.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_home_directory** --
@@ -19342,6 +19791,8 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -19363,11 +19814,10 @@ class GPUdb(object):
         return response
     # end create_directory
 
-
     # begin create_environment
     def create_environment( self, environment_name = None, options = {} ):
-        """Creates a new environment which can be used by `user-defined functions
-        <../../../../concepts/udf/>`__ (UDF).
+        """Creates a new environment which can be used by `user-defined
+        functions <../../../../concepts/udf/>`__ (UDF).
 
         Parameters:
 
@@ -19375,8 +19825,7 @@ class GPUdb(object):
                 Name of the environment to be created.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -19399,21 +19848,18 @@ class GPUdb(object):
         return response
     # end create_environment
 
-
     # begin create_graph
-    def create_graph( self, graph_name = None, directed_graph = True, nodes = None,
-                      edges = None, weights = None, restrictions = None, options
-                      = {} ):
+    def create_graph( self, graph_name = None, directed_graph = True, nodes =
+                      None, edges = None, weights = None, restrictions = None,
+                      options = {} ):
         """Creates a new graph network using given nodes, edges, weights, and
         restrictions.
 
-        IMPORTANT: It's highly recommended that you review the
-        `Network Graphs & Solvers
-        <../../../../graph_solver/network_graph_solver/>`__
-        concepts documentation, the
-        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`__,
-        and/or some `graph examples <../../../../guide-tags/graph/>`__ before
-        using this endpoint.
+        IMPORTANT: It's highly recommended that you review the `Network Graphs
+        & Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
+        documentation, the `Graph REST Tutorial
+        <../../../../guides/graph_rest_guide/>`__, and/or some `graph examples
+        <../../../../guide-tags/graph/>`__ before using this endpoint.
 
         Parameters:
 
@@ -19434,96 +19880,77 @@ class GPUdb(object):
                 The default value is True.
 
             nodes (list of str)
-                Nodes represent fundamental topological units of a graph.
-                Nodes must be specified using
-                `identifiers
+                Nodes represent fundamental topological units of a graph. Nodes
+                must be specified using `identifiers
                 <../../../../graph_solver/network_graph_solver/#identifiers>`__;
-                identifiers are grouped as
-                `combinations
+                identifiers are grouped as `combinations
                 <../../../../graph_solver/network_graph_solver/#id-combos>`__.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS NODE_ID', expressions, e.g.,
                 'ST_MAKEPOINT(column1, column2) AS NODE_WKTPOINT', or constant
-                values, e.g.,
-                '{9, 10, 11} AS NODE_ID'.
-                If using constant values in an identifier combination, the
-                number of values
-                specified must match across the combination.    The user can
+                values, e.g., '{9, 10, 11} AS NODE_ID'. If using constant
+                values in an identifier combination, the number of values
+                specified must match across the combination. The user can
                 provide a single element (which will be automatically promoted
                 to a list internally) or a list.
 
             edges (list of str)
-                Edges represent the required fundamental topological unit of
-                a graph that typically connect nodes. Edges must be specified
-                using
-                `identifiers
+                Edges represent the required fundamental topological unit of a
+                graph that typically connect nodes. Edges must be specified
+                using `identifiers
                 <../../../../graph_solver/network_graph_solver/#identifiers>`__;
-                identifiers are grouped as
-                `combinations
+                identifiers are grouped as `combinations
                 <../../../../graph_solver/network_graph_solver/#id-combos>`__.
                 Identifiers can be used with existing column names, e.g.,
-                'table.column AS EDGE_ID', expressions, e.g.,
-                'SUBSTR(column, 1, 6) AS EDGE_NODE1_NAME', or constant values,
-                e.g.,
-                "{'family', 'coworker'} AS EDGE_LABEL".
-                If using constant values in an identifier combination, the
-                number of values
-                specified must match across the combination.    The user can
+                'table.column AS EDGE_ID', expressions, e.g., 'SUBSTR(column,
+                1, 6) AS EDGE_NODE1_NAME', or constant values, e.g.,
+                "{'family', 'coworker'} AS EDGE_LABEL". If using constant
+                values in an identifier combination, the number of values
+                specified must match across the combination. The user can
                 provide a single element (which will be automatically promoted
                 to a list internally) or a list.
 
             weights (list of str)
-                Weights represent a method of informing the graph solver of
-                the cost of including a given edge in a solution. Weights must
-                be specified
-                using
-                `identifiers
+                Weights represent a method of informing the graph solver of the
+                cost of including a given edge in a solution. Weights must be
+                specified using `identifiers
                 <../../../../graph_solver/network_graph_solver/#identifiers>`__;
-                identifiers are grouped as
-                `combinations
+                identifiers are grouped as `combinations
                 <../../../../graph_solver/network_graph_solver/#id-combos>`__.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS WEIGHTS_EDGE_ID', expressions, e.g.,
                 'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED', or constant values,
-                e.g.,
-                '{4, 15} AS WEIGHTS_VALUESPECIFIED'.
-                If using constant values in an identifier combination, the
-                number of values specified
-                must match across the combination.    The user can provide a
-                single element (which will be automatically promoted to a list
-                internally) or a list.
+                e.g., '{4, 15} AS WEIGHTS_VALUESPECIFIED'. If using constant
+                values in an identifier combination, the number of values
+                specified must match across the combination. The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
 
             restrictions (list of str)
-                Restrictions represent a method of informing the graph
-                solver which edges and/or nodes should be ignored for the
-                solution. Restrictions
-                must be specified using
-                `identifiers
+                Restrictions represent a method of informing the graph solver
+                which edges and/or nodes should be ignored for the solution.
+                Restrictions must be specified using `identifiers
                 <../../../../graph_solver/network_graph_solver/#identifiers>`__;
-                identifiers are grouped as
-                `combinations
+                identifiers are grouped as `combinations
                 <../../../../graph_solver/network_graph_solver/#id-combos>`__.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS RESTRICTIONS_EDGE_ID', expressions, e.g.,
                 'column/2 AS RESTRICTIONS_VALUECOMPARED', or constant values,
-                e.g.,
-                '{0, 0, 0, 1} AS RESTRICTIONS_ONOFFCOMPARED'.
-                If using constant values in an identifier combination, the
-                number of values
-                specified must match across the combination.    The user can
-                provide a single element (which will be automatically promoted
-                to a list internally) or a list.
+                e.g., '{0, 0, 0, 1} AS RESTRICTIONS_ONOFFCOMPARED'. If using
+                constant values in an identifier combination, the number of
+                values specified must match across the combination. The user
+                can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **merge_tolerance** --
                   If node geospatial positions are input (e.g., WKTPOINT, X,
                   Y), determines the minimum separation allowed between unique
                   nodes. If nodes are within the tolerance of each other, they
-                  will be merged as a single node.  The default value is
+                  will be merged as a single node. The default value is
                   '1.0E-5'.
 
                 * **recreate** --
@@ -19574,13 +20001,21 @@ class GPUdb(object):
                   <../../../../concepts/tables/#table-naming-criteria>`__.  The
                   table will have the following identifier columns: 'EDGE_ID',
                   'EDGE_NODE1_ID', 'EDGE_NODE2_ID'. If left blank, no table is
-                  created.  The default value is ''.
+                  created. The default value is ''.
 
                 * **add_turns** --
                   Adds dummy 'pillowed' edges around intersection nodes where
                   there are more than three edges so that additional weight
                   penalties can be imposed by the solve endpoints. (increases
                   the total number of edges).
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **is_partitioned** --
                   Allowed values are:
 
                   * true
@@ -19606,7 +20041,9 @@ class GPUdb(object):
                 * **label_delimiter** --
                   If provided the label string will be split according to this
                   delimiter and each sub-string will be applied as a separate
-                  label onto the specified edge.  The default value is ''.
+                  label onto the specified edge. The default value is ''.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -19650,14 +20087,13 @@ class GPUdb(object):
         return response
     # end create_graph
 
-
     # begin create_job
-    def create_job( self, endpoint = None, request_encoding = 'binary', data = None,
-                    data_str = None, options = {} ):
-        """Create a job which will run asynchronously. The response returns a job
-        ID, which can be used to query the status and result of the job. The
-        status and the result of the job upon completion can be requested by
-        :meth:`GPUdb.get_job`.
+    def create_job( self, endpoint = None, request_encoding = 'binary', data =
+                    None, data_str = None, options = {} ):
+        """Create a job which will run asynchronously. The response returns a
+        job ID, which can be used to query the status and result of the job.
+        The status and the result of the job upon completion can be requested
+        by :meth:`GPUdb.get_job`.
 
         Parameters:
 
@@ -19692,14 +20128,21 @@ class GPUdb(object):
                 then input parameter *request_encoding* must be *json*.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
+
+                * **remove_job_on_complete** --
+                  Allowed values are:
+
+                  * true
+                  * false
 
                 * **job_tag** --
                   Tag to use for submitted job. The same tag could be used on
                   backup cluster to retrieve response for the job. Tags can use
                   letter, numbers, '_' and '-'
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -19708,14 +20151,15 @@ class GPUdb(object):
                 An identifier for the job created by this call.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **job_tag** --
                   The job tag specified by the user or if unspecified by user,
                   a unique identifier generated internally for the job across
                   clusters.
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( endpoint, (basestring)), "create_job(): Argument 'endpoint' must be (one) of type(s) '(basestring)'; given %s" % type( endpoint ).__name__
         assert isinstance( request_encoding, (basestring)), "create_job(): Argument 'request_encoding' must be (one) of type(s) '(basestring)'; given %s" % type( request_encoding ).__name__
@@ -19735,11 +20179,9 @@ class GPUdb(object):
         return response
     # end create_job
 
-
     # begin create_join_table
     def create_join_table( self, join_table_name = None, table_names = None,
-                           column_names = None, expressions = [], options = {}
-                           ):
+                           column_names = None, expressions = [], options = {} ):
         """Creates a table that is the result of a SQL JOIN.
 
         For join details and examples see: `Joins
@@ -19762,7 +20204,7 @@ class GPUdb(object):
                 [schema_name.]table_name format, using standard `name
                 resolution rules
                 <../../../../concepts/tables/#table-name-resolution>`__.
-                Corresponds to a SQL statement FROM clause.    The user can
+                Corresponds to a SQL statement FROM clause. The user can
                 provide a single element (which will be automatically promoted
                 to a list internally) or a list.
 
@@ -19776,21 +20218,19 @@ class GPUdb(object):
                 table's columns.  Columns and column expressions composing the
                 join must be uniquely named or aliased--therefore, the '*' wild
                 card cannot be used if column names aren't unique across all
-                tables.    The user can provide a single element (which will be
+                tables. The user can provide a single element (which will be
                 automatically promoted to a list internally) or a list.
 
             expressions (list of str)
                 An optional list of expressions to combine and filter the
                 joined tables.  Corresponds to a SQL statement WHERE clause.
                 For details see: `expressions
-                <../../../../concepts/expressions/>`__.  The default value is
-                an empty list ( [] ).  The user can provide a single element
-                (which will be automatically promoted to a list internally) or
-                a list.
+                <../../../../concepts/expressions/>`__. The default value is an
+                empty list ( [] ). The user can provide a single element (which
+                will be automatically promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -19811,7 +20251,7 @@ class GPUdb(object):
                   join as part of input parameter *join_table_name* and use
                   :meth:`GPUdb.create_schema` to create the schema if
                   non-existent]  Name of a schema for the join. If the schema
-                  is non-existent, it will be automatically created.  The
+                  is non-existent, it will be automatically created. The
                   default value is ''.
 
                 * **max_query_dimensions** --
@@ -19836,16 +20276,18 @@ class GPUdb(object):
                   table specified in input parameter *join_table_name*.
 
                 * **view_id** --
-                  view this projection is part of.  The default value is ''.
+                  view this projection is part of. The default value is ''.
 
                 * **no_count** --
                   Return a count of 0 for the join table for logging and for
                   :meth:`GPUdb.show_table`; optimization needed for large
-                  overlapped equi-join stencils.  The default value is 'false'.
+                  overlapped equi-join stencils. The default value is 'false'.
 
                 * **chunk_size** --
                   Maximum number of records per joined-chunk for this table.
                   Defaults to the gpudb.conf file chunk size
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -19858,13 +20300,14 @@ class GPUdb(object):
                 select expression.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_join_table_name** --
                   The fully qualified name of the join table (i.e. including
                   the schema)
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( join_table_name, (basestring)), "create_join_table(): Argument 'join_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( join_table_name ).__name__
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
@@ -19884,21 +20327,18 @@ class GPUdb(object):
         return response
     # end create_join_table
 
-
     # begin create_materialized_view
     def create_materialized_view( self, table_name = None, options = {} ):
         """Initiates the process of creating a materialized view, reserving the
         view's name to prevent other views or tables from being created with
         that name.
 
-        For materialized view details and examples, see
-        `Materialized Views <../../../../concepts/materialized_views/>`__.
+        For materialized view details and examples, see `Materialized Views
+        <../../../../concepts/materialized_views/>`__.
 
         The response contains output parameter *view_id*, which is used to tag
-        each subsequent
-        operation (projection, union, aggregation, filter, or join) that will
-        compose
-        the view.
+        each subsequent operation (projection, union, aggregation, filter, or
+        join) that will compose the view.
 
         Parameters:
 
@@ -19911,8 +20351,7 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-naming-criteria>`__.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **collection_name** --
@@ -19985,6 +20424,8 @@ class GPUdb(object):
                   Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in input parameter *table_name*.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -19995,13 +20436,14 @@ class GPUdb(object):
                 Value of view_id.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_table_name** --
                   The fully qualified name of the result table (i.e. including
                   the schema)
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "create_materialized_view(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( options, (dict)), "create_materialized_view(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -20015,15 +20457,12 @@ class GPUdb(object):
         return response
     # end create_materialized_view
 
-
     # begin create_proc
-    def create_proc( self, proc_name = None, execution_mode = 'distributed', files =
-                     {}, command = '', args = [], options = {} ):
-        """Creates an instance (proc) of the
-        `user-defined functions <../../../../concepts/udf/>`__ (UDF) specified
-        by the
-        given command, options, and files, and makes it available for
-        execution.
+    def create_proc( self, proc_name = None, execution_mode = 'distributed',
+                     files = {}, command = '', args = [], options = {} ):
+        """Creates an instance (proc) of the `user-defined functions
+        <../../../../concepts/udf/>`__ (UDF) specified by the given command,
+        options, and files, and makes it available for execution.
 
         Parameters:
 
@@ -20036,67 +20475,56 @@ class GPUdb(object):
                 Allowed values are:
 
                 * **distributed** --
-                  Input table data will be divided into data
-                  segments that are distributed across all nodes in the
-                  cluster, and the proc
+                  Input table data will be divided into data segments that are
+                  distributed across all nodes in the cluster, and the proc
                   command will be invoked once per data segment in parallel.
-                  Output table data
-                  from each invocation will be saved to the same node as the
-                  corresponding input
-                  data.
+                  Output table data from each invocation will be saved to the
+                  same node as the corresponding input data.
 
                 * **nondistributed** --
-                  The proc command will be invoked only once per
-                  execution, and will not have direct access to any tables
-                  named as input or
+                  The proc command will be invoked only once per execution, and
+                  will not have direct access to any tables named as input or
                   output table parameters in the call to
-                  :meth:`GPUdb.execute_proc`.  It will,
-                  however, be able to access the database using native API
-                  calls.
+                  :meth:`GPUdb.execute_proc`.  It will, however, be able to
+                  access the database using native API calls.
 
                 The default value is 'distributed'.
 
-            files (dict of str to str)
-                A map of the files that make up the proc. The keys of the
-                map are file names, and the values are the binary contents of
-                the files. The
-                file names may include subdirectory names (e.g. 'subdir/file')
-                but must not
-                resolve to a directory above the root for the proc.
+            files (dict of str to bytes)
+                A map of the files that make up the proc. The keys of the map
+                are file names, and the values are the binary contents of the
+                files. The file names may include subdirectory names (e.g.
+                'subdir/file') but must not resolve to a directory above the
+                root for the proc.
 
                 Files may be loaded from existing files in KiFS. Those file
-                names should be
-                prefixed with the uri kifs:// and the values in the map should
-                be empty.  The default value is an empty dict ( {} ).
+                names should be prefixed with the uri kifs:// and the values in
+                the map should be empty. The default value is an empty dict (
+                {} ).
 
             command (str)
-                The command (excluding arguments) that will be invoked when
-                the proc is executed. It will be invoked from the directory
-                containing the proc
-                input parameter *files* and may be any command that can be
-                resolved from that directory.
-                It need not refer to a file actually in that directory; for
-                example, it could be
-                'java' if the proc is a Java application; however, any
-                necessary external
-                programs must be preinstalled on every database node. If the
-                command refers to a
-                file in that directory, it must be preceded with './' as per
-                Linux convention.
-                If not specified, and exactly one file is provided in input
-                parameter *files*, that file
-                will be invoked.  The default value is ''.
+                The command (excluding arguments) that will be invoked when the
+                proc is executed. It will be invoked from the directory
+                containing the proc input parameter *files* and may be any
+                command that can be resolved from that directory. It need not
+                refer to a file actually in that directory; for example, it
+                could be 'java' if the proc is a Java application; however, any
+                necessary external programs must be preinstalled on every
+                database node. If the command refers to a file in that
+                directory, it must be preceded with './' as per Linux
+                convention. If not specified, and exactly one file is provided
+                in input parameter *files*, that file will be invoked. The
+                default value is ''.
 
             args (list of str)
                 An array of command-line arguments that will be passed to input
-                parameter *command* when the proc is executed.  The default
-                value is an empty list ( [] ).  The user can provide a single
+                parameter *command* when the proc is executed. The default
+                value is an empty list ( [] ). The user can provide a single
                 element (which will be automatically promoted to a list
                 internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **max_concurrency_per_node** --
@@ -20106,8 +20534,10 @@ class GPUdb(object):
 
                 * **set_environment** --
                   A python environment to use when executing the proc. Must be
-                  an existing environment, else an error will be returned.  The
+                  an existing environment, else an error will be returned. The
                   default value is ''.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -20138,43 +20568,35 @@ class GPUdb(object):
         return response
     # end create_proc
 
-
     # begin create_projection
     def create_projection( self, table_name = None, projection_name = None,
                            column_names = None, options = {} ):
         """Creates a new `projection <../../../../concepts/projections/>`__ of
         an existing table. A projection represents a subset of the columns
-        (potentially
-        including derived columns) of a table.
+        (potentially including derived columns) of a table.
 
-        For projection details and examples, see
-        `Projections <../../../../concepts/projections/>`__.  For limitations,
-        see
+        For projection details and examples, see `Projections
+        <../../../../concepts/projections/>`__.  For limitations, see
         `Projection Limitations and Cautions
         <../../../../concepts/projections/#limitations-and-cautions>`__.
 
         `Window functions <../../../../concepts/window/>`__, which can perform
         operations like moving averages, are available through this endpoint as
-        well as
-        :meth:`GPUdb.get_records_by_column`.
+        well as :meth:`GPUdb.get_records_by_column`.
 
-        A projection can be created with a different
-        `shard key <../../../../concepts/tables/#shard-keys>`__ than the source
-        table.
-        By specifying *shard_key*, the projection will be sharded
-        according to the specified columns, regardless of how the source table
-        is
-        sharded.  The source table can even be unsharded or replicated.
+        A projection can be created with a different `shard key
+        <../../../../concepts/tables/#shard-keys>`__ than the source table. By
+        specifying *shard_key*, the projection will be sharded according to the
+        specified columns, regardless of how the source table is sharded.  The
+        source table can even be unsharded or replicated.
 
         If input parameter *table_name* is empty, selection is performed
-        against a single-row
-        virtual table.  This can be useful in executing temporal
-        (`NOW() <../../../../concepts/expressions/#date-time-functions>`__),
-        identity
+        against a single-row virtual table.  This can be useful in executing
+        temporal (`NOW()
+        <../../../../concepts/expressions/#date-time-functions>`__), identity
         (`USER()
         <../../../../concepts/expressions/#user-security-functions>`__), or
-        constant-based functions
-        (`GEODIST(-77.11, 38.88, -71.06, 42.36)
+        constant-based functions (`GEODIST(-77.11, 38.88, -71.06, 42.36)
         <../../../../concepts/expressions/#scalar-functions>`__).
 
         Parameters:
@@ -20199,13 +20621,12 @@ class GPUdb(object):
             column_names (list of str)
                 List of columns from input parameter *table_name* to be
                 included in the projection. Can include derived columns. Can be
-                specified as aliased via the syntax 'column_name as alias'.
-                The user can provide a single element (which will be
-                automatically promoted to a list internally) or a list.
+                specified as aliased via the syntax 'column_name as alias'. The
+                user can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -20227,13 +20648,13 @@ class GPUdb(object):
                   projection as part of input parameter *projection_name* and
                   use :meth:`GPUdb.create_schema` to create the schema if
                   non-existent]  Name of a schema for the projection. If the
-                  schema is non-existent, it will be automatically created.
-                  The default value is ''.
+                  schema is non-existent, it will be automatically created. The
+                  default value is ''.
 
                 * **expression** --
                   An optional filter `expression
                   <../../../../concepts/expressions/>`__ to be applied to the
-                  source table prior to the projection.  The default value is
+                  source table prior to the projection. The default value is
                   ''.
 
                 * **is_replicated** --
@@ -20248,21 +20669,29 @@ class GPUdb(object):
 
                 * **offset** --
                   The number of initial results to skip (this can be useful for
-                  paging through the results).  The default value is '0'.
+                  paging through the results). The default value is '0'.
 
                 * **limit** --
-                  The number of records to keep.  The default value is '-9999'.
+                  The number of records to keep. The default value is '-9999'.
 
                 * **order_by** --
                   Comma-separated list of the columns to be sorted by; e.g.
                   'timestamp asc, x desc'.  The columns specified must be
                   present in input parameter *column_names*.  If any alias is
                   given for any column name, the alias must be used, rather
-                  than the original column name.  The default value is ''.
+                  than the original column name. The default value is ''.
 
                 * **chunk_size** --
                   Indicates the number of records per chunk to be used for this
                   projection.
+
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for this projection.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for this projection.
 
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
@@ -20280,7 +20709,7 @@ class GPUdb(object):
                   'column1, column2'.  The columns specified must be present in
                   input parameter *column_names*.  If any alias is given for
                   any column name, the alias must be used, rather than the
-                  original column name.  The default value is ''.
+                  original column name. The default value is ''.
 
                 * **persist** --
                   If *true*, then the projection specified in input parameter
@@ -20373,13 +20802,26 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **view_id** --
-                  ID of view of which this projection is a member.  The default
+                  ID of view of which this projection is a member. The default
                   value is ''.
 
                 * **strategy_definition** --
                   The `tier strategy
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
+
+                * **join_window_functions** --
+                  If set, window functions which require a reshard will be
+                  computed separately and joined back together, if the width of
+                  the projection is greater than the
+                  join_window_functions_threshold. The default value is 'true'.
+
+                * **join_window_functions_threshold** --
+                  If the projection is greater than this width (in bytes), then
+                  window functions which require a reshard will be computed
+                  separately and joined back together. The default value is ''.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -20388,8 +20830,7 @@ class GPUdb(object):
                 Value of input parameter *projection_name*.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **count** --
@@ -20398,6 +20839,8 @@ class GPUdb(object):
                 * **qualified_projection_name** --
                   The fully qualified name of the projection (i.e. including
                   the schema).
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "create_projection(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( projection_name, (basestring)), "create_projection(): Argument 'projection_name' must be (one) of type(s) '(basestring)'; given %s" % type( projection_name ).__name__
@@ -20415,11 +20858,10 @@ class GPUdb(object):
         return response
     # end create_projection
 
-
     # begin create_resource_group
-    def create_resource_group( self, name = None, tier_attributes = {}, ranking =
-                               None, adjoining_resource_group = '', options = {}
-                               ):
+    def create_resource_group( self, name = None, tier_attributes = {}, ranking
+                               = None, adjoining_resource_group = '', options =
+                               {} ):
         """Creates a new resource group to facilitate resource management.
 
         Parameters:
@@ -20436,13 +20878,14 @@ class GPUdb(object):
 
                 For instance, to set max VRAM capacity to 1GB and max RAM
                 capacity to 10GB, use:  {'VRAM':{'max_memory':'1000000000'},
-                'RAM':{'max_memory':'10000000000'}}.  The default value is an
-                empty dict ( {} ).
+                'RAM':{'max_memory':'10000000000'}}.
                 Allowed keys are:
 
                 * **max_memory** --
                   Maximum amount of memory usable in the given tier at one time
                   for this group.
+
+                The default value is an empty dict ( {} ).
 
             ranking (str)
                 Indicates the relative ranking among existing resource groups
@@ -20460,27 +20903,33 @@ class GPUdb(object):
             adjoining_resource_group (str)
                 If input parameter *ranking* is *before* or *after*, this field
                 indicates the resource group before or after which the current
-                group will be placed; otherwise, leave blank.  The default
-                value is ''.
+                group will be placed; otherwise, leave blank. The default value
+                is ''.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **max_cpu_concurrency** --
                   Maximum number of simultaneous threads that will be used to
-                  execute a request for this group.
+                  execute a request for this group. The minimum allowed value
+                  is '4'.
 
                 * **max_data** --
                   Maximum amount of cumulative ram usage regardless of tier
-                  status for this group.
+                  status for this group. The minimum allowed value is '-1'.
 
                 * **max_scheduling_priority** --
-                  Maximum priority of a scheduled task for this group.
+                  Maximum priority of a scheduled task for this group. The
+                  minimum allowed value is '1'. The maximum allowed value is
+                  '100'.
 
                 * **max_tier_priority** --
-                  Maximum priority of a tiered object for this group.
+                  Maximum priority of a tiered object for this group. The
+                  minimum allowed value is '1'. The maximum allowed value is
+                  '10'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -20509,7 +20958,6 @@ class GPUdb(object):
         return response
     # end create_resource_group
 
-
     # begin create_role
     def create_role( self, name = None, options = {} ):
         """Creates a new role.
@@ -20525,13 +20973,14 @@ class GPUdb(object):
                 digit. Must not be the same name as an existing user or role.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **resource_group** --
                   Name of an existing resource group to associate with this
                   user
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -20554,12 +21003,11 @@ class GPUdb(object):
         return response
     # end create_role
 
-
     # begin create_schema
     def create_schema( self, schema_name = None, options = {} ):
-        """Creates a SQL-style `schema <../../../../concepts/schemas/>`__. Schemas
-        are containers for tables and views.  Multiple tables and views can be
-        defined with the same name in different schemas.
+        """Creates a SQL-style `schema <../../../../concepts/schemas/>`__.
+        Schemas are containers for tables and views.  Multiple tables and views
+        can be defined with the same name in different schemas.
 
         Parameters:
 
@@ -20568,8 +21016,7 @@ class GPUdb(object):
                 restrictions as `tables <../../../../concepts/tables/>`__.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **no_error_if_exists** --
@@ -20581,6 +21028,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -20603,11 +21052,9 @@ class GPUdb(object):
         return response
     # end create_schema
 
-
     # begin create_state_table
     def create_state_table( self, table_name = None, input_table_name = None,
                             init_table_name = None, options = {} ):
-
         assert isinstance( table_name, (basestring)), "create_state_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( input_table_name, (basestring)), "create_state_table(): Argument 'input_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( input_table_name ).__name__
         assert isinstance( init_table_name, (basestring)), "create_state_table(): Argument 'init_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( init_table_name ).__name__
@@ -20624,24 +21071,19 @@ class GPUdb(object):
         return response
     # end create_state_table
 
-
     # begin create_table
     def create_table( self, table_name = None, type_id = None, options = {} ):
-        """Creates a new table. If a new table is being created,
-        the type of the table is given by input parameter *type_id*, which must
-        be the ID of
-        a currently registered type (i.e. one created via
+        """Creates a new table. If a new table is being created, the type of
+        the table is given by input parameter *type_id*, which must be the ID
+        of a currently registered type (i.e. one created via
         :meth:`GPUdb.create_type`).
 
-        A table may optionally be designated to use a
-        `replicated <../../../../concepts/tables/#replication>`__ distribution
-        scheme,
-        or be assigned: `foreign keys
-        <../../../../concepts/tables/#foreign-keys>`__ to
-        other tables, a `partitioning
-        <../../../../concepts/tables/#partitioning>`__
-        scheme, and/or a `tier strategy
-        <../../../../rm/concepts/#tier-strategies>`__.
+        A table may optionally be designated to use a `replicated
+        <../../../../concepts/tables/#replication>`__ distribution scheme, or
+        be assigned: `foreign keys
+        <../../../../concepts/tables/#foreign-keys>`__ to other tables, a
+        `partitioning <../../../../concepts/tables/#partitioning>`__ scheme,
+        and/or a `tier strategy <../../../../rm/concepts/#tier-strategies>`__.
 
         Parameters:
 
@@ -20659,8 +21101,7 @@ class GPUdb(object):
                 newly created table will be of this type.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **no_error_if_exists** --
@@ -20813,6 +21254,14 @@ class GPUdb(object):
                   Indicates the number of records per chunk to be used for this
                   table.
 
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for this table.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for this table.
+
                 * **is_result_table** --
                   Indicates whether the table is a `memory-only table
                   <../../../../concepts/tables_memory_only/>`__. A result table
@@ -20833,6 +21282,11 @@ class GPUdb(object):
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
 
+                * **is_virtual_union** --
+                  <DEVELOPER>
+
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -20847,13 +21301,14 @@ class GPUdb(object):
                 created entity is a schema.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_table_name** --
                   The fully qualified name of the new table (i.e. including the
                   schema)
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "create_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( type_id, (basestring)), "create_table(): Argument 'type_id' must be (one) of type(s) '(basestring)'; given %s" % type( type_id ).__name__
@@ -20869,94 +21324,79 @@ class GPUdb(object):
         return response
     # end create_table
 
-
     # begin create_table_external
     def create_table_external( self, table_name = None, filepaths = None,
                                modify_columns = {}, create_table_options = {},
                                options = {} ):
         """Creates a new `external table
-        <../../../../concepts/external_tables/>`__, which is a
-        local database object whose source data is located externally to the
-        database.  The source data can
-        be located either in `KiFS <../../../../tools/kifs/>`__; on the
-        cluster, accessible to the database; or remotely, accessible via a
-        pre-defined external `data source
-        <../../../../concepts/data_sources/>`__.
+        <../../../../concepts/external_tables/>`__, which is a local database
+        object whose source data is located externally to the database.  The
+        source data can be located either in `KiFS
+        <../../../../tools/kifs/>`__; on the cluster, accessible to the
+        database; or remotely, accessible via a pre-defined external `data
+        source <../../../../concepts/data_sources/>`__.
 
         The external table can have its structure defined explicitly, via input
-        parameter *create_table_options*,
-        which contains many of the options from :meth:`GPUdb.create_table`; or
-        defined implicitly, inferred
-        from the source data.
+        parameter *create_table_options*, which contains many of the options
+        from :meth:`GPUdb.create_table`; or defined implicitly, inferred from
+        the source data.
 
         Parameters:
 
             table_name (str)
                 Name of the table to be created, in [schema_name.]table_name
-                format, using
-                standard `name resolution rules
+                format, using standard `name resolution rules
                 <../../../../concepts/tables/#table-name-resolution>`__ and
-                meeting
-                `table naming criteria
+                meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.
 
             filepaths (list of str)
                 A list of file paths from which data will be sourced;
 
                 For paths in `KiFS <../../../../tools/kifs/>`__, use the uri
-                prefix of kifs:// followed by the path to
-                a file or directory. File matching by prefix is supported, e.g.
-                kifs://dir/file would match dir/file_1
-                and dir/file_2. When prefix matching is used, the path must
-                start with a full, valid KiFS directory name.
+                prefix of kifs:// followed by the path to a file or directory.
+                File matching by prefix is supported, e.g. kifs://dir/file
+                would match dir/file_1 and dir/file_2. When prefix matching is
+                used, the path must start with a full, valid KiFS directory
+                name.
 
                 If an external data source is specified in *datasource_name*,
-                these file
-                paths must resolve to accessible files at that data source
-                location. Prefix matching is supported.
-                If the data source is hdfs, prefixes must be aligned with
-                directories, i.e. partial file names will not match.
+                these file paths must resolve to accessible files at that data
+                source location. Prefix matching is supported. If the data
+                source is hdfs, prefixes must be aligned with directories, i.e.
+                partial file names will not match.
 
                 If no data source is specified, the files are assumed to be
-                local to the database and must all be
-                accessible to the gpudb user, residing on the path (or relative
-                to the path) specified by the
-                external files directory in the Kinetica
-                `configuration file
-                <../../../../config/#config-main-external-files>`__. Wildcards
-                (*) can be used to
-                specify a group of files.  Prefix matching is supported, the
-                prefixes must be aligned with
+                local to the database and must all be accessible to the gpudb
+                user, residing on the path (or relative to the path) specified
+                by the external files directory in the Kinetica `configuration
+                file <../../../../config/#config-main-external-files>`__.
+                Wildcards (*) can be used to specify a group of files.  Prefix
+                matching is supported, the prefixes must be aligned with
                 directories.
 
                 If the first path ends in .tsv, the text delimiter will be
-                defaulted to a tab character.
-                If the first path ends in .psv, the text delimiter will be
-                defaulted to a pipe character (|).    The user can provide a
-                single element (which will be automatically promoted to a list
-                internally) or a list.
+                defaulted to a tab character. If the first path ends in .psv,
+                the text delimiter will be defaulted to a pipe character (|).
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
 
             modify_columns (dict of str to dicts of str to str)
-                Not implemented yet.  The default value is an empty dict ( {}
-                ).
+                Not implemented yet. The default value is an empty dict ( {} ).
 
             create_table_options (dict of str to str)
                 Options from :meth:`GPUdb.create_table`, allowing the structure
-                of the table to
-                be defined independently of the data source.  The default value
-                is an empty dict ( {} ).
+                of the table to be defined independently of the data source.
                 Allowed keys are:
 
                 * **type_id** --
                   ID of a currently registered `type
-                  <../../../../concepts/types/>`__.  The default value is ''.
+                  <../../../../concepts/types/>`__. The default value is ''.
 
                 * **no_error_if_exists** --
-                  If *true*,
-                  prevents an error from occurring if the table already exists
-                  and is of the given type.  If a table with
-                  the same name but a different type exists, it is still an
-                  error.
+                  If *true*, prevents an error from occurring if the table
+                  already exists and is of the given type.  If a table with the
+                  same name but a different type exists, it is still an error.
                   Allowed values are:
 
                   * true
@@ -20966,21 +21406,17 @@ class GPUdb(object):
 
                 * **is_replicated** --
                   Affects the `distribution scheme
-                  <../../../../concepts/tables/#distribution>`__
-                  for the table's data.  If *true* and the
-                  given table has no explicit `shard key
-                  <../../../../concepts/tables/#shard-key>`__ defined, the
-                  table will be `replicated
-                  <../../../../concepts/tables/#replication>`__.  If
-                  *false*, the table will be
-                  `sharded <../../../../concepts/tables/#sharding>`__ according
-                  to the shard key specified in the
-                  given *type_id*, or
-                  `randomly sharded
-                  <../../../../concepts/tables/#random-sharding>`__, if no
-                  shard key is specified.
-                  Note that a type containing a shard key cannot be used to
-                  create a replicated table.
+                  <../../../../concepts/tables/#distribution>`__ for the
+                  table's data.  If *true* and the given table has no explicit
+                  `shard key <../../../../concepts/tables/#shard-key>`__
+                  defined, the table will be `replicated
+                  <../../../../concepts/tables/#replication>`__.  If *false*,
+                  the table will be `sharded
+                  <../../../../concepts/tables/#sharding>`__ according to the
+                  shard key specified in the given *type_id*, or `randomly
+                  sharded <../../../../concepts/tables/#random-sharding>`__, if
+                  no shard key is specified. Note that a type containing a
+                  shard key cannot be used to create a replicated table.
                   Allowed values are:
 
                   * true
@@ -20989,17 +21425,15 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **foreign_keys** --
-                  Semicolon-separated list of
-                  `foreign keys <../../../../concepts/tables/#foreign-keys>`__,
-                  of the format
+                  Semicolon-separated list of `foreign keys
+                  <../../../../concepts/tables/#foreign-keys>`__, of the format
                   '(source_column_name [, ...]) references
                   target_table_name(primary_key_column_name [, ...]) [as
                   foreign_key_name]'.
 
                 * **foreign_shard_key** --
-                  Foreign shard key of the format
-                  'source_column references shard_by_column from
-                  target_table(primary_key_column)'.
+                  Foreign shard key of the format 'source_column references
+                  shard_by_column from target_table(primary_key_column)'.
 
                 * **partition_type** --
                   `Partitioning <../../../../concepts/tables/#partitioning>`__
@@ -21028,30 +21462,28 @@ class GPUdb(object):
 
                 * **partition_keys** --
                   Comma-separated list of partition keys, which are the columns
-                  or
-                  column expressions by which records will be assigned to
-                  partitions defined by
-                  *partition_definitions*.
+                  or column expressions by which records will be assigned to
+                  partitions defined by *partition_definitions*.
 
                 * **partition_definitions** --
                   Comma-separated list of partition definitions, whose format
-                  depends
-                  on the choice of *partition_type*.  See
-                  `range partitioning
+                  depends on the choice of *partition_type*.  See `range
+                  partitioning
                   <../../../../concepts/tables/#partitioning-by-range>`__,
                   `interval partitioning
                   <../../../../concepts/tables/#partitioning-by-interval>`__,
                   `list partitioning
-                  <../../../../concepts/tables/#partitioning-by-list>`__, or
-                  `hash partitioning
-                  <../../../../concepts/tables/#partitioning-by-hash>`__ for
+                  <../../../../concepts/tables/#partitioning-by-list>`__, `hash
+                  partitioning
+                  <../../../../concepts/tables/#partitioning-by-hash>`__, or
+                  `series partitioning
+                  <../../../../concepts/tables/#partitioning-by-series>`__ for
                   example formats.
 
                 * **is_automatic_partition** --
-                  If *true*,
-                  a new partition will be created for values which don't fall
-                  into an existing partition.  Currently
-                  only supported for `list partitions
+                  If *true*, a new partition will be created for values which
+                  don't fall into an existing partition.  Currently only
+                  supported for `list partitions
                   <../../../../concepts/tables/#partitioning-by-list>`__.
                   Allowed values are:
 
@@ -21068,18 +21500,20 @@ class GPUdb(object):
                   Indicates the number of records per chunk to be used for this
                   table.
 
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for this table.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for this table.
+
                 * **is_result_table** --
-                  Indicates whether the table is a
-                  `memory-only table
+                  Indicates whether the table is a `memory-only table
                   <../../../../concepts/tables_memory_only/>`__. A result table
-                  cannot contain
-                  columns with store_only or text_search
-                  `data-handling <../../../../concepts/types/#data-handling>`__
-                  or that are
-                  `non-charN strings
-                  <../../../../concepts/types/#primitive-types>`__, and it will
-                  not be retained if
-                  the server is restarted.
+                  cannot contain columns with text_search `data-handling
+                  <../../../../concepts/types/#data-handling>`__, and it will
+                  not be retained if the server is restarted.
                   Allowed values are:
 
                   * true
@@ -21089,12 +21523,13 @@ class GPUdb(object):
 
                 * **strategy_definition** --
                   The `tier strategy
-                  <../../../../rm/concepts/#tier-strategies>`__
-                  for the table and its columns.
+                  <../../../../rm/concepts/#tier-strategies>`__ for the table
+                  and its columns.
+
+                The default value is an empty dict ( {} ).
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **avro_header_bytes** --
@@ -21141,54 +21576,49 @@ class GPUdb(object):
 
                 * **column_formats** --
                   For each target column specified, applies the
-                  column-property-bound format to the source data
-                  loaded into that column.  Each column format will contain a
-                  mapping of one or more of its column
-                  properties to an appropriate format for each property.
-                  Currently supported column properties
+                  column-property-bound format to the source data loaded into
+                  that column.  Each column format will contain a mapping of
+                  one or more of its column properties to an appropriate format
+                  for each property.  Currently supported column properties
                   include date, time, & datetime. The parameter value must be
-                  formatted as a JSON string of maps of
-                  column names to maps of column properties to their
-                  corresponding column formats, e.g.,
-                  '{ "order_date" : { "date" : "%Y.%m.%d" }, "order_time" : {
-                  "time" : "%H:%M:%S" } }'.
+                  formatted as a JSON string of maps of column names to maps of
+                  column properties to their corresponding column formats,
+                  e.g., '{ "order_date" : { "date" : "%Y.%m.%d" }, "order_time"
+                  : { "time" : "%H:%M:%S" } }'.
+
                   See *default_column_formats* for valid format syntax.
 
                 * **columns_to_load** --
                   Specifies a comma-delimited list of columns from the source
-                  data to
-                  load.  If more than one file is being loaded, this list
-                  applies to all files.
+                  data to load.  If more than one file is being loaded, this
+                  list applies to all files.
+
                   Column numbers can be specified discretely or as a range.
-                  For example, a value of '5,7,1..3' will
-                  insert values from the fifth column in the source data into
-                  the first column in the target table,
-                  from the seventh column in the source data into the second
-                  column in the target table, and from the
+                  For example, a value of '5,7,1..3' will insert values from
+                  the fifth column in the source data into the first column in
+                  the target table, from the seventh column in the source data
+                  into the second column in the target table, and from the
                   first through third columns in the source data into the third
-                  through fifth columns in the target
-                  table.
+                  through fifth columns in the target table.
+
                   If the source data contains a header, column names matching
-                  the file header names may be provided
-                  instead of column numbers.  If the target table doesn't
-                  exist, the table will be created with the
-                  columns in this order.  If the target table does exist with
-                  columns in a different order than the
+                  the file header names may be provided instead of column
+                  numbers.  If the target table doesn't exist, the table will
+                  be created with the columns in this order.  If the target
+                  table does exist with columns in a different order than the
                   source data, this list can be used to match the order of the
-                  target table.  For example, a value of
-                  'C, B, A' will create a three column table with column C,
-                  followed by column B, followed by column
-                  A; or will insert those fields in that order into a table
-                  created with columns in that order.  If
+                  target table.  For example, a value of 'C, B, A' will create
+                  a three column table with column C, followed by column B,
+                  followed by column A; or will insert those fields in that
+                  order into a table created with columns in that order.  If
                   the target table exists, the column names must match the
-                  source data field names for a name-mapping
-                  to be successful.
+                  source data field names for a name-mapping to be successful.
+
                   Mutually exclusive with *columns_to_skip*.
 
                 * **columns_to_skip** --
                   Specifies a comma-delimited list of columns from the source
-                  data to
-                  skip.  Mutually exclusive with *columns_to_load*.
+                  data to skip.  Mutually exclusive with *columns_to_load*.
 
                 * **compression_type** --
                   Optional: compression type.
@@ -21215,36 +21645,32 @@ class GPUdb(object):
 
                 * **default_column_formats** --
                   Specifies the default format to be applied to source data
-                  loaded
-                  into columns with the corresponding column property.
-                  Currently supported column properties include
-                  date, time, & datetime.  This default column-property-bound
-                  format can be overridden by specifying a
-                  column property & format for a given target column in
-                  *column_formats*. For
-                  each specified annotation, the format will apply to all
-                  columns with that annotation unless a custom
-                  *column_formats* for that annotation is specified.
+                  loaded into columns with the corresponding column property.
+                  Currently supported column properties include date, time, &
+                  datetime.  This default column-property-bound format can be
+                  overridden by specifying a column property & format for a
+                  given target column in *column_formats*. For each specified
+                  annotation, the format will apply to all columns with that
+                  annotation unless a custom *column_formats* for that
+                  annotation is specified.
+
                   The parameter value must be formatted as a JSON string that
-                  is a map of column properties to their
-                  respective column formats, e.g., '{ "date" : "%Y.%m.%d",
-                  "time" : "%H:%M:%S" }'.  Column
-                  formats are specified as a string of control characters and
-                  plain text. The supported control
-                  characters are 'Y', 'm', 'd', 'H', 'M', 'S', and 's', which
-                  follow the Linux 'strptime()'
-                  specification, as well as 's', which specifies seconds and
-                  fractional seconds (though the fractional
-                  component will be truncated past milliseconds).
+                  is a map of column properties to their respective column
+                  formats, e.g., '{ "date" : "%Y.%m.%d", "time" : "%H:%M:%S"
+                  }'.  Column formats are specified as a string of control
+                  characters and plain text. The supported control characters
+                  are 'Y', 'm', 'd', 'H', 'M', 'S', and 's', which follow the
+                  Linux 'strptime()' specification, as well as 's', which
+                  specifies seconds and fractional seconds (though the
+                  fractional component will be truncated past milliseconds).
+
                   Formats for the 'date' annotation must include the 'Y', 'm',
-                  and 'd' control characters. Formats for
-                  the 'time' annotation must include the 'H', 'M', and either
-                  'S' or 's' (but not both) control
-                  characters. Formats for the 'datetime' annotation meet both
-                  the 'date' and 'time' control character
+                  and 'd' control characters. Formats for the 'time' annotation
+                  must include the 'H', 'M', and either 'S' or 's' (but not
+                  both) control characters. Formats for the 'datetime'
+                  annotation meet both the 'date' and 'time' control character
                   requirements. For example, '{"datetime" : "%m/%d/%Y %H:%M:%S"
-                  }' would be used to interpret text
-                  as "05/04/2000 12:12:11"
+                  }' would be used to interpret text as "05/04/2000 12:12:11"
 
                 * **error_handling** --
                   Specifies how errors should be handled upon insertion.
@@ -21307,27 +21733,23 @@ class GPUdb(object):
 
                 * **gdal_configuration_options** --
                   Comma separated list of gdal conf options, for the specific
-                  requets: key=value.  The default value is ''.
+                  requets: key=value. The default value is ''.
 
                 * **ignore_existing_pk** --
                   Specifies the record collision error-suppression policy for
                   inserting into a table with a `primary key
                   <../../../../concepts/tables/#primary-keys>`__, only used
-                  when
-                  not in upsert mode (upsert mode is disabled when
-                  *update_on_existing_pk* is
-                  *false*).  If set to
-                  *true*, any record being inserted that is rejected
-                  for having primary key values that match those of an existing
-                  table record will be ignored with no
-                  error generated.  If *false*, the rejection of any
-                  record for having primary key values matching an existing
-                  record will result in an error being
-                  reported, as determined by *error_handling*.  If the
-                  specified table does not
-                  have a primary key or if upsert mode is in effect
-                  (*update_on_existing_pk* is
-                  *true*), then this option has no effect.
+                  when not in upsert mode (upsert mode is disabled when
+                  *update_on_existing_pk* is *false*).  If set to *true*, any
+                  record being inserted that is rejected for having primary key
+                  values that match those of an existing table record will be
+                  ignored with no error generated.  If *false*, the rejection
+                  of any record for having primary key values matching an
+                  existing record will result in an error being reported, as
+                  determined by *error_handling*.  If the specified table does
+                  not have a primary key or if upsert mode is in effect
+                  (*update_on_existing_pk* is *true*), then this option has no
+                  effect.
                   Allowed values are:
 
                   * **true** --
@@ -21384,7 +21806,7 @@ class GPUdb(object):
                   subscription will be cancelled automatically.
 
                 * **layer** --
-                  Optional: geo files layer(s) name(s): comma separated.  The
+                  Optional: geo files layer(s) name(s): comma separated. The
                   default value is ''.
 
                 * **loading_mode** --
@@ -21398,36 +21820,38 @@ class GPUdb(object):
                     to the head node.
 
                   * **distributed_shared** --
-                    The head node coordinates loading data by worker
-                    processes across all nodes from shared files available to
-                    all workers.
+                    The head node coordinates loading data by worker processes
+                    across all nodes from shared files available to all
+                    workers.
+
                     NOTE:
+
                     Instead of existing on a shared source, the files can be
-                    duplicated on a source local to each host
-                    to improve performance, though the files must appear as the
-                    same data set from the perspective of
-                    all hosts performing the load.
+                    duplicated on a source local to each host to improve
+                    performance, though the files must appear as the same data
+                    set from the perspective of all hosts performing the load.
 
                   * **distributed_local** --
-                    A single worker process on each node loads all files
-                    that are available to it. This option works best when each
-                    worker loads files from its own file
-                    system, to maximize performance. In order to avoid data
-                    duplication, either each worker performing
-                    the load needs to have visibility to a set of files unique
-                    to it (no file is visible to more than
-                    one node) or the target table needs to have a primary key
-                    (which will allow the worker to
-                    automatically deduplicate data).
+                    A single worker process on each node loads all files that
+                    are available to it. This option works best when each
+                    worker loads files from its own file system, to maximize
+                    performance. In order to avoid data duplication, either
+                    each worker performing the load needs to have visibility to
+                    a set of files unique to it (no file is visible to more
+                    than one node) or the target table needs to have a primary
+                    key (which will allow the worker to automatically
+                    deduplicate data).
+
                     NOTE:
+
                     If the target table doesn't exist, the table structure will
-                    be determined by the head node. If the
-                    head node has no files local to it, it will be unable to
-                    determine the structure and the request
-                    will fail.
+                    be determined by the head node. If the head node has no
+                    files local to it, it will be unable to determine the
+                    structure and the request will fail.
+
                     If the head node is configured to have no worker processes,
-                    no data strictly accessible to the head
-                    node will be loaded.
+                    no data strictly accessible to the head node will be
+                    loaded.
 
                   The default value is 'head'.
 
@@ -21438,7 +21862,7 @@ class GPUdb(object):
                   Limit the number of records to load in this request: If this
                   number is larger than a batch_size, then the number of
                   records loaded will be limited to the next whole number of
-                  batch_size (per working thread).  The default value is ''.
+                  batch_size (per working thread). The default value is ''.
 
                 * **num_tasks_per_rank** --
                   Optional: number of tasks for reading file per rank. Default
@@ -21453,7 +21877,7 @@ class GPUdb(object):
 
                 * **primary_keys** --
                   Optional: comma separated list of column names, to set as
-                  primary keys, when not specified in the type.  The default
+                  primary keys, when not specified in the type. The default
                   value is ''.
 
                 * **refresh_method** --
@@ -21472,9 +21896,13 @@ class GPUdb(object):
 
                   The default value is 'manual'.
 
+                * schema_registry_schema_id
+                * schema_registry_schema_name
+                * schema_registry_schema_version
+
                 * **shard_keys** --
                   Optional: comma separated list of column names, to set as
-                  primary keys, when not specified in the type.  The default
+                  primary keys, when not specified in the type. The default
                   value is ''.
 
                 * **skip_lines** --
@@ -21503,38 +21931,39 @@ class GPUdb(object):
 
                 * **text_comment_string** --
                   Specifies the character string that should be interpreted as
-                  a comment line
-                  prefix in the source data.  All lines in the data starting
-                  with the provided string are ignored.
-                  For *delimited_text* *file_type* only.  The default value is
+                  a comment line prefix in the source data.  All lines in the
+                  data starting with the provided string are ignored.
+
+                  For *delimited_text* *file_type* only. The default value is
                   '#'.
 
                 * **text_delimiter** --
                   Specifies the character delimiting field values in the source
-                  data
-                  and field names in the header (if present).
-                  For *delimited_text* *file_type* only.  The default value is
+                  data and field names in the header (if present).
+
+                  For *delimited_text* *file_type* only. The default value is
                   ','.
 
                 * **text_escape_character** --
                   Specifies the character that is used to escape other
-                  characters in
-                  the source data.
+                  characters in the source data.
+
                   An 'a', 'b', 'f', 'n', 'r', 't', or 'v' preceded by an escape
-                  character will be interpreted as the
-                  ASCII bell, backspace, form feed, line feed, carriage return,
-                  horizontal tab, & vertical tab,
-                  respectively.  For example, the escape character followed by
-                  an 'n' will be interpreted as a newline
+                  character will be interpreted as the ASCII bell, backspace,
+                  form feed, line feed, carriage return, horizontal tab, &
+                  vertical tab, respectively.  For example, the escape
+                  character followed by an 'n' will be interpreted as a newline
                   within a field value.
+
                   The escape character can also be used to escape the quoting
-                  character, and will be treated as an
-                  escape character whether it is within a quoted field value or
-                  not.
+                  character, and will be treated as an escape character whether
+                  it is within a quoted field value or not.
+
                   For *delimited_text* *file_type* only.
 
                 * **text_has_header** --
                   Indicates whether the source data contains a header row.
+
                   For *delimited_text* *file_type* only.
                   Allowed values are:
 
@@ -21544,33 +21973,32 @@ class GPUdb(object):
                   The default value is 'true'.
 
                 * **text_header_property_delimiter** --
-                  Specifies the delimiter for
-                  `column properties
+                  Specifies the delimiter for `column properties
                   <../../../../concepts/types/#column-properties>`__ in the
-                  header row (if
-                  present).  Cannot be set to same value as *text_delimiter*.
-                  For *delimited_text* *file_type* only.  The default value is
+                  header row (if present).  Cannot be set to same value as
+                  *text_delimiter*.
+
+                  For *delimited_text* *file_type* only. The default value is
                   '|'.
 
                 * **text_null_string** --
                   Specifies the character string that should be interpreted as
-                  a null
-                  value in the source data.
-                  For *delimited_text* *file_type* only.  The default value is
-                  '\\N'.
+                  a null value in the source data.
+
+                  For *delimited_text* *file_type* only. The default value is
+                  '\\\\N'.
 
                 * **text_quote_character** --
                   Specifies the character that should be interpreted as a field
-                  value
-                  quoting character in the source data.  The character must
-                  appear at beginning and end of field value
-                  to take effect.  Delimiters within quoted fields are treated
-                  as literals and not delimiters.  Within
-                  a quoted field, two consecutive quote characters will be
-                  interpreted as a single literal quote
-                  character, effectively escaping it.  To not have a quote
-                  character, specify an empty string.
-                  For *delimited_text* *file_type* only.  The default value is
+                  value quoting character in the source data.  The character
+                  must appear at beginning and end of field value to take
+                  effect.  Delimiters within quoted fields are treated as
+                  literals and not delimiters.  Within a quoted field, two
+                  consecutive quote characters will be interpreted as a single
+                  literal quote character, effectively escaping it.  To not
+                  have a quote character, specify an empty string.
+
+                  For *delimited_text* *file_type* only. The default value is
                   '"'.
 
                 * **text_search_columns** --
@@ -21605,7 +22033,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **type_inference_mode** --
-                  optimize type inference for:.
+                  optimize type inference for:
                   Allowed values are:
 
                   * **accuracy** --
@@ -21624,32 +22052,29 @@ class GPUdb(object):
                 * **remote_query_filter_column** --
                   Name of column to be used for splitting the query into
                   multiple sub-queries using the data distribution of given
-                  column.  The default value is ''.
+                  column. The default value is ''.
 
                 * **remote_query_increasing_column** --
                   Column on subscribed remote query result that will increase
-                  for new records (e.g., TIMESTAMP).  The default value is ''.
+                  for new records (e.g., TIMESTAMP). The default value is ''.
 
                 * **remote_query_partition_column** --
-                  Alias name for remote_query_filter_column.  The default value
+                  Alias name for remote_query_filter_column. The default value
                   is ''.
 
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting into a
-                  table
-                  with a `primary key
+                  table with a `primary key
                   <../../../../concepts/tables/#primary-keys>`__. If set to
-                  *true*, any existing table record with primary
-                  key values that match those of a record being inserted will
-                  be replaced by that new record (the new
-                  data will be "upserted"). If set to *false*,
-                  any existing table record with primary key values that match
-                  those of a record being inserted will
-                  remain unchanged, while the new record will be rejected and
-                  the error handled as determined by
-                  *ignore_existing_pk* & *error_handling*.  If the
-                  specified table does not have a primary key, then this option
-                  has no effect.
+                  *true*, any existing table record with primary key values
+                  that match those of a record being inserted will be replaced
+                  by that new record (the new data will be "upserted"). If set
+                  to *false*, any existing table record with primary key values
+                  that match those of a record being inserted will remain
+                  unchanged, while the new record will be rejected and the
+                  error handled as determined by *ignore_existing_pk* &
+                  *error_handling*.  If the specified table does not have a
+                  primary key, then this option has no effect.
                   Allowed values are:
 
                   * **true** --
@@ -21659,6 +22084,8 @@ class GPUdb(object):
                     Reject new records when primary keys match existing records
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -21697,7 +22124,6 @@ class GPUdb(object):
                 Additional information.
 
             files (list of str)
-
         """
         assert isinstance( table_name, (basestring)), "create_table_external(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         filepaths = filepaths if isinstance( filepaths, list ) else ( [] if (filepaths is None) else [ filepaths ] )
@@ -21717,30 +22143,23 @@ class GPUdb(object):
         return response
     # end create_table_external
 
-
     # begin create_table_monitor
     def create_table_monitor( self, table_name = None, options = {} ):
         """Creates a monitor that watches for a single table modification event
         type (insert, update, or delete) on a particular table (identified by
         input parameter *table_name*) and forwards event notifications to
-        subscribers via ZMQ.
-        After this call completes, subscribe to the returned output parameter
-        *topic_id* on the
-        ZMQ table monitor port (default 9002). Each time an operation of the
-        given type
-        on the table completes, a multipart message is published for that
-        topic; the
-        first part contains only the topic ID, and each subsequent part
-        contains one
+        subscribers via ZMQ. After this call completes, subscribe to the
+        returned output parameter *topic_id* on the ZMQ table monitor port
+        (default 9002). Each time an operation of the given type on the table
+        completes, a multipart message is published for that topic; the first
+        part contains only the topic ID, and each subsequent part contains one
         binary-encoded Avro object that corresponds to the event and can be
-        decoded
-        using output parameter *type_schema*. The monitor will continue to run
-        (regardless of
-        whether or not there are any subscribers) until deactivated with
-        :meth:`GPUdb.clear_table_monitor`.
+        decoded using output parameter *type_schema*. The monitor will continue
+        to run (regardless of whether or not there are any subscribers) until
+        deactivated with :meth:`GPUdb.clear_table_monitor`.
 
-        For more information on table monitors, see
-        `Table Monitors <../../../../concepts/table_monitors/>`__.
+        For more information on table monitors, see `Table Monitors
+        <../../../../concepts/table_monitors/>`__.
 
         Parameters:
 
@@ -21750,8 +22169,7 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-name-resolution>`__.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **event** --
@@ -21821,6 +22239,8 @@ class GPUdb(object):
                   at which changes are reported.  Value is a datetime string
                   with format 'YYYY-MM-DD HH:MM:SS'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -21835,9 +22255,11 @@ class GPUdb(object):
                 records.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
+
+                * **ttl** --
+                  For insert_table/delete_table events, the ttl of the table.
 
                 * **insert_topic_id** --
                   The topic id for 'insert' *event* in input parameter
@@ -21860,6 +22282,8 @@ class GPUdb(object):
 
                 * **delete_type_schema** --
                   The JSON Avro schema for 'delete' events
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "create_table_monitor(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( options, (dict)), "create_table_monitor(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
@@ -21873,7 +22297,6 @@ class GPUdb(object):
         return response
     # end create_table_monitor
 
-
     # begin create_trigger_by_area
     def create_trigger_by_area( self, request_id = None, table_names = None,
                                 x_column_name = None, x_vector = None,
@@ -21881,24 +22304,18 @@ class GPUdb(object):
                                 {} ):
         """Sets up an area trigger mechanism for two column_names for one or
         more tables. (This function is essentially the two-dimensional version
-        of
-        :meth:`GPUdb.create_trigger_by_range`.) Once the trigger has been
-        activated, any
-        record added to the listed tables(s) via :meth:`GPUdb.insert_records`
-        with the
-        chosen columns' values falling within the specified region will trip
-        the
-        trigger. All such records will be queued at the trigger port (by
-        default '9001'
-        but able to be retrieved via :meth:`GPUdb.show_system_status`) for any
-        listening
+        of :meth:`GPUdb.create_trigger_by_range`.) Once the trigger has been
+        activated, any record added to the listed tables(s) via
+        :meth:`GPUdb.insert_records` with the chosen columns' values falling
+        within the specified region will trip the trigger. All such records
+        will be queued at the trigger port (by default '9001' but able to be
+        retrieved via :meth:`GPUdb.show_system_status`) for any listening
         client to collect. Active triggers can be cancelled by using the
         :meth:`GPUdb.clear_trigger` endpoint or by clearing all relevant
         tables.
 
         The output returns the trigger handle as well as indicating success or
-        failure
-        of the trigger activation.
+        failure of the trigger activation.
 
         Parameters:
 
@@ -21910,7 +22327,7 @@ class GPUdb(object):
                 Names of the tables on which the trigger will be activated and
                 maintained, each in [schema_name.]table_name format, using
                 standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__.    The
+                <../../../../concepts/tables/#table-name-resolution>`__. The
                 user can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
 
@@ -21921,7 +22338,7 @@ class GPUdb(object):
             x_vector (list of floats)
                 The respective coordinate values for the region on which the
                 trigger is activated. This usually translates to the
-                x-coordinates of a geospatial region.    The user can provide a
+                x-coordinates of a geospatial region. The user can provide a
                 single element (which will be automatically promoted to a list
                 internally) or a list.
 
@@ -21933,12 +22350,11 @@ class GPUdb(object):
                 The respective coordinate values for the region on which the
                 trigger is activated. This usually translates to the
                 y-coordinates of a geospatial region. Must be the same length
-                as xvals.    The user can provide a single element (which will
-                be automatically promoted to a list internally) or a list.
+                as xvals. The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -21971,29 +22387,23 @@ class GPUdb(object):
         return response
     # end create_trigger_by_area
 
-
     # begin create_trigger_by_range
     def create_trigger_by_range( self, request_id = None, table_names = None,
                                  column_name = None, min = None, max = None,
                                  options = {} ):
         """Sets up a simple range trigger for a column_name for one or more
         tables. Once the trigger has been activated, any record added to the
-        listed
-        tables(s) via :meth:`GPUdb.insert_records` with the chosen
-        column_name's value
-        falling within the specified range will trip the trigger. All such
-        records will
-        be queued at the trigger port (by default '9001' but able to be
-        retrieved via
+        listed tables(s) via :meth:`GPUdb.insert_records` with the chosen
+        column_name's value falling within the specified range will trip the
+        trigger. All such records will be queued at the trigger port (by
+        default '9001' but able to be retrieved via
         :meth:`GPUdb.show_system_status`) for any listening client to collect.
-        Active
-        triggers can be cancelled by using the :meth:`GPUdb.clear_trigger`
-        endpoint or by
-        clearing all relevant tables.
+        Active triggers can be cancelled by using the
+        :meth:`GPUdb.clear_trigger` endpoint or by clearing all relevant
+        tables.
 
         The output returns the trigger handle as well as indicating success or
-        failure
-        of the trigger activation.
+        failure of the trigger activation.
 
         Parameters:
 
@@ -22005,7 +22415,7 @@ class GPUdb(object):
                 Tables on which the trigger will be active, each in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__.    The
+                <../../../../concepts/tables/#table-name-resolution>`__. The
                 user can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
 
@@ -22020,8 +22430,7 @@ class GPUdb(object):
                 The upper bound (inclusive) for the trigger range.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -22052,10 +22461,9 @@ class GPUdb(object):
         return response
     # end create_trigger_by_range
 
-
     # begin create_type
-    def create_type( self, type_definition = None, label = None, properties = {},
-                     options = {} ):
+    def create_type( self, type_definition = None, label = None, properties =
+                     {}, options = {} ):
         """Creates a new type describing the layout of a table. The type
         definition is a JSON string describing the fields (i.e. columns) of the
         type. Each field consists of a name and a data type. Supported data
@@ -22080,22 +22488,22 @@ class GPUdb(object):
 
         Example of a type definition with some of the parameters::
 
-                {"type":"record",
-                "name":"point",
-                "fields":[{"name":"msg_id","type":"string"},
-                                {"name":"x","type":"double"},
-                                {"name":"y","type":"double"},
-                                {"name":"TIMESTAMP","type":"double"},
-                                {"name":"source","type":"string"},
-                                {"name":"group_id","type":"string"},
-                                {"name":"OBJECT_ID","type":"string"}]
-                }
+            {"type":"record",
+            "name":"point",
+            "fields":[{"name":"msg_id","type":"string"},
+                    {"name":"x","type":"double"},
+                    {"name":"y","type":"double"},
+                    {"name":"TIMESTAMP","type":"double"},
+                    {"name":"source","type":"string"},
+                    {"name":"group_id","type":"string"},
+                    {"name":"OBJECT_ID","type":"string"}]
+            }
 
         Properties::
 
-                {"group_id":["store_only"],
-                "msg_id":["store_only","text_search"]
-                }
+            {"group_id":["store_only"],
+            "msg_id":["store_only","text_search"]
+            }
 
         Parameters:
 
@@ -22256,6 +22664,24 @@ class GPUdb(object):
                   (i.e. 192.168.1.1). Strings with this property must be of the
                   form: A.B.C.D where A, B, C and D are in the range of 0-255.
 
+                * **array** --
+                  Valid only for 'string' columns. Indicates that this field
+                  contains an array.  The value type and (optionally) the item
+                  count should be specified in parenthesis; e.g., 'array(int,
+                  10)' for a 10-integer array.  Both 'array(int)' and
+                  'array(int, -1)' will designate an unlimited-length integer
+                  array, though no bounds checking is performed on arrays of
+                  any length.
+
+                * **json** --
+                  Valid only for 'string' columns. Indicates that this field
+                  contains values in JSON format.
+
+                * **vector** --
+                  Valid only for 'bytes' columns. Indicates that this field
+                  contains a vector of floats.  The length should be specified
+                  in parenthesis, e.g., 'vector(1000)'.
+
                 * **wkt** --
                   Valid only for 'string' and 'bytes' columns. Indicates that
                   this field contains geospatial geometry objects in Well-Known
@@ -22280,6 +22706,7 @@ class GPUdb(object):
                   *type_definition*.  For example, if a column is of type
                   integer and is nullable, then the entry for the column in the
                   avro schema must be: ['int', 'null'].
+
                   The C++, C#, Java, and Python APIs have built-in convenience
                   for bypassing setting the avro schema by hand.  For those
                   languages, one can use this property as usual and not have to
@@ -22307,8 +22734,7 @@ class GPUdb(object):
                 The default value is an empty dict ( {} ).
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -22352,13 +22778,12 @@ class GPUdb(object):
         return response
     # end create_type
 
-
     # begin create_union
     def create_union( self, table_name = None, table_names = None,
                       input_column_names = None, output_column_names = None,
                       options = {} ):
-        """Merges data from one or more tables with comparable data types into a
-        new table.
+        """Merges data from one or more tables with comparable data types into
+        a new table.
 
         The following merges are supported:
 
@@ -22398,23 +22823,22 @@ class GPUdb(object):
                 The list of table names to merge, in [schema_name.]table_name
                 format, using standard `name resolution rules
                 <../../../../concepts/tables/#table-name-resolution>`__.  Must
-                contain the names of one or more existing tables.    The user
-                can provide a single element (which will be automatically
-                promoted to a list internally) or a list.
+                contain the names of one or more existing tables. The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
 
             input_column_names (list of lists of str)
                 The list of columns from each of the corresponding input
-                tables.    The user can provide a single element (which will be
+                tables. The user can provide a single element (which will be
                 automatically promoted to a list internally) or a list.
 
             output_column_names (list of str)
                 The list of names of the columns to be stored in the output
-                table.    The user can provide a single element (which will be
+                table. The user can provide a single element (which will be
                 automatically promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -22437,7 +22861,7 @@ class GPUdb(object):
                   :meth:`GPUdb.create_schema` to create the schema if
                   non-existent]  Name of the schema for the output table. If
                   the schema provided is non-existent, it will be automatically
-                  created.  The default value is ''.
+                  created. The default value is ''.
 
                 * **mode** --
                   If *merge_views*, then this operation will merge the provided
@@ -22489,6 +22913,14 @@ class GPUdb(object):
                   Indicates the number of records per chunk to be used for this
                   output table.
 
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for this output table.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for this output table.
+
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
                   the output table.  The columns specified must be present in
@@ -22512,7 +22944,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **view_id** --
-                  ID of view of which this output table is a member.  The
+                  ID of view of which this output table is a member. The
                   default value is ''.
 
                 * **force_replicated** --
@@ -22531,6 +22963,8 @@ class GPUdb(object):
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -22538,8 +22972,7 @@ class GPUdb(object):
                 Value of input parameter *table_name*.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **count** --
@@ -22548,6 +22981,8 @@ class GPUdb(object):
                 * **qualified_table_name** --
                   The fully qualified name of the result table (i.e. including
                   the schema)
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "create_union(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
@@ -22567,11 +23002,10 @@ class GPUdb(object):
         return response
     # end create_union
 
-
     # begin create_user_external
     def create_user_external( self, name = None, options = {} ):
-        """Creates a new external user (a user whose credentials are managed by an
-        external LDAP).
+        """Creates a new external user (a user whose credentials are managed by
+        an external LDAP).
 
         .. note::
                 This method should be used for on-premise deployments only.
@@ -22584,8 +23018,7 @@ class GPUdb(object):
                 same name as an existing user.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **resource_group** --
@@ -22609,6 +23042,8 @@ class GPUdb(object):
                   The maximum capacity to apply to the created directory if
                   *create_home_directory* is *true*. Set to -1 to indicate no
                   upper limit. If empty, the system default limit is applied.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -22631,7 +23066,6 @@ class GPUdb(object):
         return response
     # end create_user_external
 
-
     # begin create_user_internal
     def create_user_internal( self, name = None, password = None, options = {} ):
         """Creates a new internal user (a user whose credentials are managed by
@@ -22649,8 +23083,7 @@ class GPUdb(object):
                 string for no password.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **resource_group** --
@@ -22675,6 +23108,8 @@ class GPUdb(object):
                   *create_home_directory* is *true*. Set to -1 to indicate no
                   upper limit. If empty, the system default limit is applied.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -22682,11 +23117,8 @@ class GPUdb(object):
                 Value of input parameter *name*.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
-                Allowed keys are:
-
-
+                Additional information. The default value is an empty dict ( {}
+                ).
         """
         assert isinstance( name, (basestring)), "create_user_internal(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
         assert isinstance( password, (basestring)), "create_user_internal(): Argument 'password' must be (one) of type(s) '(basestring)'; given %s" % type( password ).__name__
@@ -22702,11 +23134,10 @@ class GPUdb(object):
         return response
     # end create_user_internal
 
-
     # begin create_video
-    def create_video( self, attribute = None, begin = None, duration_seconds = None,
-                      end = None, frames_per_second = None, style = None, path =
-                      None, style_parameters = None, options = {} ):
+    def create_video( self, attribute = None, begin = None, duration_seconds =
+                      None, end = None, frames_per_second = None, style = None,
+                      path = None, style_parameters = None, options = {} ):
         """Creates a job to generate a sequence of raster images that visualize
         data over a specified time.
 
@@ -22755,12 +23186,11 @@ class GPUdb(object):
                 parameter *style* field.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`__ of the video.
+                  Sets the `TTL <../../../../concepts/ttl>`__ of the video.
 
                 * **window** --
                   Specified using the data-type corresponding to the input
@@ -22792,6 +23222,8 @@ class GPUdb(object):
                   * true
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -22831,7 +23263,6 @@ class GPUdb(object):
         return response
     # end create_video
 
-
     # begin delete_directory
     def delete_directory( self, directory_name = None, options = {} ):
         """Deletes a directory from `KiFS <../../../../tools/kifs/>`__.
@@ -22843,8 +23274,7 @@ class GPUdb(object):
                 contain no files, unless *recursive* is *true*
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **recursive** --
@@ -22867,6 +23297,8 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -22888,7 +23320,6 @@ class GPUdb(object):
         return response
     # end delete_directory
 
-
     # begin delete_files
     def delete_files( self, file_names = None, options = {} ):
         """Deletes one or more files from `KiFS <../../../../tools/kifs/>`__.
@@ -22901,13 +23332,12 @@ class GPUdb(object):
 
                 Accepted wildcard characters are asterisk (*) to represent any
                 string of zero or more characters, and question mark (?) to
-                indicate a single character.    The user can provide a single
+                indicate a single character. The user can provide a single
                 element (which will be automatically promoted to a list
                 internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **no_error_if_not_exists** --
@@ -22919,6 +23349,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -22941,7 +23373,6 @@ class GPUdb(object):
         return response
     # end delete_files
 
-
     # begin delete_graph
     def delete_graph( self, graph_name = None, options = {} ):
         """Deletes an existing graph from the graph server and/or persist.
@@ -22952,8 +23383,7 @@ class GPUdb(object):
                 Name of the graph to be deleted.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **delete_persist** --
@@ -22971,6 +23401,8 @@ class GPUdb(object):
                 * **server_id** --
                   Indicates which graph server(s) to send the request to.
                   Default is to send to get information about all the servers.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -22993,7 +23425,6 @@ class GPUdb(object):
         return response
     # end delete_graph
 
-
     # begin delete_proc
     def delete_proc( self, proc_name = None, options = {} ):
         """Deletes a proc. Any currently running instances of the proc will be
@@ -23006,8 +23437,7 @@ class GPUdb(object):
                 existing proc.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -23030,11 +23460,11 @@ class GPUdb(object):
         return response
     # end delete_proc
 
-
     # begin delete_records
-    def delete_records( self, table_name = None, expressions = None, options = {} ):
-        """Deletes record(s) matching the provided criteria from the given table.
-        The record selection criteria can either be one or more  input
+    def delete_records( self, table_name = None, expressions = None, options =
+                        {} ):
+        """Deletes record(s) matching the provided criteria from the given
+        table. The record selection criteria can either be one or more  input
         parameter *expressions* (matching multiple records), a single record
         identified by *record_id* options, or all records when using
         *delete_all_records*.  Note that the three selection criteria are
@@ -23057,18 +23487,17 @@ class GPUdb(object):
                 should follow the guidelines provided `here
                 <../../../../concepts/expressions/>`__. Specifying one or more
                 input parameter *expressions* is mutually exclusive to
-                specifying *record_id* in the input parameter *options*.    The
+                specifying *record_id* in the input parameter *options*. The
                 user can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **global_expression** --
                   An optional global expression to reduce the search space of
-                  the input parameter *expressions*.  The default value is ''.
+                  the input parameter *expressions*. The default value is ''.
 
                 * **record_id** --
                   A record ID identifying a single record, obtained at the time
@@ -23087,6 +23516,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -23114,7 +23545,6 @@ class GPUdb(object):
         return response
     # end delete_records
 
-
     # begin delete_resource_group
     def delete_resource_group( self, name = None, options = {} ):
         """Deletes a resource group.
@@ -23125,8 +23555,7 @@ class GPUdb(object):
                 Name of the resource group to be deleted.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **cascade_delete** --
@@ -23139,6 +23568,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -23161,7 +23592,6 @@ class GPUdb(object):
         return response
     # end delete_resource_group
 
-
     # begin delete_role
     def delete_role( self, name = None, options = {} ):
         """Deletes an existing role.
@@ -23175,8 +23605,7 @@ class GPUdb(object):
                 Name of the role to be deleted. Must be an existing role.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -23199,7 +23628,6 @@ class GPUdb(object):
         return response
     # end delete_role
 
-
     # begin delete_user
     def delete_user( self, name = None, options = {} ):
         """Deletes an existing user.
@@ -23213,8 +23641,7 @@ class GPUdb(object):
                 Name of the user to be deleted. Must be an existing user.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -23237,10 +23664,9 @@ class GPUdb(object):
         return response
     # end delete_user
 
-
     # begin download_files
-    def download_files( self, file_names = None, read_offsets = None, read_lengths =
-                        None, options = {} ):
+    def download_files( self, file_names = None, read_offsets = None,
+                        read_lengths = None, options = {} ):
         """Downloads one or more files from `KiFS <../../../../tools/kifs/>`__.
 
         Parameters:
@@ -23252,33 +23678,30 @@ class GPUdb(object):
 
                 Accepted wildcard characters are asterisk (*) to represent any
                 string of zero or more characters, and question mark (?) to
-                indicate a single character.    The user can provide a single
+                indicate a single character. The user can provide a single
                 element (which will be automatically promoted to a list
                 internally) or a list.
 
             read_offsets (list of longs)
                 An array of starting byte offsets from which to read each
                 respective file in input parameter *file_names*. Must either be
-                empty or the same length
-                as input parameter *file_names*. If empty, files are downloaded
-                in their entirety. If not
-                empty, input parameter *read_lengths* must also not be empty.
-                The user can provide a single element (which will be
-                automatically promoted to a list internally) or a list.
+                empty or the same length as input parameter *file_names*. If
+                empty, files are downloaded in their entirety. If not empty,
+                input parameter *read_lengths* must also not be empty. The user
+                can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
 
             read_lengths (list of longs)
-                Array of number of bytes to read from each respective file
-                in input parameter *file_names*. Must either be empty or the
-                same length as
-                input parameter *file_names*. If empty, files are downloaded in
-                their entirety. If not
-                empty, input parameter *read_offsets* must also not be empty.
-                The user can provide a single element (which will be
-                automatically promoted to a list internally) or a list.
+                Array of number of bytes to read from each respective file in
+                input parameter *file_names*. Must either be empty or the same
+                length as input parameter *file_names*. If empty, files are
+                downloaded in their entirety. If not empty, input parameter
+                *read_offsets* must also not be empty. The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **file_encoding** --
@@ -23295,13 +23718,15 @@ class GPUdb(object):
 
                   The default value is 'none'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
             file_names (list of str)
                 Names of the files downloaded from KiFS
 
-            file_data (list of str)
+            file_data (list of bytes)
                 Data for the respective downloaded files listed in output
                 parameter *file_names*
 
@@ -23324,10 +23749,8 @@ class GPUdb(object):
         return response
     # end download_files
 
-
     # begin drop_container_registry
     def drop_container_registry( self, registry_name = None, options = {} ):
-
         assert isinstance( registry_name, (basestring)), "drop_container_registry(): Argument 'registry_name' must be (one) of type(s) '(basestring)'; given %s" % type( registry_name ).__name__
         assert isinstance( options, (dict)), "drop_container_registry(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -23340,7 +23763,6 @@ class GPUdb(object):
         return response
     # end drop_container_registry
 
-
     # begin drop_credential
     def drop_credential( self, credential_name = None, options = {} ):
         """Drop an existing `credential <../../../../concepts/credentials/>`__.
@@ -23352,8 +23774,7 @@ class GPUdb(object):
                 credential.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -23376,16 +23797,14 @@ class GPUdb(object):
         return response
     # end drop_credential
 
-
     # begin drop_datasink
     def drop_datasink( self, name = None, options = {} ):
         """Drops an existing `data sink <../../../../concepts/data_sinks/>`__.
 
         By default, if any `table monitors
-        <../../../../concepts/table_monitors>`__ use this
-        sink as a destination, the request will be blocked unless option
-        *clear_table_monitors* is
-        *true*.
+        <../../../../concepts/table_monitors>`__ use this sink as a
+        destination, the request will be blocked unless option
+        *clear_table_monitors* is *true*.
 
         Parameters:
 
@@ -23394,8 +23813,7 @@ class GPUdb(object):
                 sink.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **clear_table_monitors** --
@@ -23408,6 +23826,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -23430,13 +23850,11 @@ class GPUdb(object):
         return response
     # end drop_datasink
 
-
     # begin drop_datasource
     def drop_datasource( self, name = None, options = {} ):
-        """Drops an existing `data source <../../../../concepts/data_sources/>`__.
-        Any external
-        tables that depend on the data source must be dropped before it can be
-        dropped.
+        """Drops an existing `data source
+        <../../../../concepts/data_sources/>`__.  Any external tables that
+        depend on the data source must be dropped before it can be dropped.
 
         Parameters:
 
@@ -23445,8 +23863,7 @@ class GPUdb(object):
                 source.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -23469,11 +23886,10 @@ class GPUdb(object):
         return response
     # end drop_datasource
 
-
     # begin drop_environment
     def drop_environment( self, environment_name = None, options = {} ):
-        """Drop an existing `user-defined function <../../../../concepts/udf/>`__
-        (UDF) environment.
+        """Drop an existing `user-defined function
+        <../../../../concepts/udf/>`__ (UDF) environment.
 
         Parameters:
 
@@ -23482,8 +23898,7 @@ class GPUdb(object):
                 environment.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **no_error_if_not_exists** --
@@ -23497,6 +23912,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -23519,10 +23936,8 @@ class GPUdb(object):
         return response
     # end drop_environment
 
-
     # begin drop_model
     def drop_model( self, model_name = None, options = {} ):
-
         assert isinstance( model_name, (basestring)), "drop_model(): Argument 'model_name' must be (one) of type(s) '(basestring)'; given %s" % type( model_name ).__name__
         assert isinstance( options, (dict)), "drop_model(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -23535,11 +23950,11 @@ class GPUdb(object):
         return response
     # end drop_model
 
-
     # begin drop_schema
     def drop_schema( self, schema_name = None, options = {} ):
-        """Drops an existing SQL-style `schema <../../../../concepts/schemas/>`__,
-        specified in input parameter *schema_name*.
+        """Drops an existing SQL-style `schema
+        <../../../../concepts/schemas/>`__, specified in input parameter
+        *schema_name*.
 
         Parameters:
 
@@ -23547,8 +23962,7 @@ class GPUdb(object):
                 Name of the schema to be dropped. Must be an existing schema.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **no_error_if_not_exists** --
@@ -23573,6 +23987,8 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -23594,12 +24010,10 @@ class GPUdb(object):
         return response
     # end drop_schema
 
-
     # begin evaluate_model
-    def evaluate_model( self, model_name = None, replicas = None, deployment_mode =
-                        None, source_table = None, destination_table = None,
-                        options = {} ):
-
+    def evaluate_model( self, model_name = None, replicas = None,
+                        deployment_mode = None, source_table = None,
+                        destination_table = None, options = {} ):
         assert isinstance( model_name, (basestring)), "evaluate_model(): Argument 'model_name' must be (one) of type(s) '(basestring)'; given %s" % type( model_name ).__name__
         assert isinstance( replicas, (int, long, float)), "evaluate_model(): Argument 'replicas' must be (one) of type(s) '(int, long, float)'; given %s" % type( replicas ).__name__
         assert isinstance( deployment_mode, (basestring)), "evaluate_model(): Argument 'deployment_mode' must be (one) of type(s) '(basestring)'; given %s" % type( deployment_mode ).__name__
@@ -23620,7 +24034,6 @@ class GPUdb(object):
         return response
     # end evaluate_model
 
-
     # begin execute_proc
     def execute_proc( self, proc_name = None, params = {}, bin_params = {},
                       input_table_names = [], input_column_names = {},
@@ -23629,16 +24042,12 @@ class GPUdb(object):
         the proc to complete before returning.
 
         If the proc being executed is distributed, input parameter
-        *input_table_names* &
-        input parameter *input_column_names* may be passed to the proc to use
-        for reading data,
-        and input parameter *output_table_names* may be passed to the proc to
-        use for writing
-        data.
+        *input_table_names* & input parameter *input_column_names* may be
+        passed to the proc to use for reading data, and input parameter
+        *output_table_names* may be passed to the proc to use for writing data.
 
         If the proc being executed is non-distributed, these table parameters
-        will be
-        ignored.
+        will be ignored.
 
         Parameters:
 
@@ -23651,64 +24060,53 @@ class GPUdb(object):
                 key/value pair specifies the name of a parameter and its value.
                 The default value is an empty dict ( {} ).
 
-            bin_params (dict of str to str)
+            bin_params (dict of str to bytes)
                 A map containing named binary parameters to pass to the proc.
                 Each key/value pair specifies the name of a parameter and its
-                value.  The default value is an empty dict ( {} ).
+                value. The default value is an empty dict ( {} ).
 
             input_table_names (list of str)
-                Names of the tables containing data to be passed to the
-                proc. Each name specified must be the name of a currently
-                existing table, in
-                [schema_name.]table_name format, using standard
-                `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__.
-                If no table names are specified, no data will be passed to the
-                proc.  This
-                parameter is ignored if the proc has a non-distributed
-                execution mode.  The default value is an empty list ( [] ).
-                The user can provide a single element (which will be
-                automatically promoted to a list internally) or a list.
+                Names of the tables containing data to be passed to the proc.
+                Each name specified must be the name of a currently existing
+                table, in [schema_name.]table_name format, using standard `name
+                resolution rules
+                <../../../../concepts/tables/#table-name-resolution>`__. If no
+                table names are specified, no data will be passed to the proc.
+                This parameter is ignored if the proc has a non-distributed
+                execution mode. The default value is an empty list ( [] ). The
+                user can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
 
             input_column_names (dict of str to lists of str)
                 Map of table names from input parameter *input_table_names* to
-                lists
-                of names of columns from those tables that will be passed to
-                the proc. Each
-                column name specified must be the name of an existing column in
-                the
-                corresponding table. If a table name from input parameter
-                *input_table_names* is not
-                included, all columns from that table will be passed to the
-                proc.  This
+                lists of names of columns from those tables that will be passed
+                to the proc. Each column name specified must be the name of an
+                existing column in the corresponding table. If a table name
+                from input parameter *input_table_names* is not included, all
+                columns from that table will be passed to the proc.  This
                 parameter is ignored if the proc has a non-distributed
-                execution mode.  The default value is an empty dict ( {} ).
+                execution mode. The default value is an empty dict ( {} ).
 
             output_table_names (list of str)
-                Names of the tables to which output data from the proc will
-                be written, each in [schema_name.]table_name format, using
-                standard
-                `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__
-                and meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`__.
-                If a specified table does not exist, it will automatically be
-                created with the
-                same schema as the corresponding table (by order) from
-                input parameter *input_table_names*, excluding any primary and
-                shard keys. If a specified
-                table is a non-persistent result table, it must not have
-                primary or shard keys.
-                If no table names are specified, no output data can be returned
-                from the proc.
-                This parameter is ignored if the proc has a non-distributed
-                execution mode.  The default value is an empty list ( [] ).
-                The user can provide a single element (which will be
-                automatically promoted to a list internally) or a list.
+                Names of the tables to which output data from the proc will be
+                written, each in [schema_name.]table_name format, using
+                standard `name resolution rules
+                <../../../../concepts/tables/#table-name-resolution>`__ and
+                meeting `table naming criteria
+                <../../../../concepts/tables/#table-naming-criteria>`__. If a
+                specified table does not exist, it will automatically be
+                created with the same schema as the corresponding table (by
+                order) from input parameter *input_table_names*, excluding any
+                primary and shard keys. If a specified table is a
+                non-persistent result table, it must not have primary or shard
+                keys. If no table names are specified, no output data can be
+                returned from the proc. This parameter is ignored if the proc
+                has a non-distributed execution mode. The default value is an
+                empty list ( [] ). The user can provide a single element (which
+                will be automatically promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **cache_input** --
@@ -23719,7 +24117,7 @@ class GPUdb(object):
                   retained until the proc status is cleared with the
                   :meth:`clear_complete <GPUdb.show_proc_status>` option of
                   :meth:`GPUdb.show_proc_status` and all proc instances using
-                  the cached data have completed.  The default value is ''.
+                  the cached data have completed. The default value is ''.
 
                 * **use_cached_input** --
                   A comma-delimited list of run IDs (as returned from prior
@@ -23731,18 +24129,37 @@ class GPUdb(object):
                   for the specified run IDs will be passed to the proc. If the
                   same table was cached for multiple specified run IDs, the
                   cached data from the first run ID specified in the list that
-                  includes that table will be used.  The default value is ''.
+                  includes that table will be used. The default value is ''.
 
                 * **run_tag** --
                   A string that, if not empty, can be used in subsequent calls
                   to :meth:`GPUdb.show_proc_status` or :meth:`GPUdb.kill_proc`
-                  to identify the proc instance.  The default value is ''.
+                  to identify the proc instance. The default value is ''.
 
                 * **max_output_lines** --
                   The maximum number of lines of output from stdout and stderr
                   to return via :meth:`GPUdb.show_proc_status`. If the number
                   of lines output exceeds the maximum, earlier lines are
-                  discarded.  The default value is '100'.
+                  discarded. The default value is '100'.
+
+                * **execute_at_startup** --
+                  If *true*, an instance of the proc will run when the database
+                  is started instead of running immediately. The output
+                  parameter *run_id* can be retrieved using
+                  :meth:`GPUdb.show_proc` and used in
+                  :meth:`GPUdb.show_proc_status`.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **execute_at_startup_as** --
+                  Sets the alternate user name to execute this proc instance as
+                  when *execute_at_startup* is *true*. The default value is ''.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -23777,11 +24194,10 @@ class GPUdb(object):
         return response
     # end execute_proc
 
-
     # begin execute_sql
-    def execute_sql( self, statement = None, offset = 0, limit = -9999, encoding =
-                     'binary', request_schema_str = '', data = [], options = {}
-                     ):
+    def execute_sql( self, statement = None, offset = 0, limit = -9999, encoding
+                     = 'binary', request_schema_str = '', data = [], options =
+                     {} ):
         """Execute a SQL statement (query, DML, or DDL).
 
         See `SQL Support <../../../../sql/>`__ for the complete set of
@@ -23794,24 +24210,21 @@ class GPUdb(object):
 
             offset (long)
                 A positive integer indicating the number of initial results to
-                skip (this can be useful for paging through the results).  The
-                default value is 0.The minimum allowed value is 0. The maximum
+                skip (this can be useful for paging through the results). The
+                default value is 0. The minimum allowed value is 0. The maximum
                 allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned, or
-                END_OF_SET (-9999) to indicate that the maximum number of
-                results allowed by the server should be
-                returned.  The number of records returned will never exceed the
-                server's own limit, defined by the
-                `max_get_records_size
+                be returned, or END_OF_SET (-9999) to indicate that the maximum
+                number of results allowed by the server should be returned.
+                The number of records returned will never exceed the server's
+                own limit, defined by the `max_get_records_size
                 <../../../../config/#config-main-general>`__ parameter in the
-                server configuration.
-                Use output parameter *has_more_records* to see if more records
-                exist in the result to be fetched, and
+                server configuration. Use output parameter *has_more_records*
+                to see if more records exist in the result to be fetched, and
                 input parameter *offset* & input parameter *limit* to request
-                subsequent pages of results.  The default value is -9999.
+                subsequent pages of results. The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records; either 'binary' or
@@ -23824,19 +24237,17 @@ class GPUdb(object):
                 The default value is 'binary'.
 
             request_schema_str (str)
-                Avro schema of input parameter *data*.  The default value is
-                ''.
+                Avro schema of input parameter *data*. The default value is ''.
 
-            data (list of str)
+            data (list of bytes)
                 An array of binary-encoded data for the records to be binded to
                 the SQL query.  Or use *query_parameters* to pass the data in
-                JSON format.  The default value is an empty list ( [] ).  The
+                JSON format. The default value is an empty list ( [] ). The
                 user can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **cost_based_optimization** --
@@ -23878,18 +24289,15 @@ class GPUdb(object):
                 * **ignore_existing_pk** --
                   Specifies the record collision error-suppression policy for
                   inserting into or updating a table with a `primary key
-                  <../../../../concepts/tables/#primary-keys>`__, only
-                  used when primary key record collisions are rejected
-                  (*update_on_existing_pk*
-                  is *false*).  If set to
-                  *true*, any record insert/update that is rejected
-                  for resulting in a primary key collision with an existing
-                  table record will be ignored with no error
-                  generated.  If *false*, the rejection of any
-                  insert/update for resulting in a primary key collision will
-                  cause an error to be reported.  If the
-                  specified table does not have a primary key or if
-                  *update_on_existing_pk* is
+                  <../../../../concepts/tables/#primary-keys>`__, only used
+                  when primary key record collisions are rejected
+                  (*update_on_existing_pk* is *false*).  If set to *true*, any
+                  record insert/update that is rejected for resulting in a
+                  primary key collision with an existing table record will be
+                  ignored with no error generated.  If *false*, the rejection
+                  of any insert/update for resulting in a primary key collision
+                  will cause an error to be reported.  If the specified table
+                  does not have a primary key or if *update_on_existing_pk* is
                   *true*, then this option has no effect.
                   Allowed values are:
 
@@ -24004,18 +24412,15 @@ class GPUdb(object):
 
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting into or
-                  updating
-                  a table with a `primary key
+                  updating a table with a `primary key
                   <../../../../concepts/tables/#primary-keys>`__. If set to
-                  *true*, any existing table record with primary
-                  key values that match those of a record being inserted or
-                  updated will be replaced by that record.
-                  If set to *false*, any such primary key
-                  collision will result in the insert/update being rejected and
-                  the error handled as determined by
+                  *true*, any existing table record with primary key values
+                  that match those of a record being inserted or updated will
+                  be replaced by that record. If set to *false*, any such
+                  primary key collision will result in the insert/update being
+                  rejected and the error handled as determined by
                   *ignore_existing_pk*.  If the specified table does not have a
-                  primary key,
-                  then this option has no effect.
+                  primary key, then this option has no effect.
                   Allowed values are:
 
                   * **true** --
@@ -24046,6 +24451,8 @@ class GPUdb(object):
                   Use the supplied value as the `default schema
                   <../../../../concepts/schemas/#default-schema>`__ when
                   processing this SQL command.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -24079,17 +24486,19 @@ class GPUdb(object):
                 (Subject to config.paging_tables_enabled)
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **count** --
                   Number of records in the final table
 
+                The default value is an empty dict ( {} ).
+
             record_type (:class:`RecordType` or None)
                 A :class:`RecordType` object using which the user can decode
-                the binarydata by using :meth:`GPUdbRecord.decode_binary_data`.
-                If JSON encodingis used, then None.
+                the binary data by using
+                :meth:`GPUdbRecord.decode_binary_data`. If JSON encoding is
+                used, then None.
         """
         assert isinstance( statement, (basestring)), "execute_sql(): Argument 'statement' must be (one) of type(s) '(basestring)'; given %s" % type( statement ).__name__
         assert isinstance( offset, (int, long, float)), "execute_sql(): Argument 'offset' must be (one) of type(s) '(int, long, float)'; given %s" % type( offset ).__name__
@@ -24128,11 +24537,10 @@ class GPUdb(object):
         return response
     # end execute_sql
 
-
     # begin execute_sql_and_decode
-    def execute_sql_and_decode( self, statement = None, offset = 0, limit = -9999,
-                                encoding = 'binary', request_schema_str = '',
-                                data = [], options = {}, record_type = None,
+    def execute_sql_and_decode( self, statement = None, offset = 0, limit =
+                                -9999, encoding = 'binary', request_schema_str =
+                                '', data = [], options = {}, record_type = None,
                                 force_primitive_return_types = True,
                                 get_column_major = True ):
         """Execute a SQL statement (query, DML, or DDL).
@@ -24147,24 +24555,21 @@ class GPUdb(object):
 
             offset (long)
                 A positive integer indicating the number of initial results to
-                skip (this can be useful for paging through the results).  The
-                default value is 0.The minimum allowed value is 0. The maximum
+                skip (this can be useful for paging through the results). The
+                default value is 0. The minimum allowed value is 0. The maximum
                 allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned, or
-                END_OF_SET (-9999) to indicate that the maximum number of
-                results allowed by the server should be
-                returned.  The number of records returned will never exceed the
-                server's own limit, defined by the
-                `max_get_records_size
+                be returned, or END_OF_SET (-9999) to indicate that the maximum
+                number of results allowed by the server should be returned.
+                The number of records returned will never exceed the server's
+                own limit, defined by the `max_get_records_size
                 <../../../../config/#config-main-general>`__ parameter in the
-                server configuration.
-                Use output parameter *has_more_records* to see if more records
-                exist in the result to be fetched, and
+                server configuration. Use output parameter *has_more_records*
+                to see if more records exist in the result to be fetched, and
                 input parameter *offset* & input parameter *limit* to request
-                subsequent pages of results.  The default value is -9999.
+                subsequent pages of results. The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records; either 'binary' or
@@ -24177,19 +24582,17 @@ class GPUdb(object):
                 The default value is 'binary'.
 
             request_schema_str (str)
-                Avro schema of input parameter *data*.  The default value is
-                ''.
+                Avro schema of input parameter *data*. The default value is ''.
 
-            data (list of str)
+            data (list of bytes)
                 An array of binary-encoded data for the records to be binded to
                 the SQL query.  Or use *query_parameters* to pass the data in
-                JSON format.  The default value is an empty list ( [] ).  The
+                JSON format. The default value is an empty list ( [] ). The
                 user can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **cost_based_optimization** --
@@ -24231,18 +24634,15 @@ class GPUdb(object):
                 * **ignore_existing_pk** --
                   Specifies the record collision error-suppression policy for
                   inserting into or updating a table with a `primary key
-                  <../../../../concepts/tables/#primary-keys>`__, only
-                  used when primary key record collisions are rejected
-                  (*update_on_existing_pk*
-                  is *false*).  If set to
-                  *true*, any record insert/update that is rejected
-                  for resulting in a primary key collision with an existing
-                  table record will be ignored with no error
-                  generated.  If *false*, the rejection of any
-                  insert/update for resulting in a primary key collision will
-                  cause an error to be reported.  If the
-                  specified table does not have a primary key or if
-                  *update_on_existing_pk* is
+                  <../../../../concepts/tables/#primary-keys>`__, only used
+                  when primary key record collisions are rejected
+                  (*update_on_existing_pk* is *false*).  If set to *true*, any
+                  record insert/update that is rejected for resulting in a
+                  primary key collision with an existing table record will be
+                  ignored with no error generated.  If *false*, the rejection
+                  of any insert/update for resulting in a primary key collision
+                  will cause an error to be reported.  If the specified table
+                  does not have a primary key or if *update_on_existing_pk* is
                   *true*, then this option has no effect.
                   Allowed values are:
 
@@ -24357,18 +24757,15 @@ class GPUdb(object):
 
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting into or
-                  updating
-                  a table with a `primary key
+                  updating a table with a `primary key
                   <../../../../concepts/tables/#primary-keys>`__. If set to
-                  *true*, any existing table record with primary
-                  key values that match those of a record being inserted or
-                  updated will be replaced by that record.
-                  If set to *false*, any such primary key
-                  collision will result in the insert/update being rejected and
-                  the error handled as determined by
+                  *true*, any existing table record with primary key values
+                  that match those of a record being inserted or updated will
+                  be replaced by that record. If set to *false*, any such
+                  primary key collision will result in the insert/update being
+                  rejected and the error handled as determined by
                   *ignore_existing_pk*.  If the specified table does not have a
-                  primary key,
-                  then this option has no effect.
+                  primary key, then this option has no effect.
                   Allowed values are:
 
                   * **true** --
@@ -24400,11 +24797,13 @@ class GPUdb(object):
                   <../../../../concepts/schemas/#default-schema>`__ when
                   processing this SQL command.
 
+                The default value is an empty dict ( {} ).
+
             record_type (:class:`RecordType` or None)
-                The record type expected in the results, or None to
-                determinethe appropriate type automatically. If known,
-                providing thismay improve performance in binary mode. Not used
-                in JSON mode.The default value is None.
+                The record type expected in the results, or None to determine
+                the appropriate type automatically. If known, providing this
+                may improve performance in binary mode. Not used in JSON mode.
+                The default value is None.
 
             force_primitive_return_types (bool)
                 If `True`, then `OrderedDict` objects will be returned, where
@@ -24423,7 +24822,7 @@ class GPUdb(object):
 
             get_column_major (bool)
                 Indicates if the decoded records will be transposed to be
-                column-major or returned as is (row-major).  Default value is
+                column-major or returned as is (row-major). Default value is
                 True.
 
         Returns:
@@ -24452,12 +24851,13 @@ class GPUdb(object):
                 (Subject to config.paging_tables_enabled)
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **count** --
                   Number of records in the final table
+
+                The default value is an empty dict ( {} ).
 
             records (list of :class:`Record`)
                 A list of :class:`Record` objects which contain the decoded
@@ -24524,26 +24924,67 @@ class GPUdb(object):
         return response
     # end execute_sql_and_decode
 
+    # begin export_query_metrics
+    def export_query_metrics( self, options = {} ):
+        """Export query metrics to a given destination. Returns query metrics.
+
+        Parameters:
+
+            options (dict of str to str)
+                Optional parameters.
+                Allowed keys are:
+
+                * **job_id** --
+                  Export query metrics for the currently running job
+
+                * **format** --
+                  Specifies which format to export the metrics.
+                  Allowed values are:
+
+                  * json
+
+                  The default value is 'json'.
+
+                The default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            info (dict of str to str)
+                Additional information.
+                Allowed keys are:
+
+                * **output** --
+                  Exported metrics if no other destination specified
+
+                The default value is an empty dict ( {} ).
+        """
+        assert isinstance( options, (dict)), "export_query_metrics(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/export/query/metrics', obj, convert_to_attr_dict = True )
+
+        return response
+    # end export_query_metrics
 
     # begin export_records_to_files
-    def export_records_to_files( self, table_name = None, filepath = None, options =
-                                 {} ):
+    def export_records_to_files( self, table_name = None, filepath = None,
+                                 options = {} ):
         """Export records from a table to files. All tables can be exported, in
-        full or partial
-        (see *columns_to_export* and *columns_to_skip*).
+        full or partial (see *columns_to_export* and *columns_to_skip*).
         Additional filtering can be applied when using export table with
-        expression through SQL.
-        Default destination is KIFS, though other storage types (Azure, S3,
-        GCS, and HDFS) are supported
-        through *datasink_name*; see :meth:`GPUdb.create_datasink`.
+        expression through SQL. Default destination is KIFS, though other
+        storage types (Azure, S3, GCS, and HDFS) are supported through
+        *datasink_name*; see :meth:`GPUdb.create_datasink`.
 
         Server's local file system is not supported.  Default file format is
-        delimited text. See options for
-        different file types and different options for each file type.  Table
-        is saved to a single file if
-        within max file size limits (may vary depending on datasink type).  If
-        not, then table is split into
-        multiple files; these may be smaller than the max size limit.
+        delimited text. See options for different file types and different
+        options for each file type.  Table is saved to a single file if within
+        max file size limits (may vary depending on datasink type).  If not,
+        then table is split into multiple files; these may be smaller than the
+        max size limit.
 
         All filenames created are returned in the response.
 
@@ -24551,66 +24992,59 @@ class GPUdb(object):
 
             table_name (str)
 
-
             filepath (str)
                 Path to data export target.  If input parameter *filepath* has
-                a file extension, it is
-                read as the name of a file. If input parameter *filepath* is a
-                directory, then the source table name with a
-                random UUID appended will be used as the name of each exported
-                file, all written to that directory.
-                If filepath is a filename, then all exported files will have a
-                random UUID appended to the given
-                name.  In either case, the target directory specified or
-                implied must exist.  The names of all
+                a file extension, it is read as the name of a file. If input
+                parameter *filepath* is a directory, then the source table name
+                with a random UUID appended will be used as the name of each
+                exported file, all written to that directory. If filepath is a
+                filename, then all exported files will have a random UUID
+                appended to the given name.  In either case, the target
+                directory specified or implied must exist.  The names of all
                 exported files are returned in the response.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **batch_size** --
-                  Number of records to be exported as a batch.  The default
+                  Number of records to be exported as a batch. The default
                   value is '1000000'.
 
                 * **column_formats** --
                   For each source column specified, applies the
-                  column-property-bound
-                  format.  Currently supported column properties include date,
-                  time, & datetime. The parameter value
-                  must be formatted as a JSON string of maps of column names to
-                  maps of column properties to their
-                  corresponding column formats, e.g.,
-                  '{ "order_date" : { "date" : "%Y.%m.%d" }, "order_time" : {
-                  "time" : "%H:%M:%S" } }'.
+                  column-property-bound format.  Currently supported column
+                  properties include date, time, & datetime. The parameter
+                  value must be formatted as a JSON string of maps of column
+                  names to maps of column properties to their corresponding
+                  column formats, e.g., '{ "order_date" : { "date" : "%Y.%m.%d"
+                  }, "order_time" : { "time" : "%H:%M:%S" } }'.
+
                   See *default_column_formats* for valid format syntax.
 
                 * **columns_to_export** --
                   Specifies a comma-delimited list of columns from the source
-                  table to
-                  export, written to the output file in the order they are
-                  given.
+                  table to export, written to the output file in the order they
+                  are given.
+
                   Column names can be provided, in which case the target file
-                  will use those names as the column
-                  headers as well.
+                  will use those names as the column headers as well.
+
                   Alternatively, column numbers can be specified--discretely or
-                  as a range.  For example, a value of
-                  '5,7,1..3' will write values from the fifth column in the
-                  source table into the first column in the
-                  target file, from the seventh column in the source table into
-                  the second column in the target file,
+                  as a range.  For example, a value of '5,7,1..3' will write
+                  values from the fifth column in the source table into the
+                  first column in the target file, from the seventh column in
+                  the source table into the second column in the target file,
                   and from the first through third columns in the source table
-                  into the third through fifth columns in
-                  the target file.
+                  into the third through fifth columns in the target file.
+
                   Mutually exclusive with *columns_to_skip*.
 
                 * **columns_to_skip** --
                   Comma-separated list of column names or column numbers to not
                   export.  All columns in the source table not specified will
-                  be written to the target file in the
-                  order they appear in the table definition.  Mutually
-                  exclusive with
+                  be written to the target file in the order they appear in the
+                  table definition.  Mutually exclusive with
                   *columns_to_export*.
 
                 * **datasink_name** --
@@ -24619,40 +25053,36 @@ class GPUdb(object):
                 * **default_column_formats** --
                   Specifies the default format to use to write data.  Currently
                   supported column properties include date, time, & datetime.
-                  This default column-property-bound
-                  format can be overridden by specifying a column property &
-                  format for a given source column in
-                  *column_formats*. For each specified annotation, the format
-                  will apply to all
-                  columns with that annotation unless custom *column_formats*
-                  for that
-                  annotation are specified.
+                  This default column-property-bound format can be overridden
+                  by specifying a column property & format for a given source
+                  column in *column_formats*. For each specified annotation,
+                  the format will apply to all columns with that annotation
+                  unless custom *column_formats* for that annotation are
+                  specified.
+
                   The parameter value must be formatted as a JSON string that
-                  is a map of column properties to their
-                  respective column formats, e.g., '{ "date" : "%Y.%m.%d",
-                  "time" : "%H:%M:%S" }'.  Column
-                  formats are specified as a string of control characters and
-                  plain text. The supported control
-                  characters are 'Y', 'm', 'd', 'H', 'M', 'S', and 's', which
-                  follow the Linux 'strptime()'
-                  specification, as well as 's', which specifies seconds and
-                  fractional seconds (though the fractional
-                  component will be truncated past milliseconds).
+                  is a map of column properties to their respective column
+                  formats, e.g., '{ "date" : "%Y.%m.%d", "time" : "%H:%M:%S"
+                  }'.  Column formats are specified as a string of control
+                  characters and plain text. The supported control characters
+                  are 'Y', 'm', 'd', 'H', 'M', 'S', and 's', which follow the
+                  Linux 'strptime()' specification, as well as 's', which
+                  specifies seconds and fractional seconds (though the
+                  fractional component will be truncated past milliseconds).
+
                   Formats for the 'date' annotation must include the 'Y', 'm',
-                  and 'd' control characters. Formats for
-                  the 'time' annotation must include the 'H', 'M', and either
-                  'S' or 's' (but not both) control
-                  characters. Formats for the 'datetime' annotation meet both
-                  the 'date' and 'time' control character
+                  and 'd' control characters. Formats for the 'time' annotation
+                  must include the 'H', 'M', and either 'S' or 's' (but not
+                  both) control characters. Formats for the 'datetime'
+                  annotation meet both the 'date' and 'time' control character
                   requirements. For example, '{"datetime" : "%m/%d/%Y %H:%M:%S"
-                  }' would be used to write text
-                  as "05/04/2000 12:12:11"
+                  }' would be used to write text as "05/04/2000 12:12:11"
 
                 * **export_ddl** --
-                  Save DDL to a separate file.  The default value is 'false'.
+                  Save DDL to a separate file. The default value is 'false'.
 
                 * **file_extension** --
-                  Extension to give the export file.  The default value is
+                  Extension to give the export file. The default value is
                   '.csv'.
 
                 * **file_type** --
@@ -24662,12 +25092,13 @@ class GPUdb(object):
                   * **delimited_text** --
                     Delimited text file format; e.g., CSV, TSV, PSV, etc.
 
+                  * parquet
+
                   The default value is 'delimited_text'.
 
                 * **kinetica_header** --
                   Whether to include a Kinetica proprietary header. Will not be
-                  written if *text_has_header* is
-                  *false*.
+                  written if *text_has_header* is *false*.
                   Allowed values are:
 
                   * true
@@ -24677,7 +25108,7 @@ class GPUdb(object):
 
                 * **kinetica_header_delimiter** --
                   If a Kinetica proprietary header is included, then specify a
-                  property separator. Different from column delimiter.  The
+                  property separator. Different from column delimiter. The
                   default value is '|'.
 
                 * **compression_type** --
@@ -24692,8 +25123,7 @@ class GPUdb(object):
 
                 * **single_file** --
                   Save records to a single file. This option may be ignored if
-                  file
-                  size exceeds internal file size limits (this limit will
+                  file size exceeds internal file size limits (this limit will
                   differ on different targets).
                   Allowed values are:
 
@@ -24705,13 +25135,14 @@ class GPUdb(object):
 
                 * **text_delimiter** --
                   Specifies the character to write out to delimit field values
-                  and
-                  field names in the header (if present).
-                  For *delimited_text* *file_type* only.  The default value is
+                  and field names in the header (if present).
+
+                  For *delimited_text* *file_type* only. The default value is
                   ','.
 
                 * **text_has_header** --
                   Indicates whether to write out a header row.
+
                   For *delimited_text* *file_type* only.
                   Allowed values are:
 
@@ -24722,10 +25153,12 @@ class GPUdb(object):
 
                 * **text_null_string** --
                   Specifies the character string that should be written out for
-                  the null
-                  value in the data.
-                  For *delimited_text* *file_type* only.  The default value is
-                  '\\N'.
+                  the null value in the data.
+
+                  For *delimited_text* *file_type* only. The default value is
+                  '\\\\N'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -24747,9 +25180,7 @@ class GPUdb(object):
 
             data_text (list of str)
 
-
-            data_bytes (list of str)
-
+            data_bytes (list of bytes)
 
             info (dict of str to str)
                 Additional information
@@ -24768,10 +25199,9 @@ class GPUdb(object):
         return response
     # end export_records_to_files
 
-
     # begin export_records_to_table
-    def export_records_to_table( self, table_name = None, remote_query = '', options
-                                 = {} ):
+    def export_records_to_table( self, table_name = None, remote_query = None,
+                                 options = {} ):
         """Exports records from source table to  specified target table in an
         external database
 
@@ -24779,18 +25209,16 @@ class GPUdb(object):
 
             table_name (str)
                 Name of the table from which the data will be exported to
-                remote database, in
-                [schema_name.]table_name format, using standard
-                `name resolution rules
+                remote database, in [schema_name.]table_name format, using
+                standard `name resolution rules
                 <../../../../concepts/tables/#table-name-resolution>`__.
 
             remote_query (str)
                 Parameterized insert query to export gpudb table data into
-                remote database.  The default value is ''.
+                remote database
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **batch_size** --
@@ -24801,38 +25229,7 @@ class GPUdb(object):
                   Name of an existing external data sink to which table name
                   specified in input parameter *table_name* will be exported
 
-                * **jdbc_session_init_statement** --
-                  Executes the statement per each jdbc session before doing
-                  actual load.  The default value is ''.
-
-                * **jdbc_connection_init_statement** --
-                  Executes the statement once before doing actual load.  The
-                  default value is ''.
-
-                * **remote_table** --
-                  Name of the target table to which source table is exported.
-                  When this option is specified remote_query cannot be
-                  specified.  The default value is ''.
-
-                * **use_st_geomfrom_casts** --
-                  Wraps parametrized variables with st_geomfromtext or
-                  st_geomfromwkb based on source column type.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
-                * **use_indexed_parameters** --
-                  Uses $n style syntax when generating insert query for
-                  remote_table option.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -24867,21 +25264,18 @@ class GPUdb(object):
         return response
     # end export_records_to_table
 
-
     # begin filter
-    def filter( self, table_name = None, view_name = '', expression = None, options
-                = {} ):
+    def filter( self, table_name = None, view_name = '', expression = None,
+                options = {} ):
         """Filters data based on the specified expression.  The results are
         stored in a `result set <../../../../concepts/filtered_views/>`__ with
-        the
-        given input parameter *view_name*.
+        the given input parameter *view_name*.
 
         For details see `Expressions <../../../../concepts/expressions/>`__.
 
         The response message contains the number of points for which the
-        expression
-        evaluated to be true, which is equivalent to the size of the result
-        view.
+        expression evaluated to be true, which is equivalent to the size of the
+        result view.
 
         Parameters:
 
@@ -24898,7 +25292,7 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
             expression (str)
@@ -24907,8 +25301,7 @@ class GPUdb(object):
                 <../../../../concepts/expressions/>`__.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -24933,11 +25326,13 @@ class GPUdb(object):
                   created.
 
                 * **view_id** --
-                  view this filtered-view is part of.  The default value is ''.
+                  view this filtered-view is part of. The default value is ''.
 
                 * **ttl** --
                   Sets the `TTL <../../../../concepts/ttl/>`__ of the view
                   specified in input parameter *view_name*.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -24946,13 +25341,14 @@ class GPUdb(object):
                 The number of records that matched the given select expression.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_view_name** --
                   The fully qualified name of the view (i.e. including the
                   schema)
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "filter(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -24970,21 +25366,17 @@ class GPUdb(object):
         return response
     # end filter
 
-
     # begin filter_by_area
     def filter_by_area( self, table_name = None, view_name = '', x_column_name =
                         None, x_vector = None, y_column_name = None, y_vector =
                         None, options = {} ):
         """Calculates which objects from a table are within a named area of
         interest (NAI/polygon). The operation is synchronous, meaning that a
-        response
-        will not be returned until all the matching objects are fully
-        available. The
-        response payload provides the count of the resulting set. A new
-        resultant set
-        (view) which satisfies the input NAI restriction specification is
-        created with
-        the name input parameter *view_name* passed in as part of the input.
+        response will not be returned until all the matching objects are fully
+        available. The response payload provides the count of the resulting
+        set. A new resultant set (view) which satisfies the input NAI
+        restriction specification is created with the name input parameter
+        *view_name* passed in as part of the input.
 
         Parameters:
 
@@ -25001,7 +25393,7 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
             x_column_name (str)
@@ -25009,7 +25401,7 @@ class GPUdb(object):
 
             x_vector (list of floats)
                 List of x coordinates of the vertices of the polygon
-                representing the area to be filtered.    The user can provide a
+                representing the area to be filtered. The user can provide a
                 single element (which will be automatically promoted to a list
                 internally) or a list.
 
@@ -25018,13 +25410,12 @@ class GPUdb(object):
 
             y_vector (list of floats)
                 List of y coordinates of the vertices of the polygon
-                representing the area to be filtered.    The user can provide a
+                representing the area to be filtered. The user can provide a
                 single element (which will be automatically promoted to a list
                 internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -25048,6 +25439,8 @@ class GPUdb(object):
                   If the schema provided is non-existent, it will be
                   automatically created.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -25055,13 +25448,14 @@ class GPUdb(object):
                 The number of records passing the area filter.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_view_name** --
                   The fully qualified name of the view (i.e. including the
                   schema)
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "filter_by_area(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_area(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -25085,22 +25479,17 @@ class GPUdb(object):
         return response
     # end filter_by_area
 
-
     # begin filter_by_area_geometry
     def filter_by_area_geometry( self, table_name = None, view_name = '',
                                  column_name = None, x_vector = None, y_vector =
                                  None, options = {} ):
         """Calculates which geospatial geometry objects from a table intersect
         a named area of interest (NAI/polygon). The operation is synchronous,
-        meaning
-        that a response will not be returned until all the matching objects are
-        fully
-        available. The response payload provides the count of the resulting
-        set. A new
-        resultant set (view) which satisfies the input NAI restriction
-        specification is
-        created with the name input parameter *view_name* passed in as part of
-        the input.
+        meaning that a response will not be returned until all the matching
+        objects are fully available. The response payload provides the count of
+        the resulting set. A new resultant set (view) which satisfies the input
+        NAI restriction specification is created with the name input parameter
+        *view_name* passed in as part of the input.
 
         Parameters:
 
@@ -25117,7 +25506,7 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
             column_name (str)
@@ -25125,19 +25514,18 @@ class GPUdb(object):
 
             x_vector (list of floats)
                 List of x coordinates of the vertices of the polygon
-                representing the area to be filtered.    The user can provide a
+                representing the area to be filtered. The user can provide a
                 single element (which will be automatically promoted to a list
                 internally) or a list.
 
             y_vector (list of floats)
                 List of y coordinates of the vertices of the polygon
-                representing the area to be filtered.    The user can provide a
+                representing the area to be filtered. The user can provide a
                 single element (which will be automatically promoted to a list
                 internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -25160,6 +25548,8 @@ class GPUdb(object):
                   non-existent]  The schema for the newly created view. If the
                   schema is non-existent, it will be automatically created.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -25167,13 +25557,14 @@ class GPUdb(object):
                 The number of records passing the area filter.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_view_name** --
                   The fully qualified name of the view (i.e. including the
                   schema)
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "filter_by_area_geometry(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_area_geometry(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -25195,21 +25586,17 @@ class GPUdb(object):
         return response
     # end filter_by_area_geometry
 
-
     # begin filter_by_box
     def filter_by_box( self, table_name = None, view_name = '', x_column_name =
                        None, min_x = None, max_x = None, y_column_name = None,
                        min_y = None, max_y = None, options = {} ):
         """Calculates how many objects within the given table lie in a
         rectangular box. The operation is synchronous, meaning that a response
-        will not
-        be returned until all the objects are fully available. The response
-        payload
-        provides the count of the resulting set. A new resultant set which
-        satisfies the
-        input NAI restriction specification is also created when a input
-        parameter *view_name* is
-        passed in as part of the input payload.
+        will not be returned until all the objects are fully available. The
+        response payload provides the count of the resulting set. A new
+        resultant set which satisfies the input NAI restriction specification
+        is also created when a input parameter *view_name* is passed in as part
+        of the input payload.
 
         Parameters:
 
@@ -25227,7 +25614,7 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
             x_column_name (str)
@@ -25256,8 +25643,7 @@ class GPUdb(object):
                 greater than or equal to input parameter *min_y*.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -25281,6 +25667,8 @@ class GPUdb(object):
                   If the schema is non-existent, it will be automatically
                   created.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -25288,13 +25676,14 @@ class GPUdb(object):
                 The number of records passing the box filter.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_view_name** --
                   The fully qualified name of the view (i.e. including the
                   schema)
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "filter_by_box(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_box(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -25322,20 +25711,16 @@ class GPUdb(object):
         return response
     # end filter_by_box
 
-
     # begin filter_by_box_geometry
-    def filter_by_box_geometry( self, table_name = None, view_name = '', column_name
-                                = None, min_x = None, max_x = None, min_y =
-                                None, max_y = None, options = {} ):
+    def filter_by_box_geometry( self, table_name = None, view_name = '',
+                                column_name = None, min_x = None, max_x = None,
+                                min_y = None, max_y = None, options = {} ):
         """Calculates which geospatial geometry objects from a table intersect
         a rectangular box. The operation is synchronous, meaning that a
-        response will
-        not be returned until all the objects are fully available. The response
-        payload
-        provides the count of the resulting set. A new resultant set which
-        satisfies the
-        input NAI restriction specification is also created when a input
-        parameter *view_name* is
+        response will not be returned until all the objects are fully
+        available. The response payload provides the count of the resulting
+        set. A new resultant set which satisfies the input NAI restriction
+        specification is also created when a input parameter *view_name* is
         passed in as part of the input payload.
 
         Parameters:
@@ -25354,7 +25739,7 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
             column_name (str)
@@ -25377,8 +25762,7 @@ class GPUdb(object):
                 be greater than or equal to input parameter *min_y*.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -25402,6 +25786,8 @@ class GPUdb(object):
                   If the schema provided is non-existent, it will be
                   automatically created.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -25409,13 +25795,14 @@ class GPUdb(object):
                 The number of records passing the box filter.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_view_name** --
                   The fully qualified name of the view (i.e. including the
                   schema)
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "filter_by_box_geometry(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_box_geometry(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -25441,11 +25828,10 @@ class GPUdb(object):
         return response
     # end filter_by_box_geometry
 
-
     # begin filter_by_geometry
-    def filter_by_geometry( self, table_name = None, view_name = '', column_name =
-                            None, input_wkt = '', operation = None, options = {}
-                            ):
+    def filter_by_geometry( self, table_name = None, view_name = '', column_name
+                            = None, input_wkt = '', operation = None, options =
+                            {} ):
         """Applies a geometry filter against a geospatial geometry column in a
         given table or view. The filtering geometry is provided by input
         parameter *input_wkt*.
@@ -25467,7 +25853,7 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
             column_name (str)
@@ -25476,11 +25862,11 @@ class GPUdb(object):
 
             input_wkt (str)
                 A geometry in WKT format that will be used to filter the
-                objects in input parameter *table_name*.  The default value is
+                objects in input parameter *table_name*. The default value is
                 ''.
 
             operation (str)
-                The geometric filtering operation to perform
+                The geometric filtering operation to perform.
                 Allowed values are:
 
                 * **contains** --
@@ -25510,8 +25896,7 @@ class GPUdb(object):
                   Matches records that are within the given WKT.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -25535,6 +25920,8 @@ class GPUdb(object):
                   If the schema provided is non-existent, it will be
                   automatically created.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -25542,13 +25929,14 @@ class GPUdb(object):
                 The number of records passing the geometry filter.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_view_name** --
                   The fully qualified name of the view (i.e. including the
                   schema)
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "filter_by_geometry(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_geometry(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -25570,33 +25958,24 @@ class GPUdb(object):
         return response
     # end filter_by_geometry
 
-
     # begin filter_by_list
-    def filter_by_list( self, table_name = None, view_name = '', column_values_map =
-                        None, options = {} ):
+    def filter_by_list( self, table_name = None, view_name = '',
+                        column_values_map = None, options = {} ):
         """Calculates which records from a table have values in the given list
         for the corresponding column. The operation is synchronous, meaning
-        that a
-        response will not be returned until all the objects are fully
-        available. The
-        response payload provides the count of the resulting set. A new
-        resultant set
-        (view) which satisfies the input filter specification is also created
-        if a
-        input parameter *view_name* is passed in as part of the request.
+        that a response will not be returned until all the objects are fully
+        available. The response payload provides the count of the resulting
+        set. A new resultant set (view) which satisfies the input filter
+        specification is also created if a input parameter *view_name* is
+        passed in as part of the request.
 
         For example, if a type definition has the columns 'x' and 'y', then a
-        filter by
-        list query with the column map
-        {"x":["10.1", "2.3"], "y":["0.0", "-31.5", "42.0"]} will return
-        the count of all data points whose x and y values match both in the
-        respective
-        x- and y-lists, e.g., "x = 10.1 and y = 0.0", "x = 2.3 and y = -31.5",
-        etc.
-        However, a record with "x = 10.1 and y = -31.5" or "x = 2.3 and y =
-        0.0"
-        would not be returned because the values in the given lists do not
-        correspond.
+        filter by list query with the column map {"x":["10.1", "2.3"],
+        "y":["0.0", "-31.5", "42.0"]} will return the count of all data points
+        whose x and y values match both in the respective x- and y-lists, e.g.,
+        "x = 10.1 and y = 0.0", "x = 2.3 and y = -31.5", etc. However, a record
+        with "x = 10.1 and y = -31.5" or "x = 2.3 and y = 0.0" would not be
+        returned because the values in the given lists do not correspond.
 
         Parameters:
 
@@ -25613,15 +25992,14 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
             column_values_map (dict of str to lists of str)
                 List of values for the corresponding column in the table
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -25660,6 +26038,8 @@ class GPUdb(object):
 
                   The default value is 'in_list'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -25667,13 +26047,14 @@ class GPUdb(object):
                 The number of records passing the list filter.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_view_name** --
                   The fully qualified name of the view (i.e. including the
                   schema)
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "filter_by_list(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_list(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -25691,28 +26072,21 @@ class GPUdb(object):
         return response
     # end filter_by_list
 
-
     # begin filter_by_radius
-    def filter_by_radius( self, table_name = None, view_name = '', x_column_name =
-                          None, x_center = None, y_column_name = None, y_center
-                          = None, radius = None, options = {} ):
+    def filter_by_radius( self, table_name = None, view_name = '', x_column_name
+                          = None, x_center = None, y_column_name = None,
+                          y_center = None, radius = None, options = {} ):
         """Calculates which objects from a table lie within a circle with the
         given radius and center point (i.e. circular NAI). The operation is
-        synchronous,
-        meaning that a response will not be returned until all the objects are
-        fully
-        available. The response payload provides the count of the resulting
-        set. A new
-        resultant set (view) which satisfies the input circular NAI restriction
-        specification is also created if a input parameter *view_name* is
-        passed in as part of
-        the request.
+        synchronous, meaning that a response will not be returned until all the
+        objects are fully available. The response payload provides the count of
+        the resulting set. A new resultant set (view) which satisfies the input
+        circular NAI restriction specification is also created if a input
+        parameter *view_name* is passed in as part of the request.
 
         For track data, all track points that lie within the circle plus one
-        point on
-        either side of the circle (if the track goes beyond the circle) will be
-        included
-        in the result.
+        point on either side of the circle (if the track goes beyond the
+        circle) will be included in the result.
 
         Parameters:
 
@@ -25730,7 +26104,7 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
             x_column_name (str)
@@ -25739,7 +26113,7 @@ class GPUdb(object):
 
             x_center (float)
                 Value of the longitude of the center. Must be within [-180.0,
-                180.0].  The minimum allowed value is -180. The maximum allowed
+                180.0]. The minimum allowed value is -180. The maximum allowed
                 value is 180.
 
             y_column_name (str)
@@ -25748,18 +26122,17 @@ class GPUdb(object):
 
             y_center (float)
                 Value of the latitude of the center. Must be within [-90.0,
-                90.0].  The minimum allowed value is -90. The maximum allowed
+                90.0]. The minimum allowed value is -90. The maximum allowed
                 value is 90.
 
             radius (float)
                 The radius of the circle within which the search will be
                 performed. Must be a non-zero positive value. It is in meters;
-                so, for example, a value of '42000' means 42 km.  The minimum
+                so, for example, a value of '42000' means 42 km. The minimum
                 allowed value is 0. The maximum allowed value is MAX_INT.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -25783,6 +26156,8 @@ class GPUdb(object):
                   created view. If the schema is non-existent, it will be
                   automatically created.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -25790,13 +26165,14 @@ class GPUdb(object):
                 The number of records passing the radius filter.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_view_name** --
                   The fully qualified name of the view (i.e. including the
                   schema)
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "filter_by_radius(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_radius(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -25822,23 +26198,18 @@ class GPUdb(object):
         return response
     # end filter_by_radius
 
-
     # begin filter_by_radius_geometry
     def filter_by_radius_geometry( self, table_name = None, view_name = '',
                                    column_name = None, x_center = None, y_center
                                    = None, radius = None, options = {} ):
         """Calculates which geospatial geometry objects from a table intersect
         a circle with the given radius and center point (i.e. circular NAI).
-        The
-        operation is synchronous, meaning that a response will not be returned
-        until all
-        the objects are fully available. The response payload provides the
-        count of the
-        resulting set. A new resultant set (view) which satisfies the input
-        circular NAI
-        restriction specification is also created if a input parameter
-        *view_name* is passed in
-        as part of the request.
+        The operation is synchronous, meaning that a response will not be
+        returned until all the objects are fully available. The response
+        payload provides the count of the resulting set. A new resultant set
+        (view) which satisfies the input circular NAI restriction specification
+        is also created if a input parameter *view_name* is passed in as part
+        of the request.
 
         Parameters:
 
@@ -25856,7 +26227,7 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
             column_name (str)
@@ -25864,23 +26235,22 @@ class GPUdb(object):
 
             x_center (float)
                 Value of the longitude of the center. Must be within [-180.0,
-                180.0].  The minimum allowed value is -180. The maximum allowed
+                180.0]. The minimum allowed value is -180. The maximum allowed
                 value is 180.
 
             y_center (float)
                 Value of the latitude of the center. Must be within [-90.0,
-                90.0].  The minimum allowed value is -90. The maximum allowed
+                90.0]. The minimum allowed value is -90. The maximum allowed
                 value is 90.
 
             radius (float)
                 The radius of the circle within which the search will be
                 performed. Must be a non-zero positive value. It is in meters;
-                so, for example, a value of '42000' means 42 km.  The minimum
+                so, for example, a value of '42000' means 42 km. The minimum
                 allowed value is 0. The maximum allowed value is MAX_INT.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -25904,6 +26274,8 @@ class GPUdb(object):
                   If the schema provided is non-existent, it will be
                   automatically created.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -25911,13 +26283,14 @@ class GPUdb(object):
                 The number of records passing the radius filter.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_view_name** --
                   The fully qualified name of the view (i.e. including the
                   schema)
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "filter_by_radius_geometry(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_radius_geometry(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -25941,26 +26314,22 @@ class GPUdb(object):
         return response
     # end filter_by_radius_geometry
 
-
     # begin filter_by_range
     def filter_by_range( self, table_name = None, view_name = '', column_name =
                          None, lower_bound = None, upper_bound = None, options =
                          {} ):
         """Calculates which objects from a table have a column that is within
         the given bounds. An object from the table identified by input
-        parameter *table_name* is
-        added to the view input parameter *view_name* if its column is within
-        [input parameter *lower_bound*, input parameter *upper_bound*]
-        (inclusive). The operation is
-        synchronous. The response provides a count of the number of objects
-        which passed
-        the bound filter.  Although this functionality can also be accomplished
-        with the
+        parameter *table_name* is added to the view input parameter *view_name*
+        if its column is within [input parameter *lower_bound*, input parameter
+        *upper_bound*] (inclusive). The operation is synchronous. The response
+        provides a count of the number of objects which passed the bound
+        filter.  Although this functionality can also be accomplished with the
         standard filter function, it is more efficient.
 
         For track objects, the count reflects how many points fall within the
-        given
-        bounds (which may not include all the track points of any given track).
+        given bounds (which may not include all the track points of any given
+        track).
 
         Parameters:
 
@@ -25978,7 +26347,7 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
             column_name (str)
@@ -25991,8 +26360,7 @@ class GPUdb(object):
                 Value of the upper bound (inclusive).
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -26016,6 +26384,8 @@ class GPUdb(object):
                   If the schema is non-existent, it will be automatically
                   created.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -26023,13 +26393,14 @@ class GPUdb(object):
                 The number of records passing the range filter.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_view_name** --
                   The fully qualified name of the view (i.e. including the
                   schema)
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "filter_by_range(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_range(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -26051,32 +26422,23 @@ class GPUdb(object):
         return response
     # end filter_by_range
 
-
     # begin filter_by_series
-    def filter_by_series( self, table_name = None, view_name = '', track_id = None,
-                          target_track_ids = None, options = {} ):
+    def filter_by_series( self, table_name = None, view_name = '', track_id =
+                          None, target_track_ids = None, options = {} ):
         """Filters objects matching all points of the given track (works only
         on track type data).  It allows users to specify a particular track to
-        find all
-        other points in the table that fall within specified ranges (spatial
-        and
-        temporal) of all points of the given track. Additionally, the user can
-        specify
-        another track to see if the two intersect (or go close to each other
-        within the
-        specified ranges). The user also has the flexibility of using different
-        metrics
-        for the spatial distance calculation: Euclidean (flat geometry) or
-        Great Circle
-        (spherical geometry to approximate the Earth's surface distances). The
-        filtered
+        find all other points in the table that fall within specified ranges
+        (spatial and temporal) of all points of the given track. Additionally,
+        the user can specify another track to see if the two intersect (or go
+        close to each other within the specified ranges). The user also has the
+        flexibility of using different metrics for the spatial distance
+        calculation: Euclidean (flat geometry) or Great Circle (spherical
+        geometry to approximate the Earth's surface distances). The filtered
         points are stored in a newly created result set. The return value of
-        the
-        function is the number of points in the resultant set (view).
+        the function is the number of points in the resultant set (view).
 
         This operation is synchronous, meaning that a response will not be
-        returned
-        until all the objects are fully available.
+        returned until all the objects are fully available.
 
         Parameters:
 
@@ -26095,7 +26457,7 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
             track_id (str)
@@ -26109,8 +26471,7 @@ class GPUdb(object):
                 automatically promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -26138,13 +26499,14 @@ class GPUdb(object):
                   A positive number passed as a string representing the radius
                   of the search area centered around each track point's
                   geospatial coordinates. The value is interpreted in meters.
-                  Required parameter.
+                  Required parameter. The minimum allowed value is '0'.
 
                 * **time_radius** --
                   A positive number passed as a string representing the maximum
                   allowable time difference between the timestamps of a
                   filtered object and the given track's points. The value is
-                  interpreted in seconds. Required parameter.
+                  interpreted in seconds. Required parameter. The minimum
+                  allowed value is '0'.
 
                 * **spatial_distance_metric** --
                   A string representing the coordinate system to use for the
@@ -26156,6 +26518,8 @@ class GPUdb(object):
                   * euclidean
                   * great_circle
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -26163,13 +26527,14 @@ class GPUdb(object):
                 The number of records passing the series filter.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_view_name** --
                   The fully qualified name of the view (i.e. including the
                   schema)
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "filter_by_series(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_series(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -26189,17 +26554,14 @@ class GPUdb(object):
         return response
     # end filter_by_series
 
-
     # begin filter_by_string
     def filter_by_string( self, table_name = None, view_name = '', expression =
-                          None, mode = None, column_names = None, options = {}
-                          ):
+                          None, mode = None, column_names = None, options = {} ):
         """Calculates which objects from a table or view match a string
-        expression for the given string columns. Setting
-        *case_sensitive* can modify case sensitivity in matching
-        for all modes except *search*. For
-        *search* mode details and limitations, see
-        `Full Text Search <../../../../concepts/full_text_search/>`__.
+        expression for the given string columns. Setting *case_sensitive* can
+        modify case sensitivity in matching for all modes except *search*. For
+        *search* mode details and limitations, see `Full Text Search
+        <../../../../concepts/full_text_search/>`__.
 
         Parameters:
 
@@ -26217,7 +26579,7 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
             expression (str)
@@ -26253,12 +26615,11 @@ class GPUdb(object):
 
             column_names (list of str)
                 List of columns on which to apply the filter. Ignored for
-                *search* mode.    The user can provide a single element (which
+                *search* mode. The user can provide a single element (which
                 will be automatically promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -26292,6 +26653,8 @@ class GPUdb(object):
 
                   The default value is 'true'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -26299,13 +26662,14 @@ class GPUdb(object):
                 The number of records that passed the string filter.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_view_name** --
                   The fully qualified name of the view (i.e. including the
                   schema)
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "filter_by_string(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_string(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -26327,25 +26691,19 @@ class GPUdb(object):
         return response
     # end filter_by_string
 
-
     # begin filter_by_table
     def filter_by_table( self, table_name = None, view_name = '', column_name =
                          None, source_table_name = None,
                          source_table_column_name = None, options = {} ):
         """Filters objects in one table based on objects in another table. The
         user must specify matching column types from the two tables (i.e. the
-        target
-        table from which objects will be filtered and the source table based on
-        which
-        the filter will be created); the column names need not be the same. If
-        a
-        input parameter *view_name* is specified, then the filtered objects
-        will then be put in a
-        newly created view. The operation is synchronous, meaning that a
-        response will
-        not be returned until all objects are fully available in the result
-        view. The
-        return value contains the count (i.e. the size) of the resulting view.
+        target table from which objects will be filtered and the source table
+        based on which the filter will be created); the column names need not
+        be the same. If a input parameter *view_name* is specified, then the
+        filtered objects will then be put in a newly created view. The
+        operation is synchronous, meaning that a response will not be returned
+        until all objects are fully available in the result view. The return
+        value contains the count (i.e. the size) of the resulting view.
 
         Parameters:
 
@@ -26363,7 +26721,7 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
             column_name (str)
@@ -26386,8 +26744,7 @@ class GPUdb(object):
                 parameter *column_name*.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -26431,13 +26788,15 @@ class GPUdb(object):
                   The default value is 'normal'.
 
                 * **buffer** --
-                  Buffer size, in meters. Only relevant for *spatial* mode.
-                  The default value is '0'.
+                  Buffer size, in meters. Only relevant for *spatial* mode. The
+                  default value is '0'.
 
                 * **buffer_method** --
                   Method used to buffer polygons.  Only relevant for *spatial*
                   mode.
                   Allowed values are:
+
+                  * normal
 
                   * **geos** --
                     Use geos 1 edge per corner algorithm
@@ -26446,19 +26805,21 @@ class GPUdb(object):
 
                 * **max_partition_size** --
                   Maximum number of points in a partition. Only relevant for
-                  *spatial* mode.  The default value is '0'.
+                  *spatial* mode. The default value is '0'.
 
                 * **max_partition_score** --
                   Maximum number of points * edges in a partition. Only
-                  relevant for *spatial* mode.  The default value is '8000000'.
+                  relevant for *spatial* mode. The default value is '8000000'.
 
                 * **x_column_name** --
                   Name of column containing x value of point being filtered in
-                  *spatial* mode.  The default value is 'x'.
+                  *spatial* mode. The default value is 'x'.
 
                 * **y_column_name** --
                   Name of column containing y value of point being filtered in
-                  *spatial* mode.  The default value is 'y'.
+                  *spatial* mode. The default value is 'y'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -26470,13 +26831,14 @@ class GPUdb(object):
                 *source_table_name*.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_view_name** --
                   The fully qualified name of the view (i.e. including the
                   schema)
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "filter_by_table(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_table(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -26498,27 +26860,20 @@ class GPUdb(object):
         return response
     # end filter_by_table
 
-
     # begin filter_by_value
-    def filter_by_value( self, table_name = None, view_name = '', is_string = None,
-                         value = 0, value_str = '', column_name = None, options
-                         = {} ):
+    def filter_by_value( self, table_name = None, view_name = '', is_string =
+                         None, value = 0, value_str = '', column_name = None,
+                         options = {} ):
         """Calculates which objects from a table has a particular value for a
         particular column. The input parameters provide a way to specify either
-        a String
-        or a Double valued column and a desired value for the column on which
-        the filter
-        is performed. The operation is synchronous, meaning that a response
-        will not be
-        returned until all the objects are fully available. The response
-        payload
-        provides the count of the resulting set. A new result view which
-        satisfies the
-        input filter restriction specification is also created with a view name
-        passed
-        in as part of the input payload.  Although this functionality can also
-        be
-        accomplished with the standard filter function, it is more efficient.
+        a String or a Double valued column and a desired value for the column
+        on which the filter is performed. The operation is synchronous, meaning
+        that a response will not be returned until all the objects are fully
+        available. The response payload provides the count of the resulting
+        set. A new result view which satisfies the input filter restriction
+        specification is also created with a view name passed in as part of the
+        input payload.  Although this functionality can also be accomplished
+        with the standard filter function, it is more efficient.
 
         Parameters:
 
@@ -26535,7 +26890,7 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
             is_string (bool)
@@ -26543,17 +26898,16 @@ class GPUdb(object):
                 numeric.
 
             value (float)
-                The value to search for.  The default value is 0.
+                The value to search for. The default value is 0.
 
             value_str (str)
-                The string value to search for.  The default value is ''.
+                The string value to search for. The default value is ''.
 
             column_name (str)
                 Name of a column on which the filter by value would be applied.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -26577,6 +26931,8 @@ class GPUdb(object):
                   If the schema is non-existent, it will be automatically
                   created.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -26584,13 +26940,14 @@ class GPUdb(object):
                 The number of records passing the value filter.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_view_name** --
                   The fully qualified name of the view (i.e. including the
                   schema)
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "filter_by_value(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_value(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -26614,7 +26971,6 @@ class GPUdb(object):
         return response
     # end filter_by_value
 
-
     # begin get_job
     def get_job( self, job_id = None, options = {} ):
         """Get the status and result of asynchronously running job.  See the
@@ -26629,12 +26985,13 @@ class GPUdb(object):
                 be fetched.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **job_tag** --
                   Job tag returned in call to create the job
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -26721,24 +27078,20 @@ class GPUdb(object):
         return response
     # end get_job
 
-
     # begin get_records
-    def get_records( self, table_name = None, offset = 0, limit = -9999, encoding =
-                     'binary', options = {}, get_record_type = True ):
+    def get_records( self, table_name = None, offset = 0, limit = -9999,
+                     encoding = 'binary', options = {}, get_record_type = True ):
         """Retrieves records from a given table, optionally filtered by an
         expression and/or sorted by a column. This operation can be performed
-        on tables
-        and views. Records can be returned encoded as binary, json, or geojson.
+        on tables and views. Records can be returned encoded as binary, json,
+        or geojson.
 
         This operation supports paging through the data via the input parameter
-        *offset* and
-        input parameter *limit* parameters.  Note that when paging through a
-        table, if the table
-        (or the underlying table in case of a view) is updated (records are
-        inserted,
-        deleted or modified) the records retrieved may differ between calls
-        based on the
-        updates applied.
+        *offset* and input parameter *limit* parameters.  Note that when paging
+        through a table, if the table (or the underlying table in case of a
+        view) is updated (records are inserted, deleted or modified) the
+        records retrieved may differ between calls based on the updates
+        applied.
 
         Parameters:
 
@@ -26750,24 +27103,21 @@ class GPUdb(object):
 
             offset (long)
                 A positive integer indicating the number of initial results to
-                skip (this can be useful for paging through the results).  The
-                default value is 0.The minimum allowed value is 0. The maximum
+                skip (this can be useful for paging through the results). The
+                default value is 0. The minimum allowed value is 0. The maximum
                 allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned, or
-                END_OF_SET (-9999) to indicate that the maximum number of
-                results allowed by the server should be
-                returned.  The number of records returned will never exceed the
-                server's own limit, defined by the
-                `max_get_records_size
+                be returned, or END_OF_SET (-9999) to indicate that the maximum
+                number of results allowed by the server should be returned.
+                The number of records returned will never exceed the server's
+                own limit, defined by the `max_get_records_size
                 <../../../../config/#config-main-general>`__ parameter in the
-                server configuration.
-                Use output parameter *has_more_records* to see if more records
-                exist in the result to be fetched, and
+                server configuration. Use output parameter *has_more_records*
+                to see if more records exist in the result to be fetched, and
                 input parameter *offset* & input parameter *limit* to request
-                subsequent pages of results.  The default value is -9999.
+                subsequent pages of results. The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records; one of *binary*,
@@ -26781,7 +27131,6 @@ class GPUdb(object):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                The default value is an empty dict ( {} ).
                 Allowed keys are:
 
                 * **expression** --
@@ -26815,6 +27164,8 @@ class GPUdb(object):
 
                   The default value is 'ascending'.
 
+                The default value is an empty dict ( {} ).
+
             get_record_type (bool)
                 If True, deduce and return the record type for the returned
                 records.  Default is True.
@@ -26827,12 +27178,11 @@ class GPUdb(object):
 
             type_name (str)
 
-
             type_schema (str)
                 Avro schema of output parameter *records_binary* or output
                 parameter *records_json*
 
-            records_binary (list of str)
+            records_binary (list of bytes)
                 If the input parameter *encoding* was 'binary', then this list
                 contains the binary encoded records retrieved from the table,
                 otherwise not populated.
@@ -26855,8 +27205,9 @@ class GPUdb(object):
 
             record_type (:class:`RecordType` or None)
                 A :class:`RecordType` object using which the user can decode
-                the binarydata by using :meth:`GPUdbRecord.decode_binary_data`.
-                Available only if get_record_type is True.
+                the binary data by using
+                :meth:`GPUdbRecord.decode_binary_data`. Available only if
+                get_record_type is True.
         """
         assert isinstance( table_name, (basestring)), "get_records(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( offset, (int, long, float)), "get_records(): Argument 'offset' must be (one) of type(s) '(int, long, float)'; given %s" % type( offset ).__name__
@@ -26864,7 +27215,6 @@ class GPUdb(object):
         assert isinstance( encoding, (basestring)), "get_records(): Argument 'encoding' must be (one) of type(s) '(basestring)'; given %s" % type( encoding ).__name__
         assert isinstance( options, (dict)), "get_records(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
         assert ( isinstance(get_record_type, bool) ), "get_records: Argument 'get_record_type' must be a boolean; given %s" % type( get_record_type ).__name__
-
 
         # Force JSON encoding if client encoding is json and method encoding
         # is binary (checking for binary so that we do not accidentally override
@@ -26891,25 +27241,22 @@ class GPUdb(object):
         return response
     # end get_records
 
-
     # begin get_records_and_decode
-    def get_records_and_decode( self, table_name = None, offset = 0, limit = -9999,
-                                encoding = 'binary', options = {}, record_type =
-                                None, force_primitive_return_types = True ):
+    def get_records_and_decode( self, table_name = None, offset = 0, limit =
+                                -9999, encoding = 'binary', options = {},
+                                record_type = None, force_primitive_return_types
+                                = True ):
         """Retrieves records from a given table, optionally filtered by an
         expression and/or sorted by a column. This operation can be performed
-        on tables
-        and views. Records can be returned encoded as binary, json, or geojson.
+        on tables and views. Records can be returned encoded as binary, json,
+        or geojson.
 
         This operation supports paging through the data via the input parameter
-        *offset* and
-        input parameter *limit* parameters.  Note that when paging through a
-        table, if the table
-        (or the underlying table in case of a view) is updated (records are
-        inserted,
-        deleted or modified) the records retrieved may differ between calls
-        based on the
-        updates applied.
+        *offset* and input parameter *limit* parameters.  Note that when paging
+        through a table, if the table (or the underlying table in case of a
+        view) is updated (records are inserted, deleted or modified) the
+        records retrieved may differ between calls based on the updates
+        applied.
 
         Parameters:
 
@@ -26921,24 +27268,21 @@ class GPUdb(object):
 
             offset (long)
                 A positive integer indicating the number of initial results to
-                skip (this can be useful for paging through the results).  The
-                default value is 0.The minimum allowed value is 0. The maximum
+                skip (this can be useful for paging through the results). The
+                default value is 0. The minimum allowed value is 0. The maximum
                 allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned, or
-                END_OF_SET (-9999) to indicate that the maximum number of
-                results allowed by the server should be
-                returned.  The number of records returned will never exceed the
-                server's own limit, defined by the
-                `max_get_records_size
+                be returned, or END_OF_SET (-9999) to indicate that the maximum
+                number of results allowed by the server should be returned.
+                The number of records returned will never exceed the server's
+                own limit, defined by the `max_get_records_size
                 <../../../../config/#config-main-general>`__ parameter in the
-                server configuration.
-                Use output parameter *has_more_records* to see if more records
-                exist in the result to be fetched, and
+                server configuration. Use output parameter *has_more_records*
+                to see if more records exist in the result to be fetched, and
                 input parameter *offset* & input parameter *limit* to request
-                subsequent pages of results.  The default value is -9999.
+                subsequent pages of results. The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records; one of *binary*,
@@ -26952,7 +27296,6 @@ class GPUdb(object):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                The default value is an empty dict ( {} ).
                 Allowed keys are:
 
                 * **expression** --
@@ -26986,11 +27329,13 @@ class GPUdb(object):
 
                   The default value is 'ascending'.
 
+                The default value is an empty dict ( {} ).
+
             record_type (:class:`RecordType` or None)
-                The record type expected in the results, or None to
-                determinethe appropriate type automatically. If known,
-                providing thismay improve performance in binary mode. Not used
-                in JSON mode.The default value is None.
+                The record type expected in the results, or None to determine
+                the appropriate type automatically. If known, providing this
+                may improve performance in binary mode. Not used in JSON mode.
+                The default value is None.
 
             force_primitive_return_types (bool)
                 If `True`, then `OrderedDict` objects will be returned, where
@@ -27014,7 +27359,6 @@ class GPUdb(object):
                 Value of input parameter *table_name*.
 
             type_name (str)
-
 
             type_schema (str)
                 Avro schema of output parameter *records_binary* or output
@@ -27078,46 +27422,36 @@ class GPUdb(object):
         return response
     # end get_records_and_decode
 
-
     # begin get_records_by_column
-    def get_records_by_column( self, table_name = None, column_names = None, offset
-                               = 0, limit = -9999, encoding = 'binary', options
-                               = {} ):
+    def get_records_by_column( self, table_name = None, column_names = None,
+                               offset = 0, limit = -9999, encoding = 'binary',
+                               options = {} ):
         """For a given table, retrieves the values from the requested
         column(s). Maps of column name to the array of values as well as the
-        column data
-        type are returned. This endpoint supports pagination with the input
-        parameter *offset*
-        and input parameter *limit* parameters.
+        column data type are returned. This endpoint supports pagination with
+        the input parameter *offset* and input parameter *limit* parameters.
 
         `Window functions <../../../../concepts/window/>`__, which can perform
         operations like moving averages, are available through this endpoint as
-        well as
-        :meth:`GPUdb.create_projection`.
+        well as :meth:`GPUdb.create_projection`.
 
         When using pagination, if the table (or the underlying table in the
-        case of a
-        view) is modified (records are inserted, updated, or deleted) during a
-        call to
-        the endpoint, the records or values retrieved may differ between calls
-        based on
-        the type of the update, e.g., the contiguity across pages cannot be
-        relied upon.
+        case of a view) is modified (records are inserted, updated, or deleted)
+        during a call to the endpoint, the records or values retrieved may
+        differ between calls based on the type of the update, e.g., the
+        contiguity across pages cannot be relied upon.
 
         If input parameter *table_name* is empty, selection is performed
-        against a single-row
-        virtual table.  This can be useful in executing temporal
-        (`NOW() <../../../../concepts/expressions/#date-time-functions>`__),
-        identity
+        against a single-row virtual table.  This can be useful in executing
+        temporal (`NOW()
+        <../../../../concepts/expressions/#date-time-functions>`__), identity
         (`USER()
         <../../../../concepts/expressions/#user-security-functions>`__), or
-        constant-based functions
-        (`GEODIST(-77.11, 38.88, -71.06, 42.36)
+        constant-based functions (`GEODIST(-77.11, 38.88, -71.06, 42.36)
         <../../../../concepts/expressions/#scalar-functions>`__).
 
-        The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation
-        <../../../../api/concepts/#dynamic-schemas>`__.
+        The response is returned as a dynamic schema. For details see: `dynamic
+        schemas documentation <../../../../api/concepts/#dynamic-schemas>`__.
 
         Parameters:
 
@@ -27131,30 +27465,27 @@ class GPUdb(object):
                 expressions.
 
             column_names (list of str)
-                The list of column values to retrieve.    The user can provide
-                a single element (which will be automatically promoted to a
-                list internally) or a list.
+                The list of column values to retrieve. The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
 
             offset (long)
                 A positive integer indicating the number of initial results to
-                skip (this can be useful for paging through the results).  The
-                default value is 0.The minimum allowed value is 0. The maximum
+                skip (this can be useful for paging through the results). The
+                default value is 0. The minimum allowed value is 0. The maximum
                 allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned, or
-                END_OF_SET (-9999) to indicate that the maximum number of
-                results allowed by the server should be
-                returned.  The number of records returned will never exceed the
-                server's own limit, defined by the
-                `max_get_records_size
+                be returned, or END_OF_SET (-9999) to indicate that the maximum
+                number of results allowed by the server should be returned.
+                The number of records returned will never exceed the server's
+                own limit, defined by the `max_get_records_size
                 <../../../../config/#config-main-general>`__ parameter in the
-                server configuration.
-                Use output parameter *has_more_records* to see if more records
-                exist in the result to be fetched, and
+                server configuration. Use output parameter *has_more_records*
+                to see if more records exist in the result to be fetched, and
                 input parameter *offset* & input parameter *limit* to request
-                subsequent pages of results.  The default value is -9999.
+                subsequent pages of results. The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records; either *binary* or
@@ -27167,7 +27498,6 @@ class GPUdb(object):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                The default value is an empty dict ( {} ).
                 Allowed keys are:
 
                 * **expression** --
@@ -27176,7 +27506,7 @@ class GPUdb(object):
                 * **sort_by** --
                   Optional column that the data should be sorted by. Used in
                   conjunction with *sort_order*. The *order_by* option can be
-                  used in lieu of *sort_by* / *sort_order*.  The default value
+                  used in lieu of *sort_by* / *sort_order*. The default value
                   is ''.
 
                 * **sort_order** --
@@ -27192,7 +27522,7 @@ class GPUdb(object):
 
                 * **order_by** --
                   Comma-separated list of the columns to be sorted by as well
-                  as the sort direction, e.g., 'timestamp asc, x desc'.  The
+                  as the sort direction, e.g., 'timestamp asc, x desc'. The
                   default value is ''.
 
                 * **convert_wkts_to_wkbs** --
@@ -27204,6 +27534,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -27232,8 +27564,9 @@ class GPUdb(object):
 
             record_type (:class:`RecordType` or None)
                 A :class:`RecordType` object using which the user can decode
-                the binarydata by using :meth:`GPUdbRecord.decode_binary_data`.
-                If JSON encodingis used, then None.
+                the binary data by using
+                :meth:`GPUdbRecord.decode_binary_data`. If JSON encoding is
+                used, then None.
         """
         assert isinstance( table_name, (basestring)), "get_records_by_column(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         column_names = column_names if isinstance( column_names, list ) else ( [] if (column_names is None) else [ column_names ] )
@@ -27270,49 +27603,39 @@ class GPUdb(object):
         return response
     # end get_records_by_column
 
-
     # begin get_records_by_column_and_decode
-    def get_records_by_column_and_decode( self, table_name = None, column_names =
-                                          None, offset = 0, limit = -9999,
+    def get_records_by_column_and_decode( self, table_name = None, column_names
+                                          = None, offset = 0, limit = -9999,
                                           encoding = 'binary', options = {},
                                           record_type = None,
                                           force_primitive_return_types = True,
                                           get_column_major = True ):
         """For a given table, retrieves the values from the requested
         column(s). Maps of column name to the array of values as well as the
-        column data
-        type are returned. This endpoint supports pagination with the input
-        parameter *offset*
-        and input parameter *limit* parameters.
+        column data type are returned. This endpoint supports pagination with
+        the input parameter *offset* and input parameter *limit* parameters.
 
         `Window functions <../../../../concepts/window/>`__, which can perform
         operations like moving averages, are available through this endpoint as
-        well as
-        :meth:`GPUdb.create_projection`.
+        well as :meth:`GPUdb.create_projection`.
 
         When using pagination, if the table (or the underlying table in the
-        case of a
-        view) is modified (records are inserted, updated, or deleted) during a
-        call to
-        the endpoint, the records or values retrieved may differ between calls
-        based on
-        the type of the update, e.g., the contiguity across pages cannot be
-        relied upon.
+        case of a view) is modified (records are inserted, updated, or deleted)
+        during a call to the endpoint, the records or values retrieved may
+        differ between calls based on the type of the update, e.g., the
+        contiguity across pages cannot be relied upon.
 
         If input parameter *table_name* is empty, selection is performed
-        against a single-row
-        virtual table.  This can be useful in executing temporal
-        (`NOW() <../../../../concepts/expressions/#date-time-functions>`__),
-        identity
+        against a single-row virtual table.  This can be useful in executing
+        temporal (`NOW()
+        <../../../../concepts/expressions/#date-time-functions>`__), identity
         (`USER()
         <../../../../concepts/expressions/#user-security-functions>`__), or
-        constant-based functions
-        (`GEODIST(-77.11, 38.88, -71.06, 42.36)
+        constant-based functions (`GEODIST(-77.11, 38.88, -71.06, 42.36)
         <../../../../concepts/expressions/#scalar-functions>`__).
 
-        The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation
-        <../../../../api/concepts/#dynamic-schemas>`__.
+        The response is returned as a dynamic schema. For details see: `dynamic
+        schemas documentation <../../../../api/concepts/#dynamic-schemas>`__.
 
         Parameters:
 
@@ -27326,30 +27649,27 @@ class GPUdb(object):
                 expressions.
 
             column_names (list of str)
-                The list of column values to retrieve.    The user can provide
-                a single element (which will be automatically promoted to a
-                list internally) or a list.
+                The list of column values to retrieve. The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
 
             offset (long)
                 A positive integer indicating the number of initial results to
-                skip (this can be useful for paging through the results).  The
-                default value is 0.The minimum allowed value is 0. The maximum
+                skip (this can be useful for paging through the results). The
+                default value is 0. The minimum allowed value is 0. The maximum
                 allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned, or
-                END_OF_SET (-9999) to indicate that the maximum number of
-                results allowed by the server should be
-                returned.  The number of records returned will never exceed the
-                server's own limit, defined by the
-                `max_get_records_size
+                be returned, or END_OF_SET (-9999) to indicate that the maximum
+                number of results allowed by the server should be returned.
+                The number of records returned will never exceed the server's
+                own limit, defined by the `max_get_records_size
                 <../../../../config/#config-main-general>`__ parameter in the
-                server configuration.
-                Use output parameter *has_more_records* to see if more records
-                exist in the result to be fetched, and
+                server configuration. Use output parameter *has_more_records*
+                to see if more records exist in the result to be fetched, and
                 input parameter *offset* & input parameter *limit* to request
-                subsequent pages of results.  The default value is -9999.
+                subsequent pages of results. The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records; either *binary* or
@@ -27362,7 +27682,6 @@ class GPUdb(object):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                The default value is an empty dict ( {} ).
                 Allowed keys are:
 
                 * **expression** --
@@ -27371,7 +27690,7 @@ class GPUdb(object):
                 * **sort_by** --
                   Optional column that the data should be sorted by. Used in
                   conjunction with *sort_order*. The *order_by* option can be
-                  used in lieu of *sort_by* / *sort_order*.  The default value
+                  used in lieu of *sort_by* / *sort_order*. The default value
                   is ''.
 
                 * **sort_order** --
@@ -27387,7 +27706,7 @@ class GPUdb(object):
 
                 * **order_by** --
                   Comma-separated list of the columns to be sorted by as well
-                  as the sort direction, e.g., 'timestamp asc, x desc'.  The
+                  as the sort direction, e.g., 'timestamp asc, x desc'. The
                   default value is ''.
 
                 * **convert_wkts_to_wkbs** --
@@ -27400,11 +27719,13 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                The default value is an empty dict ( {} ).
+
             record_type (:class:`RecordType` or None)
-                The record type expected in the results, or None to
-                determinethe appropriate type automatically. If known,
-                providing thismay improve performance in binary mode. Not used
-                in JSON mode.The default value is None.
+                The record type expected in the results, or None to determine
+                the appropriate type automatically. If known, providing this
+                may improve performance in binary mode. Not used in JSON mode.
+                The default value is None.
 
             force_primitive_return_types (bool)
                 If `True`, then `OrderedDict` objects will be returned, where
@@ -27423,7 +27744,7 @@ class GPUdb(object):
 
             get_column_major (bool)
                 Indicates if the decoded records will be transposed to be
-                column-major or returned as is (row-major).  Default value is
+                column-major or returned as is (row-major). Default value is
                 True.
 
         Returns:
@@ -27508,27 +27829,22 @@ class GPUdb(object):
         return response
     # end get_records_by_column_and_decode
 
-
     # begin get_records_by_series
     def get_records_by_series( self, table_name = None, world_table_name = None,
                                offset = 0, limit = 250, encoding = 'binary',
                                options = {} ):
-        """Retrieves the complete series/track records from the given
-        input parameter *world_table_name* based on the partial track
-        information contained in
-        the input parameter *table_name*.
+        """Retrieves the complete series/track records from the given input
+        parameter *world_table_name* based on the partial track information
+        contained in the input parameter *table_name*.
 
         This operation supports paging through the data via the input parameter
-        *offset* and
-        input parameter *limit* parameters.
+        *offset* and input parameter *limit* parameters.
 
         In contrast to :meth:`GPUdb.get_records` this returns records grouped
-        by
-        series/track. So if input parameter *offset* is 0 and input parameter
-        *limit* is 5 this operation
-        would return the first 5 series/tracks in input parameter *table_name*.
-        Each series/track
-        will be returned sorted by their TIMESTAMP column.
+        by series/track. So if input parameter *offset* is 0 and input
+        parameter *limit* is 5 this operation would return the first 5
+        series/tracks in input parameter *table_name*. Each series/track will
+        be returned sorted by their TIMESTAMP column.
 
         Parameters:
 
@@ -27551,13 +27867,13 @@ class GPUdb(object):
             offset (int)
                 A positive integer indicating the number of initial
                 series/tracks to skip (useful for paging through the results).
-                The default value is 0.The minimum allowed value is 0. The
+                The default value is 0. The minimum allowed value is 0. The
                 maximum allowed value is MAX_INT.
 
             limit (int)
                 A positive integer indicating the maximum number of
                 series/tracks to be returned. Or END_OF_SET (-9999) to indicate
-                that the max number of results should be returned.  The default
+                that the max number of results should be returned. The default
                 value is 250.
 
             encoding (str)
@@ -27571,8 +27887,7 @@ class GPUdb(object):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -27589,7 +27904,7 @@ class GPUdb(object):
                 The type schemas (one per series/track) of the returned
                 series/tracks.
 
-            list_records_binary (list of lists of str)
+            list_records_binary (list of lists of bytes)
                 If the encoding parameter of the request was 'binary' then this
                 list-of-lists contains the binary encoded records for each
                 object (inner list) in each series/track (outer list).
@@ -27606,7 +27921,7 @@ class GPUdb(object):
 
             record_types (list of :class:`RecordType`)
                 A list of :class:`RecordType` objects using which the user can
-                decode the binarydata by using
+                decode the binary data by using
                 :meth:`GPUdbRecord.decode_binary_data` per record.
         """
         assert isinstance( table_name, (basestring)), "get_records_by_series(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
@@ -27641,28 +27956,24 @@ class GPUdb(object):
         return response
     # end get_records_by_series
 
-
     # begin get_records_by_series_and_decode
-    def get_records_by_series_and_decode( self, table_name = None, world_table_name
-                                          = None, offset = 0, limit = 250,
-                                          encoding = 'binary', options = {},
+    def get_records_by_series_and_decode( self, table_name = None,
+                                          world_table_name = None, offset = 0,
+                                          limit = 250, encoding = 'binary',
+                                          options = {},
                                           force_primitive_return_types = True ):
-        """Retrieves the complete series/track records from the given
-        input parameter *world_table_name* based on the partial track
-        information contained in
-        the input parameter *table_name*.
+        """Retrieves the complete series/track records from the given input
+        parameter *world_table_name* based on the partial track information
+        contained in the input parameter *table_name*.
 
         This operation supports paging through the data via the input parameter
-        *offset* and
-        input parameter *limit* parameters.
+        *offset* and input parameter *limit* parameters.
 
         In contrast to :meth:`GPUdb.get_records` this returns records grouped
-        by
-        series/track. So if input parameter *offset* is 0 and input parameter
-        *limit* is 5 this operation
-        would return the first 5 series/tracks in input parameter *table_name*.
-        Each series/track
-        will be returned sorted by their TIMESTAMP column.
+        by series/track. So if input parameter *offset* is 0 and input
+        parameter *limit* is 5 this operation would return the first 5
+        series/tracks in input parameter *table_name*. Each series/track will
+        be returned sorted by their TIMESTAMP column.
 
         Parameters:
 
@@ -27685,13 +27996,13 @@ class GPUdb(object):
             offset (int)
                 A positive integer indicating the number of initial
                 series/tracks to skip (useful for paging through the results).
-                The default value is 0.The minimum allowed value is 0. The
+                The default value is 0. The minimum allowed value is 0. The
                 maximum allowed value is MAX_INT.
 
             limit (int)
                 A positive integer indicating the maximum number of
                 series/tracks to be returned. Or END_OF_SET (-9999) to indicate
-                that the max number of results should be returned.  The default
+                that the max number of results should be returned. The default
                 value is 250.
 
             encoding (str)
@@ -27705,8 +28016,7 @@ class GPUdb(object):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
             force_primitive_return_types (bool)
                 If `True`, then `OrderedDict` objects will be returned, where
@@ -27792,22 +28102,18 @@ class GPUdb(object):
         return response
     # end get_records_by_series_and_decode
 
-
     # begin get_records_from_collection
-    def get_records_from_collection( self, table_name = None, offset = 0, limit =
-                                     -9999, encoding = 'binary', options = {} ):
+    def get_records_from_collection( self, table_name = None, offset = 0, limit
+                                     = -9999, encoding = 'binary', options = {} ):
         """Retrieves records from a collection. The operation can optionally
         return the record IDs which can be used in certain queries such as
         :meth:`GPUdb.delete_records`.
 
         This operation supports paging through the data via the input parameter
-        *offset* and
-        input parameter *limit* parameters.
+        *offset* and input parameter *limit* parameters.
 
         Note that when using the Java API, it is not possible to retrieve
-        records from
-        join views using this operation.
-        (DEPRECATED)
+        records from join views using this operation. (DEPRECATED)
 
         Parameters:
 
@@ -27820,23 +28126,20 @@ class GPUdb(object):
 
             offset (long)
                 A positive integer indicating the number of initial results to
-                skip (this can be useful for paging through the results).  The
-                default value is 0.The minimum allowed value is 0. The maximum
+                skip (this can be useful for paging through the results). The
+                default value is 0. The minimum allowed value is 0. The maximum
                 allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned, or
-                END_OF_SET (-9999) to indicate that the maximum number of
-                results allowed by the server should be
-                returned.  The number of records returned will never exceed the
-                server's own limit, defined by the
-                `max_get_records_size
+                be returned, or END_OF_SET (-9999) to indicate that the maximum
+                number of results allowed by the server should be returned.
+                The number of records returned will never exceed the server's
+                own limit, defined by the `max_get_records_size
                 <../../../../config/#config-main-general>`__ parameter in the
-                server configuration.
-                Use input parameter *offset* & input parameter *limit* to
-                request subsequent pages of results.  The default value is
-                -9999.
+                server configuration. Use input parameter *offset* & input
+                parameter *limit* to request subsequent pages of results. The
+                default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records; either *binary* or
@@ -27849,7 +28152,6 @@ class GPUdb(object):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                The default value is an empty dict ( {} ).
                 Allowed keys are:
 
                 * **return_record_ids** --
@@ -27863,8 +28165,10 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **expression** --
-                  Optional filter expression to apply to the table.  The
-                  default value is ''.
+                  Optional filter expression to apply to the table. The default
+                  value is ''.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -27878,7 +28182,7 @@ class GPUdb(object):
                 useful when input parameter *table_name* is a heterogeneous
                 collection (collections containing tables of different types).
 
-            records_binary (list of str)
+            records_binary (list of bytes)
                 If the encoding parameter of the request was 'binary' then this
                 list contains the binary encoded records retrieved from the
                 table/collection. Otherwise, empty list.
@@ -27894,8 +28198,7 @@ class GPUdb(object):
                 Otherwise it will be empty.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **total_number_of_records** --
@@ -27908,9 +28211,11 @@ class GPUdb(object):
                   * true
                   * false
 
+                The default value is an empty dict ( {} ).
+
             record_types (list of :class:`RecordType`)
                 A list of :class:`RecordType` objects using which the user can
-                decode the binarydata by using
+                decode the binary data by using
                 :meth:`GPUdbRecord.decode_binary_data` per record.
         """
         assert isinstance( table_name, (basestring)), "get_records_from_collection(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
@@ -27943,10 +28248,9 @@ class GPUdb(object):
         return response
     # end get_records_from_collection
 
-
     # begin get_records_from_collection_and_decode
-    def get_records_from_collection_and_decode( self, table_name = None, offset = 0,
-                                                limit = -9999, encoding =
+    def get_records_from_collection_and_decode( self, table_name = None, offset
+                                                = 0, limit = -9999, encoding =
                                                 'binary', options = {},
                                                 force_primitive_return_types =
                                                 True ):
@@ -27955,13 +28259,10 @@ class GPUdb(object):
         :meth:`GPUdb.delete_records`.
 
         This operation supports paging through the data via the input parameter
-        *offset* and
-        input parameter *limit* parameters.
+        *offset* and input parameter *limit* parameters.
 
         Note that when using the Java API, it is not possible to retrieve
-        records from
-        join views using this operation.
-        (DEPRECATED)
+        records from join views using this operation. (DEPRECATED)
 
         Parameters:
 
@@ -27974,23 +28275,20 @@ class GPUdb(object):
 
             offset (long)
                 A positive integer indicating the number of initial results to
-                skip (this can be useful for paging through the results).  The
-                default value is 0.The minimum allowed value is 0. The maximum
+                skip (this can be useful for paging through the results). The
+                default value is 0. The minimum allowed value is 0. The maximum
                 allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned, or
-                END_OF_SET (-9999) to indicate that the maximum number of
-                results allowed by the server should be
-                returned.  The number of records returned will never exceed the
-                server's own limit, defined by the
-                `max_get_records_size
+                be returned, or END_OF_SET (-9999) to indicate that the maximum
+                number of results allowed by the server should be returned.
+                The number of records returned will never exceed the server's
+                own limit, defined by the `max_get_records_size
                 <../../../../config/#config-main-general>`__ parameter in the
-                server configuration.
-                Use input parameter *offset* & input parameter *limit* to
-                request subsequent pages of results.  The default value is
-                -9999.
+                server configuration. Use input parameter *offset* & input
+                parameter *limit* to request subsequent pages of results. The
+                default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records; either *binary* or
@@ -28003,7 +28301,6 @@ class GPUdb(object):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                The default value is an empty dict ( {} ).
                 Allowed keys are:
 
                 * **return_record_ids** --
@@ -28017,8 +28314,10 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **expression** --
-                  Optional filter expression to apply to the table.  The
-                  default value is ''.
+                  Optional filter expression to apply to the table. The default
+                  value is ''.
+
+                The default value is an empty dict ( {} ).
 
             force_primitive_return_types (bool)
                 If `True`, then `OrderedDict` objects will be returned, where
@@ -28053,8 +28352,7 @@ class GPUdb(object):
                 Otherwise it will be empty.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **total_number_of_records** --
@@ -28066,6 +28364,8 @@ class GPUdb(object):
 
                   * true
                   * false
+
+                The default value is an empty dict ( {} ).
 
             records (list of :class:`Record`)
                 A list of :class:`Record` objects which contain the decoded
@@ -28115,12 +28415,10 @@ class GPUdb(object):
         return response
     # end get_records_from_collection_and_decode
 
-
     # begin get_vectortile
     def get_vectortile( self, table_names = None, column_names = None, layers =
                         None, tile_x = None, tile_y = None, zoom = None, options
                         = {} ):
-
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
         column_names = column_names if isinstance( column_names, list ) else ( [] if (column_names is None) else [ column_names ] )
         assert isinstance( layers, (dict)), "get_vectortile(): Argument 'layers' must be (one) of type(s) '(dict)'; given %s" % type( layers ).__name__
@@ -28143,17 +28441,16 @@ class GPUdb(object):
         return response
     # end get_vectortile
 
-
     # begin grant_permission
-    def grant_permission( self, principal = '', object = None, object_type = None,
-                          permission = None, options = {} ):
+    def grant_permission( self, principal = '', object = None, object_type =
+                          None, permission = None, options = {} ):
         """Grant user or role the specified permission on the specified object.
 
         Parameters:
 
             principal (str)
                 Name of the user or role for which the permission is being
-                granted.  Must be an existing user or role.  The default value
+                granted.  Must be an existing user or role. The default value
                 is ''.
 
             object (str)
@@ -28161,7 +28458,7 @@ class GPUdb(object):
                 recommended to use a fully-qualified name when possible.
 
             object_type (str)
-                The type of object being granted to
+                The type of object being granted to.
                 Allowed values are:
 
                 * **context** --
@@ -28233,18 +28530,19 @@ class GPUdb(object):
                   Access to write, change and delete objects.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **columns** --
-                  Apply table security to these columns, comma-separated.  The
+                  Apply table security to these columns, comma-separated. The
                   default value is ''.
 
                 * **filter_expression** --
                   Optional filter expression to apply to this grant.  Only rows
-                  that match the filter will be affected.  The default value is
+                  that match the filter will be affected. The default value is
                   ''.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -28282,7 +28580,6 @@ class GPUdb(object):
         return response
     # end grant_permission
 
-
     # begin grant_permission_credential
     def grant_permission_credential( self, name = None, permission = None,
                                      credential_name = None, options = {} ):
@@ -28312,8 +28609,7 @@ class GPUdb(object):
                 access on all credentials.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -28346,7 +28642,6 @@ class GPUdb(object):
         return response
     # end grant_permission_credential
 
-
     # begin grant_permission_datasource
     def grant_permission_datasource( self, name = None, permission = None,
                                      datasource_name = None, options = {} ):
@@ -28360,7 +28655,7 @@ class GPUdb(object):
                 granted. Must be an existing user or role.
 
             permission (str)
-                Permission to grant to the user or role
+                Permission to grant to the user or role.
                 Allowed values are:
 
                 * **admin** --
@@ -28375,8 +28670,7 @@ class GPUdb(object):
                 grant permission on all data sources.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -28409,12 +28703,11 @@ class GPUdb(object):
         return response
     # end grant_permission_datasource
 
-
     # begin grant_permission_directory
     def grant_permission_directory( self, name = None, permission = None,
                                     directory_name = None, options = {} ):
-        """Grants a `KiFS <../../../../tools/kifs/>`__ directory-level permission
-        to a user or role.
+        """Grants a `KiFS <../../../../tools/kifs/>`__ directory-level
+        permission to a user or role.
 
         Parameters:
 
@@ -28441,8 +28734,7 @@ class GPUdb(object):
                 directories
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -28475,7 +28767,6 @@ class GPUdb(object):
         return response
     # end grant_permission_directory
 
-
     # begin grant_permission_proc
     def grant_permission_proc( self, name = None, permission = None, proc_name =
                                None, options = {} ):
@@ -28503,8 +28794,7 @@ class GPUdb(object):
                 procs.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -28537,10 +28827,9 @@ class GPUdb(object):
         return response
     # end grant_permission_proc
 
-
     # begin grant_permission_system
-    def grant_permission_system( self, name = None, permission = None, options = {}
-                                 ):
+    def grant_permission_system( self, name = None, permission = None, options =
+                                 {} ):
         """Grants a system-level permission to a user or role.
 
         Parameters:
@@ -28567,8 +28856,7 @@ class GPUdb(object):
                   Read-only access to all tables.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -28596,10 +28884,9 @@ class GPUdb(object):
         return response
     # end grant_permission_system
 
-
     # begin grant_permission_table
-    def grant_permission_table( self, name = None, permission = None, table_name =
-                                None, filter_expression = '', options = {} ):
+    def grant_permission_table( self, name = None, permission = None, table_name
+                                = None, filter_expression = '', options = {} ):
         """Grants a table-level permission to a user or role.
 
         Parameters:
@@ -28637,17 +28924,18 @@ class GPUdb(object):
 
             filter_expression (str)
                 Optional filter expression to apply to this grant.  Only rows
-                that match the filter will be affected.  The default value is
+                that match the filter will be affected. The default value is
                 ''.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **columns** --
-                  Apply security to these columns, comma-separated.  The
-                  default value is ''.
+                  Apply security to these columns, comma-separated. The default
+                  value is ''.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -28685,7 +28973,6 @@ class GPUdb(object):
         return response
     # end grant_permission_table
 
-
     # begin grant_role
     def grant_role( self, role = None, member = None, options = {} ):
         """Grants membership in a role to a user or role.
@@ -28701,8 +28988,7 @@ class GPUdb(object):
                 input parameter *role*. Must be an existing user or role.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -28730,7 +29016,6 @@ class GPUdb(object):
         return response
     # end grant_role
 
-
     # begin has_permission
     def has_permission( self, principal = '', object = None, object_type = None,
                         permission = None, options = {} ):
@@ -28749,7 +29034,7 @@ class GPUdb(object):
                 recommended to use a fully-qualified name when possible.
 
             object_type (str)
-                The type of object being checked
+                The type of object being checked.
                 Allowed values are:
 
                 * **context** --
@@ -28821,8 +29106,7 @@ class GPUdb(object):
                   Access to write, change and delete objects.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **no_error_if_not_exists** --
@@ -28835,6 +29119,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -28886,7 +29172,6 @@ class GPUdb(object):
         return response
     # end has_permission
 
-
     # begin has_proc
     def has_proc( self, proc_name = None, options = {} ):
         """Checks the existence of a proc with the given name.
@@ -28897,8 +29182,7 @@ class GPUdb(object):
                 Name of the proc to check for existence.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -28928,7 +29212,6 @@ class GPUdb(object):
         return response
     # end has_proc
 
-
     # begin has_role
     def has_role( self, principal = '', role = None, options = {} ):
         """Checks if the specified user has the specified role.
@@ -28944,8 +29227,7 @@ class GPUdb(object):
                 Name of role to check for membership.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **no_error_if_not_exists** --
@@ -28971,6 +29253,8 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -28978,7 +29262,7 @@ class GPUdb(object):
                 Value of input parameter *principal*
 
             role (str)
-                input parameter *role* for which membership is being checked
+                Input parameter *role* for which membership is being checked
 
             has_role (bool)
                 Indicates whether the specified user has membership in the
@@ -28992,8 +29276,7 @@ class GPUdb(object):
                   User does not have membership in the role
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **direct** --
@@ -29004,6 +29287,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( principal, (basestring)), "has_role(): Argument 'principal' must be (one) of type(s) '(basestring)'; given %s" % type( principal ).__name__
         assert isinstance( role, (basestring)), "has_role(): Argument 'role' must be (one) of type(s) '(basestring)'; given %s" % type( role ).__name__
@@ -29019,7 +29304,6 @@ class GPUdb(object):
         return response
     # end has_role
 
-
     # begin has_schema
     def has_schema( self, schema_name = None, options = {} ):
         """Checks for the existence of a schema with the given name.
@@ -29032,8 +29316,7 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-name-resolution>`__.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -29063,7 +29346,6 @@ class GPUdb(object):
         return response
     # end has_schema
 
-
     # begin has_table
     def has_table( self, table_name = None, options = {} ):
         """Checks for the existence of a table with the given name.
@@ -29077,8 +29359,7 @@ class GPUdb(object):
                 <../../../../concepts/tables/#table-name-resolution>`__.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -29108,7 +29389,6 @@ class GPUdb(object):
         return response
     # end has_table
 
-
     # begin has_type
     def has_type( self, type_id = None, options = {} ):
         """Check for the existence of a type.
@@ -29120,8 +29400,7 @@ class GPUdb(object):
                 :meth:`GPUdb.create_type` request.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -29151,12 +29430,9 @@ class GPUdb(object):
         return response
     # end has_type
 
-
     # begin import_model
     def import_model( self, model_name = None, registry_name = None, container =
-                      None, run_function = None, model_type = None, options = {}
-                      ):
-
+                      None, run_function = None, model_type = None, options = {} ):
         assert isinstance( model_name, (basestring)), "import_model(): Argument 'model_name' must be (one) of type(s) '(basestring)'; given %s" % type( model_name ).__name__
         assert isinstance( registry_name, (basestring)), "import_model(): Argument 'registry_name' must be (one) of type(s) '(basestring)'; given %s" % type( registry_name ).__name__
         assert isinstance( container, (basestring)), "import_model(): Argument 'container' must be (one) of type(s) '(basestring)'; given %s" % type( container ).__name__
@@ -29177,31 +29453,25 @@ class GPUdb(object):
         return response
     # end import_model
 
-
     # begin insert_records
-    def insert_records( self, table_name = None, data = None, list_encoding = None,
-                        options = {}, record_type = None ):
+    def insert_records( self, table_name = None, data = None, list_encoding =
+                        None, options = {}, record_type = None ):
         """Adds multiple records to the specified table. The operation is
         synchronous, meaning that a response will not be returned until all the
-        records
-        are fully inserted and available. The response payload provides the
-        counts of
-        the number of records actually inserted and/or updated, and can provide
-        the
-        unique identifier of each added record.
+        records are fully inserted and available. The response payload provides
+        the counts of the number of records actually inserted and/or updated,
+        and can provide the unique identifier of each added record.
 
         The input parameter *options* parameter can be used to customize this
-        function's
-        behavior.
+        function's behavior.
 
-        The *update_on_existing_pk* option specifies the record
-        collision policy for inserting into a table with a
-        `primary key <../../../../concepts/tables/#primary-keys>`__, but is
-        ignored if
-        no primary key exists.
+        The *update_on_existing_pk* option specifies the record collision
+        policy for inserting into a table with a `primary key
+        <../../../../concepts/tables/#primary-keys>`__, but is ignored if no
+        primary key exists.
 
-        The *return_record_ids* option indicates that the
-        database should return the unique identifiers of inserted records.
+        The *return_record_ids* option indicates that the database should
+        return the unique identifiers of inserted records.
 
         Parameters:
 
@@ -29230,27 +29500,23 @@ class GPUdb(object):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting into a
-                  table
-                  with a `primary key
+                  table with a `primary key
                   <../../../../concepts/tables/#primary-keys>`__. If set to
-                  *true*, any existing table record with primary
-                  key values that match those of a record being inserted will
-                  be replaced by that new record (the new
-                  data will be "upserted"). If set to *false*,
-                  any existing table record with primary key values that match
-                  those of a record being inserted will
-                  remain unchanged, while the new record will be rejected and
-                  the error handled as determined by
-                  *ignore_existing_pk*, *allow_partial_batch*, &
-                  *return_individual_errors*.  If the specified table does not
-                  have a primary
-                  key, then this option has no effect.
+                  *true*, any existing table record with primary key values
+                  that match those of a record being inserted will be replaced
+                  by that new record (the new data will be "upserted"). If set
+                  to *false*, any existing table record with primary key values
+                  that match those of a record being inserted will remain
+                  unchanged, while the new record will be rejected and the
+                  error handled as determined by *ignore_existing_pk*,
+                  *allow_partial_batch*, & *return_individual_errors*.  If the
+                  specified table does not have a primary key, then this option
+                  has no effect.
                   Allowed values are:
 
                   * **true** --
@@ -29265,21 +29531,18 @@ class GPUdb(object):
                   Specifies the record collision error-suppression policy for
                   inserting into a table with a `primary key
                   <../../../../concepts/tables/#primary-keys>`__, only used
-                  when
-                  not in upsert mode (upsert mode is disabled when
-                  *update_on_existing_pk* is
-                  *false*).  If set to
-                  *true*, any record being inserted that is rejected
-                  for having primary key values that match those of an existing
-                  table record will be ignored with no
-                  error generated.  If *false*, the rejection of any
-                  record for having primary key values matching an existing
-                  record will result in an error being
-                  reported, as determined by *allow_partial_batch* &
+                  when not in upsert mode (upsert mode is disabled when
+                  *update_on_existing_pk* is *false*).  If set to *true*, any
+                  record being inserted that is rejected for having primary key
+                  values that match those of an existing table record will be
+                  ignored with no error generated.  If *false*, the rejection
+                  of any record for having primary key values matching an
+                  existing record will result in an error being reported, as
+                  determined by *allow_partial_batch* &
                   *return_individual_errors*.  If the specified table does not
                   have a primary key or if upsert mode is in effect
-                  (*update_on_existing_pk* is
-                  *true*), then this option has no effect.
+                  (*update_on_existing_pk* is *true*), then this option has no
+                  effect.
                   Allowed values are:
 
                   * **true** --
@@ -29348,6 +29611,8 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                The default value is an empty dict ( {} ).
+
             record_type (RecordType)
                 A :class:`RecordType` object using which the the binary data
                 will be encoded.  If None, then it is assumed that the data is
@@ -29407,7 +29672,6 @@ class GPUdb(object):
             use_object_array = True
         # end if
 
-
         if use_object_array:
             response = self.__submit_request( '/insert/records', obj, convert_to_attr_dict = True, get_req_cext = True )
         else:
@@ -29419,40 +29683,33 @@ class GPUdb(object):
         return response
     # end insert_records
 
-
     # begin insert_records_from_files
     def insert_records_from_files( self, table_name = None, filepaths = None,
                                    modify_columns = {}, create_table_options =
                                    {}, options = {} ):
         """Reads from one or more files and inserts the data into a new or
-        existing table.
-        The source data can be located either in `KiFS
+        existing table. The source data can be located either in `KiFS
         <../../../../tools/kifs/>`__; on the cluster, accessible to the
-        database; or
-        remotely, accessible via a pre-defined external `data source
-        <../../../../concepts/data_sources/>`__.
+        database; or remotely, accessible via a pre-defined external `data
+        source <../../../../concepts/data_sources/>`__.
 
 
         For delimited text files, there are two loading schemes: positional and
-        name-based. The name-based
-        loading scheme is enabled when the file has a header present and
-        *text_has_header* is set to
-        *true*. In this scheme, the source file(s) field names
-        must match the target table's column names exactly; however, the source
-        file can have more fields
+        name-based. The name-based loading scheme is enabled when the file has
+        a header present and *text_has_header* is set to *true*. In this
+        scheme, the source file(s) field names must match the target table's
+        column names exactly; however, the source file can have more fields
         than the target table has columns. If *error_handling* is set to
-        *permissive*, the source file can have fewer fields
-        than the target table has columns. If the name-based loading scheme is
-        being used, names matching
-        the file header's names may be provided to *columns_to_load* instead of
-        numbers, but ranges are not supported.
+        *permissive*, the source file can have fewer fields than the target
+        table has columns. If the name-based loading scheme is being used,
+        names matching the file header's names may be provided to
+        *columns_to_load* instead of numbers, but ranges are not supported.
 
         Note: Due to data being loaded in parallel, there is no insertion order
-        guaranteed.  For tables with
-        primary keys, in the case of a primary key collision, this means it is
-        indeterminate which record
-        will be inserted first and remain, while the rest of the colliding key
-        records are discarded.
+        guaranteed.  For tables with primary keys, in the case of a primary key
+        collision, this means it is indeterminate which record will be inserted
+        first and remain, while the rest of the colliding key records are
+        discarded.
 
         Returns once all files are processed.
 
@@ -29460,65 +29717,56 @@ class GPUdb(object):
 
             table_name (str)
                 Name of the table into which the data will be inserted, in
-                [schema_name.]table_name format, using standard
-                `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__.
-                If the table does not exist, the table will be created using
-                either an existing
-                *type_id* or the type inferred from the
-                file, and the new table name will have to meet standard
-                `table naming criteria
+                [schema_name.]table_name format, using standard `name
+                resolution rules
+                <../../../../concepts/tables/#table-name-resolution>`__. If the
+                table does not exist, the table will be created using either an
+                existing *type_id* or the type inferred from the file, and the
+                new table name will have to meet standard `table naming
+                criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.
 
             filepaths (list of str)
                 A list of file paths from which data will be sourced;
 
                 For paths in `KiFS <../../../../tools/kifs/>`__, use the uri
-                prefix of kifs:// followed by the path to
-                a file or directory. File matching by prefix is supported, e.g.
-                kifs://dir/file would match dir/file_1
-                and dir/file_2. When prefix matching is used, the path must
-                start with a full, valid KiFS directory name.
+                prefix of kifs:// followed by the path to a file or directory.
+                File matching by prefix is supported, e.g. kifs://dir/file
+                would match dir/file_1 and dir/file_2. When prefix matching is
+                used, the path must start with a full, valid KiFS directory
+                name.
 
                 If an external data source is specified in *datasource_name*,
-                these file
-                paths must resolve to accessible files at that data source
-                location. Prefix matching is supported.
-                If the data source is hdfs, prefixes must be aligned with
-                directories, i.e. partial file names will
-                not match.
+                these file paths must resolve to accessible files at that data
+                source location. Prefix matching is supported. If the data
+                source is hdfs, prefixes must be aligned with directories, i.e.
+                partial file names will not match.
 
                 If no data source is specified, the files are assumed to be
-                local to the database and must all be
-                accessible to the gpudb user, residing on the path (or relative
-                to the path) specified by the
-                external files directory in the Kinetica
-                `configuration file
-                <../../../../config/#config-main-external-files>`__. Wildcards
-                (*) can be used to
-                specify a group of files.  Prefix matching is supported, the
-                prefixes must be aligned with
+                local to the database and must all be accessible to the gpudb
+                user, residing on the path (or relative to the path) specified
+                by the external files directory in the Kinetica `configuration
+                file <../../../../config/#config-main-external-files>`__.
+                Wildcards (*) can be used to specify a group of files.  Prefix
+                matching is supported, the prefixes must be aligned with
                 directories.
 
                 If the first path ends in .tsv, the text delimiter will be
-                defaulted to a tab character.
-                If the first path ends in .psv, the text delimiter will be
-                defaulted to a pipe character (|).     The user can provide a
-                single element (which will be automatically promoted to a list
-                internally) or a list.
+                defaulted to a tab character. If the first path ends in .psv,
+                the text delimiter will be defaulted to a pipe character (|).
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
 
             modify_columns (dict of str to dicts of str to str)
-                Not implemented yet.  The default value is an empty dict ( {}
-                ).
+                Not implemented yet. The default value is an empty dict ( {} ).
 
             create_table_options (dict of str to str)
-                Options used when creating the target table.  The default value
-                is an empty dict ( {} ).
+                Options used when creating the target table.
                 Allowed keys are:
 
                 * **type_id** --
                   ID of a currently registered `type
-                  <../../../../concepts/types/>`__.  The default value is ''.
+                  <../../../../concepts/types/>`__. The default value is ''.
 
                 * **no_error_if_exists** --
                   If *true*, prevents an error from occurring if the table
@@ -29627,13 +29875,19 @@ class GPUdb(object):
                   Indicates the number of records per chunk to be used for this
                   table.
 
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for this table.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for this table.
+
                 * **is_result_table** --
                   Indicates whether the table is a `memory-only table
                   <../../../../concepts/tables_memory_only/>`__. A result table
-                  cannot contain columns with store_only or text_search
-                  `data-handling <../../../../concepts/types/#data-handling>`__
-                  or that are `non-charN strings
-                  <../../../../concepts/types/#primitive-types>`__, and it will
+                  cannot contain columns with text_search `data-handling
+                  <../../../../concepts/types/#data-handling>`__, and it will
                   not be retained if the server is restarted.
                   Allowed values are:
 
@@ -29647,9 +29901,10 @@ class GPUdb(object):
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
 
+                The default value is an empty dict ( {} ).
+
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **avro_header_bytes** --
@@ -29697,54 +29952,49 @@ class GPUdb(object):
 
                 * **column_formats** --
                   For each target column specified, applies the
-                  column-property-bound format to the source data
-                  loaded into that column.  Each column format will contain a
-                  mapping of one or more of its column
-                  properties to an appropriate format for each property.
-                  Currently supported column properties
+                  column-property-bound format to the source data loaded into
+                  that column.  Each column format will contain a mapping of
+                  one or more of its column properties to an appropriate format
+                  for each property.  Currently supported column properties
                   include date, time, & datetime. The parameter value must be
-                  formatted as a JSON string of maps of
-                  column names to maps of column properties to their
-                  corresponding column formats, e.g.,
-                  '{ "order_date" : { "date" : "%Y.%m.%d" }, "order_time" : {
-                  "time" : "%H:%M:%S" } }'.
+                  formatted as a JSON string of maps of column names to maps of
+                  column properties to their corresponding column formats,
+                  e.g., '{ "order_date" : { "date" : "%Y.%m.%d" }, "order_time"
+                  : { "time" : "%H:%M:%S" } }'.
+
                   See *default_column_formats* for valid format syntax.
 
                 * **columns_to_load** --
                   Specifies a comma-delimited list of columns from the source
-                  data to
-                  load.  If more than one file is being loaded, this list
-                  applies to all files.
+                  data to load.  If more than one file is being loaded, this
+                  list applies to all files.
+
                   Column numbers can be specified discretely or as a range.
-                  For example, a value of '5,7,1..3' will
-                  insert values from the fifth column in the source data into
-                  the first column in the target table,
-                  from the seventh column in the source data into the second
-                  column in the target table, and from the
+                  For example, a value of '5,7,1..3' will insert values from
+                  the fifth column in the source data into the first column in
+                  the target table, from the seventh column in the source data
+                  into the second column in the target table, and from the
                   first through third columns in the source data into the third
-                  through fifth columns in the target
-                  table.
+                  through fifth columns in the target table.
+
                   If the source data contains a header, column names matching
-                  the file header names may be provided
-                  instead of column numbers.  If the target table doesn't
-                  exist, the table will be created with the
-                  columns in this order.  If the target table does exist with
-                  columns in a different order than the
+                  the file header names may be provided instead of column
+                  numbers.  If the target table doesn't exist, the table will
+                  be created with the columns in this order.  If the target
+                  table does exist with columns in a different order than the
                   source data, this list can be used to match the order of the
-                  target table.  For example, a value of
-                  'C, B, A' will create a three column table with column C,
-                  followed by column B, followed by column
-                  A; or will insert those fields in that order into a table
-                  created with columns in that order.  If
+                  target table.  For example, a value of 'C, B, A' will create
+                  a three column table with column C, followed by column B,
+                  followed by column A; or will insert those fields in that
+                  order into a table created with columns in that order.  If
                   the target table exists, the column names must match the
-                  source data field names for a name-mapping
-                  to be successful.
+                  source data field names for a name-mapping to be successful.
+
                   Mutually exclusive with *columns_to_skip*.
 
                 * **columns_to_skip** --
                   Specifies a comma-delimited list of columns from the source
-                  data to
-                  skip.  Mutually exclusive with *columns_to_load*.
+                  data to skip.  Mutually exclusive with *columns_to_load*.
 
                 * **compression_type** --
                   Optional: compression type.
@@ -29771,36 +30021,32 @@ class GPUdb(object):
 
                 * **default_column_formats** --
                   Specifies the default format to be applied to source data
-                  loaded
-                  into columns with the corresponding column property.
-                  Currently supported column properties include
-                  date, time, & datetime.  This default column-property-bound
-                  format can be overridden by specifying a
-                  column property & format for a given target column in
-                  *column_formats*. For
-                  each specified annotation, the format will apply to all
-                  columns with that annotation unless a custom
-                  *column_formats* for that annotation is specified.
+                  loaded into columns with the corresponding column property.
+                  Currently supported column properties include date, time, &
+                  datetime.  This default column-property-bound format can be
+                  overridden by specifying a column property & format for a
+                  given target column in *column_formats*. For each specified
+                  annotation, the format will apply to all columns with that
+                  annotation unless a custom *column_formats* for that
+                  annotation is specified.
+
                   The parameter value must be formatted as a JSON string that
-                  is a map of column properties to their
-                  respective column formats, e.g., '{ "date" : "%Y.%m.%d",
-                  "time" : "%H:%M:%S" }'.  Column
-                  formats are specified as a string of control characters and
-                  plain text. The supported control
-                  characters are 'Y', 'm', 'd', 'H', 'M', 'S', and 's', which
-                  follow the Linux 'strptime()'
-                  specification, as well as 's', which specifies seconds and
-                  fractional seconds (though the fractional
-                  component will be truncated past milliseconds).
+                  is a map of column properties to their respective column
+                  formats, e.g., '{ "date" : "%Y.%m.%d", "time" : "%H:%M:%S"
+                  }'.  Column formats are specified as a string of control
+                  characters and plain text. The supported control characters
+                  are 'Y', 'm', 'd', 'H', 'M', 'S', and 's', which follow the
+                  Linux 'strptime()' specification, as well as 's', which
+                  specifies seconds and fractional seconds (though the
+                  fractional component will be truncated past milliseconds).
+
                   Formats for the 'date' annotation must include the 'Y', 'm',
-                  and 'd' control characters. Formats for
-                  the 'time' annotation must include the 'H', 'M', and either
-                  'S' or 's' (but not both) control
-                  characters. Formats for the 'datetime' annotation meet both
-                  the 'date' and 'time' control character
+                  and 'd' control characters. Formats for the 'time' annotation
+                  must include the 'H', 'M', and either 'S' or 's' (but not
+                  both) control characters. Formats for the 'datetime'
+                  annotation meet both the 'date' and 'time' control character
                   requirements. For example, '{"datetime" : "%m/%d/%Y %H:%M:%S"
-                  }' would be used to interpret text
-                  as "05/04/2000 12:12:11"
+                  }' would be used to interpret text as "05/04/2000 12:12:11"
 
                 * **error_handling** --
                   Specifies how errors should be handled upon insertion.
@@ -29847,27 +30093,23 @@ class GPUdb(object):
 
                 * **gdal_configuration_options** --
                   Comma separated list of gdal conf options, for the specific
-                  requets: key=value.  The default value is ''.
+                  requets: key=value. The default value is ''.
 
                 * **ignore_existing_pk** --
                   Specifies the record collision error-suppression policy for
                   inserting into a table with a `primary key
                   <../../../../concepts/tables/#primary-keys>`__, only used
-                  when
-                  not in upsert mode (upsert mode is disabled when
-                  *update_on_existing_pk* is
-                  *false*).  If set to
-                  *true*, any record being inserted that is rejected
-                  for having primary key values that match those of an existing
-                  table record will be ignored with no
-                  error generated.  If *false*, the rejection of any
-                  record for having primary key values matching an existing
-                  record will result in an error being
-                  reported, as determined by *error_handling*.  If the
-                  specified table does not
-                  have a primary key or if upsert mode is in effect
-                  (*update_on_existing_pk* is
-                  *true*), then this option has no effect.
+                  when not in upsert mode (upsert mode is disabled when
+                  *update_on_existing_pk* is *false*).  If set to *true*, any
+                  record being inserted that is rejected for having primary key
+                  values that match those of an existing table record will be
+                  ignored with no error generated.  If *false*, the rejection
+                  of any record for having primary key values matching an
+                  existing record will result in an error being reported, as
+                  determined by *error_handling*.  If the specified table does
+                  not have a primary key or if upsert mode is in effect
+                  (*update_on_existing_pk* is *true*), then this option has no
+                  effect.
                   Allowed values are:
 
                   * **true** --
@@ -29920,7 +30162,7 @@ class GPUdb(object):
                   subscription will be cancelled automatically.
 
                 * **layer** --
-                  Optional: geo files layer(s) name(s): comma separated.  The
+                  Optional: geo files layer(s) name(s): comma separated. The
                   default value is ''.
 
                 * **loading_mode** --
@@ -29934,36 +30176,38 @@ class GPUdb(object):
                     to the head node.
 
                   * **distributed_shared** --
-                    The head node coordinates loading data by worker
-                    processes across all nodes from shared files available to
-                    all workers.
+                    The head node coordinates loading data by worker processes
+                    across all nodes from shared files available to all
+                    workers.
+
                     NOTE:
+
                     Instead of existing on a shared source, the files can be
-                    duplicated on a source local to each host
-                    to improve performance, though the files must appear as the
-                    same data set from the perspective of
-                    all hosts performing the load.
+                    duplicated on a source local to each host to improve
+                    performance, though the files must appear as the same data
+                    set from the perspective of all hosts performing the load.
 
                   * **distributed_local** --
-                    A single worker process on each node loads all files
-                    that are available to it. This option works best when each
-                    worker loads files from its own file
-                    system, to maximize performance. In order to avoid data
-                    duplication, either each worker performing
-                    the load needs to have visibility to a set of files unique
-                    to it (no file is visible to more than
-                    one node) or the target table needs to have a primary key
-                    (which will allow the worker to
-                    automatically deduplicate data).
+                    A single worker process on each node loads all files that
+                    are available to it. This option works best when each
+                    worker loads files from its own file system, to maximize
+                    performance. In order to avoid data duplication, either
+                    each worker performing the load needs to have visibility to
+                    a set of files unique to it (no file is visible to more
+                    than one node) or the target table needs to have a primary
+                    key (which will allow the worker to automatically
+                    deduplicate data).
+
                     NOTE:
+
                     If the target table doesn't exist, the table structure will
-                    be determined by the head node. If the
-                    head node has no files local to it, it will be unable to
-                    determine the structure and the request
-                    will fail.
+                    be determined by the head node. If the head node has no
+                    files local to it, it will be unable to determine the
+                    structure and the request will fail.
+
                     If the head node is configured to have no worker processes,
-                    no data strictly accessible to the head
-                    node will be loaded.
+                    no data strictly accessible to the head node will be
+                    loaded.
 
                   The default value is 'head'.
 
@@ -29974,7 +30218,7 @@ class GPUdb(object):
                   Limit the number of records to load in this request: If this
                   number is larger than a batch_size, then the number of
                   records loaded will be limited to the next whole number of
-                  batch_size (per working thread).  The default value is ''.
+                  batch_size (per working thread). The default value is ''.
 
                 * **num_tasks_per_rank** --
                   Optional: number of tasks for reading file per rank. Default
@@ -29989,12 +30233,16 @@ class GPUdb(object):
 
                 * **primary_keys** --
                   Optional: comma separated list of column names, to set as
-                  primary keys, when not specified in the type.  The default
+                  primary keys, when not specified in the type. The default
                   value is ''.
+
+                * schema_registry_schema_id
+                * schema_registry_schema_name
+                * schema_registry_schema_version
 
                 * **shard_keys** --
                   Optional: comma separated list of column names, to set as
-                  primary keys, when not specified in the type.  The default
+                  primary keys, when not specified in the type. The default
                   value is ''.
 
                 * **skip_lines** --
@@ -30023,38 +30271,39 @@ class GPUdb(object):
 
                 * **text_comment_string** --
                   Specifies the character string that should be interpreted as
-                  a comment line
-                  prefix in the source data.  All lines in the data starting
-                  with the provided string are ignored.
-                  For *delimited_text* *file_type* only.  The default value is
+                  a comment line prefix in the source data.  All lines in the
+                  data starting with the provided string are ignored.
+
+                  For *delimited_text* *file_type* only. The default value is
                   '#'.
 
                 * **text_delimiter** --
                   Specifies the character delimiting field values in the source
-                  data
-                  and field names in the header (if present).
-                  For *delimited_text* *file_type* only.  The default value is
+                  data and field names in the header (if present).
+
+                  For *delimited_text* *file_type* only. The default value is
                   ','.
 
                 * **text_escape_character** --
                   Specifies the character that is used to escape other
-                  characters in
-                  the source data.
+                  characters in the source data.
+
                   An 'a', 'b', 'f', 'n', 'r', 't', or 'v' preceded by an escape
-                  character will be interpreted as the
-                  ASCII bell, backspace, form feed, line feed, carriage return,
-                  horizontal tab, & vertical tab,
-                  respectively.  For example, the escape character followed by
-                  an 'n' will be interpreted as a newline
+                  character will be interpreted as the ASCII bell, backspace,
+                  form feed, line feed, carriage return, horizontal tab, &
+                  vertical tab, respectively.  For example, the escape
+                  character followed by an 'n' will be interpreted as a newline
                   within a field value.
+
                   The escape character can also be used to escape the quoting
-                  character, and will be treated as an
-                  escape character whether it is within a quoted field value or
-                  not.
+                  character, and will be treated as an escape character whether
+                  it is within a quoted field value or not.
+
                   For *delimited_text* *file_type* only.
 
                 * **text_has_header** --
                   Indicates whether the source data contains a header row.
+
                   For *delimited_text* *file_type* only.
                   Allowed values are:
 
@@ -30064,33 +30313,32 @@ class GPUdb(object):
                   The default value is 'true'.
 
                 * **text_header_property_delimiter** --
-                  Specifies the delimiter for
-                  `column properties
+                  Specifies the delimiter for `column properties
                   <../../../../concepts/types/#column-properties>`__ in the
-                  header row (if
-                  present).  Cannot be set to same value as *text_delimiter*.
-                  For *delimited_text* *file_type* only.  The default value is
+                  header row (if present).  Cannot be set to same value as
+                  *text_delimiter*.
+
+                  For *delimited_text* *file_type* only. The default value is
                   '|'.
 
                 * **text_null_string** --
                   Specifies the character string that should be interpreted as
-                  a null
-                  value in the source data.
-                  For *delimited_text* *file_type* only.  The default value is
-                  '\\N'.
+                  a null value in the source data.
+
+                  For *delimited_text* *file_type* only. The default value is
+                  '\\\\N'.
 
                 * **text_quote_character** --
                   Specifies the character that should be interpreted as a field
-                  value
-                  quoting character in the source data.  The character must
-                  appear at beginning and end of field value
-                  to take effect.  Delimiters within quoted fields are treated
-                  as literals and not delimiters.  Within
-                  a quoted field, two consecutive quote characters will be
-                  interpreted as a single literal quote
-                  character, effectively escaping it.  To not have a quote
-                  character, specify an empty string.
-                  For *delimited_text* *file_type* only.  The default value is
+                  value quoting character in the source data.  The character
+                  must appear at beginning and end of field value to take
+                  effect.  Delimiters within quoted fields are treated as
+                  literals and not delimiters.  Within a quoted field, two
+                  consecutive quote characters will be interpreted as a single
+                  literal quote character, effectively escaping it.  To not
+                  have a quote character, specify an empty string.
+
+                  For *delimited_text* *file_type* only. The default value is
                   '"'.
 
                 * **text_search_columns** --
@@ -30125,7 +30373,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **type_inference_mode** --
-                  optimize type inference for:.
+                  optimize type inference for:
                   Allowed values are:
 
                   * **accuracy** --
@@ -30136,24 +30384,21 @@ class GPUdb(object):
                     Scans data and picks the widest possible column types so
                     that 'all' values will fit with minimum data scanned
 
-                  The default value is 'speed'.
+                  The default value is 'accuracy'.
 
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting into a
-                  table
-                  with a `primary key
+                  table with a `primary key
                   <../../../../concepts/tables/#primary-keys>`__. If set to
-                  *true*, any existing table record with primary
-                  key values that match those of a record being inserted will
-                  be replaced by that new record (the new
-                  data will be "upserted"). If set to *false*,
-                  any existing table record with primary key values that match
-                  those of a record being inserted will
-                  remain unchanged, while the new record will be rejected and
-                  the error handled as determined by
-                  *ignore_existing_pk* & *error_handling*.  If the
-                  specified table does not have a primary key, then this option
-                  has no effect.
+                  *true*, any existing table record with primary key values
+                  that match those of a record being inserted will be replaced
+                  by that new record (the new data will be "upserted"). If set
+                  to *false*, any existing table record with primary key values
+                  that match those of a record being inserted will remain
+                  unchanged, while the new record will be rejected and the
+                  error handled as determined by *ignore_existing_pk* &
+                  *error_handling*.  If the specified table does not have a
+                  primary key, then this option has no effect.
                   Allowed values are:
 
                   * **true** --
@@ -30163,6 +30408,8 @@ class GPUdb(object):
                     Reject new records when primary keys match existing records
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -30200,7 +30447,6 @@ class GPUdb(object):
                 Additional information.
 
             files (list of str)
-
         """
         assert isinstance( table_name, (basestring)), "insert_records_from_files(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         filepaths = filepaths if isinstance( filepaths, list ) else ( [] if (filepaths is None) else [ filepaths ] )
@@ -30220,15 +30466,13 @@ class GPUdb(object):
         return response
     # end insert_records_from_files
 
-
     # begin insert_records_from_payload
     def insert_records_from_payload( self, table_name = None, data_text = None,
                                      data_bytes = None, modify_columns = {},
                                      create_table_options = {}, options = {} ):
         """Reads from the given text-based or binary payload and inserts the
         data into a new or existing table.  The table will be created if it
-        doesn't
-        already exist.
+        doesn't already exist.
 
         Returns once all records are processed.
 
@@ -30236,14 +30480,13 @@ class GPUdb(object):
 
             table_name (str)
                 Name of the table into which the data will be inserted, in
-                [schema_name.]table_name format, using standard
-                `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__.
-                If the table does not exist, the table will be created using
-                either an existing
-                *type_id* or the type inferred from the
-                payload, and the new table name will have to meet standard
-                `table naming criteria
+                [schema_name.]table_name format, using standard `name
+                resolution rules
+                <../../../../concepts/tables/#table-name-resolution>`__. If the
+                table does not exist, the table will be created using either an
+                existing *type_id* or the type inferred from the payload, and
+                the new table name will have to meet standard `table naming
+                criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.
 
             data_text (str)
@@ -30253,19 +30496,17 @@ class GPUdb(object):
                 Records formatted as binary data
 
             modify_columns (dict of str to dicts of str to str)
-                Not implemented yet.  The default value is an empty dict ( {}
-                ).
+                Not implemented yet. The default value is an empty dict ( {} ).
 
             create_table_options (dict of str to str)
                 Options used when creating the target table. Includes type to
                 use. The other options match those in
-                :meth:`GPUdb.create_table`.  The default value is an empty dict
-                ( {} ).
+                :meth:`GPUdb.create_table`.
                 Allowed keys are:
 
                 * **type_id** --
                   ID of a currently registered `type
-                  <../../../../concepts/types/>`__.  The default value is ''.
+                  <../../../../concepts/types/>`__. The default value is ''.
 
                 * **no_error_if_exists** --
                   If *true*, prevents an error from occurring if the table
@@ -30374,13 +30615,19 @@ class GPUdb(object):
                   Indicates the number of records per chunk to be used for this
                   table.
 
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for this table.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for this table.
+
                 * **is_result_table** --
                   Indicates whether the table is a `memory-only table
                   <../../../../concepts/tables_memory_only/>`__. A result table
-                  cannot contain columns with store_only or text_search
-                  `data-handling <../../../../concepts/types/#data-handling>`__
-                  or that are `non-charN strings
-                  <../../../../concepts/types/#primitive-types>`__, and it will
+                  cannot contain columns with text_search `data-handling
+                  <../../../../concepts/types/#data-handling>`__, and it will
                   not be retained if the server is restarted.
                   Allowed values are:
 
@@ -30394,9 +30641,10 @@ class GPUdb(object):
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
 
+                The default value is an empty dict ( {} ).
+
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **avro_header_bytes** --
@@ -30443,54 +30691,49 @@ class GPUdb(object):
 
                 * **column_formats** --
                   For each target column specified, applies the
-                  column-property-bound format to the source data
-                  loaded into that column.  Each column format will contain a
-                  mapping of one or more of its column
-                  properties to an appropriate format for each property.
-                  Currently supported column properties
+                  column-property-bound format to the source data loaded into
+                  that column.  Each column format will contain a mapping of
+                  one or more of its column properties to an appropriate format
+                  for each property.  Currently supported column properties
                   include date, time, & datetime. The parameter value must be
-                  formatted as a JSON string of maps of
-                  column names to maps of column properties to their
-                  corresponding column formats, e.g.,
-                  '{ "order_date" : { "date" : "%Y.%m.%d" }, "order_time" : {
-                  "time" : "%H:%M:%S" } }'.
+                  formatted as a JSON string of maps of column names to maps of
+                  column properties to their corresponding column formats,
+                  e.g., '{ "order_date" : { "date" : "%Y.%m.%d" }, "order_time"
+                  : { "time" : "%H:%M:%S" } }'.
+
                   See *default_column_formats* for valid format syntax.
 
                 * **columns_to_load** --
                   Specifies a comma-delimited list of columns from the source
-                  data to
-                  load.  If more than one file is being loaded, this list
-                  applies to all files.
+                  data to load.  If more than one file is being loaded, this
+                  list applies to all files.
+
                   Column numbers can be specified discretely or as a range.
-                  For example, a value of '5,7,1..3' will
-                  insert values from the fifth column in the source data into
-                  the first column in the target table,
-                  from the seventh column in the source data into the second
-                  column in the target table, and from the
+                  For example, a value of '5,7,1..3' will insert values from
+                  the fifth column in the source data into the first column in
+                  the target table, from the seventh column in the source data
+                  into the second column in the target table, and from the
                   first through third columns in the source data into the third
-                  through fifth columns in the target
-                  table.
+                  through fifth columns in the target table.
+
                   If the source data contains a header, column names matching
-                  the file header names may be provided
-                  instead of column numbers.  If the target table doesn't
-                  exist, the table will be created with the
-                  columns in this order.  If the target table does exist with
-                  columns in a different order than the
+                  the file header names may be provided instead of column
+                  numbers.  If the target table doesn't exist, the table will
+                  be created with the columns in this order.  If the target
+                  table does exist with columns in a different order than the
                   source data, this list can be used to match the order of the
-                  target table.  For example, a value of
-                  'C, B, A' will create a three column table with column C,
-                  followed by column B, followed by column
-                  A; or will insert those fields in that order into a table
-                  created with columns in that order.  If
+                  target table.  For example, a value of 'C, B, A' will create
+                  a three column table with column C, followed by column B,
+                  followed by column A; or will insert those fields in that
+                  order into a table created with columns in that order.  If
                   the target table exists, the column names must match the
-                  source data field names for a name-mapping
-                  to be successful.
+                  source data field names for a name-mapping to be successful.
+
                   Mutually exclusive with *columns_to_skip*.
 
                 * **columns_to_skip** --
                   Specifies a comma-delimited list of columns from the source
-                  data to
-                  skip.  Mutually exclusive with *columns_to_load*.
+                  data to skip.  Mutually exclusive with *columns_to_load*.
 
                 * **compression_type** --
                   Optional: payload compression type.
@@ -30512,36 +30755,32 @@ class GPUdb(object):
 
                 * **default_column_formats** --
                   Specifies the default format to be applied to source data
-                  loaded
-                  into columns with the corresponding column property.
-                  Currently supported column properties include
-                  date, time, & datetime.  This default column-property-bound
-                  format can be overridden by specifying a
-                  column property & format for a given target column in
-                  *column_formats*. For
-                  each specified annotation, the format will apply to all
-                  columns with that annotation unless a custom
-                  *column_formats* for that annotation is specified.
+                  loaded into columns with the corresponding column property.
+                  Currently supported column properties include date, time, &
+                  datetime.  This default column-property-bound format can be
+                  overridden by specifying a column property & format for a
+                  given target column in *column_formats*. For each specified
+                  annotation, the format will apply to all columns with that
+                  annotation unless a custom *column_formats* for that
+                  annotation is specified.
+
                   The parameter value must be formatted as a JSON string that
-                  is a map of column properties to their
-                  respective column formats, e.g., '{ "date" : "%Y.%m.%d",
-                  "time" : "%H:%M:%S" }'.  Column
-                  formats are specified as a string of control characters and
-                  plain text. The supported control
-                  characters are 'Y', 'm', 'd', 'H', 'M', 'S', and 's', which
-                  follow the Linux 'strptime()'
-                  specification, as well as 's', which specifies seconds and
-                  fractional seconds (though the fractional
-                  component will be truncated past milliseconds).
+                  is a map of column properties to their respective column
+                  formats, e.g., '{ "date" : "%Y.%m.%d", "time" : "%H:%M:%S"
+                  }'.  Column formats are specified as a string of control
+                  characters and plain text. The supported control characters
+                  are 'Y', 'm', 'd', 'H', 'M', 'S', and 's', which follow the
+                  Linux 'strptime()' specification, as well as 's', which
+                  specifies seconds and fractional seconds (though the
+                  fractional component will be truncated past milliseconds).
+
                   Formats for the 'date' annotation must include the 'Y', 'm',
-                  and 'd' control characters. Formats for
-                  the 'time' annotation must include the 'H', 'M', and either
-                  'S' or 's' (but not both) control
-                  characters. Formats for the 'datetime' annotation meet both
-                  the 'date' and 'time' control character
+                  and 'd' control characters. Formats for the 'time' annotation
+                  must include the 'H', 'M', and either 'S' or 's' (but not
+                  both) control characters. Formats for the 'datetime'
+                  annotation meet both the 'date' and 'time' control character
                   requirements. For example, '{"datetime" : "%m/%d/%Y %H:%M:%S"
-                  }' would be used to interpret text
-                  as "05/04/2000 12:12:11"
+                  }' would be used to interpret text as "05/04/2000 12:12:11"
 
                 * **error_handling** --
                   Specifies how errors should be handled upon insertion.
@@ -30588,27 +30827,23 @@ class GPUdb(object):
 
                 * **gdal_configuration_options** --
                   Comma separated list of gdal conf options, for the specific
-                  requets: key=value.  The default value is ''.
+                  requets: key=value. The default value is ''.
 
                 * **ignore_existing_pk** --
                   Specifies the record collision error-suppression policy for
                   inserting into a table with a `primary key
                   <../../../../concepts/tables/#primary-keys>`__, only used
-                  when
-                  not in upsert mode (upsert mode is disabled when
-                  *update_on_existing_pk* is
-                  *false*).  If set to
-                  *true*, any record being inserted that is rejected
-                  for having primary key values that match those of an existing
-                  table record will be ignored with no
-                  error generated.  If *false*, the rejection of any
-                  record for having primary key values matching an existing
-                  record will result in an error being
-                  reported, as determined by *error_handling*.  If the
-                  specified table does not
-                  have a primary key or if upsert mode is in effect
-                  (*update_on_existing_pk* is
-                  *true*), then this option has no effect.
+                  when not in upsert mode (upsert mode is disabled when
+                  *update_on_existing_pk* is *false*).  If set to *true*, any
+                  record being inserted that is rejected for having primary key
+                  values that match those of an existing table record will be
+                  ignored with no error generated.  If *false*, the rejection
+                  of any record for having primary key values matching an
+                  existing record will result in an error being reported, as
+                  determined by *error_handling*.  If the specified table does
+                  not have a primary key or if upsert mode is in effect
+                  (*update_on_existing_pk* is *true*), then this option has no
+                  effect.
                   Allowed values are:
 
                   * **true** --
@@ -30643,7 +30878,7 @@ class GPUdb(object):
                   The default value is 'full'.
 
                 * **layer** --
-                  Optional: geo files layer(s) name(s): comma separated.  The
+                  Optional: geo files layer(s) name(s): comma separated. The
                   default value is ''.
 
                 * **loading_mode** --
@@ -30657,36 +30892,38 @@ class GPUdb(object):
                     to the head node.
 
                   * **distributed_shared** --
-                    The head node coordinates loading data by worker
-                    processes across all nodes from shared files available to
-                    all workers.
+                    The head node coordinates loading data by worker processes
+                    across all nodes from shared files available to all
+                    workers.
+
                     NOTE:
+
                     Instead of existing on a shared source, the files can be
-                    duplicated on a source local to each host
-                    to improve performance, though the files must appear as the
-                    same data set from the perspective of
-                    all hosts performing the load.
+                    duplicated on a source local to each host to improve
+                    performance, though the files must appear as the same data
+                    set from the perspective of all hosts performing the load.
 
                   * **distributed_local** --
-                    A single worker process on each node loads all files
-                    that are available to it. This option works best when each
-                    worker loads files from its own file
-                    system, to maximize performance. In order to avoid data
-                    duplication, either each worker performing
-                    the load needs to have visibility to a set of files unique
-                    to it (no file is visible to more than
-                    one node) or the target table needs to have a primary key
-                    (which will allow the worker to
-                    automatically deduplicate data).
+                    A single worker process on each node loads all files that
+                    are available to it. This option works best when each
+                    worker loads files from its own file system, to maximize
+                    performance. In order to avoid data duplication, either
+                    each worker performing the load needs to have visibility to
+                    a set of files unique to it (no file is visible to more
+                    than one node) or the target table needs to have a primary
+                    key (which will allow the worker to automatically
+                    deduplicate data).
+
                     NOTE:
+
                     If the target table doesn't exist, the table structure will
-                    be determined by the head node. If the
-                    head node has no files local to it, it will be unable to
-                    determine the structure and the request
-                    will fail.
+                    be determined by the head node. If the head node has no
+                    files local to it, it will be unable to determine the
+                    structure and the request will fail.
+
                     If the head node is configured to have no worker processes,
-                    no data strictly accessible to the head
-                    node will be loaded.
+                    no data strictly accessible to the head node will be
+                    loaded.
 
                   The default value is 'head'.
 
@@ -30697,7 +30934,7 @@ class GPUdb(object):
                   Limit the number of records to load in this request: If this
                   number is larger than a batch_size, then the number of
                   records loaded will be limited to the next whole number of
-                  batch_size (per working thread).  The default value is ''.
+                  batch_size (per working thread). The default value is ''.
 
                 * **num_tasks_per_rank** --
                   Optional: number of tasks for reading file per rank. Default
@@ -30712,12 +30949,16 @@ class GPUdb(object):
 
                 * **primary_keys** --
                   Optional: comma separated list of column names, to set as
-                  primary keys, when not specified in the type.  The default
+                  primary keys, when not specified in the type. The default
                   value is ''.
+
+                * schema_registry_schema_id
+                * schema_registry_schema_name
+                * schema_registry_schema_version
 
                 * **shard_keys** --
                   Optional: comma separated list of column names, to set as
-                  primary keys, when not specified in the type.  The default
+                  primary keys, when not specified in the type. The default
                   value is ''.
 
                 * **skip_lines** --
@@ -30746,38 +30987,39 @@ class GPUdb(object):
 
                 * **text_comment_string** --
                   Specifies the character string that should be interpreted as
-                  a comment line
-                  prefix in the source data.  All lines in the data starting
-                  with the provided string are ignored.
-                  For *delimited_text* *file_type* only.  The default value is
+                  a comment line prefix in the source data.  All lines in the
+                  data starting with the provided string are ignored.
+
+                  For *delimited_text* *file_type* only. The default value is
                   '#'.
 
                 * **text_delimiter** --
                   Specifies the character delimiting field values in the source
-                  data
-                  and field names in the header (if present).
-                  For *delimited_text* *file_type* only.  The default value is
+                  data and field names in the header (if present).
+
+                  For *delimited_text* *file_type* only. The default value is
                   ','.
 
                 * **text_escape_character** --
                   Specifies the character that is used to escape other
-                  characters in
-                  the source data.
+                  characters in the source data.
+
                   An 'a', 'b', 'f', 'n', 'r', 't', or 'v' preceded by an escape
-                  character will be interpreted as the
-                  ASCII bell, backspace, form feed, line feed, carriage return,
-                  horizontal tab, & vertical tab,
-                  respectively.  For example, the escape character followed by
-                  an 'n' will be interpreted as a newline
+                  character will be interpreted as the ASCII bell, backspace,
+                  form feed, line feed, carriage return, horizontal tab, &
+                  vertical tab, respectively.  For example, the escape
+                  character followed by an 'n' will be interpreted as a newline
                   within a field value.
+
                   The escape character can also be used to escape the quoting
-                  character, and will be treated as an
-                  escape character whether it is within a quoted field value or
-                  not.
+                  character, and will be treated as an escape character whether
+                  it is within a quoted field value or not.
+
                   For *delimited_text* *file_type* only.
 
                 * **text_has_header** --
                   Indicates whether the source data contains a header row.
+
                   For *delimited_text* *file_type* only.
                   Allowed values are:
 
@@ -30787,33 +31029,32 @@ class GPUdb(object):
                   The default value is 'true'.
 
                 * **text_header_property_delimiter** --
-                  Specifies the delimiter for
-                  `column properties
+                  Specifies the delimiter for `column properties
                   <../../../../concepts/types/#column-properties>`__ in the
-                  header row (if
-                  present).  Cannot be set to same value as *text_delimiter*.
-                  For *delimited_text* *file_type* only.  The default value is
+                  header row (if present).  Cannot be set to same value as
+                  *text_delimiter*.
+
+                  For *delimited_text* *file_type* only. The default value is
                   '|'.
 
                 * **text_null_string** --
                   Specifies the character string that should be interpreted as
-                  a null
-                  value in the source data.
-                  For *delimited_text* *file_type* only.  The default value is
-                  '\\N'.
+                  a null value in the source data.
+
+                  For *delimited_text* *file_type* only. The default value is
+                  '\\\\N'.
 
                 * **text_quote_character** --
                   Specifies the character that should be interpreted as a field
-                  value
-                  quoting character in the source data.  The character must
-                  appear at beginning and end of field value
-                  to take effect.  Delimiters within quoted fields are treated
-                  as literals and not delimiters.  Within
-                  a quoted field, two consecutive quote characters will be
-                  interpreted as a single literal quote
-                  character, effectively escaping it.  To not have a quote
-                  character, specify an empty string.
-                  For *delimited_text* *file_type* only.  The default value is
+                  value quoting character in the source data.  The character
+                  must appear at beginning and end of field value to take
+                  effect.  Delimiters within quoted fields are treated as
+                  literals and not delimiters.  Within a quoted field, two
+                  consecutive quote characters will be interpreted as a single
+                  literal quote character, effectively escaping it.  To not
+                  have a quote character, specify an empty string.
+
+                  For *delimited_text* *file_type* only. The default value is
                   '"'.
 
                 * **text_search_columns** --
@@ -30848,7 +31089,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **type_inference_mode** --
-                  optimize type inference for:.
+                  optimize type inference for:
                   Allowed values are:
 
                   * **accuracy** --
@@ -30859,24 +31100,21 @@ class GPUdb(object):
                     Scans data and picks the widest possible column types so
                     that 'all' values will fit with minimum data scanned
 
-                  The default value is 'speed'.
+                  The default value is 'accuracy'.
 
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting into a
-                  table
-                  with a `primary key
+                  table with a `primary key
                   <../../../../concepts/tables/#primary-keys>`__. If set to
-                  *true*, any existing table record with primary
-                  key values that match those of a record being inserted will
-                  be replaced by that new record (the new
-                  data will be "upserted"). If set to *false*,
-                  any existing table record with primary key values that match
-                  those of a record being inserted will
-                  remain unchanged, while the new record will be rejected and
-                  the error handled as determined by
-                  *ignore_existing_pk* & *error_handling*.  If the
-                  specified table does not have a primary key, then this option
-                  has no effect.
+                  *true*, any existing table record with primary key values
+                  that match those of a record being inserted will be replaced
+                  by that new record (the new data will be "upserted"). If set
+                  to *false*, any existing table record with primary key values
+                  that match those of a record being inserted will remain
+                  unchanged, while the new record will be rejected and the
+                  error handled as determined by *ignore_existing_pk* &
+                  *error_handling*.  If the specified table does not have a
+                  primary key, then this option has no effect.
                   Allowed values are:
 
                   * **true** --
@@ -30886,6 +31124,8 @@ class GPUdb(object):
                     Reject new records when primary keys match existing records
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -30942,43 +31182,39 @@ class GPUdb(object):
         return response
     # end insert_records_from_payload
 
-
     # begin insert_records_from_query
     def insert_records_from_query( self, table_name = None, remote_query = None,
                                    modify_columns = {}, create_table_options =
                                    {}, options = {} ):
-        """Computes remote query result and inserts the result data into a new or
-        existing table
+        """Computes remote query result and inserts the result data into a new
+        or existing table
 
         Parameters:
 
             table_name (str)
                 Name of the table into which the data will be inserted, in
-                [schema_name.]table_name format, using standard
-                `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__.
-                If the table does not exist, the table will be created using
-                either an existing
-                *type_id* or the type inferred from the
-                remote query, and the new table name will have to meet standard
-                `table naming criteria
+                [schema_name.]table_name format, using standard `name
+                resolution rules
+                <../../../../concepts/tables/#table-name-resolution>`__. If the
+                table does not exist, the table will be created using either an
+                existing *type_id* or the type inferred from the remote query,
+                and the new table name will have to meet standard `table naming
+                criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.
 
             remote_query (str)
                 Query for which result data needs to be imported
 
             modify_columns (dict of str to dicts of str to str)
-                Not implemented yet.  The default value is an empty dict ( {}
-                ).
+                Not implemented yet. The default value is an empty dict ( {} ).
 
             create_table_options (dict of str to str)
-                Options used when creating the target table.  The default value
-                is an empty dict ( {} ).
+                Options used when creating the target table.
                 Allowed keys are:
 
                 * **type_id** --
                   ID of a currently registered `type
-                  <../../../../concepts/types/>`__.  The default value is ''.
+                  <../../../../concepts/types/>`__. The default value is ''.
 
                 * **no_error_if_exists** --
                   If *true*, prevents an error from occurring if the table
@@ -31090,10 +31326,8 @@ class GPUdb(object):
                 * **is_result_table** --
                   Indicates whether the table is a `memory-only table
                   <../../../../concepts/tables_memory_only/>`__. A result table
-                  cannot contain columns with store_only or text_search
-                  `data-handling <../../../../concepts/types/#data-handling>`__
-                  or that are `non-charN strings
-                  <../../../../concepts/types/#primitive-types>`__, and it will
+                  cannot contain columns with text_search `data-handling
+                  <../../../../concepts/types/#data-handling>`__, and it will
                   not be retained if the server is restarted.
                   Allowed values are:
 
@@ -31107,9 +31341,10 @@ class GPUdb(object):
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
 
+                The default value is an empty dict ( {} ).
+
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **bad_record_table_name** --
@@ -31153,21 +31388,17 @@ class GPUdb(object):
                   Specifies the record collision error-suppression policy for
                   inserting into a table with a `primary key
                   <../../../../concepts/tables/#primary-keys>`__, only used
-                  when
-                  not in upsert mode (upsert mode is disabled when
-                  *update_on_existing_pk* is
-                  *false*).  If set to
-                  *true*, any record being inserted that is rejected
-                  for having primary key values that match those of an existing
-                  table record will be ignored with no
-                  error generated.  If *false*, the rejection of any
-                  record for having primary key values matching an existing
-                  record will result in an error being
-                  reported, as determined by *error_handling*.  If the
-                  specified table does not
-                  have a primary key or if upsert mode is in effect
-                  (*update_on_existing_pk* is
-                  *true*), then this option has no effect.
+                  when not in upsert mode (upsert mode is disabled when
+                  *update_on_existing_pk* is *false*).  If set to *true*, any
+                  record being inserted that is rejected for having primary key
+                  values that match those of an existing table record will be
+                  ignored with no error generated.  If *false*, the rejection
+                  of any record for having primary key values matching an
+                  existing record will result in an error being reported, as
+                  determined by *error_handling*.  If the specified table does
+                  not have a primary key or if upsert mode is in effect
+                  (*update_on_existing_pk* is *true*), then this option has no
+                  effect.
                   Allowed values are:
 
                   * **true** --
@@ -31207,11 +31438,11 @@ class GPUdb(object):
 
                 * **jdbc_session_init_statement** --
                   Executes the statement per each jdbc session before doing
-                  actual load.  The default value is ''.
+                  actual load. The default value is ''.
 
                 * **num_splits_per_rank** --
                   Optional: number of splits for reading data per rank. Default
-                  will be external_file_reader_num_tasks.  The default value is
+                  will be external_file_reader_num_tasks. The default value is
                   ''.
 
                 * **num_tasks_per_rank** --
@@ -31220,12 +31451,12 @@ class GPUdb(object):
 
                 * **primary_keys** --
                   Optional: comma separated list of column names, to set as
-                  primary keys, when not specified in the type.  The default
+                  primary keys, when not specified in the type. The default
                   value is ''.
 
                 * **shard_keys** --
                   Optional: comma separated list of column names, to set as
-                  primary keys, when not specified in the type.  The default
+                  primary keys, when not specified in the type. The default
                   value is ''.
 
                 * **subscribe** --
@@ -31253,38 +31484,35 @@ class GPUdb(object):
 
                 * **remote_query_order_by** --
                   Name of column to be used for splitting the query into
-                  multiple sub-queries using ordering of given column.  The
+                  multiple sub-queries using ordering of given column. The
                   default value is ''.
 
                 * **remote_query_filter_column** --
                   Name of column to be used for splitting the query into
                   multiple sub-queries using the data distribution of given
-                  column.  The default value is ''.
+                  column. The default value is ''.
 
                 * **remote_query_increasing_column** --
                   Column on subscribed remote query result that will increase
-                  for new records (e.g., TIMESTAMP).  The default value is ''.
+                  for new records (e.g., TIMESTAMP). The default value is ''.
 
                 * **remote_query_partition_column** --
-                  Alias name for remote_query_filter_column.  The default value
+                  Alias name for remote_query_filter_column. The default value
                   is ''.
 
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting into a
-                  table
-                  with a `primary key
+                  table with a `primary key
                   <../../../../concepts/tables/#primary-keys>`__. If set to
-                  *true*, any existing table record with primary
-                  key values that match those of a record being inserted will
-                  be replaced by that new record (the new
-                  data will be "upserted"). If set to *false*,
-                  any existing table record with primary key values that match
-                  those of a record being inserted will
-                  remain unchanged, while the new record will be rejected and
-                  the error handled as determined by
-                  *ignore_existing_pk* & *error_handling*.  If the
-                  specified table does not have a primary key, then this option
-                  has no effect.
+                  *true*, any existing table record with primary key values
+                  that match those of a record being inserted will be replaced
+                  by that new record (the new data will be "upserted"). If set
+                  to *false*, any existing table record with primary key values
+                  that match those of a record being inserted will remain
+                  unchanged, while the new record will be rejected and the
+                  error handled as determined by *ignore_existing_pk* &
+                  *error_handling*.  If the specified table does not have a
+                  primary key, then this option has no effect.
                   Allowed values are:
 
                   * **true** --
@@ -31294,6 +31522,8 @@ class GPUdb(object):
                     Reject new records when primary keys match existing records
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -31348,23 +31578,18 @@ class GPUdb(object):
         return response
     # end insert_records_from_query
 
-
     # begin insert_records_random
-    def insert_records_random( self, table_name = None, count = None, options = {}
-                               ):
+    def insert_records_random( self, table_name = None, count = None, options =
+                               {} ):
         """Generates a specified number of random records and adds them to the
-        given table.
-        There is an optional parameter that allows the user to customize the
-        ranges of
-        the column values. It also allows the user to specify linear profiles
-        for some
-        or all columns in which case linear values are generated rather than
-        random
-        ones. Only individual tables are supported for this operation.
+        given table. There is an optional parameter that allows the user to
+        customize the ranges of the column values. It also allows the user to
+        specify linear profiles for some or all columns in which case linear
+        values are generated rather than random ones. Only individual tables
+        are supported for this operation.
 
         This operation is synchronous, meaning that a response will not be
-        returned
-        until all random records are fully available.
+        returned until all random records are fully available.
 
         Parameters:
 
@@ -31388,7 +31613,7 @@ class GPUdb(object):
                 internal keys represents which parameter is being specified.
                 These parameters take on different meanings depending on the
                 type of the column.  Below follows a more detailed description
-                of the map:.  The default value is an empty dict ( {} ).
+                of the map:
                 Allowed keys are:
 
                 * **seed** --
@@ -31400,7 +31625,7 @@ class GPUdb(object):
                   of maps, we need an internal map to provide the seed value.
                   For example, to pass 100 as the seed value through this
                   parameter, you need something equivalent to: 'options' =
-                  {'seed': { 'value': 100 } }
+                  {'seed': { 'value': 100 } }.
                   Allowed keys are:
 
                   * **value** --
@@ -31420,10 +31645,12 @@ class GPUdb(object):
                     columns in such cases are -180.0 and -90.0. For the
                     'TIMESTAMP' column, the default minimum corresponds to Jan
                     1, 2010.
+
                     For string columns, the minimum length of the randomly
                     generated strings is set to this value (default is 0). If
                     both minimum and maximum are provided, minimum must be less
                     than or equal to max. Value needs to be within [0, 200].
+
                     If the min is outside the accepted ranges for strings
                     columns and 'x' and 'y' columns for point/shape/track, then
                     those parameters will not be set; however, an error will
@@ -31437,11 +31664,13 @@ class GPUdb(object):
                     needs to be within [-180, 180] and [-90, 90], respectively.
                     The default minimum possible values for these columns in
                     such cases are 180.0 and 90.0.
+
                     For string columns, the maximum length of the randomly
                     generated strings is set to this value (default is 200). If
                     both minimum and maximum are provided, *max* must be
                     greater than or equal to *min*. Value needs to be within
                     [0, 200].
+
                     If the *max* is outside the accepted ranges for strings
                     columns and 'x' and 'y' columns for point/shape/track, then
                     those parameters will not be set; however, an error will
@@ -31491,10 +31720,12 @@ class GPUdb(object):
                     columns in such cases are -180.0 and -90.0. For the
                     'TIMESTAMP' column, the default minimum corresponds to Jan
                     1, 2010.
+
                     For string columns, the minimum length of the randomly
                     generated strings is set to this value (default is 0). If
                     both minimum and maximum are provided, minimum must be less
                     than or equal to max. Value needs to be within [0, 200].
+
                     If the min is outside the accepted ranges for strings
                     columns and 'x' and 'y' columns for point/shape/track, then
                     those parameters will not be set; however, an error will
@@ -31508,11 +31739,13 @@ class GPUdb(object):
                     needs to be within [-180, 180] and [-90, 90], respectively.
                     The default minimum possible values for these columns in
                     such cases are 180.0 and 90.0.
+
                     For string columns, the maximum length of the randomly
                     generated strings is set to this value (default is 200). If
                     both minimum and maximum are provided, *max* must be
                     greater than or equal to *min*. Value needs to be within
                     [0, 200].
+
                     If the *max* is outside the accepted ranges for strings
                     columns and 'x' and 'y' columns for point/shape/track, then
                     those parameters will not be set; however, an error will
@@ -31558,13 +31791,17 @@ class GPUdb(object):
                     Minimum possible length for generated series; default is
                     100 records per series. Must be an integral value within
                     the range [1, 500]. If both min and max are specified, min
-                    must be less than or equal to max.
+                    must be less than or equal to max. The minimum allowed
+                    value is '1'. The maximum allowed value is '500'.
 
                   * **max** --
                     Maximum possible length for generated series; default is
                     500 records per series. Must be an integral value within
                     the range [1, 500]. If both min and max are specified, max
-                    must be greater than or equal to min.
+                    must be greater than or equal to min. The minimum allowed
+                    value is '1'. The maximum allowed value is '500'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -31592,10 +31829,9 @@ class GPUdb(object):
         return response
     # end insert_records_random
 
-
     # begin insert_symbol
-    def insert_symbol( self, symbol_id = None, symbol_format = None, symbol_data =
-                       None, options = {} ):
+    def insert_symbol( self, symbol_id = None, symbol_format = None, symbol_data
+                       = None, options = {} ):
         """Adds a symbol or icon (i.e. an image) to represent data points when
         data is rendered visually. Users must provide the symbol identifier
         (string), a format (currently supported: 'svg' and 'svg_path'), the
@@ -31630,8 +31866,7 @@ class GPUdb(object):
                 'M25.979,12.896,5.979,12.896,5.979,19.562,25.979,19.562z'
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **color** --
@@ -31641,6 +31876,8 @@ class GPUdb(object):
                   path. For example, to have the path rendered in red, used
                   'FF0000'. If 'color' is not provided then '00FF00' (i.e.
                   green) is used by default.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -31667,7 +31904,6 @@ class GPUdb(object):
         return response
     # end insert_symbol
 
-
     # begin kill_proc
     def kill_proc( self, run_id = '', options = {} ):
         """Kills a running proc instance.
@@ -31678,12 +31914,10 @@ class GPUdb(object):
                 The run ID of a running proc instance. If a proc with a
                 matching run ID is not found or the proc instance has already
                 completed, no procs will be killed. If not specified, all
-                running proc instances will be killed.  The default value is
-                ''.
+                running proc instances will be killed. The default value is ''.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **run_tag** --
@@ -31692,7 +31926,22 @@ class GPUdb(object):
                   that was provided to :meth:`GPUdb.execute_proc`. If input
                   parameter *run_id* is not specified, kill the proc
                   instance(s) where a matching run tag was provided to
-                  :meth:`GPUdb.execute_proc`.  The default value is ''.
+                  :meth:`GPUdb.execute_proc`. The default value is ''.
+
+                * **clear_execute_at_startup** --
+                  If *true*, kill and remove the instance of the proc matching
+                  the auto-start run ID that was created to run when the
+                  database is started. The auto-start run ID was returned from
+                  :meth:`GPUdb.execute_proc` and can be retrieved using
+                  :meth:`GPUdb.show_proc`.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -31715,10 +31964,8 @@ class GPUdb(object):
         return response
     # end kill_proc
 
-
     # begin list_graph
     def list_graph( self, graph_name = '', options = {} ):
-
         assert isinstance( graph_name, (basestring)), "list_graph(): Argument 'graph_name' must be (one) of type(s) '(basestring)'; given %s" % type( graph_name ).__name__
         assert isinstance( options, (dict)), "list_graph(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -31730,7 +31977,6 @@ class GPUdb(object):
 
         return response
     # end list_graph
-
 
     # begin lock_table
     def lock_table( self, table_name = None, lock_type = 'status', options = {} ):
@@ -31775,8 +32021,7 @@ class GPUdb(object):
                 The default value is 'status'.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -31801,23 +32046,19 @@ class GPUdb(object):
         return response
     # end lock_table
 
-
     # begin match_graph
-    def match_graph( self, graph_name = None, sample_points = None, solve_method =
-                     'markov_chain', solution_table = '', options = {} ):
+    def match_graph( self, graph_name = None, sample_points = None, solve_method
+                     = 'markov_chain', solution_table = '', options = {} ):
         """Matches a directed route implied by a given set of
         latitude/longitude points to an existing underlying road network graph
-        using a
-        given solution type.
+        using a given solution type.
 
-        IMPORTANT: It's highly recommended that you review the
-        `Network Graphs & Solvers
-        <../../../../graph_solver/network_graph_solver/>`__
-        concepts documentation, the
-        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`__,
-        and/or some
-        `/match/graph examples <../../../../guide-tags/graph-match/>`__
-        before using this endpoint.
+        IMPORTANT: It's highly recommended that you review the `Network Graphs
+        & Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
+        documentation, the `Graph REST Tutorial
+        <../../../../guides/graph_rest_guide/>`__, and/or some `/match/graph
+        examples <../../../../guide-tags/graph-match/>`__ before using this
+        endpoint.
 
         Parameters:
 
@@ -31826,20 +32067,17 @@ class GPUdb(object):
                 using input parameter *sample_points*.
 
             sample_points (list of str)
-                Sample points used to match to an underlying geospatial
-                graph. Sample points must be specified using
-                `identifiers
+                Sample points used to match to an underlying geospatial graph.
+                Sample points must be specified using `identifiers
                 <../../../../graph_solver/network_graph_solver/#match-identifiers>`__;
-                identifiers are grouped as
-                `combinations
+                identifiers are grouped as `combinations
                 <../../../../graph_solver/network_graph_solver/#match-combinations>`__.
                 Identifiers can be used with: existing column names, e.g.,
                 'table.column AS SAMPLE_X'; expressions, e.g.,
                 'ST_MAKEPOINT(table.x, table.y) AS SAMPLE_WKTPOINT'; or
-                constant values, e.g.,
-                '{1, 2, 10} AS SAMPLE_TRIPID'.    The user can provide a single
-                element (which will be automatically promoted to a list
-                internally) or a list.
+                constant values, e.g., '{1, 2, 10} AS SAMPLE_TRIPID'. The user
+                can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
 
             solve_method (str)
                 The type of solver to use for graph matching.
@@ -31892,6 +32130,9 @@ class GPUdb(object):
                   Matches the graph nodes with a cluster index using Louvain
                   clustering algorithm
 
+                * **match_pattern** --
+                  Matches a pattern in the graph
+
                 The default value is 'markov_chain'.
 
             solution_table (str)
@@ -31908,41 +32149,40 @@ class GPUdb(object):
                 containing a trip ID (that matches the track ID), the
                 latitude/longitude pair, the timestamp the point was recorded
                 at, and an edge ID corresponding to the matched road segment.
-                Must not be an existing table of the same name.  The default
+                Must not be an existing table of the same name. The default
                 value is ''.
 
             options (dict of str to str)
-                Additional parameters.  The default value is an empty dict ( {}
-                ).
+                Additional parameters.
                 Allowed keys are:
 
                 * **gps_noise** --
                   GPS noise value (in meters) to remove redundant sample
                   points. Use -1 to disable noise reduction. The default value
-                  accounts for 95% of point variation (+ or -5 meters).  The
+                  accounts for 95% of point variation (+ or -5 meters). The
                   default value is '5.0'.
 
                 * **num_segments** --
                   Maximum number of potentially matching road segments for each
                   sample point. For the *markov_chain* solver, the default is
-                  3.  The default value is '3'.
+                  3. The default value is '3'.
 
                 * **search_radius** --
                   Maximum search radius used when snapping sample points onto
                   potentially matching surrounding segments. The default value
-                  corresponds to approximately 100 meters.  The default value
-                  is '0.001'.
+                  corresponds to approximately 100 meters. The default value is
+                  '0.001'.
 
                 * **chain_width** --
                   For the *markov_chain* solver only. Length of the sample
                   points lookahead window within the Markov kernel; the larger
-                  the number, the more accurate the solution.  The default
-                  value is '9'.
+                  the number, the more accurate the solution. The default value
+                  is '9'.
 
                 * **source** --
                   Optional WKT starting point from input parameter
                   *sample_points* for the solver. The default behavior for the
-                  endpoint is to use time to determine the starting point.  The
+                  endpoint is to use time to determine the starting point. The
                   default value is 'POINT NULL'.
 
                 * **destination** --
@@ -31969,38 +32209,38 @@ class GPUdb(object):
                 * **max_combinations** --
                   For the *match_supply_demand* solver only. This is the cutoff
                   for the number of generated combinations for sequencing the
-                  demand locations - can increase this up to 2M.  The default
+                  demand locations - can increase this up to 2M. The default
                   value is '10000'.
 
                 * **max_supply_combinations** --
                   For the *match_supply_demand* solver only. This is the cutoff
                   for the number of generated combinations for sequencing the
-                  supply locations if/when 'permute_supplies' is true.  The
+                  supply locations if/when 'permute_supplies' is true. The
                   default value is '10000'.
 
                 * **left_turn_penalty** --
                   This will add an additonal weight over the edges labelled as
                   'left turn' if the 'add_turn' option parameter of the
-                  :meth:`GPUdb.create_graph` was invoked at graph creation.
-                  The default value is '0.0'.
+                  :meth:`GPUdb.create_graph` was invoked at graph creation. The
+                  default value is '0.0'.
 
                 * **right_turn_penalty** --
                   This will add an additonal weight over the edges labelled as'
                   right turn' if the 'add_turn' option parameter of the
-                  :meth:`GPUdb.create_graph` was invoked at graph creation.
-                  The default value is '0.0'.
+                  :meth:`GPUdb.create_graph` was invoked at graph creation. The
+                  default value is '0.0'.
 
                 * **intersection_penalty** --
                   This will add an additonal weight over the edges labelled as
                   'intersection' if the 'add_turn' option parameter of the
-                  :meth:`GPUdb.create_graph` was invoked at graph creation.
-                  The default value is '0.0'.
+                  :meth:`GPUdb.create_graph` was invoked at graph creation. The
+                  default value is '0.0'.
 
                 * **sharp_turn_penalty** --
                   This will add an additonal weight over the edges labelled as
                   'sharp turn' or 'u-turn' if the 'add_turn' option parameter
                   of the :meth:`GPUdb.create_graph` was invoked at graph
-                  creation.  The default value is '0.0'.
+                  creation. The default value is '0.0'.
 
                 * **aggregated_output** --
                   For the *match_supply_demand* solver only. When it is true
@@ -32009,14 +32249,14 @@ class GPUdb(object):
                   (MULTILINESTRING) and the corresponding aggregated cost.
                   Otherwise, each record shows a single scheduled truck route
                   (LINESTRING) towards a particular demand location (store id)
-                  with its corresponding cost.  The default value is 'true'.
+                  with its corresponding cost. The default value is 'true'.
 
                 * **output_tracks** --
                   For the *match_supply_demand* solver only. When it is true
                   (non-default), the output will be in tracks format for all
                   the round trips of each truck in which the timestamps are
                   populated directly from the edge weights starting from their
-                  originating depots.  The default value is 'false'.
+                  originating depots. The default value is 'false'.
 
                 * **max_trip_cost** --
                   For the *match_supply_demand* and *match_pickup_dropoff*
@@ -32024,7 +32264,7 @@ class GPUdb(object):
                   (default) then the trucks/rides will skip travelling from one
                   demand/pick location to another if the cost between them is
                   greater than this number (distance or time). Zero (default)
-                  value means no check is performed.  The default value is
+                  value means no check is performed. The default value is
                   '0.0'.
 
                 * **filter_folding_paths** --
@@ -32048,7 +32288,7 @@ class GPUdb(object):
                   load amount to be delivered. If this value is greater than
                   zero (default) then the additional cost of this unit load
                   multiplied by the total dropped load will be added over to
-                  the trip cost to the demand location.  The default value is
+                  the trip cost to the demand location. The default value is
                   '0.0'.
 
                 * **max_num_threads** --
@@ -32057,13 +32297,13 @@ class GPUdb(object):
                   than the specified value. It can be lower due to the memory
                   and the number cores available. Default value of zero allows
                   the algorithm to set the maximal number of threads within
-                  these constraints.  The default value is '0'.
+                  these constraints. The default value is '0'.
 
                 * **service_limit** --
                   For the *match_supply_demand* solver only. If specified
                   (greater than zero), any supply actor's total service cost
                   (distance or time) will be limited by the specified value
-                  including multiple rounds (if set).  The default value is
+                  including multiple rounds (if set). The default value is
                   '0.0'.
 
                 * **enable_reuse** --
@@ -32087,7 +32327,7 @@ class GPUdb(object):
                   this many stops (demand locations) in one round trip.
                   Otherwise, it is unlimited. If 'enable_truck_reuse' is on,
                   this condition will be applied separately at each round trip
-                  use of the same truck.  The default value is '0'.
+                  use of the same truck. The default value is '0'.
 
                 * **service_radius** --
                   For the *match_supply_demand* and *match_pickup_dropoff*
@@ -32150,25 +32390,25 @@ class GPUdb(object):
                 * **num_cycles** --
                   For the *match_clusters* solver only. Terminates the cluster
                   exchange iterations across 2-step-cycles (outer loop) when
-                  quality does not improve during iterations.  The default
-                  value is '10'.
+                  quality does not improve during iterations. The default value
+                  is '10'.
 
                 * **num_loops_per_cycle** --
                   For the *match_clusters* solver only. Terminates the cluster
                   exchanges within the first step iterations of a cycle (inner
-                  loop) unless convergence is reached.  The default value is
+                  loop) unless convergence is reached. The default value is
                   '10'.
 
                 * **num_output_clusters** --
                   For the *match_clusters* solver only.  Limits the output to
                   the top 'num_output_clusters' clusters based on density.
-                  Default value of zero outputs all clusters.  The default
-                  value is '0'.
+                  Default value of zero outputs all clusters. The default value
+                  is '0'.
 
                 * **max_num_clusters** --
                   For the *match_clusters* solver only. If set (value greater
                   than zero), it terminates when the number of clusters goes
-                  below than this number.  The default value is '0'.
+                  below than this number. The default value is '0'.
 
                 * **cluster_quality_metric** --
                   For the *match_clusters* solver only. The quality metric for
@@ -32206,7 +32446,7 @@ class GPUdb(object):
                   Indicates which graph server(s) to send the request to.
                   Default is to send to the server, amongst those containing
                   the corresponding graph, that has the most computational
-                  bandwidth.  The default value is ''.
+                  bandwidth. The default value is ''.
 
                 * **inverse_solve** --
                   For the *match_batch_solves* solver only. Solves
@@ -32224,47 +32464,47 @@ class GPUdb(object):
                 * **min_loop_level** --
                   For the *match_loops* solver only. Finds closed loops around
                   each node deducible not less than this minimal hop (level)
-                  deep.  The default value is '0'.
+                  deep. The default value is '0'.
 
                 * **max_loop_level** --
                   For the *match_loops* solver only. Finds closed loops around
                   each node deducible not more than this maximal hop (level)
-                  deep.  The default value is '5'.
+                  deep. The default value is '5'.
 
                 * **search_limit** --
                   For the *match_loops* solver only. Searches within this limit
                   of nodes per vertex to detect loops. The value zero means
-                  there is no limit.  The default value is '10000'.
+                  there is no limit. The default value is '10000'.
 
                 * **output_batch_size** --
                   For the *match_loops* solver only. Uses this value as the
                   batch size of the number of loops in flushing(inserting) to
-                  the output table.  The default value is '1000'.
+                  the output table. The default value is '1000'.
 
                 * **charging_capacity** --
                   For the *match_charging_stations* solver only. This is the
                   maximum ev-charging capacity of a vehicle (distance in meters
                   or time in seconds depending on the unit of the graph
-                  weights).  The default value is '300000.0'.
+                  weights). The default value is '300000.0'.
 
                 * **charging_candidates** --
                   For the *match_charging_stations* solver only. Solver
                   searches for this many number of stations closest around each
-                  base charging location found by capacity.  The default value
+                  base charging location found by capacity. The default value
                   is '10'.
 
                 * **charging_penalty** --
                   For the *match_charging_stations* solver only. This is the
-                  penalty for full charging.  The default value is '30000.0'.
+                  penalty for full charging. The default value is '30000.0'.
 
                 * **max_hops** --
                   For the *match_similarity* solver only. Searches within this
                   maximum hops for source and target node pairs to compute the
-                  Jaccard scores.  The default value is '3'.
+                  Jaccard scores. The default value is '3'.
 
                 * **traversal_node_limit** --
                   For the *match_similarity* solver only. Limits the traversal
-                  depth if it reaches this many number of nodes.  The default
+                  depth if it reaches this many number of nodes. The default
                   value is '1000'.
 
                 * **paired_similarity** --
@@ -32278,6 +32518,18 @@ class GPUdb(object):
                   * false
 
                   The default value is 'true'.
+
+                * **force_undirected** --
+                  For the *match_pattern* solver only. Pattern matching will be
+                  using both pattern and graph as undirected if set to true.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -32310,30 +32562,24 @@ class GPUdb(object):
         return response
     # end match_graph
 
-
     # begin merge_records
     def merge_records( self, table_name = None, source_table_names = None,
                        field_maps = None, options = {} ):
         """Create a new empty result table (specified by input parameter
-        *table_name*),
-        and insert all records from source tables
-        (specified by input parameter *source_table_names*) based on the field
-        mapping
+        *table_name*), and insert all records from source tables (specified by
+        input parameter *source_table_names*) based on the field mapping
         information (specified by input parameter *field_maps*).
 
-        For merge records details and examples, see
-        `Merge Records <../../../../concepts/merge_records/>`__.  For
-        limitations, see
-        `Merge Records Limitations and Cautions
+        For merge records details and examples, see `Merge Records
+        <../../../../concepts/merge_records/>`__.  For limitations, see `Merge
+        Records Limitations and Cautions
         <../../../../concepts/merge_records/#limitations-and-cautions>`__.
 
         The field map (specified by input parameter *field_maps*) holds the
-        user-specified maps
-        of target table column names to source table columns. The array of
-        input parameter *field_maps* must match one-to-one with the input
-        parameter *source_table_names*,
-        e.g., there's a map present in input parameter *field_maps* for each
-        table listed in
+        user-specified maps of target table column names to source table
+        columns. The array of input parameter *field_maps* must match
+        one-to-one with the input parameter *source_table_names*, e.g., there's
+        a map present in input parameter *field_maps* for each table listed in
         input parameter *source_table_names*.
 
         Parameters:
@@ -32352,9 +32598,9 @@ class GPUdb(object):
                 each in [schema_name.]table_name format, using standard `name
                 resolution rules
                 <../../../../concepts/tables/#table-name-resolution>`__.  Must
-                be existing table names.    The user can provide a single
-                element (which will be automatically promoted to a list
-                internally) or a list.
+                be existing table names. The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
 
             field_maps (list of dicts of str to str)
                 Contains a list of source/target column mappings, one mapping
@@ -32366,13 +32612,12 @@ class GPUdb(object):
                 <../../../../concepts/expressions/>`__ (as values) will be
                 merged into.  All of the source columns being merged into a
                 given target column must match in type, as that type will
-                determine the type of the new target column.    The user can
+                determine the type of the new target column. The user can
                 provide a single element (which will be automatically promoted
                 to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -32432,23 +32677,35 @@ class GPUdb(object):
                   Indicates the number of records per chunk to be used for the
                   merged table specified in input parameter *table_name*.
 
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for the merged table specified in input
+                  parameter *table_name*.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for the merged table specified in input
+                  parameter *table_name*.
+
                 * **view_id** --
-                  view this result table is part of.  The default value is ''.
+                  view this result table is part of. The default value is ''.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
 
             table_name (str)
 
-
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_table_name** --
                   The fully qualified name of the result table (i.e. including
                   the schema)
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "merge_records(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         source_table_names = source_table_names if isinstance( source_table_names, list ) else ( [] if (source_table_names is None) else [ source_table_names ] )
@@ -32466,19 +32723,16 @@ class GPUdb(object):
         return response
     # end merge_records
 
-
     # begin modify_graph
-    def modify_graph( self, graph_name = None, nodes = None, edges = None, weights =
-                      None, restrictions = None, options = {} ):
+    def modify_graph( self, graph_name = None, nodes = None, edges = None,
+                      weights = None, restrictions = None, options = {} ):
         """Update an existing graph network using given nodes, edges, weights,
         restrictions, and options.
 
-        IMPORTANT: It's highly recommended that you review the
-        `Network Graphs & Solvers
-        <../../../../graph_solver/network_graph_solver/>`__
-        concepts documentation and
-        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`__
-        before using this endpoint.
+        IMPORTANT: It's highly recommended that you review the `Network Graphs
+        & Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
+        documentation, and `Graph REST Tutorial
+        <../../../../guides/graph_rest_guide/>`__ before using this endpoint.
 
         Parameters:
 
@@ -32501,9 +32755,9 @@ class GPUdb(object):
                 match across the combination. Identifier combination(s) do not
                 have to match the method used to create the graph, e.g., if
                 column names were specified to create the graph, expressions or
-                raw values could also be used to modify the graph.    The user
-                can provide a single element (which will be automatically
-                promoted to a list internally) or a list.
+                raw values could also be used to modify the graph. The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
 
             edges (list of str)
                 Edges with which to update existing input parameter *edges* in
@@ -32521,9 +32775,9 @@ class GPUdb(object):
                 match across the combination. Identifier combination(s) do not
                 have to match the method used to create the graph, e.g., if
                 column names were specified to create the graph, expressions or
-                raw values could also be used to modify the graph.    The user
-                can provide a single element (which will be automatically
-                promoted to a list internally) or a list.
+                raw values could also be used to modify the graph. The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
 
             weights (list of str)
                 Weights with which to update existing input parameter *weights*
@@ -32543,9 +32797,9 @@ class GPUdb(object):
                 must match across the combination. Identifier combination(s) do
                 not have to match the method used to create the graph, e.g., if
                 column names were specified to create the graph, expressions or
-                raw values could also be used to modify the graph.    The user
-                can provide a single element (which will be automatically
-                promoted to a list internally) or a list.
+                raw values could also be used to modify the graph. The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
 
             restrictions (list of str)
                 Restrictions with which to update existing input parameter
@@ -32566,12 +32820,11 @@ class GPUdb(object):
                 combination(s) do not have to match the method used to create
                 the graph, e.g., if column names were specified to create the
                 graph, expressions or raw values could also be used to modify
-                the graph.    The user can provide a single element (which will
-                be automatically promoted to a list internally) or a list.
+                the graph. The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **restriction_threshold_value** --
@@ -32640,7 +32893,7 @@ class GPUdb(object):
                   <../../../../concepts/tables/#table-naming-criteria>`__.
                   This table will have the following identifier columns:
                   'EDGE_ID', 'EDGE_NODE1_ID', 'EDGE_NODE2_ID'. If left blank,
-                  no table is created.  The default value is ''.
+                  no table is created. The default value is ''.
 
                 * **remove_label_only** --
                   When RESTRICTIONS on labeled entities requested, if set to
@@ -32673,7 +32926,7 @@ class GPUdb(object):
                   intersection node. The larger the value, the larger the
                   threshold for sharp turns and intersections; the smaller the
                   value, the larger the threshold for right and left turns; 0 <
-                  turn_angle < 90.  The default value is '60'.
+                  turn_angle < 90. The default value is '60'.
 
                 * **use_rtree** --
                   Use an range tree structure to accelerate and improve the
@@ -32684,6 +32937,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'true'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -32724,42 +32979,31 @@ class GPUdb(object):
         return response
     # end modify_graph
 
-
     # begin query_graph
     def query_graph( self, graph_name = None, queries = None, restrictions = [],
                      adjacency_table = '', rings = 1, options = {} ):
         """Employs a topological query on a network graph generated a-priori by
         :meth:`GPUdb.create_graph` and returns a list of adjacent edge(s) or
-        node(s),
-        also known as an adjacency list, depending on what's been provided to
-        the
-        endpoint; providing edges will return nodes and providing nodes will
-        return
-        edges.
+        node(s), also known as an adjacency list, depending on what's been
+        provided to the endpoint; providing edges will return nodes and
+        providing nodes will return edges.
 
         To determine the node(s) or edge(s) adjacent to a value from a given
-        column,
-        provide a list of values to input parameter *queries*. This field can
-        be populated with
-        column values from any table as long as the type is supported by the
-        given
-        identifier. See
-        `Query Identifiers
+        column, provide a list of values to input parameter *queries*. This
+        field can be populated with column values from any table as long as the
+        type is supported by the given identifier. See `Query Identifiers
         <../../../../graph_solver/network_graph_solver/#query-identifiers>`__
         for more information.
 
         To return the adjacency list in the response, leave input parameter
-        *adjacency_table*
-        empty.
+        *adjacency_table* empty.
 
-        IMPORTANT: It's highly recommended that you review the
-        `Network Graphs & Solvers
-        <../../../../graph_solver/network_graph_solver/>`__
-        concepts documentation, the
-        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`__,
-        and/or some
-        `/match/graph examples <../../../../guide-tags/graph-query>`__
-        before using this endpoint.
+        IMPORTANT: It's highly recommended that you review the `Network Graphs
+        & Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
+        documentation, the `Graph REST Tutorial
+        <../../../../guides/graph_rest_guide/>`__, and/or some `/match/graph
+        examples <../../../../guide-tags/graph-query>`__ before using this
+        endpoint.
 
         Parameters:
 
@@ -32775,7 +33019,7 @@ class GPUdb(object):
                 table.y) AS QUERY_NODE_WKTPOINT'. Multiple values can be
                 provided as long as the same identifier is used for all values.
                 If using raw values in an identifier combination, the number of
-                values specified must match across the combination.    The user
+                values specified must match across the combination. The user
                 can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
 
@@ -32791,8 +33035,8 @@ class GPUdb(object):
                 'column/2 AS RESTRICTIONS_VALUECOMPARED', or raw values, e.g.,
                 '{0, 0, 0, 1} AS RESTRICTIONS_ONOFFCOMPARED'. If using raw
                 values in an identifier combination, the number of values
-                specified must match across the combination.  The default value
-                is an empty list ( [] ).  The user can provide a single element
+                specified must match across the combination. The default value
+                is an empty list ( [] ). The user can provide a single element
                 (which will be automatically promoted to a list internally) or
                 a list.
 
@@ -32810,7 +33054,7 @@ class GPUdb(object):
                 columns will be available: 'PATH_ID' and 'RING_ID'. See `Using
                 Labels
                 <../../../../graph_solver/network_graph_solver/#using-labels>`__
-                for more information.  The default value is ''.
+                for more information. The default value is ''.
 
             rings (int)
                 Sets the number of rings around the node to query for
@@ -32822,12 +33066,11 @@ class GPUdb(object):
                 the queried node(s) will be returned. If the value is set to
                 '0', any nodes that meet the criteria in input parameter
                 *queries* and input parameter *restrictions* will be returned.
-                This parameter is only applicable when querying nodes.  The
+                This parameter is only applicable when querying nodes. The
                 default value is 1.
 
             options (dict of str to str)
-                Additional parameters.  The default value is an empty dict ( {}
-                ).
+                Additional parameters.
                 Allowed keys are:
 
                 * **force_undirected** --
@@ -32877,6 +33120,13 @@ class GPUdb(object):
                   the corresponding graph, that has the most computational
                   bandwidth.
 
+                * **output_charn_length** --
+                  When specified (>0 and <=256), limits the number of char
+                  length on the output tables for string based nodes. The
+                  default length is 64. The default value is '64'.
+
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -32925,18 +33175,15 @@ class GPUdb(object):
         return response
     # end query_graph
 
-
     # begin repartition_graph
     def repartition_graph( self, graph_name = None, options = {} ):
         """Rebalances an existing partitioned graph.
 
-        IMPORTANT: It's highly recommended that you review the
-        `Network Graphs & Solvers
-        <../../../../graph_solver/network_graph_solver/>`__
-        concepts documentation, the
-        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`__,
-        and/or some `graph examples <../../../../guide-tags/graph/>`__ before
-        using this endpoint.
+        IMPORTANT: It's highly recommended that you review the `Network Graphs
+        & Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
+        documentation, the `Graph REST Tutorial
+        <../../../../guides/graph_rest_guide/>`__, and/or some `graph examples
+        <../../../../guide-tags/graph/>`__ before using this endpoint.
 
         Parameters:
 
@@ -32944,31 +33191,29 @@ class GPUdb(object):
                 Name of the graph resource to rebalance.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **new_graph_name** --
                   If a non-empty value is specified, the original graph will be
-                  kept
-                  (non-default behaviour) and a new balanced graph will be
-                  created under this given name.  When the
-                  value is empty (default), the generated 'balanced' graph will
-                  replace the original 'unbalanced'
-                  graph under the same graph name.  The default value is ''.
+                  kept (non-default behaviour) and a new balanced graph will be
+                  created under this given name.  When the value is empty
+                  (default), the generated 'balanced' graph will replace the
+                  original 'unbalanced' graph under the same graph name. The
+                  default value is ''.
 
                 * **source_node** --
                   The distributed shortest path solve is run from this source
-                  node to
-                  all the nodes in the graph to create balaced partitions using
-                  the iso-distance levels of the
-                  solution.  The source node is selected by the rebalance
-                  algorithm automatically (default case when
-                  the value is an empty string). Otherwise, the user specified
-                  node is used as the source.  The default value is ''.
+                  node to all the nodes in the graph to create balaced
+                  partitions using the iso-distance levels of the solution.
+                  The source node is selected by the rebalance algorithm
+                  automatically (default case when the value is an empty
+                  string). Otherwise, the user specified node is used as the
+                  source. The default value is ''.
 
-                * **sql_request_avro_json** --
-                    The default value is ''.
+                * sql_request_avro_json
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -32991,11 +33236,9 @@ class GPUdb(object):
         return response
     # end repartition_graph
 
-
     # begin reserve_resource
     def reserve_resource( self, component = None, name = None, action = None,
                           bytes_requested = 0, owner_id = 0, options = {} ):
-
         assert isinstance( component, (basestring)), "reserve_resource(): Argument 'component' must be (one) of type(s) '(basestring)'; given %s" % type( component ).__name__
         assert isinstance( name, (basestring)), "reserve_resource(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
         assert isinstance( action, (basestring)), "reserve_resource(): Argument 'action' must be (one) of type(s) '(basestring)'; given %s" % type( action ).__name__
@@ -33016,17 +33259,17 @@ class GPUdb(object):
         return response
     # end reserve_resource
 
-
     # begin revoke_permission
-    def revoke_permission( self, principal = '', object = None, object_type = None,
-                           permission = None, options = {} ):
-        """Revoke user or role the specified permission on the specified object.
+    def revoke_permission( self, principal = '', object = None, object_type =
+                           None, permission = None, options = {} ):
+        """Revoke user or role the specified permission on the specified
+        object.
 
         Parameters:
 
             principal (str)
                 Name of the user or role for which the permission is being
-                revoked.  Must be an existing user or role.  The default value
+                revoked.  Must be an existing user or role. The default value
                 is ''.
 
             object (str)
@@ -33034,7 +33277,7 @@ class GPUdb(object):
                 recommended to use a fully-qualified name when possible.
 
             object_type (str)
-                The type of object being revoked
+                The type of object being revoked.
                 Allowed values are:
 
                 * **context** --
@@ -33106,13 +33349,14 @@ class GPUdb(object):
                   Access to write, change and delete objects.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **columns** --
                   Revoke table security from these columns, comma-separated.
                   The default value is ''.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -33150,7 +33394,6 @@ class GPUdb(object):
         return response
     # end revoke_permission
 
-
     # begin revoke_permission_credential
     def revoke_permission_credential( self, name = None, permission = None,
                                       credential_name = None, options = {} ):
@@ -33180,8 +33423,7 @@ class GPUdb(object):
                 access on all credentials.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -33214,7 +33456,6 @@ class GPUdb(object):
         return response
     # end revoke_permission_credential
 
-
     # begin revoke_permission_datasource
     def revoke_permission_datasource( self, name = None, permission = None,
                                       datasource_name = None, options = {} ):
@@ -33228,7 +33469,7 @@ class GPUdb(object):
                 revoked. Must be an existing user or role.
 
             permission (str)
-                Permission to revoke from the user or role
+                Permission to revoke from the user or role.
                 Allowed values are:
 
                 * **admin** --
@@ -33243,8 +33484,7 @@ class GPUdb(object):
                 revoke permission from all data sources.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -33277,12 +33517,11 @@ class GPUdb(object):
         return response
     # end revoke_permission_datasource
 
-
     # begin revoke_permission_directory
     def revoke_permission_directory( self, name = None, permission = None,
                                      directory_name = None, options = {} ):
-        """Revokes a `KiFS <../../../../tools/kifs/>`__ directory-level permission
-        from a user or role.
+        """Revokes a `KiFS <../../../../tools/kifs/>`__ directory-level
+        permission from a user or role.
 
         Parameters:
 
@@ -33308,8 +33547,7 @@ class GPUdb(object):
                 access
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -33342,10 +33580,9 @@ class GPUdb(object):
         return response
     # end revoke_permission_directory
 
-
     # begin revoke_permission_proc
-    def revoke_permission_proc( self, name = None, permission = None, proc_name =
-                                None, options = {} ):
+    def revoke_permission_proc( self, name = None, permission = None, proc_name
+                                = None, options = {} ):
         """Revokes a proc-level permission from a user or role.
 
         Parameters:
@@ -33370,8 +33607,7 @@ class GPUdb(object):
                 access to all procs.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -33404,10 +33640,9 @@ class GPUdb(object):
         return response
     # end revoke_permission_proc
 
-
     # begin revoke_permission_system
-    def revoke_permission_system( self, name = None, permission = None, options = {}
-                                  ):
+    def revoke_permission_system( self, name = None, permission = None, options
+                                  = {} ):
         """Revokes a system-level permission from a user or role.
 
         Parameters:
@@ -33434,8 +33669,7 @@ class GPUdb(object):
                   Read-only access to all tables.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -33463,10 +33697,9 @@ class GPUdb(object):
         return response
     # end revoke_permission_system
 
-
     # begin revoke_permission_table
-    def revoke_permission_table( self, name = None, permission = None, table_name =
-                                 None, options = {} ):
+    def revoke_permission_table( self, name = None, permission = None,
+                                 table_name = None, options = {} ):
         """Revokes a table-level permission from a user or role.
 
         Parameters:
@@ -33502,13 +33735,14 @@ class GPUdb(object):
                 be an existing table, view or schema.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **columns** --
-                  Apply security to these columns, comma-separated.  The
-                  default value is ''.
+                  Apply security to these columns, comma-separated. The default
+                  value is ''.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -33541,7 +33775,6 @@ class GPUdb(object):
         return response
     # end revoke_permission_table
 
-
     # begin revoke_role
     def revoke_role( self, role = None, member = None, options = {} ):
         """Revokes membership in a role from a user or role.
@@ -33557,8 +33790,7 @@ class GPUdb(object):
                 input parameter *role*. Must be an existing user or role.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -33586,10 +33818,8 @@ class GPUdb(object):
         return response
     # end revoke_role
 
-
     # begin show_container_registry
     def show_container_registry( self, registry_name = None, options = {} ):
-
         assert isinstance( registry_name, (basestring)), "show_container_registry(): Argument 'registry_name' must be (one) of type(s) '(basestring)'; given %s" % type( registry_name ).__name__
         assert isinstance( options, (dict)), "show_container_registry(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -33601,7 +33831,6 @@ class GPUdb(object):
 
         return response
     # end show_container_registry
-
 
     # begin show_credential
     def show_credential( self, credential_name = None, options = {} ):
@@ -33616,8 +33845,7 @@ class GPUdb(object):
                 specified, information about all credentials will be returned.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -33654,7 +33882,6 @@ class GPUdb(object):
         return response
     # end show_credential
 
-
     # begin show_datasink
     def show_datasink( self, name = None, options = {} ):
         """Shows information about a specified `data sink
@@ -33668,8 +33895,7 @@ class GPUdb(object):
                 specified, information about all data sinks will be returned.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -33684,9 +33910,17 @@ class GPUdb(object):
             additional_info (list of dicts of str to str)
                 Additional information about the respective data sinks in
                 output parameter *datasink_names*.
-                Allowed values are:
+                Allowed keys are:
 
-                * @INNER_STRUCTURE
+                * **destination** --
+                  Destination for the output data in
+                  'destination_type://path[:port]' format
+
+                * **kafka_topic_name** --
+                  Kafka topic if the data sink type is a Kafka broker
+
+                * **user_name** --
+                  Name of the remote system user
 
             info (dict of str to str)
                 Additional information.
@@ -33703,7 +33937,6 @@ class GPUdb(object):
         return response
     # end show_datasink
 
-
     # begin show_datasource
     def show_datasource( self, name = None, options = {} ):
         """Shows information about a specified `data source
@@ -33717,8 +33950,7 @@ class GPUdb(object):
                 specified, information about all data sources will be returned.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -33740,9 +33972,24 @@ class GPUdb(object):
             additional_info (list of dicts of str to str)
                 Additional information about the respective data sources in
                 output parameter *datasource_names*.
-                Allowed values are:
+                Allowed keys are:
 
-                * @INNER_STRUCTURE
+                * **location** --
+                  Location of the remote storage in
+                  'storage_provider_type://[storage_path[:storage_port]]'
+                  format
+
+                * **s3_bucket_name** --
+                  Name of the Amazon S3 bucket used as the data source
+
+                * **s3_region** --
+                  Name of the Amazon S3 region where the bucket is located
+
+                * **hdfs_kerberos_keytab** --
+                  Kerberos key for the given HDFS user
+
+                * **user_name** --
+                  Name of the remote system user
 
             info (dict of str to str)
                 Additional information.
@@ -33759,7 +34006,6 @@ class GPUdb(object):
         return response
     # end show_datasource
 
-
     # begin show_directories
     def show_directories( self, directory_name = '', options = {} ):
         """Shows information about directories in `KiFS
@@ -33770,11 +34016,10 @@ class GPUdb(object):
 
             directory_name (str)
                 The KiFS directory name to show. If empty, shows all
-                directories.  The default value is ''.
+                directories. The default value is ''.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -33801,10 +34046,9 @@ class GPUdb(object):
 
             permissions (list of str)
                 Highest level of permission the calling user has for the
-                respective directories in output parameter *directories*.
-                Will be empty if no permissions. If a user has been granted
-                both read and write permissions, 'directory_write' will be
-                listed.
+                respective directories in output parameter *directories*. Will
+                be empty if no permissions. If a user has been granted both
+                read and write permissions, 'directory_write' will be listed.
 
             info (dict of str to str)
                 Additional information.
@@ -33821,9 +34065,8 @@ class GPUdb(object):
         return response
     # end show_directories
 
-
     # begin show_environment
-    def show_environment( self, environment_name = None, options = {} ):
+    def show_environment( self, environment_name = '', options = {} ):
         """Shows information about a specified `user-defined function
         <../../../../concepts/udf/>`__ (UDF) environment or all environments.
         Returns detailed information about existing environments.
@@ -33834,11 +34077,10 @@ class GPUdb(object):
                 Name of the environment on which to retrieve information. The
                 name must refer to a currently existing environment. If '*' or
                 an empty value is specified, information about all environments
-                will be returned.
+                will be returned. The default value is ''.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **no_error_if_not_exists** --
@@ -33852,6 +34094,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -33878,7 +34122,6 @@ class GPUdb(object):
         return response
     # end show_environment
 
-
     # begin show_files
     def show_files( self, paths = None, options = {} ):
         """Shows information about files in `KiFS <../../../../tools/kifs/>`__.
@@ -33894,13 +34137,12 @@ class GPUdb(object):
 
                 Accepted wildcard characters are asterisk (*) to represent any
                 string of zero or more characters, and question mark (?) to
-                indicate a single character.    The user can provide a single
+                indicate a single character. The user can provide a single
                 element (which will be automatically promoted to a list
                 internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -33936,10 +34178,8 @@ class GPUdb(object):
         return response
     # end show_files
 
-
     # begin show_functions
     def show_functions( self, names = None, options = {} ):
-
         names = names if isinstance( names, list ) else ( [] if (names is None) else [ names ] )
         assert isinstance( options, (dict)), "show_functions(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -33952,11 +34192,10 @@ class GPUdb(object):
         return response
     # end show_functions
 
-
     # begin show_graph
     def show_graph( self, graph_name = '', options = {} ):
-        """Shows information and characteristics of graphs that exist on the graph
-        server.
+        """Shows information and characteristics of graphs that exist on the
+        graph server.
 
         Parameters:
 
@@ -33966,8 +34205,7 @@ class GPUdb(object):
                 The default value is ''.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **show_original_request** --
@@ -33983,6 +34221,8 @@ class GPUdb(object):
                 * **server_id** --
                   Indicates which graph server(s) to send the request to.
                   Default is to send to get information about all the servers.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -34065,10 +34305,8 @@ class GPUdb(object):
         return response
     # end show_graph
 
-
     # begin show_graph_grammar
     def show_graph_grammar( self, options = {} ):
-
         assert isinstance( options, (dict)), "show_graph_grammar(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         obj = {}
@@ -34079,10 +34317,8 @@ class GPUdb(object):
         return response
     # end show_graph_grammar
 
-
     # begin show_model
-    def show_model( self, model_names = {}, options = {} ):
-
+    def show_model( self, model_names = [], options = {} ):
         model_names = model_names if isinstance( model_names, list ) else ( [] if (model_names is None) else [ model_names ] )
         assert isinstance( options, (dict)), "show_model(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -34095,7 +34331,6 @@ class GPUdb(object):
         return response
     # end show_model
 
-
     # begin show_proc
     def show_proc( self, proc_name = '', options = {} ):
         """Shows information about a proc.
@@ -34105,12 +34340,11 @@ class GPUdb(object):
             proc_name (str)
                 Name of the proc to show information about. If specified, must
                 be the name of a currently existing proc. If not specified,
-                information about all procs will be returned.  The default
-                value is ''.
+                information about all procs will be returned. The default value
+                is ''.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **include_files** --
@@ -34123,6 +34357,8 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -34134,9 +34370,13 @@ class GPUdb(object):
                 *proc_names*.
                 Allowed values are:
 
-                * @INNER_STRUCTURE
+                * **distributed** --
+                  Distributed
 
-            files (list of dicts of str to str)
+                * **nondistributed** --
+                  Nondistributed
+
+            files (list of dicts of str to bytes)
                 Maps of the files that make up the procs named in output
                 parameter *proc_names*.
 
@@ -34167,11 +34407,10 @@ class GPUdb(object):
         return response
     # end show_proc
 
-
     # begin show_proc_status
     def show_proc_status( self, run_id = '', options = {} ):
-        """Shows the statuses of running or completed proc instances. Results are
-        grouped by run ID (as returned from :meth:`GPUdb.execute_proc`) and
+        """Shows the statuses of running or completed proc instances. Results
+        are grouped by run ID (as returned from :meth:`GPUdb.execute_proc`) and
         data segment ID (each invocation of the proc command on a data segment
         is assigned a data segment ID).
 
@@ -34181,12 +34420,11 @@ class GPUdb(object):
                 The run ID of a specific proc instance for which the status
                 will be returned. If a proc with a matching run ID is not
                 found, the response will be empty. If not specified, the
-                statuses of all executed proc instances will be returned.  The
+                statuses of all executed proc instances will be returned. The
                 default value is ''.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **clear_complete** --
@@ -34206,7 +34444,9 @@ class GPUdb(object):
                   run tag that was provided to :meth:`GPUdb.execute_proc`. If
                   input parameter *run_id* is not specified, return statuses
                   for all proc instances where a matching run tag was provided
-                  to :meth:`GPUdb.execute_proc`.  The default value is ''.
+                  to :meth:`GPUdb.execute_proc`. The default value is ''.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -34218,7 +34458,7 @@ class GPUdb(object):
                 The string params passed to :meth:`GPUdb.execute_proc` for the
                 returned run IDs.
 
-            bin_params (dict of str to dicts of str to str)
+            bin_params (dict of str to dicts of str to bytes)
                 The binary params passed to :meth:`GPUdb.execute_proc` for the
                 returned run IDs.
 
@@ -34259,8 +34499,29 @@ class GPUdb(object):
                 * **error** --
                   The proc instance failed with an error.
 
+                * **none** --
+                  The proc instance does not have a status, i.e. it has not yet
+                  ran.
+
             statuses (dict of str to dicts of str to str)
                 Statuses for the returned run IDs, grouped by data segment ID.
+                Allowed values are:
+
+                * **running** --
+                  The proc instance is currently running.
+
+                * **complete** --
+                  The proc instance completed with no errors.
+
+                * **killed** --
+                  The proc instance was killed before completion.
+
+                * **error** --
+                  The proc instance failed with an error.
+
+                * **none** --
+                  The proc instance does not have a status, i.e. it has not yet
+                  ran.
 
             messages (dict of str to dicts of str to str)
                 Messages containing additional status information for the
@@ -34270,13 +34531,20 @@ class GPUdb(object):
                 String results for the returned run IDs, grouped by data
                 segment ID.
 
-            bin_results (dict of str to dicts of str to dicts of str to str)
+            bin_results (dict of str to dicts of str to dicts of str to bytes)
                 Binary results for the returned run IDs, grouped by data
                 segment ID.
 
             output (dict of str to dicts of str to dicts of str to lists of str)
                 Output lines for the returned run IDs, grouped by data segment
                 ID.
+                Allowed keys are:
+
+                * **stdout** --
+                  Output lines from stdout.
+
+                * **stderr** --
+                  Output lines from stderr.
 
             timings (dict of str to dicts of str to dicts of str to longs)
                 Timing information for the returned run IDs, grouped by data
@@ -34297,22 +34565,18 @@ class GPUdb(object):
         return response
     # end show_proc_status
 
-
     # begin show_resource_objects
     def show_resource_objects( self, options = {} ):
-        """Returns information about the internal sub-components (tiered objects)
-        which use resources of the system. The request can either return
-        results from
-        actively used objects (default) or it can be used to query the status
-        of the
-        objects of a given list of tables.
-        Returns detailed information about the requested resource objects.
+        """Returns information about the internal sub-components (tiered
+        objects) which use resources of the system. The request can either
+        return results from actively used objects (default) or it can be used
+        to query the status of the objects of a given list of tables. Returns
+        detailed information about the requested resource objects.
 
         Parameters:
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **tiers** --
@@ -34342,17 +34606,17 @@ class GPUdb(object):
                 * **limit** --
                   An integer indicating the maximum number of results to be
                   returned, per rank, or (-1) to indicate that the maximum
-                  number of results allowed by the server
-                  should be returned.  The number of records returned will
-                  never exceed the server's own limit,
-                  defined by the `max_get_records_size
+                  number of results allowed by the server should be returned.
+                  The number of records returned will never exceed the server's
+                  own limit, defined by the `max_get_records_size
                   <../../../../config/#config-main-general>`__ parameter in the
-                  server
-                  configuration.  The default value is '100'.
+                  server configuration. The default value is '100'.
 
                 * **table_names** --
                   Comma-separated list of tables to restrict the results to.
                   Use '*' to show all tables.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -34375,18 +34639,15 @@ class GPUdb(object):
         return response
     # end show_resource_objects
 
-
     # begin show_resource_statistics
     def show_resource_statistics( self, options = {} ):
         """Requests various statistics for storage/memory tiers and resource
-        groups.
-        Returns statistics on a per-rank basis.
+        groups. Returns statistics on a per-rank basis.
 
         Parameters:
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -34407,23 +34668,21 @@ class GPUdb(object):
         return response
     # end show_resource_statistics
 
-
     # begin show_resource_groups
     def show_resource_groups( self, names = None, options = {} ):
-        """Requests resource group properties.
-        Returns detailed information about the requested resource groups.
+        """Requests resource group properties. Returns detailed information
+        about the requested resource groups.
 
         Parameters:
 
             names (list of str)
                 List of names of groups to be shown. A single entry with an
-                empty string returns all groups.    The user can provide a
-                single element (which will be automatically promoted to a list
+                empty string returns all groups. The user can provide a single
+                element (which will be automatically promoted to a list
                 internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **show_default_values** --
@@ -34457,6 +34716,8 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -34483,7 +34744,6 @@ class GPUdb(object):
         return response
     # end show_resource_groups
 
-
     # begin show_schema
     def show_schema( self, schema_name = None, options = {} ):
         """Retrieves information about a `schema
@@ -34497,8 +34757,7 @@ class GPUdb(object):
                 blank, then info for all schemas is returned.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **no_error_if_not_exists** --
@@ -34512,6 +34771,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -34545,7 +34806,6 @@ class GPUdb(object):
         return response
     # end show_schema
 
-
     # begin show_security
     def show_security( self, names = None, options = {} ):
         """Shows security information relating to users and/or roles. If the
@@ -34557,13 +34817,25 @@ class GPUdb(object):
             names (list of str)
                 A list of names of users and/or roles about which security
                 information is requested. If none are provided, information
-                about all users and roles will be returned.    The user can
+                about all users and roles will be returned. The user can
                 provide a single element (which will be automatically promoted
                 to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
+                Allowed keys are:
+
+                * **show_current_user** --
+                  If *true*, returns only security information for the current
+                  user.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -34607,22 +34879,20 @@ class GPUdb(object):
         return response
     # end show_security
 
-
     # begin show_sql_proc
     def show_sql_proc( self, procedure_name = '', options = {} ):
-        """Shows information about SQL procedures, including the full definition
-        of each requested procedure.
+        """Shows information about SQL procedures, including the full
+        definition of each requested procedure.
 
         Parameters:
 
             procedure_name (str)
                 Name of the procedure for which to retrieve the information. If
-                blank, then information about all procedures is returned.  The
+                blank, then information about all procedures is returned. The
                 default value is ''.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **no_error_if_not_exists** --
@@ -34636,6 +34906,8 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
@@ -34648,9 +34920,23 @@ class GPUdb(object):
             additional_info (list of dicts of str to str)
                 Additional information about the respective tables in the
                 requested procedures.
-                Allowed values are:
+                Allowed keys are:
 
-                * @INNER_STRUCTURE
+                * **execute_as** --
+                  The periodic execution impersonate user. The default value is
+                  ''.
+
+                * **execute_interval** --
+                  The periodic execution interval in seconds. The default value
+                  is ''.
+
+                * **execute_start_time** --
+                  The initial date/time that periodic execution began. The
+                  default value is ''.
+
+                * **execute_stop_time** --
+                  Time at which the periodic execution stops. The default value
+                  is ''.
 
             info (dict of str to str)
                 Additional information.
@@ -34667,10 +34953,10 @@ class GPUdb(object):
         return response
     # end show_sql_proc
 
-
     # begin show_statistics
     def show_statistics( self, table_names = None, options = {} ):
-        """Retrieves the collected column statistics for the specified table(s).
+        """Retrieves the collected column statistics for the specified
+        table(s).
 
         Parameters:
 
@@ -34679,13 +34965,12 @@ class GPUdb(object):
                 [schema_name.]table_name format, using standard `name
                 resolution rules
                 <../../../../concepts/tables/#table-name-resolution>`__.  All
-                provided tables must exist, or an error is returned.    The
-                user can provide a single element (which will be automatically
+                provided tables must exist, or an error is returned. The user
+                can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -34712,7 +34997,6 @@ class GPUdb(object):
         return response
     # end show_statistics
 
-
     # begin show_system_properties
     def show_system_properties( self, options = {} ):
         """Returns server configuration and version related information to the
@@ -34722,13 +35006,14 @@ class GPUdb(object):
         Parameters:
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **properties** --
                   A list of comma separated names of properties requested. If
                   not specified, all properties will be returned.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -34783,17 +35068,16 @@ class GPUdb(object):
         return response
     # end show_system_properties
 
-
     # begin show_system_status
     def show_system_status( self, options = {} ):
-        """Provides server configuration and health related status to the caller.
-        The admin tool uses it to present server related information to the
-        user.
+        """Provides server configuration and health related status to the
+        caller. The admin tool uses it to present server related information to
+        the user.
 
         Parameters:
 
             options (dict of str to str)
-                Optional parameters, currently unused.  The default value is an
+                Optional parameters, currently unused. The default value is an
                 empty dict ( {} ).
 
         Returns:
@@ -34815,7 +35099,6 @@ class GPUdb(object):
         return response
     # end show_system_status
 
-
     # begin show_system_timing
     def show_system_timing( self, options = {} ):
         """Returns the last 100 database requests along with the request timing
@@ -34825,7 +35108,7 @@ class GPUdb(object):
         Parameters:
 
             options (dict of str to str)
-                Optional parameters, currently unused.  The default value is an
+                Optional parameters, currently unused. The default value is an
                 empty dict ( {} ).
 
         Returns:
@@ -34853,39 +35136,31 @@ class GPUdb(object):
         return response
     # end show_system_timing
 
-
     # begin show_table
     def show_table( self, table_name = None, options = {} ):
         """Retrieves detailed information about a table, view, or schema,
         specified in input parameter *table_name*. If the supplied input
-        parameter *table_name* is a
-        schema the call can return information about either the schema itself
-        or the
-        tables and views it contains. If input parameter *table_name* is empty,
-        information about
-        all schemas will be returned.
+        parameter *table_name* is a schema the call can return information
+        about either the schema itself or the tables and views it contains. If
+        input parameter *table_name* is empty, information about all schemas
+        will be returned.
 
-        If the option *get_sizes* is set to
-        *true*, then the number of records
-        in each table is returned (in output parameter *sizes* and
-        output parameter *full_sizes*), along with the total number of objects
-        across all
-        requested tables (in output parameter *total_size* and output parameter
-        *total_full_size*).
+        If the option *get_sizes* is set to *true*, then the number of records
+        in each table is returned (in output parameter *sizes* and output
+        parameter *full_sizes*), along with the total number of objects across
+        all requested tables (in output parameter *total_size* and output
+        parameter *total_full_size*).
 
-        For a schema, setting the *show_children* option to
-        *false* returns only information
-        about the schema itself; setting *show_children* to
-        *true* returns a list of tables and
-        views contained in the schema, along with their corresponding detail.
+        For a schema, setting the *show_children* option to *false* returns
+        only information about the schema itself; setting *show_children* to
+        *true* returns a list of tables and views contained in the schema,
+        along with their corresponding detail.
 
         To retrieve a list of every table, view, and schema in the database,
-        set
-        input parameter *table_name* to '*' and *show_children* to
-        *true*.  When doing this, the
-        returned output parameter *total_size* and output parameter
-        *total_full_size* will not include the sizes of
-        non-base tables (e.g., filters, views, joins, etc.).
+        set input parameter *table_name* to '*' and *show_children* to *true*.
+        When doing this, the returned output parameter *total_size* and output
+        parameter *total_full_size* will not include the sizes of non-base
+        tables (e.g., filters, views, joins, etc.).
 
         Parameters:
 
@@ -34897,8 +35172,7 @@ class GPUdb(object):
                 blank, then returns information about all tables and views.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **force_synchronous** --
@@ -34914,6 +35188,18 @@ class GPUdb(object):
                 * **get_sizes** --
                   If *true* then the number of records in each table, along
                   with a cumulative count, will be returned; blank, otherwise.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **get_cached_sizes** --
+                  If *true* then the number of records in each table, along
+                  with a cumulative count, will be returned; blank, otherwise.
+                  This version will return the sizes cached at rank 0, which
+                  may be stale if there is a multihead insert occuring.
                   Allowed values are:
 
                   * true
@@ -34955,6 +35241,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -35010,9 +35298,213 @@ class GPUdb(object):
             additional_info (list of dicts of str to str)
                 Additional information about the respective tables in output
                 parameter *table_names*.
-                Allowed values are:
+                Allowed keys are:
 
-                * @INNER_STRUCTURE
+                * **request_avro_type** --
+                  Method by which this table was created.
+                  Allowed values are:
+
+                  * create_table
+                  * create_projection
+                  * create_union
+
+                * **request_avro_json** --
+                  The JSON representation of request creating this table. The
+                  default value is ''.
+
+                * **protected** --
+                  No longer used.  Indicated whether the respective table was
+                  protected or not.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                * **record_bytes** --
+                  The number of in-memory bytes per record which is the sum of
+                  the byte sizes of all columns with property  'data'.
+
+                * **total_bytes** --
+                  The total size in bytes of all data stored in the table.
+
+                * **collection_names** --
+                  [DEPRECATED--use schema_name instead]  This will now contain
+                  the name of the schema for the table.  There can only be one
+                  schema for a table.
+
+                * **schema_name** --
+                  The name of the schema for the table.  There can only be one
+                  schema for a table.
+
+                * **table_ttl** --
+                  The value of the `time-to-live <../../../../concepts/ttl/>`__
+                  setting.  Not present for schemas.
+
+                * **remaining_table_ttl** --
+                  The remaining `time-to-live <../../../../concepts/ttl/>`__,
+                  in minutes, before the respective table expires (-1 if it
+                  will never expire).  Not present for schemas.
+
+                * **primary_key_type** --
+                  The primary key type of the table (if it has a primary key).
+                  Allowed values are:
+
+                  * **memory** --
+                    In-memory primary key
+
+                  * **disk** --
+                    On-disk primary key
+
+                * **foreign_keys** --
+                  Semicolon-separated list of `foreign keys
+                  <../../../../concepts/tables/#foreign-key>`__, of the format
+                  'source_column references target_table(primary_key_column)'.
+                  Not present for schemas. The default value is ''.
+
+                * **foreign_shard_key** --
+                  Foreign shard key description of the format: <fk_foreign_key>
+                  references <pk_column_name> from
+                  <pk_table_name>(<pk_primary_key>). Not present for schemas.
+                  The default value is ''.
+
+                * **partition_type** --
+                  `Partitioning <../../../../concepts/tables/#partitioning>`__
+                  scheme used for this table.
+                  Allowed values are:
+
+                  * **RANGE** --
+                    Using `range partitioning
+                    <../../../../concepts/tables/#partitioning-by-range>`__
+
+                  * **INTERVAL** --
+                    Using `interval partitioning
+                    <../../../../concepts/tables/#partitioning-by-interval>`__
+
+                  * **LIST** --
+                    Using `manual list partitioning
+                    <../../../../concepts/tables/#partitioning-by-list-manual>`__
+
+                  * **HASH** --
+                    Using `hash partitioning
+                    <../../../../concepts/tables/#partitioning-by-hash>`__.
+
+                  * **SERIES** --
+                    Using `series partitioning
+                    <../../../../concepts/tables/#partitioning-by-series>`__.
+
+                  * **NONE** --
+                    Using no partitioning
+
+                  The default value is 'NONE'.
+
+                * **partition_keys** --
+                  Comma-separated list of partition keys. The default value is
+                  ''.
+
+                * **partition_definitions** --
+                  Comma-separated list of partition definitions, whose format
+                  depends on the partition_type.  See `partitioning
+                  <../../../../concepts/tables/#partitioning>`__ documentation
+                  for details. The default value is ''.
+
+                * **is_automatic_partition** --
+                  True if partitions will be created for LIST VALUES which
+                  don't fall into existing partitions. The default value is ''.
+
+                * **attribute_indexes** --
+                  Semicolon-separated list of columns that have `indexes
+                  <../../../../concepts/indexes/#column-index>`__. Not present
+                  for schemas. The default value is ''.
+
+                * **compressed_columns** --
+                  No longer supported. The default value is ''.
+
+                * **column_info** --
+                  JSON-encoded string representing a map of column name to
+                  information including memory usage if if the
+                  *get_column_info* option is *true*. The default value is ''.
+
+                * **global_access_mode** --
+                  Returns the global access mode (i.e. lock status) for the
+                  table.
+                  Allowed values are:
+
+                  * **no_access** --
+                    No read/write operations are allowed on this table.
+
+                  * **read_only** --
+                    Only read operations are allowed on this table.
+
+                  * **write_only** --
+                    Only write operations are allowed on this table.
+
+                  * **read_write** --
+                    All read/write operations are allowed on this table.
+
+                * **view_table_name** --
+                  For materialized view the name of the view this member table
+                  is part of - if same as the table_name then this is the root
+                  of the view. The default value is ''.
+
+                * **is_view_persisted** --
+                  True if the view named view_table_name is persisted -
+                  reported for each view member.  Means method of recreating
+                  this member is saved - not the members data. The default
+                  value is ''.
+
+                * **is_dirty** --
+                  True if some input table of the materialized view that
+                  affects this member table has been modified since the last
+                  refresh. The default value is ''.
+
+                * **refresh_method** --
+                  For materialized view current refresh_method - one of manual,
+                  periodic, on_change. The default value is ''.
+
+                * **refresh_start_time** --
+                  For materialized view with periodic refresh_method the
+                  current intial datetime string that periodic refreshes began.
+                  The default value is ''.
+
+                * **refresh_stop_time** --
+                  Time at which the periodic view refresh stops. The default
+                  value is ''.
+
+                * **refresh_period** --
+                  For materialized view with periodic refresh_method the
+                  current refresh period in seconds. The default value is ''.
+
+                * **last_refresh_time** --
+                  For materialized view the a datatime string indicating the
+                  last time the view was refreshed. The default value is ''.
+
+                * **next_refresh_time** --
+                  For materialized view with periodic refresh_method a datetime
+                  string indicating the next time the view is to be refreshed.
+                  The default value is ''.
+
+                * **user_chunk_size** --
+                  User-specified number of records per chunk, if provided at
+                  table creation time. The default value is ''.
+
+                * **user_chunk_column_max_memory** --
+                  User-specified target max bytes per column in a chunk, if
+                  provided at table creation time. The default value is ''.
+
+                * **user_chunk_max_memory** --
+                  User-specified target max bytes for all columns in a chunk,
+                  if provided at table creation time. The default value is ''.
+
+                * **owner_resource_group** --
+                  Name of the owner resource group. The default value is ''.
+
+                * **alternate_shard_keys** --
+                  Semicolon-separated list of shard keys that were equated in
+                  joins (applicable for join tables). The default value is ''.
+
+                * **datasource_subscriptions** --
+                  Semicolon-separated list of datasource names the table has
+                  subscribed to. The default value is ''.
 
             sizes (list of longs)
                 If *get_sizes* is *true*, an array containing the number of
@@ -35070,7 +35562,6 @@ class GPUdb(object):
         return response
     # end show_table
 
-
     # begin show_table_metadata
     def show_table_metadata( self, table_names = None, options = {} ):
         """Retrieves the user provided metadata for the specified tables.
@@ -35082,13 +35573,12 @@ class GPUdb(object):
                 [schema_name.]table_name format, using standard `name
                 resolution rules
                 <../../../../concepts/tables/#table-name-resolution>`__.  All
-                provided tables must exist, or an error is returned.    The
-                user can provide a single element (which will be automatically
+                provided tables must exist, or an error is returned. The user
+                can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -35117,24 +35607,22 @@ class GPUdb(object):
         return response
     # end show_table_metadata
 
-
     # begin show_table_monitors
     def show_table_monitors( self, monitor_ids = None, options = {} ):
         """Show table monitors and their properties. Table monitors are created
-        using :meth:`GPUdb.create_table_monitor`.
-        Returns detailed information about existing table monitors.
+        using :meth:`GPUdb.create_table_monitor`. Returns detailed information
+        about existing table monitors.
 
         Parameters:
 
             monitor_ids (list of str)
                 List of monitors to be shown. An empty list or a single entry
-                with an empty string returns all table monitors.    The user
-                can provide a single element (which will be automatically
-                promoted to a list internally) or a list.
+                with an empty string returns all table monitors. The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -35178,9 +35666,33 @@ class GPUdb(object):
             additional_info (list of dicts of str to str)
                 Additional information about the respective monitors in output
                 parameter *monitor_ids*.
-                Allowed values are:
+                Allowed keys are:
 
-                * @INNER_STRUCTURE
+                * **monitor_type** --
+                  Notification type for the respective output parameter
+                  *monitor_ids* and output parameter *table_names*. The default
+                  value is ''.
+
+                * **type_schema** --
+                  Notification type schemas for the respective output parameter
+                  *monitor_ids* and output parameter *table_names*. The default
+                  value is ''.
+
+                * **materialized_view_for_change_detector** --
+                  Materialized view that implements the change detector
+
+                * **materialized_view_for_filter** --
+                  Materialized views created for the output parameter
+                  *filter_expressions*. The default value is ''.
+
+                * **references** --
+                  Reference count on the respective output parameter
+                  *monitor_ids*. The default value is ''.
+
+                * **datasink_json** --
+                  Datasink info in JSON format for the respective output
+                  parameter *monitor_ids* if one is defined. The default value
+                  is ''.
 
             info (dict of str to str)
                 Additional information.
@@ -35196,7 +35708,6 @@ class GPUdb(object):
 
         return response
     # end show_table_monitors
-
 
     # begin show_tables_by_type
     def show_tables_by_type( self, type_id = None, label = None, options = {} ):
@@ -35216,8 +35727,7 @@ class GPUdb(object):
                 type_id to retrieve all tables with the given label.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -35242,24 +35752,22 @@ class GPUdb(object):
         return response
     # end show_tables_by_type
 
-
     # begin show_triggers
     def show_triggers( self, trigger_ids = None, options = {} ):
-        """Retrieves information regarding the specified triggers or all existing
-        triggers currently active.
+        """Retrieves information regarding the specified triggers or all
+        existing triggers currently active.
 
         Parameters:
 
             trigger_ids (list of str)
                 List of IDs of the triggers whose information is to be
                 retrieved. An empty list means information will be retrieved on
-                all active triggers.    The user can provide a single element
+                all active triggers. The user can provide a single element
                 (which will be automatically promoted to a list internally) or
                 a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -35292,12 +35800,11 @@ class GPUdb(object):
         return response
     # end show_triggers
 
-
     # begin show_types
     def show_types( self, type_id = None, label = None, options = {} ):
-        """Retrieves information for the specified data type ID or type label. For
-        all data types that match the input criteria, the database returns the
-        type ID, the type schema, the label (if available), and the type's
+        """Retrieves information for the specified data type ID or type label.
+        For all data types that match the input criteria, the database returns
+        the type ID, the type schema, the label (if available), and the type's
         column properties.
 
         Parameters:
@@ -35311,8 +35818,7 @@ class GPUdb(object):
                 :meth:`GPUdb.create_type`.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **no_join_types** --
@@ -35324,20 +35830,18 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A dict with the following entries--
 
             type_ids (list of str)
 
-
             type_schemas (list of str)
-
 
             labels (list of str)
 
-
             properties (list of dicts of str to lists of str)
-
 
             info (dict of str to str)
                 Additional information.
@@ -35367,7 +35871,6 @@ class GPUdb(object):
         return response
     # end show_types
 
-
     # begin show_video
     def show_video( self, paths = None, options = {} ):
         """Retrieves information about rendered videos.
@@ -35376,13 +35879,12 @@ class GPUdb(object):
 
             paths (list of str)
                 The fully-qualified `KiFS <../../../../tools/kifs/>`__ paths
-                for the videos to show. If empty, shows all videos.    The user
+                for the videos to show. If empty, shows all videos. The user
                 can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -35436,25 +35938,82 @@ class GPUdb(object):
         return response
     # end show_video
 
+    # begin show_wal
+    def show_wal( self, table_names = None, options = {} ):
+        """Requests table wal properties. Returns information about the
+        requested table wal entries.
+
+        Parameters:
+
+            table_names (list of str)
+                List of tables to query. An asterisk returns all tables. The
+                user can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.
+                Allowed keys are:
+
+                * **show_settings** --
+                  If *true* include a map of the wal settings for the requested
+                  tables.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                The default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            table_names (list of str)
+                List of returned tables.
+
+            sizes (list of lists of longs)
+                List of current wal usage.
+
+            capacities (list of longs)
+                List of wal capacities.
+
+            uncommitted (list of lists of longs)
+                List of number of uncommitted entries.
+
+            settings (list of dicts of str to str)
+                List of table wal settings.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        assert isinstance( options, (dict)), "show_wal(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['table_names'] = table_names
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/show/wal', obj, convert_to_attr_dict = True )
+
+        return response
+    # end show_wal
 
     # begin solve_graph
-    def solve_graph( self, graph_name = None, weights_on_edges = [], restrictions =
-                     [], solver_type = 'SHORTEST_PATH', source_nodes = [],
-                     destination_nodes = [], solution_table = 'graph_solutions',
-                     options = {} ):
+    def solve_graph( self, graph_name = None, weights_on_edges = [],
+                     restrictions = [], solver_type = 'SHORTEST_PATH',
+                     source_nodes = [], destination_nodes = [], solution_table =
+                     'graph_solutions', options = {} ):
         """Solves an existing graph for a type of problem (e.g., shortest path,
         page rank, travelling salesman, etc.) using source nodes, destination
-        nodes, and
-        additional, optional weights and restrictions.
+        nodes, and additional, optional weights and restrictions.
 
-        IMPORTANT: It's highly recommended that you review the
-        `Network Graphs & Solvers
-        <../../../../graph_solver/network_graph_solver/>`__
-        concepts documentation, the
-        `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`__,
-        and/or some
-        `/solve/graph examples <../../../../guide-tags/graph-solve>`__
-        before using this endpoint.
+        IMPORTANT: It's highly recommended that you review the `Network Graphs
+        & Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
+        documentation, the `Graph REST Tutorial
+        <../../../../guides/graph_rest_guide/>`__, and/or some `/solve/graph
+        examples <../../../../guide-tags/graph-solve>`__ before using this
+        endpoint.
 
         Parameters:
 
@@ -35462,55 +36021,44 @@ class GPUdb(object):
                 Name of the graph resource to solve.
 
             weights_on_edges (list of str)
-                Additional weights to apply to the edges of an existing
-                graph. Weights must be specified using
-                `identifiers
+                Additional weights to apply to the edges of an existing graph.
+                Weights must be specified using `identifiers
                 <../../../../graph_solver/network_graph_solver/#identifiers>`__;
-                identifiers are grouped as
-                `combinations
+                identifiers are grouped as `combinations
                 <../../../../graph_solver/network_graph_solver/#id-combos>`__.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS WEIGHTS_EDGE_ID', expressions, e.g.,
                 'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED', or constant values,
-                e.g.,
-                '{4, 15, 2} AS WEIGHTS_VALUESPECIFIED'. Any provided weights
-                will be added
-                (in the case of 'WEIGHTS_VALUESPECIFIED') to or multiplied with
-                (in the case of 'WEIGHTS_FACTORSPECIFIED') the existing
-                weight(s). If using
+                e.g., '{4, 15, 2} AS WEIGHTS_VALUESPECIFIED'. Any provided
+                weights will be added (in the case of 'WEIGHTS_VALUESPECIFIED')
+                to or multiplied with (in the case of
+                'WEIGHTS_FACTORSPECIFIED') the existing weight(s). If using
                 constant values in an identifier combination, the number of
-                values specified
-                must match across the combination.  The default value is an
-                empty list ( [] ).  The user can provide a single element
-                (which will be automatically promoted to a list internally) or
-                a list.
+                values specified must match across the combination. The default
+                value is an empty list ( [] ). The user can provide a single
+                element (which will be automatically promoted to a list
+                internally) or a list.
 
             restrictions (list of str)
                 Additional restrictions to apply to the nodes/edges of an
                 existing graph. Restrictions must be specified using
                 `identifiers
                 <../../../../graph_solver/network_graph_solver/#identifiers>`__;
-                identifiers are grouped as
-                `combinations
+                identifiers are grouped as `combinations
                 <../../../../graph_solver/network_graph_solver/#id-combos>`__.
                 Identifiers can be used with existing column names, e.g.,
                 'table.column AS RESTRICTIONS_EDGE_ID', expressions, e.g.,
                 'column/2 AS RESTRICTIONS_VALUECOMPARED', or constant values,
-                e.g.,
-                '{0, 0, 0, 1} AS RESTRICTIONS_ONOFFCOMPARED'. If using constant
-                values in an
-                identifier combination, the number of values specified must
-                match across the
-                combination. If remove_previous_restrictions option is set
-                to true, any
+                e.g., '{0, 0, 0, 1} AS RESTRICTIONS_ONOFFCOMPARED'. If using
+                constant values in an identifier combination, the number of
+                values specified must match across the combination. If
+                remove_previous_restrictions option is set to true, any
                 provided restrictions will replace the existing restrictions.
-                Otherwise, any provided
-                restrictions will be added (in the case of
-                'RESTRICTIONS_VALUECOMPARED') to or
-                replaced (in the case of 'RESTRICTIONS_ONOFFCOMPARED').  The
-                default value is an empty list ( [] ).  The user can provide a
-                single element (which will be automatically promoted to a list
-                internally) or a list.
+                Otherwise, any provided restrictions will be added (in the case
+                of 'RESTRICTIONS_VALUECOMPARED') to or replaced (in the case of
+                'RESTRICTIONS_ONOFFCOMPARED'). The default value is an empty
+                list ( [] ). The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
 
             solver_type (str)
                 The type of solver to use for the graph.
@@ -35572,27 +36120,26 @@ class GPUdb(object):
             source_nodes (list of str)
                 It can be one of the nodal identifiers - e.g: 'NODE_WKTPOINT'
                 for source nodes. For *BACKHAUL_ROUTING*, this list depicts the
-                fixed assets.  The default value is an empty list ( [] ).  The
+                fixed assets. The default value is an empty list ( [] ). The
                 user can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
 
             destination_nodes (list of str)
                 It can be one of the nodal identifiers - e.g: 'NODE_WKTPOINT'
                 for destination (target) nodes. For *BACKHAUL_ROUTING*, this
-                list depicts the remote assets.  The default value is an empty
-                list ( [] ).  The user can provide a single element (which will
+                list depicts the remote assets. The default value is an empty
+                list ( [] ). The user can provide a single element (which will
                 be automatically promoted to a list internally) or a list.
 
             solution_table (str)
                 Name of the table to store the solution, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__.  The
+                <../../../../concepts/tables/#table-name-resolution>`__. The
                 default value is 'graph_solutions'.
 
             options (dict of str to str)
-                Additional parameters.  The default value is an empty dict ( {}
-                ).
+                Additional parameters.
                 Allowed keys are:
 
                 * **max_solution_radius** --
@@ -35600,7 +36147,7 @@ class GPUdb(object):
                   solvers only. Sets the maximum solution cost radius, which
                   ignores the input parameter *destination_nodes* list and
                   instead outputs the nodes within the radius sorted by
-                  ascending cost. If set to '0.0', the setting is ignored.  The
+                  ascending cost. If set to '0.0', the setting is ignored. The
                   default value is '0.0'.
 
                 * **min_solution_radius** --
@@ -35609,8 +36156,7 @@ class GPUdb(object):
                   set. Sets the minimum solution cost radius, which ignores the
                   input parameter *destination_nodes* list and instead outputs
                   the nodes within the radius sorted by ascending cost. If set
-                  to '0.0', the setting is ignored.  The default value is
-                  '0.0'.
+                  to '0.0', the setting is ignored. The default value is '0.0'.
 
                 * **max_solution_targets** --
                   For *ALLPATHS*, *SHORTEST_PATH* and *INVERSE_SHORTEST_PATH*
@@ -35618,7 +36164,7 @@ class GPUdb(object):
                   which ignores the input parameter *destination_nodes* list
                   and instead outputs no more than n number of nodes sorted by
                   ascending cost where n is equal to the setting value. If set
-                  to 0, the setting is ignored.  The default value is '1000'.
+                  to 0, the setting is ignored. The default value is '1000'.
 
                 * **uniform_weights** --
                   When specified, assigns the given value to all the edges in
@@ -35628,40 +36174,40 @@ class GPUdb(object):
                 * **left_turn_penalty** --
                   This will add an additonal weight over the edges labelled as
                   'left turn' if the 'add_turn' option parameter of the
-                  :meth:`GPUdb.create_graph` was invoked at graph creation.
-                  The default value is '0.0'.
+                  :meth:`GPUdb.create_graph` was invoked at graph creation. The
+                  default value is '0.0'.
 
                 * **right_turn_penalty** --
                   This will add an additonal weight over the edges labelled as'
                   right turn' if the 'add_turn' option parameter of the
-                  :meth:`GPUdb.create_graph` was invoked at graph creation.
-                  The default value is '0.0'.
+                  :meth:`GPUdb.create_graph` was invoked at graph creation. The
+                  default value is '0.0'.
 
                 * **intersection_penalty** --
                   This will add an additonal weight over the edges labelled as
                   'intersection' if the 'add_turn' option parameter of the
-                  :meth:`GPUdb.create_graph` was invoked at graph creation.
-                  The default value is '0.0'.
+                  :meth:`GPUdb.create_graph` was invoked at graph creation. The
+                  default value is '0.0'.
 
                 * **sharp_turn_penalty** --
                   This will add an additonal weight over the edges labelled as
                   'sharp turn' or 'u-turn' if the 'add_turn' option parameter
                   of the :meth:`GPUdb.create_graph` was invoked at graph
-                  creation.  The default value is '0.0'.
+                  creation. The default value is '0.0'.
 
                 * **num_best_paths** --
                   For *MULTIPLE_ROUTING* solvers only; sets the number of
                   shortest paths computed from each node. This is the heuristic
                   criterion. Default value of zero allows the number to be
                   computed automatically by the solver. The user may want to
-                  override this parameter to speed-up the solver.  The default
+                  override this parameter to speed-up the solver. The default
                   value is '0'.
 
                 * **max_num_combinations** --
                   For *MULTIPLE_ROUTING* solvers only; sets the cap on the
                   combinatorial sequences generated. If the default value of
                   two millions is overridden to a lesser value, it can
-                  potentially speed up the solver.  The default value is
+                  potentially speed up the solver. The default value is
                   '2000000'.
 
                 * **output_edge_path** --
@@ -35697,7 +36243,7 @@ class GPUdb(object):
                   For *PAGE_RANK* solvers only; Maximum percent relative
                   threshold on the pagerank scores of each node between
                   consecutive iterations to satisfy convergence. Default value
-                  is 1 (one) percent.  The default value is '1.0'.
+                  is 1 (one) percent. The default value is '1.0'.
 
                 * **max_iterations** --
                   For *PAGE_RANK* solvers only; Maximum number of pagerank
@@ -35708,7 +36254,7 @@ class GPUdb(object):
                   For all *CENTRALITY* solvers only; Sets the maximum number of
                   shortest path runs; maximum possible value is the number of
                   nodes in the graph. Default value of 0 enables this value to
-                  be auto computed by the solver.  The default value is '0'.
+                  be auto computed by the solver. The default value is '0'.
 
                 * **output_clusters** --
                   For *STATS_ALL* solvers only; the cluster index for each node
@@ -35742,7 +36288,9 @@ class GPUdb(object):
                   For path solvers only when 'solve_heuristic' option is
                   'astar'. The shortest path traversal front includes nodes
                   only within this radius (kilometers) as it moves towards the
-                  target location.  The default value is '70'.
+                  target location. The default value is '70'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -35782,103 +36330,77 @@ class GPUdb(object):
         return response
     # end solve_graph
 
-
     # begin update_records
-    def update_records( self, table_name = None, expressions = None, new_values_maps
-                        = None, records_to_insert = [], records_to_insert_str =
-                        [], record_encoding = 'binary', options = {},
-                        record_type = None ):
+    def update_records( self, table_name = None, expressions = None,
+                        new_values_maps = None, records_to_insert = [],
+                        records_to_insert_str = [], record_encoding = 'binary',
+                        options = {}, record_type = None ):
         """Runs multiple predicate-based updates in a single call.  With the
         list of given expressions, any matching record's column values will be
-        updated
-        as provided in input parameter *new_values_maps*.  There is also an
-        optional 'upsert'
-        capability where if a particular predicate doesn't match any existing
-        record,
-        then a new record can be inserted.
+        updated as provided in input parameter *new_values_maps*.  There is
+        also an optional 'upsert' capability where if a particular predicate
+        doesn't match any existing record, then a new record can be inserted.
 
         Note that this operation can only be run on an original table and not
-        on a
-        result view.
+        on a result view.
 
-        This operation can update primary key values.  By default only
-        'pure primary key' predicates are allowed when updating primary key
-        values. If
-        the primary key for a table is the column 'attr1', then the operation
-        will only
-        accept predicates of the form: "attr1 == 'foo'" if the attr1 column is
-        being
-        updated.  For a composite primary key (e.g. columns 'attr1' and
-        'attr2') then
-        this operation will only accept predicates of the form:
-        "(attr1 == 'foo') and (attr2 == 'bar')".  Meaning, all primary key
-        columns
-        must appear in an equality predicate in the expressions.  Furthermore
-        each
-        'pure primary key' predicate must be unique within a given request.
-        These
-        restrictions can be removed by utilizing some available options through
-        input parameter *options*.
+        This operation can update primary key values.  By default only 'pure
+        primary key' predicates are allowed when updating primary key values.
+        If the primary key for a table is the column 'attr1', then the
+        operation will only accept predicates of the form: "attr1 == 'foo'" if
+        the attr1 column is being updated.  For a composite primary key (e.g.
+        columns 'attr1' and 'attr2') then this operation will only accept
+        predicates of the form: "(attr1 == 'foo') and (attr2 == 'bar')".
+        Meaning, all primary key columns must appear in an equality predicate
+        in the expressions.  Furthermore each 'pure primary key' predicate must
+        be unique within a given request.  These restrictions can be removed by
+        utilizing some available options through input parameter *options*.
 
         The *update_on_existing_pk* option specifies the record primary key
-        collision
-        policy for tables with a `primary key
+        collision policy for tables with a `primary key
         <../../../../concepts/tables/#primary-keys>`__, while
         *ignore_existing_pk* specifies the record primary key collision
         error-suppression policy when those collisions result in the update
-        being rejected.  Both are
-        ignored on tables with no primary key.
+        being rejected.  Both are ignored on tables with no primary key.
 
         Parameters:
 
             table_name (str)
                 Name of table to be updated, in [schema_name.]table_name
-                format, using standard
-                `name resolution rules
+                format, using standard `name resolution rules
                 <../../../../concepts/tables/#table-name-resolution>`__.  Must
-                be a currently
-                existing table and not a view.
+                be a currently existing table and not a view.
 
             expressions (list of str)
                 A list of the actual predicates, one for each update; format
-                should follow the guidelines :meth:`here <GPUdb.filter>`.
-                The user can provide a single element (which will be
-                automatically promoted to a list internally) or a list.  The
+                should follow the guidelines :meth:`here <GPUdb.filter>`. The
                 user can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
 
-            new_values_maps (list of dicts of str to str and/or None)
+            new_values_maps (list of dicts of str to optional str)
                 List of new values for the matching records.  Each element is a
-                map with
-                (key, value) pairs where the keys are the names of the columns
-                whose values are to be updated; the
-                values are the new values.  The number of elements in the list
-                should match the length of input parameter *expressions*.
-                The user can provide a single element (which will be
-                automatically promoted to a list internally) or a list.  The
-                user can provide a single element (which will be automatically
-                promoted to a list internally) or a list.
+                map with (key, value) pairs where the keys are the names of the
+                columns whose values are to be updated; the values are the new
+                values.  The number of elements in the list should match the
+                length of input parameter *expressions*. The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
 
-            records_to_insert (list of str)
+            records_to_insert (list of bytes)
                 An *optional* list of new binary-avro encoded records to
-                insert, one for each
-                update.  If one of input parameter *expressions* does not yield
-                a matching record to be updated, then the
-                corresponding element from this list will be added to the
-                table.  The default value is an empty list ( [] ).  The user
+                insert, one for each update.  If one of input parameter
+                *expressions* does not yield a matching record to be updated,
+                then the corresponding element from this list will be added to
+                the table. The default value is an empty list ( [] ). The user
                 can provide a single element (which will be automatically
-                promoted to a list internally) or a list.  The user can provide
-                a single element (which will be automatically promoted to a
-                list internally) or a list.
+                promoted to a list internally) or a list.
 
             records_to_insert_str (list of str)
                 An optional list of JSON encoded objects to insert, one for
                 each update, to be added if the particular update did not match
-                any objects.  The default value is an empty list ( [] ).  The
+                any objects. The default value is an empty list ( [] ). The
                 user can provide a single element (which will be automatically
-                promoted to a list internally) or a list.  The user can provide
-                a single element (which will be automatically promoted to a
-                list internally) or a list.
+                promoted to a list internally) or a list.
 
             record_encoding (str)
                 Identifies which of input parameter *records_to_insert* and
@@ -35891,25 +36413,22 @@ class GPUdb(object):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **global_expression** --
                   An optional global expression to reduce the search space of
-                  the predicates listed in input parameter *expressions*.  The
+                  the predicates listed in input parameter *expressions*. The
                   default value is ''.
 
                 * **bypass_safety_checks** --
-                  When set to *true*,
-                  all predicates are available for primary key updates.  Keep
-                  in mind that it is possible to destroy
+                  When set to *true*, all predicates are available for primary
+                  key updates.  Keep in mind that it is possible to destroy
                   data in this case, since a single predicate may match
-                  multiple objects (potentially all of records
-                  of a table), and then updating all of those records to have
-                  the same primary key will, due to the
-                  primary key uniqueness constraints, effectively delete all
-                  but one of those updated records.
+                  multiple objects (potentially all of records of a table), and
+                  then updating all of those records to have the same primary
+                  key will, due to the primary key uniqueness constraints,
+                  effectively delete all but one of those updated records.
                   Allowed values are:
 
                   * true
@@ -35919,50 +36438,48 @@ class GPUdb(object):
 
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for updating a table
-                  with a
-                  `primary key <../../../../concepts/tables/#primary-keys>`__.
-                  There are two ways that a record collision can
-                  occur.
+                  with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__.  There are
+                  two ways that a record collision can occur.
+
                   The first is an "update collision", which happens when the
-                  update changes the value of the updated
-                  record's primary key, and that new primary key already exists
-                  as the primary key of another record
-                  in the table.
+                  update changes the value of the updated record's primary key,
+                  and that new primary key already exists as the primary key of
+                  another record in the table.
+
                   The second is an "insert collision", which occurs when a
-                  given filter in input parameter *expressions*
-                  finds no records to update, and the alternate insert record
-                  given in input parameter *records_to_insert* (or
-                  input parameter *records_to_insert_str*) contains a primary
-                  key matching that of an existing record in the
-                  table.
-                  If *update_on_existing_pk* is set to
-                  *true*, "update collisions" will result in the
-                  existing record collided into being removed and the record
-                  updated with values specified in
+                  given filter in input parameter *expressions* finds no
+                  records to update, and the alternate insert record given in
+                  input parameter *records_to_insert* (or input parameter
+                  *records_to_insert_str*) contains a primary key matching that
+                  of an existing record in the table.
+
+                  If *update_on_existing_pk* is set to *true*, "update
+                  collisions" will result in the existing record collided into
+                  being removed and the record updated with values specified in
                   input parameter *new_values_maps* taking its place; "insert
-                  collisions" will result in the collided-into
-                  record being updated with the values in input parameter
+                  collisions" will result in the collided-into record being
+                  updated with the values in input parameter
                   *records_to_insert*/input parameter *records_to_insert_str*
                   (if given).
-                  If set to *false*, the existing collided-into
-                  record will remain unchanged, while the update will be
-                  rejected and the error handled as determined
-                  by *ignore_existing_pk*.  If the specified table does not
-                  have a primary key,
-                  then this option has no effect.
+
+                  If set to *false*, the existing collided-into record will
+                  remain unchanged, while the update will be rejected and the
+                  error handled as determined by *ignore_existing_pk*.  If the
+                  specified table does not have a primary key, then this option
+                  has no effect.
                   Allowed values are:
 
                   * **true** --
-                    Overwrite the collided-into record when updating a
-                    record's primary key or inserting an alternate record
-                    causes a primary key collision between the
-                    record being updated/inserted and another existing record
-                    in the table
+                    Overwrite the collided-into record when updating a record's
+                    primary key or inserting an alternate record causes a
+                    primary key collision between the record being
+                    updated/inserted and another existing record in the table
 
                   * **false** --
-                    Reject updates which cause primary key collisions
-                    between the record being updated/inserted and an existing
-                    record in the table
+                    Reject updates which cause primary key collisions between
+                    the record being updated/inserted and an existing record in
+                    the table
 
                   The default value is 'false'.
 
@@ -35970,18 +36487,15 @@ class GPUdb(object):
                   Specifies the record collision error-suppression policy for
                   updating a table with a `primary key
                   <../../../../concepts/tables/#primary-keys>`__, only used
-                  when primary
-                  key record collisions are rejected (*update_on_existing_pk*
-                  is
-                  *false*).  If set to
-                  *true*, any record update that is rejected for
-                  resulting in a primary key collision with an existing table
-                  record will be ignored with no error
-                  generated.  If *false*, the rejection of any update
+                  when primary key record collisions are rejected
+                  (*update_on_existing_pk* is *false*).  If set to *true*, any
+                  record update that is rejected for resulting in a primary key
+                  collision with an existing table record will be ignored with
+                  no error generated.  If *false*, the rejection of any update
                   for resulting in a primary key collision will cause an error
-                  to be reported.  If the specified table
-                  does not have a primary key or if *update_on_existing_pk* is
-                  *true*, then this option has no effect.
+                  to be reported.  If the specified table does not have a
+                  primary key or if *update_on_existing_pk* is *true*, then
+                  this option has no effect.
                   Allowed values are:
 
                   * **true** --
@@ -36015,14 +36529,12 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **use_expressions_in_new_values_maps** --
-                  When set to *true*,
-                  all new values in input parameter *new_values_maps* are
-                  considered as expression values. When set to
-                  *false*, all new values in
-                  input parameter *new_values_maps* are considered as
-                  constants.  NOTE:  When
-                  *true*, string constants will need
-                  to be quoted to avoid being evaluated as expressions.
+                  When set to *true*, all new values in input parameter
+                  *new_values_maps* are considered as expression values. When
+                  set to *false*, all new values in input parameter
+                  *new_values_maps* are considered as constants.  NOTE:  When
+                  *true*, string constants will need to be quoted to avoid
+                  being evaluated as expressions.
                   Allowed values are:
 
                   * true
@@ -36034,6 +36546,8 @@ class GPUdb(object):
                   ID of a single record to be updated (returned in the call to
                   :meth:`GPUdb.insert_records` or
                   :meth:`GPUdb.get_records_from_collection`).
+
+                The default value is an empty dict ( {} ).
 
             record_type (RecordType)
                 A :class:`RecordType` object using which the the binary data
@@ -36094,7 +36608,6 @@ class GPUdb(object):
             obj['records_to_insert'] = []
         # end if
 
-
         if use_object_array:
             response = self.__submit_request( '/update/records', obj, convert_to_attr_dict = True, get_req_cext = True )
         else:
@@ -36106,15 +36619,14 @@ class GPUdb(object):
         return response
     # end update_records
 
-
     # begin update_records_by_series
-    def update_records_by_series( self, table_name = None, world_table_name = None,
-                                  view_name = '', reserved = [], options = {} ):
-        """Updates the view specified by input parameter *table_name* to include
-        full
-        series (track) information from the input parameter *world_table_name*
-        for the series
-        (tracks) present in the input parameter *view_name*.
+    def update_records_by_series( self, table_name = None, world_table_name =
+                                  None, view_name = '', reserved = [], options =
+                                  {} ):
+        """Updates the view specified by input parameter *table_name* to
+        include full series (track) information from the input parameter
+        *world_table_name* for the series (tracks) present in the input
+        parameter *view_name*.
 
         Parameters:
 
@@ -36135,23 +36647,21 @@ class GPUdb(object):
                 Name of the view containing the series (tracks) which have to
                 be updated, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__.  The
+                <../../../../concepts/tables/#table-name-resolution>`__. The
                 default value is ''.
 
             reserved (list of str)
-                The default value is an empty list ( [] ).  The user can
-                provide a single element (which will be automatically promoted
-                to a list internally) or a list.
+                The default value is an empty list ( [] ). The user can provide
+                a single element (which will be automatically promoted to a
+                list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
 
             count (int)
-
 
             info (dict of str to str)
                 Additional information.
@@ -36174,108 +36684,85 @@ class GPUdb(object):
         return response
     # end update_records_by_series
 
-
     # begin upload_files
     def upload_files( self, file_names = None, file_data = None, options = {} ):
-        """Uploads one or more files to `KiFS <../../../../tools/kifs/>`__. There
-        are
-        two methods for uploading files: load files in their entirety, or load
-        files in
-        parts. The latter is recommeded for files of approximately 60 MB or
-        larger.
+        """Uploads one or more files to `KiFS <../../../../tools/kifs/>`__.
+        There are two methods for uploading files: load files in their
+        entirety, or load files in parts. The latter is recommeded for files of
+        approximately 60 MB or larger.
 
         To upload files in their entirety, populate input parameter
-        *file_names* with the file
-        names to upload into on KiFS, and their respective byte content in
-        input parameter *file_data*.
+        *file_names* with the file names to upload into on KiFS, and their
+        respective byte content in input parameter *file_data*.
 
         Multiple steps are involved when uploading in multiple parts. Only one
-        file at a
-        time can be uploaded in this manner. A user-provided UUID is utilized
-        to tie all
-        the upload steps together for a given file.  To upload a file in
-        multiple parts:
+        file at a time can be uploaded in this manner. A user-provided UUID is
+        utilized to tie all the upload steps together for a given file.  To
+        upload a file in multiple parts:
 
         1. Provide the file name in input parameter *file_names*, the UUID in
-           the *multipart_upload_uuid* key in input parameter *options*, and
-           a *multipart_operation* value of
-           *init*.
+           the *multipart_upload_uuid* key in input parameter *options*, and a
+           *multipart_operation* value of *init*.
         2. Upload one or more parts by providing the file name, the part data
            in input parameter *file_data*, the UUID, a *multipart_operation*
-           value of *upload_part*, and
-           the part number in the *multipart_upload_part_number*.
-           The part numbers must start at 1 and increase incrementally.
-           Parts may not be uploaded out of order.
+           value of *upload_part*, and the part number in the
+           *multipart_upload_part_number*. The part numbers must start at 1 and
+           increase incrementally. Parts may not be uploaded out of order.
         3. Complete the upload by providing the file name, the UUID, and a
-           *multipart_operation* value of
-           *complete*.
+           *multipart_operation* value of *complete*.
 
         Multipart uploads in progress may be canceled by providing the file
-        name, the
-        UUID, and a *multipart_operation* value of
-        *cancel*.  If an new upload is
-        initialized with a different UUID for an existing upload in progress,
-        the
-        pre-existing upload is automatically canceled in favor of the new
-        upload.
+        name, the UUID, and a *multipart_operation* value of *cancel*.  If an
+        new upload is initialized with a different UUID for an existing upload
+        in progress, the pre-existing upload is automatically canceled in favor
+        of the new upload.
 
         The multipart upload must be completed for the file to be usable in
-        KiFS.
-        Information about multipart uploads in progress is available in
+        KiFS. Information about multipart uploads in progress is available in
         :meth:`GPUdb.show_files`.
 
         File data may be pre-encoded using base64 encoding. This should be
-        indicated
-        using the *file_encoding* option, and is recommended when
+        indicated using the *file_encoding* option, and is recommended when
         using JSON serialization.
 
         Each file path must reside in a top-level KiFS directory, i.e. one of
-        the
-        directories listed in :meth:`GPUdb.show_directories`. The user must
-        have write
-        permission on the directory. Nested directories are permitted in file
-        name
-        paths. Directories are deliniated with the directory separator of '/'.
-        For
-        example, given the file path '/a/b/c/d.txt', 'a' must be a KiFS
-        directory.
+        the directories listed in :meth:`GPUdb.show_directories`. The user must
+        have write permission on the directory. Nested directories are
+        permitted in file name paths. Directories are deliniated with the
+        directory separator of '/'.  For example, given the file path
+        '/a/b/c/d.txt', 'a' must be a KiFS directory.
 
         These characters are allowed in file name paths: letters, numbers,
-        spaces, the
-        path delimiter of '/', and the characters: '.' '-' ':' '[' ']' '(' ')'
-        '#' '='.
+        spaces, the path delimiter of '/', and the characters: '.' '-' ':' '['
+        ']' '(' ')' '#' '='.
 
         Parameters:
 
             file_names (list of str)
                 An array of full file name paths to be used for the files
                 uploaded to KiFS. File names may have any number of nested
-                directories in their
-                paths, but the top-level directory must be an existing KiFS
-                directory. Each file
-                must reside in or under a top-level directory. A full file name
-                path cannot be
-                larger than 1024 characters.    The user can provide a single
-                element (which will be automatically promoted to a list
+                directories in their paths, but the top-level directory must be
+                an existing KiFS directory. Each file must reside in or under a
+                top-level directory. A full file name path cannot be larger
+                than 1024 characters. The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
+
+            file_data (list of bytes)
+                File data for the files being uploaded, for the respective
+                files in input parameter *file_names*. The user can provide a
+                single element (which will be automatically promoted to a list
                 internally) or a list.
 
-            file_data (list of str)
-                File data for the files being uploaded, for the respective
-                files in input parameter *file_names*.    The user can provide
-                a single element (which will be automatically promoted to a
-                list internally) or a list.
-
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **file_encoding** --
-                  Encoding that has been applied to the uploaded
-                  file data. When using JSON serialization it is recommended to
-                  utilize
-                  *base64*. The caller is responsible
-                  for encoding the data provided in this payload.
+                  Encoding that has been applied to the uploaded file data.
+                  When using JSON serialization it is recommended to utilize
+                  *base64*. The caller is responsible for encoding the data
+                  provided in this payload.
                   Allowed values are:
 
                   * **base64** --
@@ -36312,25 +36799,25 @@ class GPUdb(object):
                   UUID to uniquely identify a multipart upload
 
                 * **multipart_upload_part_number** --
-                  Incremental part number for each part in a
-                  multipart upload. Part numbers start at 1, increment by 1,
-                  and must be uploaded
+                  Incremental part number for each part in a multipart upload.
+                  Part numbers start at 1, increment by 1, and must be uploaded
                   sequentially
 
                 * **delete_if_exists** --
-                  If *true*,
-                  any existing files specified in input parameter *file_names*
-                  will be deleted prior to start of upload.
+                  If *true*, any existing files specified in input parameter
+                  *file_names* will be deleted prior to start of upload.
                   Otherwise the file is replaced once the upload completes.
-                  Rollback of the original file is
-                  no longer possible if the upload is cancelled, aborted or
-                  fails if the file was deleted beforehand.
+                  Rollback of the original file is no longer possible if the
+                  upload is cancelled, aborted or fails if the file was deleted
+                  beforehand.
                   Allowed values are:
 
                   * true
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -36352,50 +36839,41 @@ class GPUdb(object):
         return response
     # end upload_files
 
-
     # begin upload_files_fromurl
     def upload_files_fromurl( self, file_names = None, urls = None, options = {} ):
         """Uploads one or more files to `KiFS <../../../../tools/kifs/>`__.
 
         Each file path must reside in a top-level KiFS directory, i.e. one of
-        the
-        directories listed in :meth:`GPUdb.show_directories`. The user must
-        have write
-        permission on the directory. Nested directories are permitted in file
-        name
-        paths. Directories are deliniated with the directory separator of '/'.
-        For
-        example, given the file path '/a/b/c/d.txt', 'a' must be a KiFS
-        directory.
+        the directories listed in :meth:`GPUdb.show_directories`. The user must
+        have write permission on the directory. Nested directories are
+        permitted in file name paths. Directories are deliniated with the
+        directory separator of '/'.  For example, given the file path
+        '/a/b/c/d.txt', 'a' must be a KiFS directory.
 
         These characters are allowed in file name paths: letters, numbers,
-        spaces, the
-        path delimiter of '/', and the characters: '.' '-' ':' '[' ']' '(' ')'
-        '#' '='.
+        spaces, the path delimiter of '/', and the characters: '.' '-' ':' '['
+        ']' '(' ')' '#' '='.
 
         Parameters:
 
             file_names (list of str)
                 An array of full file name paths to be used for the files
                 uploaded to KiFS. File names may have any number of nested
-                directories in their
-                paths, but the top-level directory must be an existing KiFS
-                directory. Each file
-                must reside in or under a top-level directory. A full file name
-                path cannot be
-                larger than 1024 characters.    The user can provide a single
-                element (which will be automatically promoted to a list
-                internally) or a list.
+                directories in their paths, but the top-level directory must be
+                an existing KiFS directory. Each file must reside in or under a
+                top-level directory. A full file name path cannot be larger
+                than 1024 characters. The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
 
             urls (list of str)
                 List of URLs to upload, for each respective file in input
-                parameter *file_names*.    The user can provide a single
-                element (which will be automatically promoted to a list
-                internally) or a list.
+                parameter *file_names*. The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -36424,17 +36902,15 @@ class GPUdb(object):
         return response
     # end upload_files_fromurl
 
-
     # begin visualize_get_feature_info
-    def visualize_get_feature_info( self, table_names = None, x_column_names = None,
-                                    y_column_names = None, geometry_column_names
-                                    = None, query_column_names = None,
-                                    projection = None, min_x = None, max_x =
-                                    None, min_y = None, max_y = None, width =
-                                    None, height = None, x = None, y = None,
-                                    radius = None, limit = None, encoding =
-                                    None, options = {} ):
-
+    def visualize_get_feature_info( self, table_names = None, x_column_names =
+                                    None, y_column_names = None,
+                                    geometry_column_names = None,
+                                    query_column_names = None, projection =
+                                    None, min_x = None, max_x = None, min_y =
+                                    None, max_y = None, width = None, height =
+                                    None, x = None, y = None, radius = None,
+                                    limit = None, encoding = None, options = {} ):
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
         x_column_names = x_column_names if isinstance( x_column_names, list ) else ( [] if (x_column_names is None) else [ x_column_names ] )
         y_column_names = y_column_names if isinstance( y_column_names, list ) else ( [] if (y_column_names is None) else [ y_column_names ] )
@@ -36479,7 +36955,6 @@ class GPUdb(object):
         return response
     # end visualize_get_feature_info
 
-
     # begin visualize_image
     def visualize_image( self, table_names = None, world_table_names = None,
                          x_column_name = None, y_column_name = None,
@@ -36488,7 +36963,6 @@ class GPUdb(object):
                          None, max_y = None, width = None, height = None,
                          projection = 'PLATE_CARREE', bg_color = None,
                          style_options = None, options = {} ):
-
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
         world_table_names = world_table_names if isinstance( world_table_names, list ) else ( [] if (world_table_names is None) else [ world_table_names ] )
         assert isinstance( x_column_name, (basestring)), "visualize_image(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
@@ -36531,18 +37005,17 @@ class GPUdb(object):
         return response
     # end visualize_image
 
-
     # begin visualize_image_chart
     def visualize_image_chart( self, table_name = None, x_column_names = None,
                                y_column_names = None, min_x = None, max_x =
                                None, min_y = None, max_y = None, width = None,
                                height = None, bg_color = None, style_options =
                                None, options = {} ):
-        """Scatter plot is the only plot type currently supported. A non-numeric
-        column can be specified as x or y column and jitters can be added to
-        them to avoid excessive overlapping. All color values must be in the
-        format RRGGBB or AARRGGBB (to specify the alpha value).
-        The image is contained in the output parameter *image_data* field.
+        """Scatter plot is the only plot type currently supported. A
+        non-numeric column can be specified as x or y column and jitters can be
+        added to them to avoid excessive overlapping. All color values must be
+        in the format RRGGBB or AARRGGBB (to specify the alpha value). The
+        image is contained in the output parameter *image_data* field.
 
         Parameters:
 
@@ -36554,13 +37027,13 @@ class GPUdb(object):
 
             x_column_names (list of str)
                 Names of the columns containing the data mapped to the x axis
-                of a chart.    The user can provide a single element (which
-                will be automatically promoted to a list internally) or a list.
+                of a chart. The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
 
             y_column_names (list of str)
                 Names of the columns containing the data mapped to the y axis
-                of a chart.    The user can provide a single element (which
-                will be automatically promoted to a list internally) or a list.
+                of a chart. The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
 
             min_x (float)
                 Lower bound for the x column values. For non-numeric x column,
@@ -36597,11 +37070,11 @@ class GPUdb(object):
 
                 * **pointcolor** --
                   The color of points in the plot represented as a hexadecimal
-                  number.  The default value is '0000FF'.
+                  number. The default value is '0000FF'.
 
                 * **pointsize** --
                   The size of points in the plot represented as number of
-                  pixels.  The default value is '3'.
+                  pixels. The default value is '3'.
 
                 * **pointshape** --
                   The shape of points in the plot.
@@ -36648,7 +37121,7 @@ class GPUdb(object):
 
                 * **cb_delimiter** --
                   A character or string which separates per-class values in a
-                  class-break style option string.  The default value is ';'.
+                  class-break style option string. The default value is ';'.
 
                 * **x_order_by** --
                   An expression or aggregate expression by which non-numeric x
@@ -36690,25 +37163,24 @@ class GPUdb(object):
                   response. If this options is set to "true", this endpoint
                   expects request's min/max values are already scaled according
                   to scale_type_x/scale_type_y. Response's min/max values will
-                  be equal to request's min/max values.  The default value is
+                  be equal to request's min/max values. The default value is
                   'false'.
 
                 * **jitter_x** --
                   Amplitude of horizontal jitter applied to non-numeric x
-                  column values.  The default value is '0.0'.
+                  column values. The default value is '0.0'.
 
                 * **jitter_y** --
                   Amplitude of vertical jitter applied to non-numeric y column
-                  values.  The default value is '0.0'.
+                  values. The default value is '0.0'.
 
                 * **plot_all** --
                   If this options is set to "true", all non-numeric column
                   values are plotted ignoring min_x, max_x, min_y and max_y
-                  parameters.  The default value is 'false'.
+                  parameters. The default value is 'false'.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **image_encoding** --
@@ -36723,6 +37195,8 @@ class GPUdb(object):
                     Do not apply any additional encoding to the output image.
 
                   The default value is 'none'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -36816,11 +37290,10 @@ class GPUdb(object):
         return response
     # end visualize_image_chart
 
-
     # begin visualize_image_classbreak
-    def visualize_image_classbreak( self, table_names = None, world_table_names =
-                                    None, x_column_name = None, y_column_name =
-                                    None, symbol_column_name = None,
+    def visualize_image_classbreak( self, table_names = None, world_table_names
+                                    = None, x_column_name = None, y_column_name
+                                    = None, symbol_column_name = None,
                                     geometry_column_name = None, track_ids =
                                     None, cb_attr = None, cb_vals = None,
                                     cb_pointcolor_attr = None,
@@ -36835,7 +37308,6 @@ class GPUdb(object):
                                     'PLATE_CARREE', bg_color = None,
                                     style_options = None, options = {},
                                     cb_transparency_vec = None ):
-
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
         world_table_names = world_table_names if isinstance( world_table_names, list ) else ( [] if (world_table_names is None) else [ world_table_names ] )
         assert isinstance( x_column_name, (basestring)), "visualize_image_classbreak(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
@@ -36900,7 +37372,6 @@ class GPUdb(object):
         return response
     # end visualize_image_classbreak
 
-
     # begin visualize_image_contour
     def visualize_image_contour( self, table_names = None, x_column_name = None,
                                  y_column_name = None, value_column_name = None,
@@ -36908,7 +37379,6 @@ class GPUdb(object):
                                  = None, width = None, height = None, projection
                                  = 'PLATE_CARREE', style_options = None, options
                                  = {} ):
-
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
         assert isinstance( x_column_name, (basestring)), "visualize_image_contour(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
         assert isinstance( y_column_name, (basestring)), "visualize_image_contour(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
@@ -36943,7 +37413,6 @@ class GPUdb(object):
         return response
     # end visualize_image_contour
 
-
     # begin visualize_image_heatmap
     def visualize_image_heatmap( self, table_names = None, x_column_name = None,
                                  y_column_name = None, value_column_name = None,
@@ -36952,7 +37421,6 @@ class GPUdb(object):
                                  = None, height = None, projection =
                                  'PLATE_CARREE', style_options = None, options =
                                  {} ):
-
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
         assert isinstance( x_column_name, (basestring)), "visualize_image_heatmap(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
         assert isinstance( y_column_name, (basestring)), "visualize_image_heatmap(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
@@ -36989,7 +37457,6 @@ class GPUdb(object):
         return response
     # end visualize_image_heatmap
 
-
     # begin visualize_image_labels
     def visualize_image_labels( self, table_name = None, x_column_name = None,
                                 y_column_name = None, x_offset = '', y_offset =
@@ -37002,7 +37469,6 @@ class GPUdb(object):
                                 min_y = None, max_y = None, width = None, height
                                 = None, projection = 'PLATE_CARREE', options =
                                 {} ):
-
         assert isinstance( table_name, (basestring)), "visualize_image_labels(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( x_column_name, (basestring)), "visualize_image_labels(): Argument 'x_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( x_column_name ).__name__
         assert isinstance( y_column_name, (basestring)), "visualize_image_labels(): Argument 'y_column_name' must be (one) of type(s) '(basestring)'; given %s" % type( y_column_name ).__name__
@@ -37063,23 +37529,19 @@ class GPUdb(object):
         return response
     # end visualize_image_labels
 
-
     # begin visualize_isochrone
     def visualize_isochrone( self, graph_name = None, source_node = None,
-                             max_solution_radius = '-1.0', weights_on_edges =
-                             [], restrictions = [], num_levels = '1',
-                             generate_image = True, levels_table = '',
-                             style_options = None, solve_options = {},
-                             contour_options = {}, options = {} ):
+                             max_solution_radius = -1.0, weights_on_edges = [],
+                             restrictions = [], num_levels = 1, generate_image =
+                             True, levels_table = '', style_options = None,
+                             solve_options = {}, contour_options = {}, options =
+                             {} ):
         """Generate an image containing isolines for travel results using an
         existing graph. Isolines represent curves of equal cost, with cost
-        typically
-        referring to the time or distance assigned as the weights of the
-        underlying
-        graph. See
-        `Network Graphs & Solvers
-        <../../../../graph_solver/network_graph_solver/>`__
-        for more information on graphs.
+        typically referring to the time or distance assigned as the weights of
+        the underlying graph. See `Network Graphs & Solvers
+        <../../../../graph_solver/network_graph_solver/>`__ for more
+        information on graphs.
 
         Parameters:
 
@@ -37106,8 +37568,8 @@ class GPUdb(object):
                 'ST_LENGTH(wkt) AS WEIGHTS_VALUESPECIFIED'. Any provided
                 weights will be added (in the case of 'WEIGHTS_VALUESPECIFIED')
                 to or multiplied with (in the case of
-                'WEIGHTS_FACTORSPECIFIED') the existing weight(s).  The default
-                value is an empty list ( [] ).  The user can provide a single
+                'WEIGHTS_FACTORSPECIFIED') the existing weight(s). The default
+                value is an empty list ( [] ). The user can provide a single
                 element (which will be automatically promoted to a list
                 internally) or a list.
 
@@ -37126,12 +37588,12 @@ class GPUdb(object):
                 *remove_previous_restrictions* is set to *false*, any provided
                 restrictions will be added (in the case of
                 'RESTRICTIONS_VALUECOMPARED') to or replaced (in the case of
-                'RESTRICTIONS_ONOFFCOMPARED').  The default value is an empty
-                list ( [] ).  The user can provide a single element (which will
+                'RESTRICTIONS_ONOFFCOMPARED'). The default value is an empty
+                list ( [] ). The user can provide a single element (which will
                 be automatically promoted to a list internally) or a list.
 
             num_levels (int)
-                Number of equally-separated isochrones to compute.  The default
+                Number of equally-separated isochrones to compute. The default
                 value is 1.
 
             generate_image (bool)
@@ -37152,7 +37614,7 @@ class GPUdb(object):
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  The
                 table will contain levels and their corresponding WKT geometry.
-                If no value is provided, the table is not generated.  The
+                If no value is provided, the table is not generated. The
                 default value is ''.
 
             style_options (dict of str to str)
@@ -37160,26 +37622,27 @@ class GPUdb(object):
                 Allowed keys are:
 
                 * **line_size** --
-                  The width of the contour lines in pixels.  The default value
-                  is '3'.
+                  The width of the contour lines in pixels. The default value
+                  is '3'. The minimum allowed value is '0'. The maximum allowed
+                  value is '20'.
 
                 * **color** --
                   Color of generated isolines. All color values must be in the
                   format RRGGBB or AARRGGBB (to specify the alpha value). If
                   alpha is specified and flooded contours are enabled, it will
-                  be used for as the transparency of the latter.  The default
+                  be used for as the transparency of the latter. The default
                   value is 'FF696969'.
 
                 * **bg_color** --
                   When input parameter *generate_image* is set to *true*,
                   background color of the generated image. All color values
                   must be in the format RRGGBB or AARRGGBB (to specify the
-                  alpha value).  The default value is '00000000'.
+                  alpha value). The default value is '00000000'.
 
                 * **text_color** --
                   When *add_labels* is set to *true*, color for the labels. All
                   color values must be in the format RRGGBB or AARRGGBB (to
-                  specify the alpha value).  The default value is 'FF000000'.
+                  specify the alpha value). The default value is 'FF000000'.
 
                 * **colormap** --
                   Colormap for contours or fill-in regions when applicable. All
@@ -37266,8 +37729,7 @@ class GPUdb(object):
                   The default value is 'jet'.
 
             solve_options (dict of str to str)
-                Solver specific parameters.  The default value is an empty dict
-                ( {} ).
+                Solver specific parameters.
                 Allowed keys are:
 
                 * **remove_previous_restrictions** --
@@ -37292,9 +37754,10 @@ class GPUdb(object):
                   the graph. Note that weights provided in input parameter
                   *weights_on_edges* will override this value.
 
+                The default value is an empty dict ( {} ).
+
             contour_options (dict of str to str)
-                Solver specific parameters.  The default value is an empty dict
-                ( {} ).
+                Solver specific parameters.
                 Allowed keys are:
 
                 * **projection** --
@@ -37315,24 +37778,24 @@ class GPUdb(object):
 
                 * **width** --
                   When input parameter *generate_image* is set to *true*, width
-                  of the generated image.  The default value is '512'.
+                  of the generated image. The default value is '512'.
 
                 * **height** --
                   When input parameter *generate_image* is set to *true*,
                   height of the generated image. If the default value is used,
                   the *height* is set to the value resulting from multiplying
-                  the aspect ratio by the *width*.  The default value is '-1'.
+                  the aspect ratio by the *width*. The default value is '-1'.
 
                 * **search_radius** --
                   When interpolating the graph solution to generate the
                   isochrone, neighborhood of influence of sample data (in
-                  percent of the image/grid).  The default value is '20'.
+                  percent of the image/grid). The default value is '20'.
 
                 * **grid_size** --
                   When interpolating the graph solution to generate the
                   isochrone, number of subdivisions along the x axis when
                   building the grid (the y is computed using the aspect ratio
-                  of the output image).  The default value is '100'.
+                  of the output image). The default value is '100'.
 
                 * **color_isolines** --
                   Color each isoline according to the colormap; otherwise, use
@@ -37355,40 +37818,41 @@ class GPUdb(object):
 
                 * **labels_font_size** --
                   When *add_labels* is set to *true*, size of the font (in
-                  pixels) to use for labels.  The default value is '12'.
+                  pixels) to use for labels. The default value is '12'.
 
                 * **labels_font_family** --
                   When *add_labels* is set to *true*, font name to be used when
-                  adding labels.  The default value is 'arial'.
+                  adding labels. The default value is 'arial'.
 
                 * **labels_search_window** --
                   When *add_labels* is set to *true*, a search window is used
                   to rate the local quality of each isoline. Smooth,
                   continuous, long stretches with relatively flat angles are
                   favored. The provided value is multiplied by the
-                  *labels_font_size* to calculate the final window size.  The
+                  *labels_font_size* to calculate the final window size. The
                   default value is '4'.
 
                 * **labels_intralevel_separation** --
                   When *add_labels* is set to *true*, this value determines the
                   distance (in multiples of the *labels_font_size*) to use when
-                  separating labels of different values.  The default value is
+                  separating labels of different values. The default value is
                   '4'.
 
                 * **labels_interlevel_separation** --
                   When *add_labels* is set to *true*, this value determines the
                   distance (in percent of the total window size) to use when
-                  separating labels of the same value.  The default value is
+                  separating labels of the same value. The default value is
                   '20'.
 
                 * **labels_max_angle** --
                   When *add_labels* is set to *true*, maximum angle (in
-                  degrees) from the vertical to use when adding labels.  The
+                  degrees) from the vertical to use when adding labels. The
                   default value is '60'.
 
+                The default value is an empty dict ( {} ).
+
             options (dict of str to str)
-                Additional parameters.  The default value is an empty dict ( {}
-                ).
+                Additional parameters.
                 Allowed keys are:
 
                 * **solve_table** --
@@ -37400,7 +37864,7 @@ class GPUdb(object):
                   <../../../../concepts/tables/#table-naming-criteria>`__.
                   This table will contain the position and cost for each vertex
                   in the graph. If the default value is used, a temporary table
-                  is created and deleted once the solution is calculated.  The
+                  is created and deleted once the solution is calculated. The
                   default value is ''.
 
                 * **is_replicated** --
@@ -37431,8 +37895,9 @@ class GPUdb(object):
                 * **concavity_level** --
                   Factor to qualify the concavity of the isochrone curves. The
                   lower the value, the more convex (with '0' being completely
-                  convex and '1' being the most concave).  The default value is
-                  '0.5'.
+                  convex and '1' being the most concave). The default value is
+                  '0.5'. The minimum allowed value is '0'. The maximum allowed
+                  value is '1'.
 
                 * **use_priority_queue_solvers** --
                   sets the solver methods explicitly if true.
@@ -37460,6 +37925,8 @@ class GPUdb(object):
                     Shortest path to source (Dijkstra)
 
                   The default value is 'from_source'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -38461,6 +38928,7 @@ class GPUdbTable( object ):
                 else:
                     # A list of lists/dicts--multiple records within a list
                     for record in args[0]:
+                        record = self.convert_special_type_values_in_insert_records(self.gpudbrecord_type, record)
                         encoded_record = self._record_encoding_function( record )
                         encoded_data.append( encoded_record )
                     # end for
@@ -38473,6 +38941,7 @@ class GPUdbTable( object ):
         else:
             # All arguments are either lists or dicts, so multiple records given
             for col_vals in args:
+                col_vals = self.convert_special_type_values_in_insert_records(self.gpudbrecord_type, col_vals)
                 encoded_record = self._record_encoding_function( col_vals )
                 encoded_data.append( encoded_record )
             # end for
@@ -38484,6 +38953,102 @@ class GPUdbTable( object ):
         return encoded_data
     # end __encode_data_for_insertion
 
+    @staticmethod
+    def convert_special_type_values_in_insert_records(record_type : GPUdbRecordType,
+                                                      records: Union[Union[ list, dict], List[Record]]
+                                                      ):
+        """Convert any special value type (array, json, vector etc.) suitably
+
+        Args:
+            record_type (GPUdbRecordType): the record type for these 'records'
+            records (Union[Union[ list, dict], List[Record]]): A single record value (list or dict)
+
+        Returns:
+            object: the converted value
+        """
+        if isinstance(records, list):
+            for index, column_value in enumerate(records):
+                if column_value:
+                    if index in record_type.array_type_names_indices or \
+                        index in record_type.json_type_names_indices or \
+                        index in record_type.vector_type_names_indices:
+                            # convert the value
+                            converted_value = _Util._convert_value_on_insertion(
+                                column_value, record_type.columns[index]
+                            )
+                            records[index] = converted_value
+        elif isinstance(records, dict):
+            for column_name, column_value in records.items():
+                if column_value:
+                    if column_name in record_type.array_type_names_values or \
+                        column_name in record_type.json_type_names_values or \
+                        column_name in record_type.vector_type_names_values:
+                            # convert the value
+                            index = record_type.column_names.index(column_name)
+                            converted_value = _Util._convert_value_on_insertion(
+                                column_value, record_type.columns[index]
+                            )
+                            records[column_name] = converted_value
+        return records
+
+    @staticmethod
+    def convert_special_type_values_in_get_records(record_type : GPUdbRecordType,
+                                                   records: Union[Union[ list, dict], List[Record]]
+                                                   ):
+        """Convert any special value type (array, json, vector etc.) suitably
+
+        Args:
+            record_type (GPUdbRecordType): the record type for these 'records'
+            records (Union[Union[ list, dict], List[Record]]): A single record value (list or dict)
+
+        Returns:
+            object: the converted value
+        """        
+        if not (isinstance(records, list) and all(isinstance(e, Record) for e in records)) and \
+            not (isinstance(records, list) and all(isinstance(e, collections.OrderedDict) for e in records)) and \
+            not isinstance(records, collections.OrderedDict):
+            raise GPUdbException("'records' can only be list of 'Record' type objects or 'OrderedDict")
+
+        if isinstance(records, list):
+            if all(isinstance(e, Record) for e in records):
+                for record in records:
+                    for column_name, column_value in record.items():
+                        if column_name in record_type.array_type_names_values or \
+                            column_name in record_type.json_type_names_values or \
+                            column_name in record_type.vector_type_names_values:
+                                # convert the value
+                                index = record_type.column_names.index(column_name)
+                                converted_value = _Util._convert_value_on_retrieval(
+                                    column_value, record_type.columns[index]
+                                )
+                                record[column_name] = converted_value
+            elif all(isinstance(e, collections.OrderedDict) for e in records):
+                # each OrderedDict is a record
+                for record in records:
+                    for column_name, column_value in record.items():
+                        if column_name in record_type.array_type_names_values or \
+                                column_name in record_type.json_type_names_values or \
+                                column_name in record_type.vector_type_names_values:
+                            # convert the value
+                            index = record_type.column_names.index(column_name)
+                            converted_value = _Util._convert_value_on_retrieval(
+                                column_value, record_type.columns[index]
+                            )
+                            record[column_name] = converted_value
+        elif isinstance(records, collections.OrderedDict):
+            for column_name, value_list in records.items():
+                if column_name in record_type.array_type_names_values or \
+                        column_name in record_type.json_type_names_values or \
+                        column_name in record_type.vector_type_names_values:
+                    # convert the value
+                    index = record_type.column_names.index(column_name)
+                    converted_value_list = [_Util._convert_value_on_retrieval(
+                                column_value, record_type.columns[index]
+                            ) for column_value in value_list]
+                    records[column_name] = converted_value_list
+            # pass
+
+        return records
 
     def __insert_encoded_records( self, encoded_data, options ):
         """Given encoded records and some options, insert the records
@@ -38855,7 +39420,8 @@ class GPUdbTable( object ):
             raise GPUdbException( "Record retrieval by sharding/primary keys "
                                   "is not set up for this table." )
 
-        return self._multihead_retriever.get_records_by_key( key_values, expression, options )
+        response = self._multihead_retriever.get_records_by_key( key_values, expression, options )
+        return response
     # end get_records_by_key
 
 
@@ -39419,8 +39985,7 @@ class GPUdbTable( object ):
 
     @staticmethod
     def create_join_table( db, join_table_name = None, table_names = None,
-                           column_names = None, expressions = [], options = {}
-                           ):
+                           column_names = None, expressions = [], options = {} ):
         """Creates a table that is the result of a SQL JOIN.
 
         For join details and examples see: `Joins
@@ -39443,7 +40008,7 @@ class GPUdbTable( object ):
                 [schema_name.]table_name format, using standard `name
                 resolution rules
                 <../../../../concepts/tables/#table-name-resolution>`__.
-                Corresponds to a SQL statement FROM clause.    The user can
+                Corresponds to a SQL statement FROM clause. The user can
                 provide a single element (which will be automatically promoted
                 to a list internally) or a list.
 
@@ -39457,21 +40022,19 @@ class GPUdbTable( object ):
                 table's columns.  Columns and column expressions composing the
                 join must be uniquely named or aliased--therefore, the '*' wild
                 card cannot be used if column names aren't unique across all
-                tables.    The user can provide a single element (which will be
+                tables. The user can provide a single element (which will be
                 automatically promoted to a list internally) or a list.
 
             expressions (list of str)
                 An optional list of expressions to combine and filter the
                 joined tables.  Corresponds to a SQL statement WHERE clause.
                 For details see: `expressions
-                <../../../../concepts/expressions/>`__.  The default value is
-                an empty list ( [] ).  The user can provide a single element
-                (which will be automatically promoted to a list internally) or
-                a list.
+                <../../../../concepts/expressions/>`__. The default value is an
+                empty list ( [] ). The user can provide a single element (which
+                will be automatically promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -39492,7 +40055,7 @@ class GPUdbTable( object ):
                   join as part of input parameter *join_table_name* and use
                   :meth:`GPUdb.create_schema` to create the schema if
                   non-existent]  Name of a schema for the join. If the schema
-                  is non-existent, it will be automatically created.  The
+                  is non-existent, it will be automatically created. The
                   default value is ''.
 
                 * **max_query_dimensions** --
@@ -39517,16 +40080,18 @@ class GPUdbTable( object ):
                   table specified in input parameter *join_table_name*.
 
                 * **view_id** --
-                  view this projection is part of.  The default value is ''.
+                  view this projection is part of. The default value is ''.
 
                 * **no_count** --
                   Return a count of 0 for the join table for logging and for
-                  :meth:`GPUdb.show_table`; optimization needed for large
-                  overlapped equi-join stencils.  The default value is 'false'.
+                  :meth:`GPUdbTable.show_table`; optimization needed for large
+                  overlapped equi-join stencils. The default value is 'false'.
 
                 * **chunk_size** --
                   Maximum number of records per joined-chunk for this table.
                   Defaults to the gpudb.conf file chunk size
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A read-only GPUdbTable object.
@@ -39560,13 +40125,12 @@ class GPUdbTable( object ):
         return GPUdbTable( None, join_table_name, db = db )
     # end create_join_table
 
-
     @staticmethod
     def create_union( db, table_name = None, table_names = None,
                       input_column_names = None, output_column_names = None,
                       options = {} ):
-        """Merges data from one or more tables with comparable data types into a
-        new table.
+        """Merges data from one or more tables with comparable data types into
+        a new table.
 
         The following merges are supported:
 
@@ -39606,23 +40170,22 @@ class GPUdbTable( object ):
                 The list of table names to merge, in [schema_name.]table_name
                 format, using standard `name resolution rules
                 <../../../../concepts/tables/#table-name-resolution>`__.  Must
-                contain the names of one or more existing tables.    The user
-                can provide a single element (which will be automatically
-                promoted to a list internally) or a list.
+                contain the names of one or more existing tables. The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
 
             input_column_names (list of lists of str)
                 The list of columns from each of the corresponding input
-                tables.    The user can provide a single element (which will be
+                tables. The user can provide a single element (which will be
                 automatically promoted to a list internally) or a list.
 
             output_column_names (list of str)
                 The list of names of the columns to be stored in the output
-                table.    The user can provide a single element (which will be
+                table. The user can provide a single element (which will be
                 automatically promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -39645,7 +40208,7 @@ class GPUdbTable( object ):
                   :meth:`GPUdb.create_schema` to create the schema if
                   non-existent]  Name of the schema for the output table. If
                   the schema provided is non-existent, it will be automatically
-                  created.  The default value is ''.
+                  created. The default value is ''.
 
                 * **mode** --
                   If *merge_views*, then this operation will merge the provided
@@ -39697,6 +40260,14 @@ class GPUdbTable( object ):
                   Indicates the number of records per chunk to be used for this
                   output table.
 
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for this output table.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for this output table.
+
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
                   the output table.  The columns specified must be present in
@@ -39720,7 +40291,7 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **view_id** --
-                  ID of view of which this output table is a member.  The
+                  ID of view of which this output table is a member. The
                   default value is ''.
 
                 * **force_replicated** --
@@ -39738,6 +40309,8 @@ class GPUdbTable( object ):
                   The `tier strategy
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A read-only GPUdbTable object.
@@ -39771,30 +40344,24 @@ class GPUdbTable( object ):
         return GPUdbTable( None, table_name, db = db )
     # end create_union
 
-
     @staticmethod
     def merge_records( db, table_name = None, source_table_names = None,
                        field_maps = None, options = {} ):
         """Create a new empty result table (specified by input parameter
-        *table_name*),
-        and insert all records from source tables
-        (specified by input parameter *source_table_names*) based on the field
-        mapping
+        *table_name*), and insert all records from source tables (specified by
+        input parameter *source_table_names*) based on the field mapping
         information (specified by input parameter *field_maps*).
 
-        For merge records details and examples, see
-        `Merge Records <../../../../concepts/merge_records/>`__.  For
-        limitations, see
-        `Merge Records Limitations and Cautions
+        For merge records details and examples, see `Merge Records
+        <../../../../concepts/merge_records/>`__.  For limitations, see `Merge
+        Records Limitations and Cautions
         <../../../../concepts/merge_records/#limitations-and-cautions>`__.
 
         The field map (specified by input parameter *field_maps*) holds the
-        user-specified maps
-        of target table column names to source table columns. The array of
-        input parameter *field_maps* must match one-to-one with the input
-        parameter *source_table_names*,
-        e.g., there's a map present in input parameter *field_maps* for each
-        table listed in
+        user-specified maps of target table column names to source table
+        columns. The array of input parameter *field_maps* must match
+        one-to-one with the input parameter *source_table_names*, e.g., there's
+        a map present in input parameter *field_maps* for each table listed in
         input parameter *source_table_names*.
 
         Parameters:
@@ -39813,9 +40380,9 @@ class GPUdbTable( object ):
                 each in [schema_name.]table_name format, using standard `name
                 resolution rules
                 <../../../../concepts/tables/#table-name-resolution>`__.  Must
-                be existing table names.    The user can provide a single
-                element (which will be automatically promoted to a list
-                internally) or a list.
+                be existing table names. The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
 
             field_maps (list of dicts of str to str)
                 Contains a list of source/target column mappings, one mapping
@@ -39827,13 +40394,12 @@ class GPUdbTable( object ):
                 <../../../../concepts/expressions/>`__ (as values) will be
                 merged into.  All of the source columns being merged into a
                 given target column must match in type, as that type will
-                determine the type of the new target column.    The user can
+                determine the type of the new target column. The user can
                 provide a single element (which will be automatically promoted
                 to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -39893,8 +40459,20 @@ class GPUdbTable( object ):
                   Indicates the number of records per chunk to be used for the
                   merged table specified in input parameter *table_name*.
 
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for the merged table specified in input
+                  parameter *table_name*.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for the merged table specified in input
+                  parameter *table_name*.
+
                 * **view_id** --
-                  view this result table is part of.  The default value is ''.
+                  view this result table is part of. The default value is ''.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A read-only GPUdbTable object.
@@ -39947,8 +40525,7 @@ class GPUdbTable( object ):
                 for the operation being performed.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             The response from the server which is a dict containing the
@@ -39964,7 +40541,6 @@ class GPUdbTable( object ):
                 Count of the number of points in the convex set.
 
             is_valid (bool)
-
 
             info (dict of str to str)
                 Additional information.
@@ -39983,13 +40559,12 @@ class GPUdbTable( object ):
         return response
     # end aggregate_convex_hull
 
-
     def aggregate_group_by( self, column_names = None, offset = 0, limit =
                             -9999, encoding = 'binary', options = {},
                             force_primitive_return_types = True,
                             get_column_major = True ):
-        """Calculates unique combinations (groups) of values for the given columns
-        in a given table or view and computes aggregates on each unique
+        """Calculates unique combinations (groups) of values for the given
+        columns in a given table or view and computes aggregates on each unique
         combination. This is somewhat analogous to an SQL-style SELECT...GROUP
         BY.
 
@@ -40057,28 +40632,26 @@ class GPUdbTable( object ):
 
             column_names (list of str)
                 List of one or more column names, expressions, and aggregate
-                expressions.
+                expressions. The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
 
             offset (long)
                 A positive integer indicating the number of initial results to
-                skip (this can be useful for paging through the results).  The
-                default value is 0.The minimum allowed value is 0. The maximum
+                skip (this can be useful for paging through the results). The
+                default value is 0. The minimum allowed value is 0. The maximum
                 allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned, or
-                END_OF_SET (-9999) to indicate that the maximum number of
-                results allowed by the server should be
-                returned.  The number of records returned will never exceed the
-                server's own limit, defined by the
-                `max_get_records_size
+                be returned, or END_OF_SET (-9999) to indicate that the maximum
+                number of results allowed by the server should be returned.
+                The number of records returned will never exceed the server's
+                own limit, defined by the `max_get_records_size
                 <../../../../config/#config-main-general>`__ parameter in the
-                server configuration.
-                Use output parameter *has_more_records* to see if more records
-                exist in the result to be fetched, and
+                server configuration. Use output parameter *has_more_records*
+                to see if more records exist in the result to be fetched, and
                 input parameter *offset* & input parameter *limit* to request
-                subsequent pages of results.  The default value is -9999.
+                subsequent pages of results. The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records.
@@ -40093,8 +40666,7 @@ class GPUdbTable( object ):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -40221,13 +40793,23 @@ class GPUdbTable( object ):
                   result table. Must be used in combination with the
                   *result_table* option.
 
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for the result table. Must be used in
+                  combination with the *result_table* option.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for the result table. Must be used in
+                  combination with the *result_table* option.
+
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
                   the result table. Must be used in combination with the
                   *result_table* option.
 
                 * **view_id** --
-                  ID of view of which the result table will be a member.  The
+                  ID of view of which the result table will be a member. The
                   default value is ''.
 
                 * **pivot** --
@@ -40251,6 +40833,8 @@ class GPUdbTable( object ):
                   This option is used to specify the multidimensional
                   aggregates.
 
+                The default value is an empty dict ( {} ).
+
             force_primitive_return_types (bool)
                 If `True`, then `OrderedDict` objects will be returned, where
                 string sub-type columns will have their values converted back
@@ -40268,7 +40852,7 @@ class GPUdbTable( object ):
 
             get_column_major (bool)
                 Indicates if the decoded records will be transposed to be
-                column-major or returned as is (row-major).  Default value is
+                column-major or returned as is (row-major). Default value is
                 True.
 
         Returns:
@@ -40287,13 +40871,14 @@ class GPUdbTable( object ):
                 Too many records. Returned a partial set.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_result_table_name** --
                   The fully qualified name of the table (i.e. including the
                   schema) used to store the results.
+
+                The default value is an empty dict ( {} ).
 
             records (list of :class:`Record`)
                 A list of :class:`Record` objects which contain the decoded
@@ -40334,27 +40919,21 @@ class GPUdbTable( object ):
         return response
     # end aggregate_group_by
 
-
     def aggregate_histogram( self, column_name = None, start = None, end = None,
                              interval = None, options = {} ):
         """Performs a histogram calculation given a table, a column, and an
         interval function. The input parameter *interval* is used to produce
-        bins of that size
-        and the result, computed over the records falling within each bin, is
-        returned.
-        For each bin, the start value is inclusive, but the end value is
-        exclusive--except for the very last bin for which the end value is also
-        inclusive.  The value returned for each bin is the number of records in
-        it,
-        except when a column name is provided as a
-        *value_column*.  In this latter case the sum of the
-        values corresponding to the *value_column* is used as the
-        result instead.  The total number of bins requested cannot exceed
-        10,000.
+        bins of that size and the result, computed over the records falling
+        within each bin, is returned. For each bin, the start value is
+        inclusive, but the end value is exclusive--except for the very last bin
+        for which the end value is also inclusive.  The value returned for each
+        bin is the number of records in it, except when a column name is
+        provided as a *value_column*.  In this latter case the sum of the
+        values corresponding to the *value_column* is used as the result
+        instead.  The total number of bins requested cannot exceed 10,000.
 
         NOTE:  The Kinetica instance being accessed must be running a CUDA
-        (GPU-based)
-        build to service a request that specifies a *value_column*.
+        (GPU-based) build to service a request that specifies a *value_column*.
 
         Parameters:
 
@@ -40372,14 +40951,15 @@ class GPUdbTable( object ):
                 The size of each bin within the start and end parameters.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **value_column** --
                   The name of the column to use when calculating the bin values
                   (values are summed).  The column must be a numerical type
                   (int, double, long, float).
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             The response from the server which is a dict containing the
@@ -40412,36 +40992,29 @@ class GPUdbTable( object ):
         return response
     # end aggregate_histogram
 
-
     def aggregate_k_means( self, column_names = None, k = None, tolerance =
                            None, options = {} ):
         """This endpoint runs the k-means algorithm - a heuristic algorithm
         that attempts to do k-means clustering.  An ideal k-means clustering
-        algorithm
-        selects k points such that the sum of the mean squared distances of
-        each member
-        of the set to the nearest of the k points is minimized.  The k-means
-        algorithm
-        however does not necessarily produce such an ideal cluster.   It begins
-        with a
-        randomly selected set of k points and then refines the location of the
-        points
-        iteratively and settles to a local minimum.  Various parameters and
-        options are
+        algorithm selects k points such that the sum of the mean squared
+        distances of each member of the set to the nearest of the k points is
+        minimized.  The k-means algorithm however does not necessarily produce
+        such an ideal cluster.   It begins with a randomly selected set of k
+        points and then refines the location of the points iteratively and
+        settles to a local minimum.  Various parameters and options are
         provided to control the heuristic search.
 
         NOTE:  The Kinetica instance being accessed must be running a CUDA
-        (GPU-based)
-        build to service this request.
+        (GPU-based) build to service this request.
 
         Parameters:
 
             column_names (list of str)
                 List of column names on which the operation would be performed.
                 If n columns are provided then each of the k result points will
-                have n dimensions corresponding to the n columns.    The user
-                can provide a single element (which will be automatically
-                promoted to a list internally) or a list.
+                have n dimensions corresponding to the n columns. The user can
+                provide a single element (which will be automatically promoted
+                to a list internally) or a list.
 
             k (int)
                 The number of mean points to be determined by the algorithm.
@@ -40451,8 +41024,7 @@ class GPUdbTable( object ):
                 less than the given tolerance.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **whiten** --
@@ -40509,6 +41081,8 @@ class GPUdbTable( object ):
                   Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in *result_table*.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             A read-only GPUdbTable object if input options has "result_table";
             otherwise the response from the server, which is a dict containing
@@ -40541,13 +41115,14 @@ class GPUdbTable( object ):
                 The number of iterations the algorithm executed before it quit.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_result_table_name** --
                   The fully qualified name of the result table (i.e. including
                   the schema) used to store the results.
+
+                The default value is an empty dict ( {} ).
 
         Raises:
 
@@ -40571,10 +41146,9 @@ class GPUdbTable( object ):
         return response
     # end aggregate_k_means
 
-
     def aggregate_min_max( self, column_name = None, options = {} ):
-        """Calculates and returns the minimum and maximum values of a particular
-        column in a table.
+        """Calculates and returns the minimum and maximum values of a
+        particular column in a table.
 
         Parameters:
 
@@ -40583,8 +41157,7 @@ class GPUdbTable( object ):
                 which the min-max will be calculated.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             The response from the server which is a dict containing the
@@ -40612,7 +41185,6 @@ class GPUdbTable( object ):
         return response
     # end aggregate_min_max
 
-
     def aggregate_min_max_geometry( self, column_name = None, options = {} ):
         """Calculates and returns the minimum and maximum x- and y-coordinates
         of a particular geospatial geometry column in a table.
@@ -40624,8 +41196,7 @@ class GPUdbTable( object ):
                 be calculated.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             The response from the server which is a dict containing the
@@ -40663,69 +41234,47 @@ class GPUdbTable( object ):
         return response
     # end aggregate_min_max_geometry
 
-
     def aggregate_statistics( self, column_name = None, stats = None, options =
                               {} ):
         """Calculates the requested statistics of the given column(s) in a
         given table.
 
-        The available statistics are:
-          *count* (number of total objects),
-          *mean*,
-          *stdv* (standard deviation),
-          *variance*,
-          *skew*,
-          *kurtosis*,
-          *sum*,
-          *min*,
-          *max*,
-          *weighted_average*,
-          *cardinality* (unique count),
-          *estimated_cardinality*,
-          *percentile*, and
-          *percentile_rank*.
+        The available statistics are: *count* (number of total objects),
+        *mean*, *stdv* (standard deviation), *variance*, *skew*, *kurtosis*,
+        *sum*, *min*, *max*, *weighted_average*, *cardinality* (unique count),
+        *estimated_cardinality*, *percentile*, and *percentile_rank*.
 
         Estimated cardinality is calculated by using the hyperloglog
-        approximation
-        technique.
+        approximation technique.
 
         Percentiles and percentile ranks are approximate and are calculated
-        using the
-        t-digest algorithm. They must include the desired
-        *percentile*/*percentile_rank*.
-        To compute multiple percentiles each value must be specified separately
-        (i.e.
+        using the t-digest algorithm. They must include the desired
+        *percentile*/*percentile_rank*. To compute multiple percentiles each
+        value must be specified separately (i.e.
         'percentile(75.0),percentile(99.0),percentile_rank(1234.56),percentile_rank(-5)').
 
-        A second, comma-separated value can be added to the
-        *percentile* statistic to calculate percentile
-        resolution, e.g., a 50th percentile with 200 resolution would be
-        'percentile(50,200)'.
+        A second, comma-separated value can be added to the *percentile*
+        statistic to calculate percentile resolution, e.g., a 50th percentile
+        with 200 resolution would be 'percentile(50,200)'.
 
         The weighted average statistic requires a weight column to be specified
-        in
-        *weight_column_name*.  The weighted average is then
-        defined as the sum of the products of input parameter *column_name*
-        times the
+        in *weight_column_name*.  The weighted average is then defined as the
+        sum of the products of input parameter *column_name* times the
         *weight_column_name* values divided by the sum of the
         *weight_column_name* values.
 
         Additional columns can be used in the calculation of statistics via
-        *additional_column_names*.  Values in these columns will
-        be included in the overall aggregate calculation--individual aggregates
-        will not
-        be calculated per additional column.  For instance, requesting the
-        *count* & *mean* of
-        input parameter *column_name* x and *additional_column_names*
-        y & z, where x holds the numbers 1-10, y holds 11-20, and z holds
-        21-30, would
-        return the total number of x, y, & z values (30), and the single
-        average value
-        across all x, y, & z values (15.5).
+        *additional_column_names*.  Values in these columns will be included in
+        the overall aggregate calculation--individual aggregates will not be
+        calculated per additional column.  For instance, requesting the *count*
+        & *mean* of input parameter *column_name* x and
+        *additional_column_names* y & z, where x holds the numbers 1-10, y
+        holds 11-20, and z holds 21-30, would return the total number of x, y,
+        & z values (30), and the single average value across all x, y, & z
+        values (15.5).
 
         The response includes a list of key/value pairs of each statistic
-        requested and
-        its corresponding value.
+        requested and its corresponding value.
 
         Parameters:
 
@@ -40789,8 +41338,7 @@ class GPUdbTable( object ):
                   approximately 50.0).
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **additional_column_names** --
@@ -40804,6 +41352,8 @@ class GPUdbTable( object ):
                 * **weight_column_name** --
                   Name of column used as weighting attribute for the weighted
                   average statistic.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             The response from the server which is a dict containing the
@@ -40829,54 +41379,41 @@ class GPUdbTable( object ):
         return response
     # end aggregate_statistics
 
-
     def aggregate_statistics_by_range( self, select_expression = '', column_name
                                        = None, value_column_name = None, stats =
                                        None, start = None, end = None, interval
                                        = None, options = {} ):
         """Divides the given set into bins and calculates statistics of the
         values of a value-column in each bin.  The bins are based on the values
-        of a
-        given binning-column.  The statistics that may be requested are mean,
-        stdv
-        (standard deviation), variance, skew, kurtosis, sum, min, max, first,
-        last and
-        weighted average. In addition to the requested statistics the count of
-        total
-        samples in each bin is returned. This counts vector is just the
-        histogram of the
-        column used to divide the set members into bins. The weighted average
-        statistic
-        requires a weight column to be specified in
-        *weight_column_name*. The weighted average is then
-        defined as the sum of the products of the value column times the weight
-        column
-        divided by the sum of the weight column.
+        of a given binning-column.  The statistics that may be requested are
+        mean, stdv (standard deviation), variance, skew, kurtosis, sum, min,
+        max, first, last and weighted average. In addition to the requested
+        statistics the count of total samples in each bin is returned. This
+        counts vector is just the histogram of the column used to divide the
+        set members into bins. The weighted average statistic requires a weight
+        column to be specified in *weight_column_name*. The weighted average is
+        then defined as the sum of the products of the value column times the
+        weight column divided by the sum of the weight column.
 
         There are two methods for binning the set members. In the first, which
-        can be
-        used for numeric valued binning-columns, a min, max and interval are
-        specified.
-        The number of bins, nbins, is the integer upper bound of
-        (max-min)/interval.
-        Values that fall in the range [min+n*interval,min+(n+1)*interval) are
-        placed in
-        the nth bin where n ranges from 0..nbin-2. The final bin is
-        [min+(nbin-1)*interval,max]. In the second method,
-        *bin_values* specifies a list of binning column values.
-        Binning-columns whose value matches the nth member of the
-        *bin_values* list are placed in the nth bin. When a list
-        is provided, the binning-column must be of type string or int.
+        can be used for numeric valued binning-columns, a min, max and interval
+        are specified. The number of bins, nbins, is the integer upper bound of
+        (max-min)/interval. Values that fall in the range
+        [min+n*interval,min+(n+1)*interval) are placed in the nth bin where n
+        ranges from 0..nbin-2. The final bin is [min+(nbin-1)*interval,max]. In
+        the second method, *bin_values* specifies a list of binning column
+        values. Binning-columns whose value matches the nth member of the
+        *bin_values* list are placed in the nth bin. When a list is provided,
+        the binning-column must be of type string or int.
 
         NOTE:  The Kinetica instance being accessed must be running a CUDA
-        (GPU-based)
-        build to service this request.
+        (GPU-based) build to service this request.
 
         Parameters:
 
             select_expression (str)
                 For a non-empty expression statistics are calculated for those
-                records for which the expression is true.  The default value is
+                records for which the expression is true. The default value is
                 ''.
 
             column_name (str)
@@ -40904,8 +41441,7 @@ class GPUdbTable( object ):
                 start+interval*(i+1)).
 
             options (dict of str to str)
-                Map of optional parameters:.  The default value is an empty
-                dict ( {} ).
+                Map of optional parameters:
                 Allowed keys are:
 
                 * **additional_column_names** --
@@ -40923,6 +41459,8 @@ class GPUdbTable( object ):
 
                 * **order_column_name** --
                   Name of the column used for candlestick charting techniques.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             The response from the server which is a dict containing the
@@ -40954,55 +41492,44 @@ class GPUdbTable( object ):
         return response
     # end aggregate_statistics_by_range
 
-
     def aggregate_unique( self, column_name = None, offset = 0, limit = -9999,
                           encoding = 'binary', options = {},
                           force_primitive_return_types = True, get_column_major
                           = True ):
-        """Returns all the unique values from a particular column
-        (specified by input parameter *column_name*) of a particular table or
-        view
-        (specified by input parameter *table_name*). If input parameter
-        *column_name* is a numeric column,
-        the values will be in output parameter *binary_encoded_response*.
-        Otherwise if
-        input parameter *column_name* is a string column, the values will be in
-        output parameter *json_encoded_response*.  The results can be paged via
-        input parameter *offset*
-        and input parameter *limit* parameters.
+        """Returns all the unique values from a particular column (specified by
+        input parameter *column_name*) of a particular table or view (specified
+        by input parameter *table_name*). If input parameter *column_name* is a
+        numeric column, the values will be in output parameter
+        *binary_encoded_response*. Otherwise if input parameter *column_name*
+        is a string column, the values will be in output parameter
+        *json_encoded_response*.  The results can be paged via input parameter
+        *offset* and input parameter *limit* parameters.
 
         Columns marked as `store-only
-        <../../../../concepts/types/#data-handling>`__
-        are unable to be used with this function.
+        <../../../../concepts/types/#data-handling>`__ are unable to be used
+        with this function.
 
         To get the first 10 unique values sorted in descending order input
-        parameter *options*
-        would be::
+        parameter *options* would be::
 
-        {"limit":"10","sort_order":"descending"}.
+            {"limit":"10","sort_order":"descending"}
 
-        The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation
-        <../../../../api/concepts/#dynamic-schemas>`__.
+        The response is returned as a dynamic schema. For details see: `dynamic
+        schemas documentation <../../../../api/concepts/#dynamic-schemas>`__.
 
-        If a *result_table* name is specified in the
-        input parameter *options*, the results are stored in a new table with
-        that name--no
-        results are returned in the response.  Both the table name and
-        resulting column
-        name must adhere to
-        `standard naming conventions <../../../../concepts/tables/#table>`__;
-        any column expression will need to be aliased.  If the source table's
-        `shard key <../../../../concepts/tables/#shard-keys>`__ is used as the
-        input parameter *column_name*, the result table will be sharded, in all
-        other cases it
-        will be replicated.  Sorting will properly function only if the result
-        table is
-        replicated or if there is only one processing node and should not be
-        relied upon
-        in other cases.  Not available if the value of input parameter
-        *column_name* is an
-        unrestricted-length string.
+        If a *result_table* name is specified in the input parameter *options*,
+        the results are stored in a new table with that name--no results are
+        returned in the response.  Both the table name and resulting column
+        name must adhere to `standard naming conventions
+        <../../../../concepts/tables/#table>`__; any column expression will
+        need to be aliased.  If the source table's `shard key
+        <../../../../concepts/tables/#shard-keys>`__ is used as the input
+        parameter *column_name*, the result table will be sharded, in all other
+        cases it will be replicated.  Sorting will properly function only if
+        the result table is replicated or if there is only one processing node
+        and should not be relied upon in other cases.  Not available if the
+        value of input parameter *column_name* is an unrestricted-length
+        string.
 
         Parameters:
 
@@ -41012,24 +41539,21 @@ class GPUdbTable( object ):
 
             offset (long)
                 A positive integer indicating the number of initial results to
-                skip (this can be useful for paging through the results).  The
-                default value is 0.The minimum allowed value is 0. The maximum
+                skip (this can be useful for paging through the results). The
+                default value is 0. The minimum allowed value is 0. The maximum
                 allowed value is MAX_INT.
 
             limit (long)
                 A positive integer indicating the maximum number of results to
-                be returned, or
-                END_OF_SET (-9999) to indicate that the maximum number of
-                results allowed by the server should be
-                returned.  The number of records returned will never exceed the
-                server's own limit, defined by the
-                `max_get_records_size
+                be returned, or END_OF_SET (-9999) to indicate that the maximum
+                number of results allowed by the server should be returned.
+                The number of records returned will never exceed the server's
+                own limit, defined by the `max_get_records_size
                 <../../../../config/#config-main-general>`__ parameter in the
-                server configuration.
-                Use output parameter *has_more_records* to see if more records
-                exist in the result to be fetched, and
+                server configuration. Use output parameter *has_more_records*
+                to see if more records exist in the result to be fetched, and
                 input parameter *offset* & input parameter *limit* to request
-                subsequent pages of results.  The default value is -9999.
+                subsequent pages of results. The default value is -9999.
 
             encoding (str)
                 Specifies the encoding for returned records.
@@ -41044,8 +41568,7 @@ class GPUdbTable( object ):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -41135,9 +41658,21 @@ class GPUdbTable( object ):
                   result table. Must be used in combination with the
                   *result_table* option.
 
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for the result table. Must be used in
+                  combination with the *result_table* option.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for the result table. Must be used in
+                  combination with the *result_table* option.
+
                 * **view_id** --
-                  ID of view of which the result table will be a member.  The
+                  ID of view of which the result table will be a member. The
                   default value is ''.
+
+                The default value is an empty dict ( {} ).
 
             force_primitive_return_types (bool)
                 If `True`, then `OrderedDict` objects will be returned, where
@@ -41156,7 +41691,7 @@ class GPUdbTable( object ):
 
             get_column_major (bool)
                 Indicates if the decoded records will be transposed to be
-                column-major or returned as is (row-major).  Default value is
+                column-major or returned as is (row-major). Default value is
                 True.
 
         Returns:
@@ -41175,13 +41710,14 @@ class GPUdbTable( object ):
                 Too many records. Returned a partial set.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_result_table_name** --
                   The fully qualified name of the table (i.e. including the
                   schema) used to store the results.
+
+                The default value is an empty dict ( {} ).
 
             records (list of :class:`Record`)
                 A list of :class:`Record` objects which contain the decoded
@@ -41222,7 +41758,6 @@ class GPUdbTable( object ):
         return response
     # end aggregate_unique
 
-
     def aggregate_unpivot( self, column_names = None, variable_column_name = '',
                            value_column_name = '', pivoted_columns = None,
                            encoding = 'binary', options = {},
@@ -41230,43 +41765,40 @@ class GPUdbTable( object ):
                            = True ):
         """Rotate the column values into rows values.
 
-        For unpivot details and examples, see
-        `Unpivot <../../../../concepts/unpivot/>`__.  For limitations, see
-        `Unpivot Limitations <../../../../concepts/unpivot/#limitations>`__.
+        For unpivot details and examples, see `Unpivot
+        <../../../../concepts/unpivot/>`__.  For limitations, see `Unpivot
+        Limitations <../../../../concepts/unpivot/#limitations>`__.
 
         Unpivot is used to normalize tables that are built for cross tabular
-        reporting
-        purposes. The unpivot operator rotates the column values for all the
-        pivoted
-        columns. A variable column, value column and all columns from the
-        source table
-        except the unpivot columns are projected into the result table. The
-        variable
-        column and value columns in the result table indicate the pivoted
-        column name
-        and values respectively.
+        reporting purposes. The unpivot operator rotates the column values for
+        all the pivoted columns. A variable column, value column and all
+        columns from the source table except the unpivot columns are projected
+        into the result table. The variable column and value columns in the
+        result table indicate the pivoted column name and values respectively.
 
-        The response is returned as a dynamic schema. For details see:
-        `dynamic schemas documentation
-        <../../../../api/concepts/#dynamic-schemas>`__.
+        The response is returned as a dynamic schema. For details see: `dynamic
+        schemas documentation <../../../../api/concepts/#dynamic-schemas>`__.
 
         Parameters:
 
             column_names (list of str)
                 List of column names or expressions. A wildcard '*' can be used
                 to include all the non-pivoted columns from the source table.
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
 
             variable_column_name (str)
-                Specifies the variable/parameter column name.  The default
-                value is ''.
+                Specifies the variable/parameter column name. The default value
+                is ''.
 
             value_column_name (str)
-                Specifies the value column name.  The default value is ''.
+                Specifies the value column name. The default value is ''.
 
             pivoted_columns (list of str)
                 List of one or more values typically the column names of the
                 input table. All the columns in the source table must have the
-                same data type.
+                same data type. The user can provide a single element (which
+                will be automatically promoted to a list internally) or a list.
 
             encoding (str)
                 Specifies the encoding for returned records.
@@ -41281,8 +41813,7 @@ class GPUdbTable( object ):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -41337,22 +41868,32 @@ class GPUdbTable( object ):
                   'timestamp asc, x desc'.  The columns specified must be
                   present in input table.  If any alias is given for any column
                   name, the alias must be used, rather than the original column
-                  name.  The default value is ''.
+                  name. The default value is ''.
 
                 * **chunk_size** --
                   Indicates the number of records per chunk to be used for the
                   result table. Must be used in combination with the
                   *result_table* option.
 
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for the result table. Must be used in
+                  combination with the *result_table* option.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for the result table. Must be used in
+                  combination with the *result_table* option.
+
                 * **limit** --
-                  The number of records to keep.  The default value is ''.
+                  The number of records to keep. The default value is ''.
 
                 * **ttl** --
                   Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in *result_table*.
 
                 * **view_id** --
-                  view this result table is part of.  The default value is ''.
+                  view this result table is part of. The default value is ''.
 
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
@@ -41372,6 +41913,8 @@ class GPUdbTable( object ):
 
                   The default value is 'false'.
 
+                The default value is an empty dict ( {} ).
+
             force_primitive_return_types (bool)
                 If `True`, then `OrderedDict` objects will be returned, where
                 string sub-type columns will have their values converted back
@@ -41389,7 +41932,7 @@ class GPUdbTable( object ):
 
             get_column_major (bool)
                 Indicates if the decoded records will be transposed to be
-                column-major or returned as is (row-major).  Default value is
+                column-major or returned as is (row-major). Default value is
                 True.
 
         Returns:
@@ -41412,13 +41955,14 @@ class GPUdbTable( object ):
                 Too many records. Returned a partial set.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
 
                 * **qualified_result_table_name** --
                   The fully qualified name of the table (i.e. including the
                   schema) used to store the results.
+
+                The default value is an empty dict ( {} ).
 
             records (list of :class:`Record`)
                 A list of :class:`Record` objects which contain the decoded
@@ -41461,62 +42005,52 @@ class GPUdbTable( object ):
         return response
     # end aggregate_unpivot
 
-
     def alter_table( self, action = None, value = None, options = {} ):
-        """Apply various modifications to a table or view.  The
-        available modifications include the following:
+        """Apply various modifications to a table or view.  The available
+        modifications include the following:
 
         Manage a table's columns--a column can be added, removed, or have its
         `type and properties <../../../../concepts/types/>`__ modified,
-        including whether it is
-        `dictionary encoded <../../../../concepts/dictionary_encoding/>`__ or
-        not.
+        including whether it is `dictionary encoded
+        <../../../../concepts/dictionary_encoding/>`__ or not.
 
         External tables cannot be modified except for their refresh method.
 
         Create or delete an `index
-        <../../../../concepts/indexes/#column-index>`__ on a
-        particular column. This can speed up certain operations when using
-        expressions
-        containing equality or relational operators on indexed columns. This
-        only
-        applies to tables.
+        <../../../../concepts/indexes/#column-index>`__ on a particular column.
+        This can speed up certain operations when using expressions containing
+        equality or relational operators on indexed columns. This only applies
+        to tables.
 
         Create or delete a `foreign key
-        <../../../../concepts/tables/#foreign-key>`__
-        on a particular column.
+        <../../../../concepts/tables/#foreign-key>`__ on a particular column.
 
-        Manage a
-        `range-partitioned
-        <../../../../concepts/tables/#partitioning-by-range>`__ or a
-        `manual list-partitioned
-        <../../../../concepts/tables/#partitioning-by-list-manual>`__
-        table's partitions.
+        Manage a `range-partitioned
+        <../../../../concepts/tables/#partitioning-by-range>`__ or a `manual
+        list-partitioned
+        <../../../../concepts/tables/#partitioning-by-list-manual>`__ table's
+        partitions.
 
         Set (or reset) the `tier strategy
-        <../../../../rm/concepts/#tier-strategies>`__
-        of a table or view.
+        <../../../../rm/concepts/#tier-strategies>`__ of a table or view.
 
-        Refresh and manage the refresh mode of a
-        `materialized view <../../../../concepts/materialized_views/>`__ or an
-        `external table <../../../../concepts/external_tables/>`__.
+        Refresh and manage the refresh mode of a `materialized view
+        <../../../../concepts/materialized_views/>`__ or an `external table
+        <../../../../concepts/external_tables/>`__.
 
         Set the `time-to-live (TTL) <../../../../concepts/ttl/>`__. This can be
-        applied
-        to tables or views.
+        applied to tables or views.
 
         Set the global access mode (i.e. locking) for a table. This setting
-        trumps any
-        role-based access controls that may be in place; e.g., a user with
-        write access
-        to a table marked read-only will not be able to insert records into it.
-        The mode
-        can be set to read-only, write-only, read/write, and no access.
+        trumps any role-based access controls that may be in place; e.g., a
+        user with write access to a table marked read-only will not be able to
+        insert records into it. The mode can be set to read-only, write-only,
+        read/write, and no access.
 
         Parameters:
 
             action (str)
-                Modification operation to be applied
+                Modification operation to be applied.
                 Allowed values are:
 
                 * **allow_homogeneous_tables** --
@@ -41567,6 +42101,11 @@ class GPUdbTable( object ):
                   Sets the `time-to-live <../../../../concepts/ttl/>`__ in
                   minutes of the table or view specified in input parameter
                   *table_name*.
+
+                * **add_comment** --
+                  Adds the comment specified in input parameter *value* to the
+                  table specified in input parameter *table_name*.  Use
+                  *column_name* to set the comment for a column.
 
                 * **add_column** --
                   Adds the column specified in input parameter *value* to the
@@ -41734,9 +42273,12 @@ class GPUdbTable( object ):
                 field would be blank.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
+
+                * action
+                * column_name
+                * table_name
 
                 * **column_default_value** --
                   When adding a column, set a default value for existing
@@ -41832,6 +42374,8 @@ class GPUdbTable( object ):
 
                   The default value is 'column'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             The response from the server which is a dict containing the
             following entries--
@@ -41889,24 +42433,20 @@ class GPUdbTable( object ):
         return response
     # end alter_table
 
-
     def alter_table_columns( self, column_alterations = None, options = None ):
-        """Apply various modifications to columns in a table, view.  The available
-        modifications include the following:
+        """Apply various modifications to columns in a table, view.  The
+        available modifications include the following:
 
         Create or delete an `index
-        <../../../../concepts/indexes/#column-index>`__ on a
-        particular column. This can speed up certain operations when using
-        expressions
-        containing equality or relational operators on indexed columns. This
-        only
-        applies to tables.
+        <../../../../concepts/indexes/#column-index>`__ on a particular column.
+        This can speed up certain operations when using expressions containing
+        equality or relational operators on indexed columns. This only applies
+        to tables.
 
         Manage a table's columns--a column can be added, removed, or have its
         `type and properties <../../../../concepts/types/>`__ modified,
-        including whether it is
-        `dictionary encoded <../../../../concepts/dictionary_encoding/>`__ or
-        not.
+        including whether it is `dictionary encoded
+        <../../../../concepts/dictionary_encoding/>`__ or not.
 
         Parameters:
 
@@ -41918,7 +42458,7 @@ class GPUdbTable( object ):
                 but in the same map as the column name and the action. For
                 example:
                 [{'column_name':'col_1','action':'change_column','rename_column':'col_2'},{'column_name':'col_1','action':'add_column',
-                'type':'int','default_value':'1'}]    The user can provide a
+                'type':'int','default_value':'1'}]. The user can provide a
                 single element (which will be automatically promoted to a list
                 internally) or a list.
 
@@ -41974,16 +42514,13 @@ class GPUdbTable( object ):
         return response
     # end alter_table_columns
 
-
     def append_records( self, source_table_name = None, field_map = None,
                         options = {} ):
-        """Append (or insert) all records from a source table
-        (specified by input parameter *source_table_name*) to a particular
-        target table
-        (specified by input parameter *table_name*). The field map
-        (specified by input parameter *field_map*) holds the user specified map
-        of target table
-        column names with their mapped source column names.
+        """Append (or insert) all records from a source table (specified by
+        input parameter *source_table_name*) to a particular target table
+        (specified by input parameter *table_name*). The field map (specified
+        by input parameter *field_map*) holds the user specified map of target
+        table column names with their mapped source column names.
 
         Parameters:
 
@@ -42005,52 +42542,47 @@ class GPUdbTable( object ):
                 <../../../../concepts/expressions/>`__.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **offset** --
                   A positive integer indicating the number of initial results
                   to skip from input parameter *source_table_name*. Default is
                   0. The minimum allowed value is 0. The maximum allowed value
-                  is MAX_INT.  The default value is '0'.
+                  is MAX_INT. The default value is '0'.
 
                 * **limit** --
                   A positive integer indicating the maximum number of results
                   to be returned from input parameter *source_table_name*. Or
                   END_OF_SET (-9999) to indicate that the max number of results
-                  should be returned.  The default value is '-9999'.
+                  should be returned. The default value is '-9999'.
 
                 * **expression** --
                   Optional filter expression to apply to the input parameter
-                  *source_table_name*.  The default value is ''.
+                  *source_table_name*. The default value is ''.
 
                 * **order_by** --
                   Comma-separated list of the columns to be sorted by from
                   source table (specified by input parameter
                   *source_table_name*), e.g., 'timestamp asc, x desc'. The
                   *order_by* columns do not have to be present in input
-                  parameter *field_map*.  The default value is ''.
+                  parameter *field_map*. The default value is ''.
 
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting source
-                  table
-                  records (specified by input parameter *source_table_name*)
-                  into a target table
-                  (specified by input parameter *table_name*) with a `primary
-                  key <../../../../concepts/tables/#primary-keys>`__. If
-                  set to *true*, any existing table record with
-                  primary key values that match those of a source table record
-                  being inserted will be replaced by that
-                  new record (the new data will be "upserted"). If set to
-                  *false*, any existing table record with primary
-                  key values that match those of a source table record being
-                  inserted will remain unchanged, while the
-                  source record will be rejected and an error handled as
-                  determined by
+                  table records (specified by input parameter
+                  *source_table_name*) into a target table (specified by input
+                  parameter *table_name*) with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__. If set to
+                  *true*, any existing table record with primary key values
+                  that match those of a source table record being inserted will
+                  be replaced by that new record (the new data will be
+                  "upserted"). If set to *false*, any existing table record
+                  with primary key values that match those of a source table
+                  record being inserted will remain unchanged, while the source
+                  record will be rejected and an error handled as determined by
                   *ignore_existing_pk*.  If the specified table does not have a
-                  primary key,
-                  then this option has no effect.
+                  primary key, then this option has no effect.
                   Allowed values are:
 
                   * **true** --
@@ -42064,23 +42596,20 @@ class GPUdbTable( object ):
                 * **ignore_existing_pk** --
                   Specifies the record collision error-suppression policy for
                   inserting source table records (specified by input parameter
-                  *source_table_name*) into a target table
-                  (specified by input parameter *table_name*) with a `primary
-                  key <../../../../concepts/tables/#primary-keys>`__, only
-                  used when not in upsert mode (upsert mode is disabled when
-                  *update_on_existing_pk* is
-                  *false*).  If set to
-                  *true*, any source table record being inserted that
-                  is rejected for having primary key values that match those of
-                  an existing target table record will
-                  be ignored with no error generated.  If *false*,
-                  the rejection of any source table record for having primary
-                  key values matching an existing target
-                  table record will result in an error being raised.  If the
-                  specified table does not have a primary
-                  key or if upsert mode is in effect (*update_on_existing_pk*
-                  is
-                  *true*), then this option has no effect.
+                  *source_table_name*) into a target table (specified by input
+                  parameter *table_name*) with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__, only used
+                  when not in upsert mode (upsert mode is disabled when
+                  *update_on_existing_pk* is *false*).  If set to *true*, any
+                  source table record being inserted that is rejected for
+                  having primary key values that match those of an existing
+                  target table record will be ignored with no error generated.
+                  If *false*, the rejection of any source table record for
+                  having primary key values matching an existing target table
+                  record will result in an error being raised.  If the
+                  specified table does not have a primary key or if upsert mode
+                  is in effect (*update_on_existing_pk* is *true*), then this
+                  option has no effect.
                   Allowed values are:
 
                   * **true** --
@@ -42104,16 +42633,17 @@ class GPUdbTable( object ):
 
                   The default value is 'false'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             The response from the server which is a dict containing the
             following entries--
 
             table_name (str)
 
-
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information. The default value is an empty dict ( {}
+                ).
 
         Raises:
 
@@ -42128,7 +42658,6 @@ class GPUdbTable( object ):
         return response
     # end append_records
 
-
     def clear_statistics( self, column_name = '', options = {} ):
         """Clears statistics (cardinality, mean value, etc.) for a column in a
         specified table.
@@ -42142,8 +42671,7 @@ class GPUdbTable( object ):
                 The default value is ''.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             The response from the server which is a dict containing the
@@ -42171,24 +42699,20 @@ class GPUdbTable( object ):
         return response
     # end clear_statistics
 
-
     def clear( self, authorization = '', options = {} ):
         """Clears (drops) one or all tables in the database cluster. The
         operation is synchronous meaning that the table will be cleared before
-        the
-        function returns. The response payload returns the status of the
-        operation along
-        with the name of the table that was cleared.
+        the function returns. The response payload returns the status of the
+        operation along with the name of the table that was cleared.
 
         Parameters:
 
             authorization (str)
-                No longer used. User can pass an empty string.  The default
+                No longer used. User can pass an empty string. The default
                 value is ''.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **no_error_if_not_exists** --
@@ -42202,6 +42726,8 @@ class GPUdbTable( object ):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             The response from the server which is a dict containing the
@@ -42227,7 +42753,6 @@ class GPUdbTable( object ):
         return response
     # end clear
 
-
     def collect_statistics( self, column_names = None, options = {} ):
         """Collect statistics for a column(s) in a specified table.
 
@@ -42236,12 +42761,11 @@ class GPUdbTable( object ):
             column_names (list of str)
                 List of one or more column names in input parameter
                 *table_name* for which to collect statistics (cardinality, mean
-                value, etc.).    The user can provide a single element (which
-                will be automatically promoted to a list internally) or a list.
+                value, etc.). The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             The response from the server which is a dict containing the
@@ -42269,8 +42793,9 @@ class GPUdbTable( object ):
         return response
     # end collect_statistics
 
-
     def create_delta_table( self, delta_table_name = None, options = {} ):
+        # Create a random table name if none is given
+        delta_table_name = delta_table_name if delta_table_name else GPUdbTable.random_name()
 
         response = self.db.create_delta_table( delta_table_name,
                                                self.qualified_name, options )
@@ -42280,42 +42805,34 @@ class GPUdbTable( object ):
         return response
     # end create_delta_table
 
-
     def create_projection( self, column_names = None, options = {},
                            projection_name = None ):
         """Creates a new `projection <../../../../concepts/projections/>`__ of
         an existing table. A projection represents a subset of the columns
-        (potentially
-        including derived columns) of a table.
+        (potentially including derived columns) of a table.
 
-        For projection details and examples, see
-        `Projections <../../../../concepts/projections/>`__.  For limitations,
-        see
+        For projection details and examples, see `Projections
+        <../../../../concepts/projections/>`__.  For limitations, see
         `Projection Limitations and Cautions
         <../../../../concepts/projections/#limitations-and-cautions>`__.
 
         `Window functions <../../../../concepts/window/>`__, which can perform
         operations like moving averages, are available through this endpoint as
-        well as
-        :meth:`GPUdb.get_records_by_column`.
+        well as :meth:`GPUdb.get_records_by_column`.
 
-        A projection can be created with a different
-        `shard key <../../../../concepts/tables/#shard-keys>`__ than the source
-        table.
-        By specifying *shard_key*, the projection will be sharded
-        according to the specified columns, regardless of how the source table
-        is
-        sharded.  The source table can even be unsharded or replicated.
+        A projection can be created with a different `shard key
+        <../../../../concepts/tables/#shard-keys>`__ than the source table. By
+        specifying *shard_key*, the projection will be sharded according to the
+        specified columns, regardless of how the source table is sharded.  The
+        source table can even be unsharded or replicated.
 
         If input parameter *table_name* is empty, selection is performed
-        against a single-row
-        virtual table.  This can be useful in executing temporal
-        (`NOW() <../../../../concepts/expressions/#date-time-functions>`__),
-        identity
+        against a single-row virtual table.  This can be useful in executing
+        temporal (`NOW()
+        <../../../../concepts/expressions/#date-time-functions>`__), identity
         (`USER()
         <../../../../concepts/expressions/#user-security-functions>`__), or
-        constant-based functions
-        (`GEODIST(-77.11, 38.88, -71.06, 42.36)
+        constant-based functions (`GEODIST(-77.11, 38.88, -71.06, 42.36)
         <../../../../concepts/expressions/#scalar-functions>`__).
 
         Parameters:
@@ -42323,13 +42840,12 @@ class GPUdbTable( object ):
             column_names (list of str)
                 List of columns from input parameter *table_name* to be
                 included in the projection. Can include derived columns. Can be
-                specified as aliased via the syntax 'column_name as alias'.
-                The user can provide a single element (which will be
-                automatically promoted to a list internally) or a list.
+                specified as aliased via the syntax 'column_name as alias'. The
+                user can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -42351,13 +42867,13 @@ class GPUdbTable( object ):
                   projection as part of input parameter *projection_name* and
                   use :meth:`GPUdb.create_schema` to create the schema if
                   non-existent]  Name of a schema for the projection. If the
-                  schema is non-existent, it will be automatically created.
-                  The default value is ''.
+                  schema is non-existent, it will be automatically created. The
+                  default value is ''.
 
                 * **expression** --
                   An optional filter `expression
                   <../../../../concepts/expressions/>`__ to be applied to the
-                  source table prior to the projection.  The default value is
+                  source table prior to the projection. The default value is
                   ''.
 
                 * **is_replicated** --
@@ -42372,21 +42888,29 @@ class GPUdbTable( object ):
 
                 * **offset** --
                   The number of initial results to skip (this can be useful for
-                  paging through the results).  The default value is '0'.
+                  paging through the results). The default value is '0'.
 
                 * **limit** --
-                  The number of records to keep.  The default value is '-9999'.
+                  The number of records to keep. The default value is '-9999'.
 
                 * **order_by** --
                   Comma-separated list of the columns to be sorted by; e.g.
                   'timestamp asc, x desc'.  The columns specified must be
                   present in input parameter *column_names*.  If any alias is
                   given for any column name, the alias must be used, rather
-                  than the original column name.  The default value is ''.
+                  than the original column name. The default value is ''.
 
                 * **chunk_size** --
                   Indicates the number of records per chunk to be used for this
                   projection.
+
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for this projection.
+
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for this projection.
 
                 * **create_indexes** --
                   Comma-separated list of columns on which to create indexes on
@@ -42404,7 +42928,7 @@ class GPUdbTable( object ):
                   'column1, column2'.  The columns specified must be present in
                   input parameter *column_names*.  If any alias is given for
                   any column name, the alias must be used, rather than the
-                  original column name.  The default value is ''.
+                  original column name. The default value is ''.
 
                 * **persist** --
                   If *true*, then the projection specified in input parameter
@@ -42497,13 +43021,26 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **view_id** --
-                  ID of view of which this projection is a member.  The default
+                  ID of view of which this projection is a member. The default
                   value is ''.
 
                 * **strategy_definition** --
                   The `tier strategy
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
+
+                * **join_window_functions** --
+                  If set, window functions which require a reshard will be
+                  computed separately and joined back together, if the width of
+                  the projection is greater than the
+                  join_window_functions_threshold. The default value is 'true'.
+
+                * **join_window_functions_threshold** --
+                  If the projection is greater than this width (in bytes), then
+                  window functions which require a reshard will be computed
+                  separately and joined back together. The default value is ''.
+
+                The default value is an empty dict ( {} ).
 
             projection_name (str)
                 Name of the projection to be created, in
@@ -42536,46 +43073,27 @@ class GPUdbTable( object ):
         return self.create_view( projection_name )
     # end create_projection
 
-
-    def create_state_table( self, table_name = None, options = {} ):
-
-        response = self.db.create_state_table( table_name, self.qualified_name,
-                                               self.qualified_name, options )
-        if not response.is_ok():
-            raise GPUdbException( response.get_error_msg() )
-
-        return response
-    # end create_state_table
-
-
     def create_table_monitor( self, options = {} ):
         """Creates a monitor that watches for a single table modification event
         type (insert, update, or delete) on a particular table (identified by
         input parameter *table_name*) and forwards event notifications to
-        subscribers via ZMQ.
-        After this call completes, subscribe to the returned output parameter
-        *topic_id* on the
-        ZMQ table monitor port (default 9002). Each time an operation of the
-        given type
-        on the table completes, a multipart message is published for that
-        topic; the
-        first part contains only the topic ID, and each subsequent part
-        contains one
+        subscribers via ZMQ. After this call completes, subscribe to the
+        returned output parameter *topic_id* on the ZMQ table monitor port
+        (default 9002). Each time an operation of the given type on the table
+        completes, a multipart message is published for that topic; the first
+        part contains only the topic ID, and each subsequent part contains one
         binary-encoded Avro object that corresponds to the event and can be
-        decoded
-        using output parameter *type_schema*. The monitor will continue to run
-        (regardless of
-        whether or not there are any subscribers) until deactivated with
-        :meth:`GPUdb.clear_table_monitor`.
+        decoded using output parameter *type_schema*. The monitor will continue
+        to run (regardless of whether or not there are any subscribers) until
+        deactivated with :meth:`GPUdb.clear_table_monitor`.
 
-        For more information on table monitors, see
-        `Table Monitors <../../../../concepts/table_monitors/>`__.
+        For more information on table monitors, see `Table Monitors
+        <../../../../concepts/table_monitors/>`__.
 
         Parameters:
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **event** --
@@ -42645,6 +43163,8 @@ class GPUdbTable( object ):
                   at which changes are reported.  Value is a datetime string
                   with format 'YYYY-MM-DD HH:MM:SS'.
 
+                The default value is an empty dict ( {} ).
+
         Returns:
             The response from the server which is a dict containing the
             following entries--
@@ -42660,9 +43180,11 @@ class GPUdbTable( object ):
                 records.
 
             info (dict of str to str)
-                Additional information.  The default value is an empty dict (
-                {} ).
+                Additional information.
                 Allowed keys are:
+
+                * **ttl** --
+                  For insert_table/delete_table events, the ttl of the table.
 
                 * **insert_topic_id** --
                   The topic id for 'insert' *event* in input parameter
@@ -42686,6 +43208,8 @@ class GPUdbTable( object ):
                 * **delete_type_schema** --
                   The JSON Avro schema for 'delete' events
 
+                The default value is an empty dict ( {} ).
+
         Raises:
 
             GPUdbException --
@@ -42698,10 +43222,9 @@ class GPUdbTable( object ):
         return response
     # end create_table_monitor
 
-
     def delete_records( self, expressions = None, options = {} ):
-        """Deletes record(s) matching the provided criteria from the given table.
-        The record selection criteria can either be one or more  input
+        """Deletes record(s) matching the provided criteria from the given
+        table. The record selection criteria can either be one or more  input
         parameter *expressions* (matching multiple records), a single record
         identified by *record_id* options, or all records when using
         *delete_all_records*.  Note that the three selection criteria are
@@ -42717,18 +43240,17 @@ class GPUdbTable( object ):
                 should follow the guidelines provided `here
                 <../../../../concepts/expressions/>`__. Specifying one or more
                 input parameter *expressions* is mutually exclusive to
-                specifying *record_id* in the input parameter *options*.    The
+                specifying *record_id* in the input parameter *options*. The
                 user can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **global_expression** --
                   An optional global expression to reduce the search space of
-                  the input parameter *expressions*.  The default value is ''.
+                  the input parameter *expressions*. The default value is ''.
 
                 * **record_id** --
                   A record ID identifying a single record, obtained at the time
@@ -42747,6 +43269,8 @@ class GPUdbTable( object ):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             The response from the server which is a dict containing the
@@ -42774,19 +43298,16 @@ class GPUdbTable( object ):
         return response
     # end delete_records
 
-
     def filter( self, expression = None, options = {}, view_name = '' ):
         """Filters data based on the specified expression.  The results are
         stored in a `result set <../../../../concepts/filtered_views/>`__ with
-        the
-        given input parameter *view_name*.
+        the given input parameter *view_name*.
 
         For details see `Expressions <../../../../concepts/expressions/>`__.
 
         The response message contains the number of points for which the
-        expression
-        evaluated to be true, which is equivalent to the size of the result
-        view.
+        expression evaluated to be true, which is equivalent to the size of the
+        result view.
 
         Parameters:
 
@@ -42796,8 +43317,7 @@ class GPUdbTable( object ):
                 <../../../../concepts/expressions/>`__.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -42822,11 +43342,13 @@ class GPUdbTable( object ):
                   created.
 
                 * **view_id** --
-                  view this filtered-view is part of.  The default value is ''.
+                  view this filtered-view is part of. The default value is ''.
 
                 * **ttl** --
                   Sets the `TTL <../../../../concepts/ttl/>`__ of the view
                   specified in input parameter *view_name*.
+
+                The default value is an empty dict ( {} ).
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -42835,7 +43357,7 @@ class GPUdbTable( object ):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
         Returns:
@@ -42860,20 +43382,16 @@ class GPUdbTable( object ):
         return self.create_view( view_name, response[ "count" ] )
     # end filter
 
-
     def filter_by_area( self, x_column_name = None, x_vector = None,
                         y_column_name = None, y_vector = None, options = {},
                         view_name = '' ):
         """Calculates which objects from a table are within a named area of
         interest (NAI/polygon). The operation is synchronous, meaning that a
-        response
-        will not be returned until all the matching objects are fully
-        available. The
-        response payload provides the count of the resulting set. A new
-        resultant set
-        (view) which satisfies the input NAI restriction specification is
-        created with
-        the name input parameter *view_name* passed in as part of the input.
+        response will not be returned until all the matching objects are fully
+        available. The response payload provides the count of the resulting
+        set. A new resultant set (view) which satisfies the input NAI
+        restriction specification is created with the name input parameter
+        *view_name* passed in as part of the input.
 
         Parameters:
 
@@ -42882,7 +43400,7 @@ class GPUdbTable( object ):
 
             x_vector (list of floats)
                 List of x coordinates of the vertices of the polygon
-                representing the area to be filtered.    The user can provide a
+                representing the area to be filtered. The user can provide a
                 single element (which will be automatically promoted to a list
                 internally) or a list.
 
@@ -42891,13 +43409,12 @@ class GPUdbTable( object ):
 
             y_vector (list of floats)
                 List of y coordinates of the vertices of the polygon
-                representing the area to be filtered.    The user can provide a
+                representing the area to be filtered. The user can provide a
                 single element (which will be automatically promoted to a list
                 internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -42921,6 +43438,8 @@ class GPUdbTable( object ):
                   If the schema provided is non-existent, it will be
                   automatically created.
 
+                The default value is an empty dict ( {} ).
+
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
@@ -42928,7 +43447,7 @@ class GPUdbTable( object ):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
         Returns:
@@ -42954,21 +43473,15 @@ class GPUdbTable( object ):
         return self.create_view( view_name, response[ "count" ] )
     # end filter_by_area
 
-
     def filter_by_area_geometry( self, column_name = None, x_vector = None,
-                                 y_vector = None, options = {}, view_name = ''
-                                 ):
+                                 y_vector = None, options = {}, view_name = '' ):
         """Calculates which geospatial geometry objects from a table intersect
         a named area of interest (NAI/polygon). The operation is synchronous,
-        meaning
-        that a response will not be returned until all the matching objects are
-        fully
-        available. The response payload provides the count of the resulting
-        set. A new
-        resultant set (view) which satisfies the input NAI restriction
-        specification is
-        created with the name input parameter *view_name* passed in as part of
-        the input.
+        meaning that a response will not be returned until all the matching
+        objects are fully available. The response payload provides the count of
+        the resulting set. A new resultant set (view) which satisfies the input
+        NAI restriction specification is created with the name input parameter
+        *view_name* passed in as part of the input.
 
         Parameters:
 
@@ -42977,19 +43490,18 @@ class GPUdbTable( object ):
 
             x_vector (list of floats)
                 List of x coordinates of the vertices of the polygon
-                representing the area to be filtered.    The user can provide a
+                representing the area to be filtered. The user can provide a
                 single element (which will be automatically promoted to a list
                 internally) or a list.
 
             y_vector (list of floats)
                 List of y coordinates of the vertices of the polygon
-                representing the area to be filtered.    The user can provide a
+                representing the area to be filtered. The user can provide a
                 single element (which will be automatically promoted to a list
                 internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -43012,6 +43524,8 @@ class GPUdbTable( object ):
                   non-existent]  The schema for the newly created view. If the
                   schema is non-existent, it will be automatically created.
 
+                The default value is an empty dict ( {} ).
+
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
@@ -43019,7 +43533,7 @@ class GPUdbTable( object ):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
         Returns:
@@ -43045,20 +43559,16 @@ class GPUdbTable( object ):
         return self.create_view( view_name, response[ "count" ] )
     # end filter_by_area_geometry
 
-
     def filter_by_box( self, x_column_name = None, min_x = None, max_x = None,
                        y_column_name = None, min_y = None, max_y = None, options
                        = {}, view_name = '' ):
         """Calculates how many objects within the given table lie in a
         rectangular box. The operation is synchronous, meaning that a response
-        will not
-        be returned until all the objects are fully available. The response
-        payload
-        provides the count of the resulting set. A new resultant set which
-        satisfies the
-        input NAI restriction specification is also created when a input
-        parameter *view_name* is
-        passed in as part of the input payload.
+        will not be returned until all the objects are fully available. The
+        response payload provides the count of the resulting set. A new
+        resultant set which satisfies the input NAI restriction specification
+        is also created when a input parameter *view_name* is passed in as part
+        of the input payload.
 
         Parameters:
 
@@ -43088,8 +43598,7 @@ class GPUdbTable( object ):
                 greater than or equal to input parameter *min_y*.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -43113,6 +43622,8 @@ class GPUdbTable( object ):
                   If the schema is non-existent, it will be automatically
                   created.
 
+                The default value is an empty dict ( {} ).
+
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
@@ -43120,7 +43631,7 @@ class GPUdbTable( object ):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
         Returns:
@@ -43146,19 +43657,15 @@ class GPUdbTable( object ):
         return self.create_view( view_name, response[ "count" ] )
     # end filter_by_box
 
-
     def filter_by_box_geometry( self, column_name = None, min_x = None, max_x =
                                 None, min_y = None, max_y = None, options = {},
                                 view_name = '' ):
         """Calculates which geospatial geometry objects from a table intersect
         a rectangular box. The operation is synchronous, meaning that a
-        response will
-        not be returned until all the objects are fully available. The response
-        payload
-        provides the count of the resulting set. A new resultant set which
-        satisfies the
-        input NAI restriction specification is also created when a input
-        parameter *view_name* is
+        response will not be returned until all the objects are fully
+        available. The response payload provides the count of the resulting
+        set. A new resultant set which satisfies the input NAI restriction
+        specification is also created when a input parameter *view_name* is
         passed in as part of the input payload.
 
         Parameters:
@@ -43183,8 +43690,7 @@ class GPUdbTable( object ):
                 be greater than or equal to input parameter *min_y*.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -43208,6 +43714,8 @@ class GPUdbTable( object ):
                   If the schema provided is non-existent, it will be
                   automatically created.
 
+                The default value is an empty dict ( {} ).
+
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
@@ -43215,7 +43723,7 @@ class GPUdbTable( object ):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
         Returns:
@@ -43242,7 +43750,6 @@ class GPUdbTable( object ):
         return self.create_view( view_name, response[ "count" ] )
     # end filter_by_box_geometry
 
-
     def filter_by_geometry( self, column_name = None, input_wkt = '', operation
                             = None, options = {}, view_name = '' ):
         """Applies a geometry filter against a geospatial geometry column in a
@@ -43257,11 +43764,11 @@ class GPUdbTable( object ):
 
             input_wkt (str)
                 A geometry in WKT format that will be used to filter the
-                objects in input parameter *table_name*.  The default value is
+                objects in input parameter *table_name*. The default value is
                 ''.
 
             operation (str)
-                The geometric filtering operation to perform
+                The geometric filtering operation to perform.
                 Allowed values are:
 
                 * **contains** --
@@ -43291,8 +43798,7 @@ class GPUdbTable( object ):
                   Matches records that are within the given WKT.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -43316,6 +43822,8 @@ class GPUdbTable( object ):
                   If the schema provided is non-existent, it will be
                   automatically created.
 
+                The default value is an empty dict ( {} ).
+
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
@@ -43323,7 +43831,7 @@ class GPUdbTable( object ):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
         Returns:
@@ -43349,32 +43857,23 @@ class GPUdbTable( object ):
         return self.create_view( view_name, response[ "count" ] )
     # end filter_by_geometry
 
-
     def filter_by_list( self, column_values_map = None, options = {}, view_name
                         = '' ):
         """Calculates which records from a table have values in the given list
         for the corresponding column. The operation is synchronous, meaning
-        that a
-        response will not be returned until all the objects are fully
-        available. The
-        response payload provides the count of the resulting set. A new
-        resultant set
-        (view) which satisfies the input filter specification is also created
-        if a
-        input parameter *view_name* is passed in as part of the request.
+        that a response will not be returned until all the objects are fully
+        available. The response payload provides the count of the resulting
+        set. A new resultant set (view) which satisfies the input filter
+        specification is also created if a input parameter *view_name* is
+        passed in as part of the request.
 
         For example, if a type definition has the columns 'x' and 'y', then a
-        filter by
-        list query with the column map
-        {"x":["10.1", "2.3"], "y":["0.0", "-31.5", "42.0"]} will return
-        the count of all data points whose x and y values match both in the
-        respective
-        x- and y-lists, e.g., "x = 10.1 and y = 0.0", "x = 2.3 and y = -31.5",
-        etc.
-        However, a record with "x = 10.1 and y = -31.5" or "x = 2.3 and y =
-        0.0"
-        would not be returned because the values in the given lists do not
-        correspond.
+        filter by list query with the column map {"x":["10.1", "2.3"],
+        "y":["0.0", "-31.5", "42.0"]} will return the count of all data points
+        whose x and y values match both in the respective x- and y-lists, e.g.,
+        "x = 10.1 and y = 0.0", "x = 2.3 and y = -31.5", etc. However, a record
+        with "x = 10.1 and y = -31.5" or "x = 2.3 and y = 0.0" would not be
+        returned because the values in the given lists do not correspond.
 
         Parameters:
 
@@ -43382,8 +43881,7 @@ class GPUdbTable( object ):
                 List of values for the corresponding column in the table
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -43422,6 +43920,8 @@ class GPUdbTable( object ):
 
                   The default value is 'in_list'.
 
+                The default value is an empty dict ( {} ).
+
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
@@ -43429,7 +43929,7 @@ class GPUdbTable( object ):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
         Returns:
@@ -43454,27 +43954,20 @@ class GPUdbTable( object ):
         return self.create_view( view_name, response[ "count" ] )
     # end filter_by_list
 
-
     def filter_by_radius( self, x_column_name = None, x_center = None,
                           y_column_name = None, y_center = None, radius = None,
                           options = {}, view_name = '' ):
         """Calculates which objects from a table lie within a circle with the
         given radius and center point (i.e. circular NAI). The operation is
-        synchronous,
-        meaning that a response will not be returned until all the objects are
-        fully
-        available. The response payload provides the count of the resulting
-        set. A new
-        resultant set (view) which satisfies the input circular NAI restriction
-        specification is also created if a input parameter *view_name* is
-        passed in as part of
-        the request.
+        synchronous, meaning that a response will not be returned until all the
+        objects are fully available. The response payload provides the count of
+        the resulting set. A new resultant set (view) which satisfies the input
+        circular NAI restriction specification is also created if a input
+        parameter *view_name* is passed in as part of the request.
 
         For track data, all track points that lie within the circle plus one
-        point on
-        either side of the circle (if the track goes beyond the circle) will be
-        included
-        in the result.
+        point on either side of the circle (if the track goes beyond the
+        circle) will be included in the result.
 
         Parameters:
 
@@ -43484,7 +43977,7 @@ class GPUdbTable( object ):
 
             x_center (float)
                 Value of the longitude of the center. Must be within [-180.0,
-                180.0].  The minimum allowed value is -180. The maximum allowed
+                180.0]. The minimum allowed value is -180. The maximum allowed
                 value is 180.
 
             y_column_name (str)
@@ -43493,18 +43986,17 @@ class GPUdbTable( object ):
 
             y_center (float)
                 Value of the latitude of the center. Must be within [-90.0,
-                90.0].  The minimum allowed value is -90. The maximum allowed
+                90.0]. The minimum allowed value is -90. The maximum allowed
                 value is 90.
 
             radius (float)
                 The radius of the circle within which the search will be
                 performed. Must be a non-zero positive value. It is in meters;
-                so, for example, a value of '42000' means 42 km.  The minimum
+                so, for example, a value of '42000' means 42 km. The minimum
                 allowed value is 0. The maximum allowed value is MAX_INT.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -43528,6 +44020,8 @@ class GPUdbTable( object ):
                   created view. If the schema is non-existent, it will be
                   automatically created.
 
+                The default value is an empty dict ( {} ).
+
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
@@ -43535,7 +44029,7 @@ class GPUdbTable( object ):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
         Returns:
@@ -43562,22 +44056,17 @@ class GPUdbTable( object ):
         return self.create_view( view_name, response[ "count" ] )
     # end filter_by_radius
 
-
     def filter_by_radius_geometry( self, column_name = None, x_center = None,
                                    y_center = None, radius = None, options = {},
                                    view_name = '' ):
         """Calculates which geospatial geometry objects from a table intersect
         a circle with the given radius and center point (i.e. circular NAI).
-        The
-        operation is synchronous, meaning that a response will not be returned
-        until all
-        the objects are fully available. The response payload provides the
-        count of the
-        resulting set. A new resultant set (view) which satisfies the input
-        circular NAI
-        restriction specification is also created if a input parameter
-        *view_name* is passed in
-        as part of the request.
+        The operation is synchronous, meaning that a response will not be
+        returned until all the objects are fully available. The response
+        payload provides the count of the resulting set. A new resultant set
+        (view) which satisfies the input circular NAI restriction specification
+        is also created if a input parameter *view_name* is passed in as part
+        of the request.
 
         Parameters:
 
@@ -43586,23 +44075,22 @@ class GPUdbTable( object ):
 
             x_center (float)
                 Value of the longitude of the center. Must be within [-180.0,
-                180.0].  The minimum allowed value is -180. The maximum allowed
+                180.0]. The minimum allowed value is -180. The maximum allowed
                 value is 180.
 
             y_center (float)
                 Value of the latitude of the center. Must be within [-90.0,
-                90.0].  The minimum allowed value is -90. The maximum allowed
+                90.0]. The minimum allowed value is -90. The maximum allowed
                 value is 90.
 
             radius (float)
                 The radius of the circle within which the search will be
                 performed. Must be a non-zero positive value. It is in meters;
-                so, for example, a value of '42000' means 42 km.  The minimum
+                so, for example, a value of '42000' means 42 km. The minimum
                 allowed value is 0. The maximum allowed value is MAX_INT.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -43626,6 +44114,8 @@ class GPUdbTable( object ):
                   If the schema provided is non-existent, it will be
                   automatically created.
 
+                The default value is an empty dict ( {} ).
+
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
@@ -43633,7 +44123,7 @@ class GPUdbTable( object ):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
         Returns:
@@ -43660,24 +44150,20 @@ class GPUdbTable( object ):
         return self.create_view( view_name, response[ "count" ] )
     # end filter_by_radius_geometry
 
-
     def filter_by_range( self, column_name = None, lower_bound = None,
                          upper_bound = None, options = {}, view_name = '' ):
         """Calculates which objects from a table have a column that is within
         the given bounds. An object from the table identified by input
-        parameter *table_name* is
-        added to the view input parameter *view_name* if its column is within
-        [input parameter *lower_bound*, input parameter *upper_bound*]
-        (inclusive). The operation is
-        synchronous. The response provides a count of the number of objects
-        which passed
-        the bound filter.  Although this functionality can also be accomplished
-        with the
+        parameter *table_name* is added to the view input parameter *view_name*
+        if its column is within [input parameter *lower_bound*, input parameter
+        *upper_bound*] (inclusive). The operation is synchronous. The response
+        provides a count of the number of objects which passed the bound
+        filter.  Although this functionality can also be accomplished with the
         standard filter function, it is more efficient.
 
         For track objects, the count reflects how many points fall within the
-        given
-        bounds (which may not include all the track points of any given track).
+        given bounds (which may not include all the track points of any given
+        track).
 
         Parameters:
 
@@ -43691,8 +44177,7 @@ class GPUdbTable( object ):
                 Value of the upper bound (inclusive).
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -43716,6 +44201,8 @@ class GPUdbTable( object ):
                   If the schema is non-existent, it will be automatically
                   created.
 
+                The default value is an empty dict ( {} ).
+
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
@@ -43723,7 +44210,7 @@ class GPUdbTable( object ):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
         Returns:
@@ -43749,31 +44236,22 @@ class GPUdbTable( object ):
         return self.create_view( view_name, response[ "count" ] )
     # end filter_by_range
 
-
     def filter_by_series( self, track_id = None, target_track_ids = None,
                           options = {}, view_name = '' ):
         """Filters objects matching all points of the given track (works only
         on track type data).  It allows users to specify a particular track to
-        find all
-        other points in the table that fall within specified ranges (spatial
-        and
-        temporal) of all points of the given track. Additionally, the user can
-        specify
-        another track to see if the two intersect (or go close to each other
-        within the
-        specified ranges). The user also has the flexibility of using different
-        metrics
-        for the spatial distance calculation: Euclidean (flat geometry) or
-        Great Circle
-        (spherical geometry to approximate the Earth's surface distances). The
-        filtered
+        find all other points in the table that fall within specified ranges
+        (spatial and temporal) of all points of the given track. Additionally,
+        the user can specify another track to see if the two intersect (or go
+        close to each other within the specified ranges). The user also has the
+        flexibility of using different metrics for the spatial distance
+        calculation: Euclidean (flat geometry) or Great Circle (spherical
+        geometry to approximate the Earth's surface distances). The filtered
         points are stored in a newly created result set. The return value of
-        the
-        function is the number of points in the resultant set (view).
+        the function is the number of points in the resultant set (view).
 
         This operation is synchronous, meaning that a response will not be
-        returned
-        until all the objects are fully available.
+        returned until all the objects are fully available.
 
         Parameters:
 
@@ -43788,8 +44266,7 @@ class GPUdbTable( object ):
                 automatically promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -43817,13 +44294,14 @@ class GPUdbTable( object ):
                   A positive number passed as a string representing the radius
                   of the search area centered around each track point's
                   geospatial coordinates. The value is interpreted in meters.
-                  Required parameter.
+                  Required parameter. The minimum allowed value is '0'.
 
                 * **time_radius** --
                   A positive number passed as a string representing the maximum
                   allowable time difference between the timestamps of a
                   filtered object and the given track's points. The value is
-                  interpreted in seconds. Required parameter.
+                  interpreted in seconds. Required parameter. The minimum
+                  allowed value is '0'.
 
                 * **spatial_distance_metric** --
                   A string representing the coordinate system to use for the
@@ -43835,6 +44313,8 @@ class GPUdbTable( object ):
                   * euclidean
                   * great_circle
 
+                The default value is an empty dict ( {} ).
+
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
@@ -43842,7 +44322,7 @@ class GPUdbTable( object ):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
         Returns:
@@ -43867,15 +44347,13 @@ class GPUdbTable( object ):
         return self.create_view( view_name, response[ "count" ] )
     # end filter_by_series
 
-
     def filter_by_string( self, expression = None, mode = None, column_names =
                           None, options = {}, view_name = '' ):
         """Calculates which objects from a table or view match a string
-        expression for the given string columns. Setting
-        *case_sensitive* can modify case sensitivity in matching
-        for all modes except *search*. For
-        *search* mode details and limitations, see
-        `Full Text Search <../../../../concepts/full_text_search/>`__.
+        expression for the given string columns. Setting *case_sensitive* can
+        modify case sensitivity in matching for all modes except *search*. For
+        *search* mode details and limitations, see `Full Text Search
+        <../../../../concepts/full_text_search/>`__.
 
         Parameters:
 
@@ -43912,12 +44390,11 @@ class GPUdbTable( object ):
 
             column_names (list of str)
                 List of columns on which to apply the filter. Ignored for
-                *search* mode.    The user can provide a single element (which
+                *search* mode. The user can provide a single element (which
                 will be automatically promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -43951,6 +44428,8 @@ class GPUdbTable( object ):
 
                   The default value is 'true'.
 
+                The default value is an empty dict ( {} ).
+
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
@@ -43958,7 +44437,7 @@ class GPUdbTable( object ):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
         Returns:
@@ -43984,24 +44463,18 @@ class GPUdbTable( object ):
         return self.create_view( view_name, response[ "count" ] )
     # end filter_by_string
 
-
     def filter_by_table( self, column_name = None, source_table_name = None,
                          source_table_column_name = None, options = {},
                          view_name = '' ):
         """Filters objects in one table based on objects in another table. The
         user must specify matching column types from the two tables (i.e. the
-        target
-        table from which objects will be filtered and the source table based on
-        which
-        the filter will be created); the column names need not be the same. If
-        a
-        input parameter *view_name* is specified, then the filtered objects
-        will then be put in a
-        newly created view. The operation is synchronous, meaning that a
-        response will
-        not be returned until all objects are fully available in the result
-        view. The
-        return value contains the count (i.e. the size) of the resulting view.
+        target table from which objects will be filtered and the source table
+        based on which the filter will be created); the column names need not
+        be the same. If a input parameter *view_name* is specified, then the
+        filtered objects will then be put in a newly created view. The
+        operation is synchronous, meaning that a response will not be returned
+        until all objects are fully available in the result view. The return
+        value contains the count (i.e. the size) of the resulting view.
 
         Parameters:
 
@@ -44025,8 +44498,7 @@ class GPUdbTable( object ):
                 parameter *column_name*.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -44070,13 +44542,15 @@ class GPUdbTable( object ):
                   The default value is 'normal'.
 
                 * **buffer** --
-                  Buffer size, in meters. Only relevant for *spatial* mode.
-                  The default value is '0'.
+                  Buffer size, in meters. Only relevant for *spatial* mode. The
+                  default value is '0'.
 
                 * **buffer_method** --
                   Method used to buffer polygons.  Only relevant for *spatial*
                   mode.
                   Allowed values are:
+
+                  * normal
 
                   * **geos** --
                     Use geos 1 edge per corner algorithm
@@ -44085,19 +44559,21 @@ class GPUdbTable( object ):
 
                 * **max_partition_size** --
                   Maximum number of points in a partition. Only relevant for
-                  *spatial* mode.  The default value is '0'.
+                  *spatial* mode. The default value is '0'.
 
                 * **max_partition_score** --
                   Maximum number of points * edges in a partition. Only
-                  relevant for *spatial* mode.  The default value is '8000000'.
+                  relevant for *spatial* mode. The default value is '8000000'.
 
                 * **x_column_name** --
                   Name of column containing x value of point being filtered in
-                  *spatial* mode.  The default value is 'x'.
+                  *spatial* mode. The default value is 'x'.
 
                 * **y_column_name** --
                   Name of column containing y value of point being filtered in
-                  *spatial* mode.  The default value is 'y'.
+                  *spatial* mode. The default value is 'y'.
+
+                The default value is an empty dict ( {} ).
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -44106,7 +44582,7 @@ class GPUdbTable( object ):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
         Returns:
@@ -44132,25 +44608,18 @@ class GPUdbTable( object ):
         return self.create_view( view_name, response[ "count" ] )
     # end filter_by_table
 
-
     def filter_by_value( self, is_string = None, value = 0, value_str = '',
                          column_name = None, options = {}, view_name = '' ):
         """Calculates which objects from a table has a particular value for a
         particular column. The input parameters provide a way to specify either
-        a String
-        or a Double valued column and a desired value for the column on which
-        the filter
-        is performed. The operation is synchronous, meaning that a response
-        will not be
-        returned until all the objects are fully available. The response
-        payload
-        provides the count of the resulting set. A new result view which
-        satisfies the
-        input filter restriction specification is also created with a view name
-        passed
-        in as part of the input payload.  Although this functionality can also
-        be
-        accomplished with the standard filter function, it is more efficient.
+        a String or a Double valued column and a desired value for the column
+        on which the filter is performed. The operation is synchronous, meaning
+        that a response will not be returned until all the objects are fully
+        available. The response payload provides the count of the resulting
+        set. A new result view which satisfies the input filter restriction
+        specification is also created with a view name passed in as part of the
+        input payload.  Although this functionality can also be accomplished
+        with the standard filter function, it is more efficient.
 
         Parameters:
 
@@ -44159,17 +44628,16 @@ class GPUdbTable( object ):
                 numeric.
 
             value (float)
-                The value to search for.  The default value is 0.
+                The value to search for. The default value is 0.
 
             value_str (str)
-                The string value to search for.  The default value is ''.
+                The string value to search for. The default value is ''.
 
             column_name (str)
                 Name of a column on which the filter by value would be applied.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **create_temp_table** --
@@ -44193,6 +44661,8 @@ class GPUdbTable( object ):
                   If the schema is non-existent, it will be automatically
                   created.
 
+                The default value is an empty dict ( {} ).
+
             view_name (str)
                 If provided, then this will be the name of the view containing
                 the results, in [schema_name.]view_name format, using standard
@@ -44200,7 +44670,7 @@ class GPUdbTable( object ):
                 <../../../../concepts/tables/#table-name-resolution>`__ and
                 meeting `table naming criteria
                 <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                not be an already existing table or view.  The default value is
+                not be an already existing table or view. The default value is
                 ''.
 
         Returns:
@@ -44225,7 +44695,6 @@ class GPUdbTable( object ):
 
         return self.create_view( view_name, response[ "count" ] )
     # end filter_by_value
-
 
     def lock_table( self, lock_type = 'status', options = {} ):
         """Manages global access to a table's data.  By default a table has a
@@ -44263,8 +44732,7 @@ class GPUdbTable( object ):
                 The default value is 'status'.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             The response from the server which is a dict containing the
@@ -44288,44 +44756,35 @@ class GPUdbTable( object ):
         return response
     # end lock_table
 
-
     def show_table( self, options = {} ):
         """Retrieves detailed information about a table, view, or schema,
         specified in input parameter *table_name*. If the supplied input
-        parameter *table_name* is a
-        schema the call can return information about either the schema itself
-        or the
-        tables and views it contains. If input parameter *table_name* is empty,
-        information about
-        all schemas will be returned.
+        parameter *table_name* is a schema the call can return information
+        about either the schema itself or the tables and views it contains. If
+        input parameter *table_name* is empty, information about all schemas
+        will be returned.
 
-        If the option *get_sizes* is set to
-        *true*, then the number of records
-        in each table is returned (in output parameter *sizes* and
-        output parameter *full_sizes*), along with the total number of objects
-        across all
-        requested tables (in output parameter *total_size* and output parameter
-        *total_full_size*).
+        If the option *get_sizes* is set to *true*, then the number of records
+        in each table is returned (in output parameter *sizes* and output
+        parameter *full_sizes*), along with the total number of objects across
+        all requested tables (in output parameter *total_size* and output
+        parameter *total_full_size*).
 
-        For a schema, setting the *show_children* option to
-        *false* returns only information
-        about the schema itself; setting *show_children* to
-        *true* returns a list of tables and
-        views contained in the schema, along with their corresponding detail.
+        For a schema, setting the *show_children* option to *false* returns
+        only information about the schema itself; setting *show_children* to
+        *true* returns a list of tables and views contained in the schema,
+        along with their corresponding detail.
 
         To retrieve a list of every table, view, and schema in the database,
-        set
-        input parameter *table_name* to '*' and *show_children* to
-        *true*.  When doing this, the
-        returned output parameter *total_size* and output parameter
-        *total_full_size* will not include the sizes of
-        non-base tables (e.g., filters, views, joins, etc.).
+        set input parameter *table_name* to '*' and *show_children* to *true*.
+        When doing this, the returned output parameter *total_size* and output
+        parameter *total_full_size* will not include the sizes of non-base
+        tables (e.g., filters, views, joins, etc.).
 
         Parameters:
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **force_synchronous** --
@@ -44341,6 +44800,18 @@ class GPUdbTable( object ):
                 * **get_sizes** --
                   If *true* then the number of records in each table, along
                   with a cumulative count, will be returned; blank, otherwise.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **get_cached_sizes** --
+                  If *true* then the number of records in each table, along
+                  with a cumulative count, will be returned; blank, otherwise.
+                  This version will return the sizes cached at rank 0, which
+                  may be stale if there is a multihead insert occuring.
                   Allowed values are:
 
                   * true
@@ -44382,6 +44853,8 @@ class GPUdbTable( object ):
                   * false
 
                   The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             The response from the server which is a dict containing the
@@ -44438,9 +44911,213 @@ class GPUdbTable( object ):
             additional_info (list of dicts of str to str)
                 Additional information about the respective tables in output
                 parameter *table_names*.
-                Allowed values are:
+                Allowed keys are:
 
-                * @INNER_STRUCTURE
+                * **request_avro_type** --
+                  Method by which this table was created.
+                  Allowed values are:
+
+                  * create_table
+                  * create_projection
+                  * create_union
+
+                * **request_avro_json** --
+                  The JSON representation of request creating this table. The
+                  default value is ''.
+
+                * **protected** --
+                  No longer used.  Indicated whether the respective table was
+                  protected or not.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                * **record_bytes** --
+                  The number of in-memory bytes per record which is the sum of
+                  the byte sizes of all columns with property  'data'.
+
+                * **total_bytes** --
+                  The total size in bytes of all data stored in the table.
+
+                * **collection_names** --
+                  [DEPRECATED--use schema_name instead]  This will now contain
+                  the name of the schema for the table.  There can only be one
+                  schema for a table.
+
+                * **schema_name** --
+                  The name of the schema for the table.  There can only be one
+                  schema for a table.
+
+                * **table_ttl** --
+                  The value of the `time-to-live <../../../../concepts/ttl/>`__
+                  setting.  Not present for schemas.
+
+                * **remaining_table_ttl** --
+                  The remaining `time-to-live <../../../../concepts/ttl/>`__,
+                  in minutes, before the respective table expires (-1 if it
+                  will never expire).  Not present for schemas.
+
+                * **primary_key_type** --
+                  The primary key type of the table (if it has a primary key).
+                  Allowed values are:
+
+                  * **memory** --
+                    In-memory primary key
+
+                  * **disk** --
+                    On-disk primary key
+
+                * **foreign_keys** --
+                  Semicolon-separated list of `foreign keys
+                  <../../../../concepts/tables/#foreign-key>`__, of the format
+                  'source_column references target_table(primary_key_column)'.
+                  Not present for schemas. The default value is ''.
+
+                * **foreign_shard_key** --
+                  Foreign shard key description of the format: <fk_foreign_key>
+                  references <pk_column_name> from
+                  <pk_table_name>(<pk_primary_key>). Not present for schemas.
+                  The default value is ''.
+
+                * **partition_type** --
+                  `Partitioning <../../../../concepts/tables/#partitioning>`__
+                  scheme used for this table.
+                  Allowed values are:
+
+                  * **RANGE** --
+                    Using `range partitioning
+                    <../../../../concepts/tables/#partitioning-by-range>`__
+
+                  * **INTERVAL** --
+                    Using `interval partitioning
+                    <../../../../concepts/tables/#partitioning-by-interval>`__
+
+                  * **LIST** --
+                    Using `manual list partitioning
+                    <../../../../concepts/tables/#partitioning-by-list-manual>`__
+
+                  * **HASH** --
+                    Using `hash partitioning
+                    <../../../../concepts/tables/#partitioning-by-hash>`__.
+
+                  * **SERIES** --
+                    Using `series partitioning
+                    <../../../../concepts/tables/#partitioning-by-series>`__.
+
+                  * **NONE** --
+                    Using no partitioning
+
+                  The default value is 'NONE'.
+
+                * **partition_keys** --
+                  Comma-separated list of partition keys. The default value is
+                  ''.
+
+                * **partition_definitions** --
+                  Comma-separated list of partition definitions, whose format
+                  depends on the partition_type.  See `partitioning
+                  <../../../../concepts/tables/#partitioning>`__ documentation
+                  for details. The default value is ''.
+
+                * **is_automatic_partition** --
+                  True if partitions will be created for LIST VALUES which
+                  don't fall into existing partitions. The default value is ''.
+
+                * **attribute_indexes** --
+                  Semicolon-separated list of columns that have `indexes
+                  <../../../../concepts/indexes/#column-index>`__. Not present
+                  for schemas. The default value is ''.
+
+                * **compressed_columns** --
+                  No longer supported. The default value is ''.
+
+                * **column_info** --
+                  JSON-encoded string representing a map of column name to
+                  information including memory usage if if the
+                  *get_column_info* option is *true*. The default value is ''.
+
+                * **global_access_mode** --
+                  Returns the global access mode (i.e. lock status) for the
+                  table.
+                  Allowed values are:
+
+                  * **no_access** --
+                    No read/write operations are allowed on this table.
+
+                  * **read_only** --
+                    Only read operations are allowed on this table.
+
+                  * **write_only** --
+                    Only write operations are allowed on this table.
+
+                  * **read_write** --
+                    All read/write operations are allowed on this table.
+
+                * **view_table_name** --
+                  For materialized view the name of the view this member table
+                  is part of - if same as the table_name then this is the root
+                  of the view. The default value is ''.
+
+                * **is_view_persisted** --
+                  True if the view named view_table_name is persisted -
+                  reported for each view member.  Means method of recreating
+                  this member is saved - not the members data. The default
+                  value is ''.
+
+                * **is_dirty** --
+                  True if some input table of the materialized view that
+                  affects this member table has been modified since the last
+                  refresh. The default value is ''.
+
+                * **refresh_method** --
+                  For materialized view current refresh_method - one of manual,
+                  periodic, on_change. The default value is ''.
+
+                * **refresh_start_time** --
+                  For materialized view with periodic refresh_method the
+                  current intial datetime string that periodic refreshes began.
+                  The default value is ''.
+
+                * **refresh_stop_time** --
+                  Time at which the periodic view refresh stops. The default
+                  value is ''.
+
+                * **refresh_period** --
+                  For materialized view with periodic refresh_method the
+                  current refresh period in seconds. The default value is ''.
+
+                * **last_refresh_time** --
+                  For materialized view the a datatime string indicating the
+                  last time the view was refreshed. The default value is ''.
+
+                * **next_refresh_time** --
+                  For materialized view with periodic refresh_method a datetime
+                  string indicating the next time the view is to be refreshed.
+                  The default value is ''.
+
+                * **user_chunk_size** --
+                  User-specified number of records per chunk, if provided at
+                  table creation time. The default value is ''.
+
+                * **user_chunk_column_max_memory** --
+                  User-specified target max bytes per column in a chunk, if
+                  provided at table creation time. The default value is ''.
+
+                * **user_chunk_max_memory** --
+                  User-specified target max bytes for all columns in a chunk,
+                  if provided at table creation time. The default value is ''.
+
+                * **owner_resource_group** --
+                  Name of the owner resource group. The default value is ''.
+
+                * **alternate_shard_keys** --
+                  Semicolon-separated list of shard keys that were equated in
+                  joins (applicable for join tables). The default value is ''.
+
+                * **datasource_subscriptions** --
+                  Semicolon-separated list of datasource names the table has
+                  subscribed to. The default value is ''.
 
             sizes (list of longs)
                 If *get_sizes* is *true*, an array containing the number of
@@ -44487,77 +45164,69 @@ class GPUdbTable( object ):
         return response
     # end show_table
 
-
     def update_records( self, expressions = None, new_values_maps = None,
                         records_to_insert = [], records_to_insert_str = [],
                         record_encoding = 'binary', options = {} ):
         """Runs multiple predicate-based updates in a single call.  With the
         list of given expressions, any matching record's column values will be
-        updated
-        as provided in input parameter *new_values_maps*.  There is also an
-        optional 'upsert'
-        capability where if a particular predicate doesn't match any existing
-        record,
-        then a new record can be inserted.
+        updated as provided in input parameter *new_values_maps*.  There is
+        also an optional 'upsert' capability where if a particular predicate
+        doesn't match any existing record, then a new record can be inserted.
 
         Note that this operation can only be run on an original table and not
-        on a
-        result view.
+        on a result view.
 
-        This operation can update primary key values.  By default only
-        'pure primary key' predicates are allowed when updating primary key
-        values. If
-        the primary key for a table is the column 'attr1', then the operation
-        will only
-        accept predicates of the form: "attr1 == 'foo'" if the attr1 column is
-        being
-        updated.  For a composite primary key (e.g. columns 'attr1' and
-        'attr2') then
-        this operation will only accept predicates of the form:
-        "(attr1 == 'foo') and (attr2 == 'bar')".  Meaning, all primary key
-        columns
-        must appear in an equality predicate in the expressions.  Furthermore
-        each
-        'pure primary key' predicate must be unique within a given request.
-        These
-        restrictions can be removed by utilizing some available options through
-        input parameter *options*.
+        This operation can update primary key values.  By default only 'pure
+        primary key' predicates are allowed when updating primary key values.
+        If the primary key for a table is the column 'attr1', then the
+        operation will only accept predicates of the form: "attr1 == 'foo'" if
+        the attr1 column is being updated.  For a composite primary key (e.g.
+        columns 'attr1' and 'attr2') then this operation will only accept
+        predicates of the form: "(attr1 == 'foo') and (attr2 == 'bar')".
+        Meaning, all primary key columns must appear in an equality predicate
+        in the expressions.  Furthermore each 'pure primary key' predicate must
+        be unique within a given request.  These restrictions can be removed by
+        utilizing some available options through input parameter *options*.
 
         The *update_on_existing_pk* option specifies the record primary key
-        collision
-        policy for tables with a `primary key
+        collision policy for tables with a `primary key
         <../../../../concepts/tables/#primary-keys>`__, while
         *ignore_existing_pk* specifies the record primary key collision
         error-suppression policy when those collisions result in the update
-        being rejected.  Both are
-        ignored on tables with no primary key.
+        being rejected.  Both are ignored on tables with no primary key.
 
         Parameters:
 
             expressions (list of str)
                 A list of the actual predicates, one for each update; format
-                should follow the guidelines :meth:`here <GPUdb.filter>`.
+                should follow the guidelines :meth:`here <GPUdbTable.filter>`.
+                The user can provide a single element (which will be
+                automatically promoted to a list internally) or a list.
 
-            new_values_maps (list of dicts of str to str and/or None)
+            new_values_maps (list of dicts of str to optional str)
                 List of new values for the matching records.  Each element is a
-                map with
-                (key, value) pairs where the keys are the names of the columns
-                whose values are to be updated; the
-                values are the new values.  The number of elements in the list
-                should match the length of input parameter *expressions*.
+                map with (key, value) pairs where the keys are the names of the
+                columns whose values are to be updated; the values are the new
+                values.  The number of elements in the list should match the
+                length of input parameter *expressions*. The user can provide a
+                single element (which will be automatically promoted to a list
+                internally) or a list.
 
-            records_to_insert (list of str)
+            records_to_insert (list of bytes)
                 An *optional* list of new binary-avro encoded records to
-                insert, one for each
-                update.  If one of input parameter *expressions* does not yield
-                a matching record to be updated, then the
-                corresponding element from this list will be added to the
-                table.  The default value is an empty list ( [] ).
+                insert, one for each update.  If one of input parameter
+                *expressions* does not yield a matching record to be updated,
+                then the corresponding element from this list will be added to
+                the table. The default value is an empty list ( [] ). The user
+                can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
 
             records_to_insert_str (list of str)
                 An optional list of JSON encoded objects to insert, one for
                 each update, to be added if the particular update did not match
-                any objects.  The default value is an empty list ( [] ).
+                any objects. The default value is an empty list ( [] ). The
+                user can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
 
             record_encoding (str)
                 Identifies which of input parameter *records_to_insert* and
@@ -44570,25 +45239,22 @@ class GPUdbTable( object ):
                 The default value is 'binary'.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters.
                 Allowed keys are:
 
                 * **global_expression** --
                   An optional global expression to reduce the search space of
-                  the predicates listed in input parameter *expressions*.  The
+                  the predicates listed in input parameter *expressions*. The
                   default value is ''.
 
                 * **bypass_safety_checks** --
-                  When set to *true*,
-                  all predicates are available for primary key updates.  Keep
-                  in mind that it is possible to destroy
+                  When set to *true*, all predicates are available for primary
+                  key updates.  Keep in mind that it is possible to destroy
                   data in this case, since a single predicate may match
-                  multiple objects (potentially all of records
-                  of a table), and then updating all of those records to have
-                  the same primary key will, due to the
-                  primary key uniqueness constraints, effectively delete all
-                  but one of those updated records.
+                  multiple objects (potentially all of records of a table), and
+                  then updating all of those records to have the same primary
+                  key will, due to the primary key uniqueness constraints,
+                  effectively delete all but one of those updated records.
                   Allowed values are:
 
                   * true
@@ -44598,50 +45264,48 @@ class GPUdbTable( object ):
 
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for updating a table
-                  with a
-                  `primary key <../../../../concepts/tables/#primary-keys>`__.
-                  There are two ways that a record collision can
-                  occur.
+                  with a `primary key
+                  <../../../../concepts/tables/#primary-keys>`__.  There are
+                  two ways that a record collision can occur.
+
                   The first is an "update collision", which happens when the
-                  update changes the value of the updated
-                  record's primary key, and that new primary key already exists
-                  as the primary key of another record
-                  in the table.
+                  update changes the value of the updated record's primary key,
+                  and that new primary key already exists as the primary key of
+                  another record in the table.
+
                   The second is an "insert collision", which occurs when a
-                  given filter in input parameter *expressions*
-                  finds no records to update, and the alternate insert record
-                  given in input parameter *records_to_insert* (or
-                  input parameter *records_to_insert_str*) contains a primary
-                  key matching that of an existing record in the
-                  table.
-                  If *update_on_existing_pk* is set to
-                  *true*, "update collisions" will result in the
-                  existing record collided into being removed and the record
-                  updated with values specified in
+                  given filter in input parameter *expressions* finds no
+                  records to update, and the alternate insert record given in
+                  input parameter *records_to_insert* (or input parameter
+                  *records_to_insert_str*) contains a primary key matching that
+                  of an existing record in the table.
+
+                  If *update_on_existing_pk* is set to *true*, "update
+                  collisions" will result in the existing record collided into
+                  being removed and the record updated with values specified in
                   input parameter *new_values_maps* taking its place; "insert
-                  collisions" will result in the collided-into
-                  record being updated with the values in input parameter
+                  collisions" will result in the collided-into record being
+                  updated with the values in input parameter
                   *records_to_insert*/input parameter *records_to_insert_str*
                   (if given).
-                  If set to *false*, the existing collided-into
-                  record will remain unchanged, while the update will be
-                  rejected and the error handled as determined
-                  by *ignore_existing_pk*.  If the specified table does not
-                  have a primary key,
-                  then this option has no effect.
+
+                  If set to *false*, the existing collided-into record will
+                  remain unchanged, while the update will be rejected and the
+                  error handled as determined by *ignore_existing_pk*.  If the
+                  specified table does not have a primary key, then this option
+                  has no effect.
                   Allowed values are:
 
                   * **true** --
-                    Overwrite the collided-into record when updating a
-                    record's primary key or inserting an alternate record
-                    causes a primary key collision between the
-                    record being updated/inserted and another existing record
-                    in the table
+                    Overwrite the collided-into record when updating a record's
+                    primary key or inserting an alternate record causes a
+                    primary key collision between the record being
+                    updated/inserted and another existing record in the table
 
                   * **false** --
-                    Reject updates which cause primary key collisions
-                    between the record being updated/inserted and an existing
-                    record in the table
+                    Reject updates which cause primary key collisions between
+                    the record being updated/inserted and an existing record in
+                    the table
 
                   The default value is 'false'.
 
@@ -44649,18 +45313,15 @@ class GPUdbTable( object ):
                   Specifies the record collision error-suppression policy for
                   updating a table with a `primary key
                   <../../../../concepts/tables/#primary-keys>`__, only used
-                  when primary
-                  key record collisions are rejected (*update_on_existing_pk*
-                  is
-                  *false*).  If set to
-                  *true*, any record update that is rejected for
-                  resulting in a primary key collision with an existing table
-                  record will be ignored with no error
-                  generated.  If *false*, the rejection of any update
+                  when primary key record collisions are rejected
+                  (*update_on_existing_pk* is *false*).  If set to *true*, any
+                  record update that is rejected for resulting in a primary key
+                  collision with an existing table record will be ignored with
+                  no error generated.  If *false*, the rejection of any update
                   for resulting in a primary key collision will cause an error
-                  to be reported.  If the specified table
-                  does not have a primary key or if *update_on_existing_pk* is
-                  *true*, then this option has no effect.
+                  to be reported.  If the specified table does not have a
+                  primary key or if *update_on_existing_pk* is *true*, then
+                  this option has no effect.
                   Allowed values are:
 
                   * **true** --
@@ -44694,14 +45355,12 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **use_expressions_in_new_values_maps** --
-                  When set to *true*,
-                  all new values in input parameter *new_values_maps* are
-                  considered as expression values. When set to
-                  *false*, all new values in
-                  input parameter *new_values_maps* are considered as
-                  constants.  NOTE:  When
-                  *true*, string constants will need
-                  to be quoted to avoid being evaluated as expressions.
+                  When set to *true*, all new values in input parameter
+                  *new_values_maps* are considered as expression values. When
+                  set to *false*, all new values in input parameter
+                  *new_values_maps* are considered as constants.  NOTE:  When
+                  *true*, string constants will need to be quoted to avoid
+                  being evaluated as expressions.
                   Allowed values are:
 
                   * true
@@ -44713,6 +45372,8 @@ class GPUdbTable( object ):
                   ID of a single record to be updated (returned in the call to
                   :meth:`GPUdb.insert_records` or
                   :meth:`GPUdb.get_records_from_collection`).
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             The response from the server which is a dict containing the
@@ -44753,14 +45414,12 @@ class GPUdbTable( object ):
         return response
     # end update_records
 
-
     def update_records_by_series( self, world_table_name = None, view_name = '',
                                   reserved = [], options = {} ):
-        """Updates the view specified by input parameter *table_name* to include
-        full
-        series (track) information from the input parameter *world_table_name*
-        for the series
-        (tracks) present in the input parameter *view_name*.
+        """Updates the view specified by input parameter *table_name* to
+        include full series (track) information from the input parameter
+        *world_table_name* for the series (tracks) present in the input
+        parameter *view_name*.
 
         Parameters:
 
@@ -44774,24 +45433,22 @@ class GPUdbTable( object ):
                 Name of the view containing the series (tracks) which have to
                 be updated, in [schema_name.]view_name format, using standard
                 `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__.  The
+                <../../../../concepts/tables/#table-name-resolution>`__. The
                 default value is ''.
 
             reserved (list of str)
-                The default value is an empty list ( [] ).  The user can
-                provide a single element (which will be automatically promoted
-                to a list internally) or a list.
+                The default value is an empty list ( [] ). The user can provide
+                a single element (which will be automatically promoted to a
+                list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters.  The default value is an empty dict ( {}
-                ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             The response from the server which is a dict containing the
             following entries--
 
             count (int)
-
 
             info (dict of str to str)
                 Additional information.
@@ -44811,7 +45468,6 @@ class GPUdbTable( object ):
         return response
     # end update_records_by_series
 
-
     def visualize_image_labels( self, x_column_name = None, y_column_name =
                                 None, x_offset = '', y_offset = '', text_string
                                 = None, font = '', text_color = '', text_angle =
@@ -44822,7 +45478,6 @@ class GPUdbTable( object ):
                                 None, max_x = None, min_y = None, max_y = None,
                                 width = None, height = None, projection =
                                 'PLATE_CARREE', options = {} ):
-
         response = self.db.visualize_image_labels( self.qualified_name,
                                                    x_column_name, y_column_name,
                                                    x_offset, y_offset,
@@ -44951,15 +45606,19 @@ class GPUdbTableOptions(object):
     __is_replicated               = "is_replicated"
     __foreign_keys                = "foreign_keys"
     __foreign_shard_key           = "foreign_shard_key"
+    __primary_key_type            = "primary_key_type"
     __partition_type              = "partition_type"
     __partition_keys              = "partition_keys"
     __partition_definitions       = "partition_definitions"
     __is_automatic_partition      = "is_automatic_partition"
     __ttl                         = "ttl"
     __chunk_size                  = "chunk_size"
+    __chunk_column_max_memory     = "chunk_column_max_memory"
+    __chunk_max_memory            = "chunk_max_memory"
     __strategy_definition         = "strategy_definition"
     __is_result_table             = "is_result_table"
     __create_temp_table           = "create_temp_table"
+    __wal_sync_policy             = "wal_sync_policy"
 
     _supported_options = [ __no_error_if_exists,
                            __collection_name,
@@ -44968,15 +45627,19 @@ class GPUdbTableOptions(object):
                            __is_replicated,
                            __foreign_keys,
                            __foreign_shard_key,
+                           __primary_key_type,
                            __partition_type,
                            __partition_keys,
                            __partition_definitions,
                            __is_automatic_partition,
                            __ttl,
                            __chunk_size,
+                           __chunk_column_max_memory,
+                           __chunk_max_memory,
                            __strategy_definition,
                            __is_result_table,
-                           __create_temp_table
+                           __create_temp_table,
+                           __wal_sync_policy
     ]
 
 
@@ -45003,15 +45666,19 @@ class GPUdbTableOptions(object):
         self._is_replicated               = False
         self._foreign_keys                = None
         self._foreign_shard_key           = None
+        self._primary_key_type            = None
         self._partition_type              = None
         self._partition_keys              = None
         self._partition_definitions       = None
         self._is_automatic_partition      = None
         self._ttl                         = None
         self._chunk_size                  = None
+        self._chunk_column_max_memory     = None
+        self._chunk_max_memory            = None
         self._strategy_definition         = None
         self._is_result_table             = None
         self._create_temp_table           = False
+        self._wal_sync_policy             = None
 
         if (_dict is None):
             return # nothing to do
@@ -45050,6 +45717,12 @@ class GPUdbTableOptions(object):
         if self._chunk_size is not None:
             result[ self.__chunk_size         ] = str( self._chunk_size )
 
+        if self._chunk_column_max_memory is not None:
+            result[ self.__chunk_column_max_memory ] = str( self._chunk_column_max_memory )
+
+        if self._chunk_max_memory is not None:
+            result[ self.__chunk_max_memory ] = str( self._chunk_max_memory )
+
         if self._is_collection is not None:
             result[ self.__is_collection      ] = "true" if self._is_collection else "false"
 
@@ -45058,6 +45731,9 @@ class GPUdbTableOptions(object):
 
         if self._foreign_shard_key is not None:
             result[ self.__foreign_shard_key  ] = str( self._foreign_shard_key )
+
+        if self._primary_key_type is not None:
+            result[ self.__primary_key_type ] = str ( self._primary_key_type )
 
         if self._partition_type is not None:
             result[ self.__partition_type     ] = str( self._partition_type )
@@ -45082,6 +45758,9 @@ class GPUdbTableOptions(object):
 
         if self._create_temp_table is not None and self._create_temp_table:
             result[ self.__create_temp_table ] = "true"
+
+        if self._wal_sync_policy is not None:
+            result[ self.__wal_sync_policy ] = str( self._wal_sync_policy )
 
         return result
     # end as_json
@@ -45210,6 +45889,12 @@ class GPUdbTableOptions(object):
     # end foreign_shard_key
 
 
+    def primary_key_type(self, val):
+        self._primary_key_type = val
+        return self
+    # end primary_key_type
+
+
     def partition_type(self, val):
         self._partition_type = val
         return self
@@ -45240,6 +45925,18 @@ class GPUdbTableOptions(object):
     # end chunk_size
 
 
+    def chunk_column_max_memory(self, val):
+        self._chunk_column_max_memory = val
+        return self
+    # end chunk_column_max_memory
+
+
+    def chunk_max_memory(self, val):
+        self._chunk_max_memory = val
+        return self
+    # end chunk_max_memory
+
+
     def strategy_definition(self, val):
         self._strategy_definition = val
         return self
@@ -45257,5 +45954,11 @@ class GPUdbTableOptions(object):
                                   "given " + repr( val ) )
         return self
     # end create_temp_table
+
+
+    def wal_sync_policy(self, val):
+        self._wal_sync_policy = val
+        return self
+    # end wal_sync_policy
 
 # end class GPUdbTableOptions

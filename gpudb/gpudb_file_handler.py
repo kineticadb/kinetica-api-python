@@ -53,6 +53,7 @@ class KifsFileInfo(object):
     def file_size(self, value):
         self._file_size = value
 
+
 class GPUdbFileHandler(object):
     """This class exposes convenience methods to upload/download
     files to/from KIFS from local/KIFS directory.

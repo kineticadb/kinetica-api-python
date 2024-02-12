@@ -1294,3 +1294,7 @@ def Parse(json_string):
 
   # construct the Avro Schema object
   return SchemaFromJSONData(json_data, names)
+
+
+def parse(json_string):
+    return Parse(json_string)

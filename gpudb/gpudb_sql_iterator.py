@@ -6,11 +6,13 @@
 # ---------------------------------------------------------------------------
 
 import logging
+import json
 
 from . import GPUdb
 from . import GPUdbTable
 from . import GPUdbException
 
+LOG = logging.getLogger(__name__)
 
 class GPUdbSqlIterator():
     """  Iterates over the records of a given query.
@@ -31,19 +33,17 @@ class GPUdbSqlIterator():
                             ncols=cls.TQDM_NCOLS):
                 result_list.append(rec)
 
-    
     """
 
-    _log = logging.getLogger("gpudb.GPUdbSqlIterator")
+    _log = logging.getLogger(f"gpudb.GPUdbSqlIterator")
 
     def __init__(self,
-                 db,
-                 sql,
-                 batch_size,
-                 sql_opts=None):
-        self.rec_pos = 0
-        if sql_opts is None:
-            sql_opts = {}
+                 db: GPUdb,
+                 sql: str,
+                 batch_size: int = 5000,
+                 sql_params = [],
+                 sql_opts: dict = {}):
+
         self.sql = sql
         self.db = db
         self.batch_size = batch_size
@@ -58,7 +58,41 @@ class GPUdbSqlIterator():
         self.paging_tables = []
 
         paging_table_name = GPUdbTable.random_name()
+        self._set_sql_params(sql_opts, sql_params)
         self.sql_opts["paging_table"] = paging_table_name
+
+
+    @classmethod
+    def _set_sql_params(cls, sql_opts: dict, sql_params: list) -> None:
+        """Convert SQL parameters to JSON and set as an option for execute_sql_and_decode()
+
+        Parameters:
+            sql_opts (dict)
+                The parameter list that will be appended to.
+
+            sql_params (list of native types)
+                The SQL parameters that will be subsituted for tokens (e.g. $1 $2)
+        """
+        if (len(sql_params) == 0):
+            return
+        
+        for idx, item in enumerate(sql_params):
+            if (isinstance(item, list)):
+                # assume that list type is vector
+                sql_params[idx] = str(item)
+
+        json_params = json.dumps(sql_params)
+        LOG.info(f"json_params: {json_params}")
+        sql_opts['query_parameters'] = json.dumps(sql_params)
+
+
+    @classmethod
+    def _check_error(cls, response: dict) -> None:
+        status = response['status_info']['status']
+        if (status != 'OK'):
+            message = response['status_info']['message']
+            raise GPUdbException('[%s]: %s' % (status, message))
+
 
     def open(self):
         # optional call
@@ -85,7 +119,7 @@ class GPUdbSqlIterator():
         self.open()
         return self
 
-    def __next__(self):
+    def __next__(self) -> list:
         self._check_fetch()
         if (self.records is None):
             raise StopIteration
@@ -94,6 +128,7 @@ class GPUdbSqlIterator():
         self.rec_pos += 1
         self.retrieved_count += 1
         return rec_values
+
 
     def _check_fetch(self):
         if (self.records is not None and self.rec_pos < len(self.records)):
@@ -109,6 +144,7 @@ class GPUdbSqlIterator():
 
         self._execute_sql()
         self.offset += self.batch_size
+        
 
     def _execute_sql(self):
         limit = self.batch_size
@@ -116,7 +152,7 @@ class GPUdbSqlIterator():
             recs_remaining = self.total_count - self.offset
             limit = min(recs_remaining, self.batch_size)
 
-        self._log.debug("SQL fetch: offset={} limit={}".format(self.offset, limit))
+        self._log.debug(f"SQL fetch: offset={self.offset} limit={limit}")
         response = self.db.execute_sql_and_decode(
             statement=self.sql,
             offset=self.offset,
@@ -125,11 +161,7 @@ class GPUdbSqlIterator():
             get_column_major=False,
             options=self.sql_opts)
 
-        status = response['status_info']['status']
-        if (status != 'OK'):
-            message = response['status_info']['message']
-            raise GPUdbException('[%s]: %s' % (status, message))
-
+        self._check_error(response)
         self.records = response['records']
 
         if (self.total_count is None):
@@ -147,7 +179,7 @@ class GPUdbSqlIterator():
                 self.paging_tables.extend(supporting_paging_tables.split(','))
 
             if (len(self.paging_tables) > 0):
-                self._log.debug("Paging tables: {}".format(self.paging_tables))
+                self._log.debug(f"Paging tables: {self.paging_tables}")
 
         if (self.total_count == 0):
             return
@@ -157,6 +189,6 @@ class GPUdbSqlIterator():
             col_names = list(col.name for col in col_defs)
             col_types = list(col.data_type for col in col_defs)
             self.type_map = {name: type for (name, type) in zip(col_names, col_types)}
-            self._log.debug("Type map: {}".format(self.type_map))
+            self._log.debug(f"Type map: {self.type_map}")
 
 # end class KineticaSqlIterator

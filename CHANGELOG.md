@@ -1,5 +1,17 @@
 # GPUdb Python API Changelog
 
+## Version 7.2
+
+### Version 7.2.0.0 - 2024.02.12
+
+#### Added
+-   Support for array, JSON, & vector types
+-   `GPUdbTableOptions` member `chunk_column_max_memory`
+
+#### Notes
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
+
+
 ## Version 7.1
 
 ### Version 7.1.9.10 - 2023-11-13

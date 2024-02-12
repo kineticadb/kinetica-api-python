@@ -2816,7 +2816,7 @@ static PyObject* get_string_column(ColumnValue* column_value)
             Py_ssize_t len;
             char* data;
 
-            data = PyUnicode_AsUTF8AndSize(value, &len);
+            data = (char*)PyUnicode_AsUTF8AndSize(value, &len);
 
             if (data)
             {
@@ -2946,7 +2946,7 @@ static int set_char_column_small(Record* self, Py_ssize_t index, PyObject* value
     #if PY_MAJOR_VERSION >= 3
         value = PyObject_Str(value);
         CHECK(value, error)
-        data = PyUnicode_AsUTF8AndSize(value, &len);
+        data = (char*)PyUnicode_AsUTF8AndSize(value, &len);
         CHECK(data, error)
         CHECK_OBJECT(len <= size, PyExc_ValueError, format_string("maximum length %d exceeded", size), error)
         column_value = &(&self->column_values)[index];
@@ -3016,7 +3016,7 @@ static int set_char_column_large(Record* self, Py_ssize_t index, PyObject* value
 
         value = PyObject_Str(value);
         CHECK(value, error)
-        data = PyUnicode_AsUTF8AndSize(value, &len);
+        data = (char*)PyUnicode_AsUTF8AndSize(value, &len);
         CHECK(data, error)
         CHECK_OBJECT(len <= size, PyExc_ValueError, format_string("maximum length %d exceeded", size), error)
         column_value = &(&self->column_values)[index];
@@ -3283,7 +3283,7 @@ static int set_string_column(Record* self, Py_ssize_t index, PyObject* value)
 
         value = PyObject_Str(value);
         CHECK(value, error)
-        data = PyUnicode_AsUTF8AndSize(value, &len);
+        data = (char*)PyUnicode_AsUTF8AndSize(value, &len);
         CHECK(data, error)
         column_value = &(&self->column_values)[index];
         old_value = PyList_GET_ITEM(self->values, index);

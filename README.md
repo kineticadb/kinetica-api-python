@@ -4,9 +4,9 @@
 <h5 align="center" style="margin:0px">
 	<a href="https://www.kinetica.com/">Website</a>
 	|
-	<a href="https://docs.kinetica.com/7.1/">Docs</a>
+	<a href="https://docs.kinetica.com/7.2/">Docs</a>
 	|
-	<a href="https://docs.kinetica.com/7.1/api/">API Docs</a>
+	<a href="https://docs.kinetica.com/7.2/api/">API Docs</a>
 	|
 	<a href="https://join.slack.com/t/kinetica-community/shared_invite/zt-1bt9x3mvr-uMKrXlSDXfy3oU~sKi84qg">Community Slack</a>   
 </h5>
@@ -14,7 +14,7 @@
 
 # Kinetica Python API
 
-This is the 7.1.x.y version of the client-side Python API for Kinetica.  The
+This is the 7.2.x.y version of the client-side Python API for Kinetica.  The
 first two components of the client version must match that of the Kinetica
 server.  When the versions do not match, the API will print a warning.  Often,
 there are breaking changes between versions, so it is critical that they match.
@@ -40,11 +40,11 @@ will not work.
 
 There is also an example file in the example directory.
 
-The documentation can be found at https://docs.kinetica.com/7.1/.  
+The documentation can be found at https://docs.kinetica.com/7.2/.  
 The python specific documentation can be found at:
 
-*   https://docs.kinetica.com/7.1/guides/python_guide/
-*   https://docs.kinetica.com/7.1/api/python/
+*   https://docs.kinetica.com/7.2/guides/python_guide/
+*   https://docs.kinetica.com/7.2/api/python/
 
 
 For changes to the client-side API, please refer to
