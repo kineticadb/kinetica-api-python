@@ -611,13 +611,21 @@ class _Util(object):
                 # convert to string
                 converted_column_value = json.dumps(column_value)
         elif column.is_array():
-            if isinstance(column_value, list):
+            if isinstance(column_value, list) and column.get_array_type() != GPUdbColumnProperty.BOOLEAN:
                 if all(isinstance(e, (int, float)) for e in column_value):
                     converted_column_value = '[{}]'.format(','.join(str(e) for e in column_value))
                 elif all(isinstance(e, str) for e in column_value):
                     converted_column_value = "[{}]".format(','.join('{}'.format(str(e)) for e in column_value))
+            elif isinstance(column_value, list) and all((e in [True, False]) for e in column_value):
+                # Got an array of boolean values
+                converted_column_value = str(column_value).replace('True', 'true').replace('False', 'false')
         elif column.is_vector():
-            if not isinstance(column_value, bytes):
+            # pack as bytes only if the vector value is a list of floats
+            if isinstance(column_value, str):
+                # convert stringified list of floats to Python list
+                column_value = eval(column_value)
+                
+            if isinstance(column_value, list) and all(isinstance(e, float) for e in column_value):
                 dims = column.get_vector_dimensions()
                 # pack as bytes
                 converted_column_value = struct.pack("%sf" % dims, *column_value)
@@ -647,8 +655,12 @@ class _Util(object):
                 converted_column_value = column_value
         elif column.is_array():
             if isinstance(column_value, str):
-                # convert to list
-                converted_column_value = eval(column_value)
+                if column.get_array_type() != GPUdbColumnProperty.BOOLEAN:
+                    # convert to list
+                    converted_column_value = eval(column_value)
+                else:
+                    # Got a boolean array - string - convert to list of Pythonic booleans
+                    converted_column_value = eval(column_value.replace('true', 'True').replace('false', 'False'))
         elif column.is_vector():
             if isinstance(column_value, bytes):
                 dims = column.get_vector_dimensions()
@@ -1471,6 +1483,7 @@ class GPUdbRecordColumn(object):
         DOUBLE = "double"
         STRING = "string"
         BYTES  = "bytes"
+        BOOLEAN = "boolean"
     # end class _ColumnType
 
 
@@ -1480,12 +1493,14 @@ class GPUdbRecordColumn(object):
                             _ColumnType.FLOAT,
                             _ColumnType.DOUBLE,
                             _ColumnType.STRING,
-                            _ColumnType.BYTES
+                            _ColumnType.BYTES,
+                            _ColumnType.BOOLEAN
     ]
 
     # All non-numeric data types
     _non_numeric_data_types = [ _ColumnType.STRING,
-                                _ColumnType.BYTES
+                                _ColumnType.BYTES,
+                                _ColumnType.BOOLEAN
     ]
 
     # All allowed numeric data types
@@ -1632,14 +1647,16 @@ class GPUdbRecordColumn(object):
                     sub_type = prop[open_index+1:close_index].lower()
                     if sub_type.startswith("int"):
                         return GPUdbRecordColumn._ColumnType.INT
-                    elif sub_type == "long":
+                    elif sub_type.startswith("long"):
                         return GPUdbRecordColumn._ColumnType.LONG
-                    elif sub_type == "float":
+                    elif sub_type.startswith("float"):
                         return GPUdbRecordColumn._ColumnType.FLOAT
-                    elif sub_type == "double":
+                    elif sub_type.startswith("double"):
                         return GPUdbRecordColumn._ColumnType.DOUBLE
-                    elif sub_type == "string":
+                    elif sub_type.startswith("string"):
                         return GPUdbRecordColumn._ColumnType.STRING
+                    elif sub_type.startswith("boolean"):
+                        return GPUdbRecordColumn._ColumnType.BOOLEAN
                     else:
                         raise GPUdbException("Unknown array type: " + sub_type)
 
@@ -4927,7 +4944,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.0.0"
+    api_version = "7.2.0.1"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -24934,16 +24951,30 @@ class GPUdb(object):
                 Optional parameters.
                 Allowed keys are:
 
-                * **job_id** --
-                  Export query metrics for the currently running job
+                * **expression** --
+                  Filter for multi query export
+
+                * **filepath** --
+                  Path to export target specified as a filename or existing
+                  directory.
 
                 * **format** --
                   Specifies which format to export the metrics.
                   Allowed values are:
 
-                  * json
+                  * **json** --
+                    Generic json output
+
+                  * **json_trace_event** --
+                    Chromium/Perfetto trace event format
 
                   The default value is 'json'.
+
+                * **job_id** --
+                  Export query metrics for the currently running job
+
+                * **limit** --
+                  Record limit per file for multi query export
 
                 The default value is an empty dict ( {} ).
 
@@ -24953,6 +24984,9 @@ class GPUdb(object):
             info (dict of str to str)
                 Additional information.
                 Allowed keys are:
+
+                * **exported_files** --
+                  Comma separated list of filenames exported if applicable
 
                 * **output** --
                   Exported metrics if no other destination specified
@@ -34970,7 +35004,22 @@ class GPUdb(object):
                 promoted to a list internally) or a list.
 
             options (dict of str to str)
-                Optional parameters. The default value is an empty dict ( {} ).
+                Optional parameters.
+                Allowed keys are:
+
+                * **no_error_if_not_exists** --
+                  If *true* and if the table names specified in input parameter
+                  *table_names* does not exist, no error is returned. If
+                  *false* and if the table names specified in input parameter
+                  *table_names* does not exist, then an error is returned.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -38005,7 +38054,7 @@ if IS_PYTHON_3:
         from gpudb_multihead_io import GPUdbIngestor, RecordRetriever
 else:
     try:                   # Installed
-        from gpudb import GPUdbIngestor, RecordRetriever
+        from gpudb import GPUdbIngestor, RecordRetriever, GPUdbColumnProperty
     except ImportError:    # Local
         try:
             from gpudb.gpudb_multihead_io import GPUdbIngestor, RecordRetriever
@@ -38046,7 +38095,8 @@ class GPUdbTable( object ):
                   use_multihead_io = False,
                   use_multihead_ingest = False,
                   multihead_ingest_batch_size = 10000,
-                  flush_multi_head_ingest_per_insertion = False ):
+                  flush_multi_head_ingest_per_insertion = False,
+                  convert_special_types_on_retrieval = False):
         """
         Parameters:
             _type (:class:`RecordType` or :class:`GPUdbRecordType` or list of lists of str)
@@ -38149,6 +38199,10 @@ class GPUdbTable( object ):
                 remaining records will have to be manually flushed using
                 :meth:`.flush_data_to_server`. Default False.
 
+            convert_special_types_on_retrieval(bool)
+                Convert array types to list and JSON types to dicts while
+                retrieval. Default False.
+
         Returns:
             A GPUdbTable object.
         """
@@ -38175,6 +38229,7 @@ class GPUdbTable( object ):
             raise GPUdbException( "Argument 'db' must be a GPUdb object; "
                                   "given %s" % str( type(db) ) )
         self.db = db
+        self._convert_special_types_on_retrieval = convert_special_types_on_retrieval
 
         # Save the options (maybe need to convert to a dict)
         if options:
@@ -38412,7 +38467,7 @@ class GPUdbTable( object ):
         if use_multihead_io:
             self._multihead_retriever = RecordRetriever( self.db, self.qualified_name,
                                                          self.gpudbrecord_type,
-                                                         is_table_replicated = self._is_replicated )
+                                                         is_table_replicated = self._is_replicated)
         # end if
 
         # Set the encoding function for data to be inserted
@@ -39421,6 +39476,13 @@ class GPUdbTable( object ):
                                   "is not set up for this table." )
 
         response = self._multihead_retriever.get_records_by_key( key_values, expression, options )
+
+        if self._convert_special_types_on_retrieval:
+            records = response["data"]
+            converted_records = GPUdbTable.convert_special_type_values_in_get_records(self.gpudbrecord_type, records)
+            response["data"] = converted_records
+            response["records"] = converted_records
+
         return response
     # end get_records_by_key
 
@@ -39534,6 +39596,11 @@ class GPUdbTable( object ):
                                                        force_primitive_return_types =
                                                        force_primitive_return_types )
         # end if
+
+        if self._convert_special_types_on_retrieval:
+            converted_records = GPUdbTable.convert_special_type_values_in_get_records(
+                self.gpudbrecord_type, response.records)
+            response.records = converted_records
 
         # Return just the records; disregard the extra info within the response
         return response.records
@@ -39662,7 +39729,9 @@ class GPUdbTable( object ):
 
         # Get the records out
         data = response[ "records" ]
-
+        if self._convert_special_types_on_retrieval:
+            converted_data = GPUdbTable.convert_special_type_values_in_get_records(self.gpudbrecord_type, data)
+            data = converted_data
         # Print the date, if desired
         if print_data and get_column_major:
             print( tabulate( data , headers = 'keys', tablefmt = 'psql') )

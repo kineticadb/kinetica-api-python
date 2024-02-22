@@ -2,6 +2,18 @@
 
 ## Version 7.2
 
+### Version 7.2.0.1 - 2024.02.22
+
+#### Added
+-   Improved support for vector input as Python list
+-   Improved support for boolean array conversion
+-   `GPUdbTable` option `convert_special_types_on_retrieval` for automatically
+    converting array, JSON, & vector types to Python native types on retrieval
+    
+#### Fixed
+-   Issue with null numeric columns
+
+
 ### Version 7.2.0.0 - 2024.02.12
 
 #### Added

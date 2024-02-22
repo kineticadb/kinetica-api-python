@@ -91,14 +91,15 @@ class DataFrameUtils:
         #     raise GPUdbException(f"Incorrect record count: expected={sql_iter.total_count} retrieved={result_df.shape[0]}")
         return result_df
 
+
     TYPE_GPUDB_TO_NUMPY = {
-        _COL_TYPE.LONG:                 'int64',
-        _COL_TYPE.INT:                  'int32',
-        GPUdbColumnProperty.INT16:      'int16',
-        GPUdbColumnProperty.INT8:       'int8',
-        _COL_TYPE.DOUBLE:               'float64',
-        _COL_TYPE.FLOAT:                'float32',
-        GPUdbColumnProperty.DATETIME:   'string'
+        _COL_TYPE.LONG: 'Int64',
+        _COL_TYPE.INT: 'Int64',
+        GPUdbColumnProperty.INT16: 'Int16',
+        GPUdbColumnProperty.INT8: 'Int8',
+        _COL_TYPE.DOUBLE: 'Float64',
+        _COL_TYPE.FLOAT: 'Float32',
+        GPUdbColumnProperty.DATETIME: 'string'
     }
 
     @classmethod
@@ -119,20 +120,25 @@ class DataFrameUtils:
 
         # convert each column individually to avoid un-necessary conversions
         for col_name, raw_data in zip(type_map.keys(), col_major_recs):
-            gpudb_type = type_map[col_name]
-            numpy_type = cls.TYPE_GPUDB_TO_NUMPY.get(gpudb_type)
-            col_data = pd.Series(data=raw_data,
-                                 name=col_name,
-                                 dtype=numpy_type,
-                                 index=index)
+            try:
+                gpudb_type = type_map[col_name]
+                numpy_type = cls.TYPE_GPUDB_TO_NUMPY.get(gpudb_type)
+                col_data = pd.Series(data=raw_data,
+                                    name=col_name,
+                                    dtype=numpy_type,
+                                    index=index)
 
-            # do special conversion
-            if (gpudb_type == cls._COL_TYPE.BYTES):
-                col_data = col_data.map(cls.bytes_to_vec)
-            elif (gpudb_type == GPUdbColumnProperty.TIMESTAMP):
-                col_data = pd.to_datetime(col_data, unit='ms')
-            elif (gpudb_type == GPUdbColumnProperty.DATETIME):
-                col_data = pd.to_datetime(col_data, format='%Y-%m-%d %H:%M:%S.%f')
+                # do special conversion
+                if (gpudb_type == cls._COL_TYPE.BYTES):
+                    col_data = col_data.map(cls.bytes_to_vec)
+                elif (gpudb_type == GPUdbColumnProperty.TIMESTAMP):
+                    col_data = pd.to_datetime(col_data, unit='ms')
+                elif (gpudb_type == GPUdbColumnProperty.DATETIME):
+                    col_data = pd.to_datetime(col_data, format='%Y-%m-%d %H:%M:%S.%f')
+
+            except Exception as ex:
+                msg = "Error converting column <{}> with data type <{}/{}>: {}".format(col_name, gpudb_type, numpy_type, ex)
+                raise GPUdbException(msg) from ex
 
             data_list.append(col_data)
         return pd.concat(data_list, axis=1)
