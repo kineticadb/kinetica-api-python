@@ -2,6 +2,15 @@
 
 ## Version 7.2
 
+### Version 7.2.0.2 - 2024.03.06
+
+#### Added
+-   Improved support for JSON & standard array input as Python list
+    
+#### Notes
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
+
+
 ### Version 7.2.0.1 - 2024.02.22
 
 #### Added

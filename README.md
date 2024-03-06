@@ -14,21 +14,22 @@
 
 # Kinetica Python API
 
+-  [Overview](#overview)
+-  [Installation Instructions](#installation-instructions)
+-  [Troubleshooting Installation](#troubleshooting-installation)
+-  [GPUdb Table Monitor Client API](#gpudb-table-monitor-client-api)
+-  [Support](#support)
+-  [Contact Us](#contact-us)
+
+
+## Overview
+
 This is the 7.2.x.y version of the client-side Python API for Kinetica.  The
 first two components of the client version must match that of the Kinetica
 server.  When the versions do not match, the API will print a warning.  Often,
 there are breaking changes between versions, so it is critical that they match.
 For example, Kinetica 6.2 and 7.0 have incompatible changes, so the 6.2.x.y
 versions of the Python API would NOT be compatible with 7.0.a.b versions.
-
-
-## Contents
-
-* [Installation Instructions](#installation-instructions)
-* [Troubleshooting Installation](#troubleshooting-installation)
-* [GPUdb Table Monitor Client API](#gpudb-table-monitor-client-api)
-* [Support](#support)
-* [Contact Us](#contact-us)
 
 
 ## Installation Instructions
@@ -41,10 +42,10 @@ will not work.
 There is also an example file in the example directory.
 
 The documentation can be found at https://docs.kinetica.com/7.2/.  
-The python specific documentation can be found at:
+The Python specific documentation can be found at:
 
-*   https://docs.kinetica.com/7.2/guides/python_guide/
-*   https://docs.kinetica.com/7.2/api/python/
+* **Complete API**:  https://docs.kinetica.com/7.2/api/python/
+* **Tutorial**:  https://docs.kinetica.com/7.2/guides/python_guide/
 
 
 For changes to the client-side API, please refer to

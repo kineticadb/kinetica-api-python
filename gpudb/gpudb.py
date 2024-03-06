@@ -592,6 +592,16 @@ GPUdbRecordType = typing.NewType("GPUdbRecordType", object)
 class _Util(object):
 
     @staticmethod
+    def _is_heterogeneous_list(lst):
+        # Get the data type of the first element
+        first_type = type(lst[0])
+        # Check if any element has a different data type
+        for element in lst[1:]:
+            if type(element) != first_type:
+                return True
+        return False
+
+    @staticmethod
     def _convert_value_on_insertion(column_value: Any, column: GPUdbRecordColumn) -> object:
         """Convert column value for insertion into table for array, json and vector types
         JSON - str or dict (server needs it as string, so dict => str)
@@ -606,16 +616,22 @@ class _Util(object):
             object: the converted value
         """        
         converted_column_value: Any = None
-        if column.is_json():
-            if isinstance(column_value, dict):
-                # convert to string
+        if column.is_json() and not isinstance(column_value, str):
+            # convert to JSON string only if not already a string
+            converted_column_value: Any = None
+            try:
                 converted_column_value = json.dumps(column_value)
+            except TypeError:
+                raise GPUdbException("Invalid JSON value : " + column_value)
         elif column.is_array():
             if isinstance(column_value, list) and column.get_array_type() != GPUdbColumnProperty.BOOLEAN:
-                if all(isinstance(e, (int, float)) for e in column_value):
-                    converted_column_value = '[{}]'.format(','.join(str(e) for e in column_value))
-                elif all(isinstance(e, str) for e in column_value):
-                    converted_column_value = "[{}]".format(','.join('{}'.format(str(e)) for e in column_value))
+                if _Util._is_heterogeneous_list(column_value):
+                    converted_column_value = str(column_value).replace("'", "\"")
+                else:
+                    if all(isinstance(e, (int, float)) for e in column_value):
+                        converted_column_value = '[{}]'.format(','.join(str(e) for e in column_value))
+                    elif all(isinstance(e, str) for e in column_value):
+                        converted_column_value = "[{}]".format(','.join('{}'.format(str(e)) for e in column_value))
             elif isinstance(column_value, list) and all((e in [True, False]) for e in column_value):
                 # Got an array of boolean values
                 converted_column_value = str(column_value).replace('True', 'true').replace('False', 'false')
@@ -652,7 +668,7 @@ class _Util(object):
         if column.is_json():
             if isinstance(column_value, str):
                 # convert to dict
-                converted_column_value = column_value
+                converted_column_value = json.loads(column_value)
         elif column.is_array():
             if isinstance(column_value, str):
                 if column.get_array_type() != GPUdbColumnProperty.BOOLEAN:
@@ -1483,7 +1499,6 @@ class GPUdbRecordColumn(object):
         DOUBLE = "double"
         STRING = "string"
         BYTES  = "bytes"
-        BOOLEAN = "boolean"
     # end class _ColumnType
 
 
@@ -1494,13 +1509,11 @@ class GPUdbRecordColumn(object):
                             _ColumnType.DOUBLE,
                             _ColumnType.STRING,
                             _ColumnType.BYTES,
-                            _ColumnType.BOOLEAN
     ]
 
     # All non-numeric data types
     _non_numeric_data_types = [ _ColumnType.STRING,
                                 _ColumnType.BYTES,
-                                _ColumnType.BOOLEAN
     ]
 
     # All allowed numeric data types
@@ -1656,7 +1669,7 @@ class GPUdbRecordColumn(object):
                     elif sub_type.startswith("string"):
                         return GPUdbRecordColumn._ColumnType.STRING
                     elif sub_type.startswith("boolean"):
-                        return GPUdbRecordColumn._ColumnType.BOOLEAN
+                        return "boolean"
                     else:
                         raise GPUdbException("Unknown array type: " + sub_type)
 
@@ -4944,7 +4957,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.0.1"
+    api_version = "7.2.0.2"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -17971,11 +17984,13 @@ class GPUdb(object):
 
         External tables cannot be modified except for their refresh method.
 
-        Create or delete an `index
-        <../../../../concepts/indexes/#column-index>`__ on a particular column.
-        This can speed up certain operations when using expressions containing
-        equality or relational operators on indexed columns. This only applies
-        to tables.
+        Create or delete a `column
+        <../../../../concepts/indexes/#column-index>`__, `chunk skip
+        <../../../../concepts/indexes/#chunk-skip-index>`__, `geospatial
+        <../../../../concepts/indexes/#geospatial-index>`__, or `CAGRA
+        <../../../../concepts/indexes/#cagra-index>`__ index. This can speed up
+        certain operations when using expressions containing equality or
+        relational operators on indexed columns. This only applies to tables.
 
         Create or delete a `foreign key
         <../../../../concepts/tables/#foreign-key>`__ on a particular column.
@@ -18008,7 +18023,7 @@ class GPUdb(object):
                 Table on which the operation will be performed, in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__.  Must
+                <../../../../concepts/tables/#table-name-resolution>`__. Must
                 be an existing table or view.
 
             action (str)
@@ -18019,20 +18034,29 @@ class GPUdb(object):
                   No longer supported; action will be ignored.
 
                 * **create_index** --
-                  Creates either a `column (attribute) index
-                  <../../../../concepts/indexes/#column-index>`__ or `chunk
-                  skip index
-                  <../../../../concepts/indexes/#chunk-skip-index>`__,
-                  depending on the specified *index_type*, on the column name
+                  Creates a `column (attribute) index
+                  <../../../../concepts/indexes/#column-index>`__, `chunk skip
+                  index <../../../../concepts/indexes/#chunk-skip-index>`__,
+                  `geospatial index
+                  <../../../../concepts/indexes/#geospatial-index>`__, or
+                  `CAGRA index <../../../../concepts/indexes/#cagra-index>`__
+                  (depending on the specified *index_type*), on the column name
                   specified in input parameter *value*. If this column already
                   has the specified index, an error will be returned.
 
+                * **refresh_index** --
+                  Refreshes an index identified by *index_type*, on the column
+                  name specified in input parameter *value*. Currently
+                  applicable only to CAGRA indices.
+
                 * **delete_index** --
-                  Deletes either a `column (attribute) index
-                  <../../../../concepts/indexes/#column-index>`__ or `chunk
-                  skip index
-                  <../../../../concepts/indexes/#chunk-skip-index>`__,
-                  depending on the specified *index_type*, on the column name
+                  Deletes a `column (attribute) index
+                  <../../../../concepts/indexes/#column-index>`__, `chunk skip
+                  index <../../../../concepts/indexes/#chunk-skip-index>`__,
+                  `geospatial index
+                  <../../../../concepts/indexes/#geospatial-index>`__, or
+                  `CAGRA index <../../../../concepts/indexes/#cagra-index>`__
+                  (depending on the specified *index_type*), on the column name
                   specified in input parameter *value*. If this column does not
                   have the specified index, an error will be returned.
 
@@ -18045,8 +18069,8 @@ class GPUdb(object):
 
                 * **move_to_schema** --
                   Moves a table or view into a schema named input parameter
-                  *value*.  If the schema provided is nonexistent, an error
-                  will be thrown. If input parameter *value* is empty, then the
+                  *value*. If the schema provided is nonexistent, an error will
+                  be thrown. If input parameter *value* is empty, then the
                   table or view will be placed in the user's default schema.
 
                 * **protected** --
@@ -18066,19 +18090,19 @@ class GPUdb(object):
 
                 * **add_comment** --
                   Adds the comment specified in input parameter *value* to the
-                  table specified in input parameter *table_name*.  Use
+                  table specified in input parameter *table_name*. Use
                   *column_name* to set the comment for a column.
 
                 * **add_column** --
                   Adds the column specified in input parameter *value* to the
-                  table specified in input parameter *table_name*.  Use
+                  table specified in input parameter *table_name*. Use
                   *column_type* and *column_properties* in input parameter
                   *options* to set the column's type and properties,
                   respectively.
 
                 * **change_column** --
                   Changes type and properties of the column specified in input
-                  parameter *value*.  Use *column_type* and *column_properties*
+                  parameter *value*. Use *column_type* and *column_properties*
                   in input parameter *options* to set the column's type and
                   properties, respectively. Note that primary key and/or shard
                   key columns cannot be changed. All unchanging column
@@ -18208,28 +18232,28 @@ class GPUdb(object):
 
                 * **cancel_datasource_subscription** --
                   Permanently unsubscribe a data source that is loading
-                  continuously as a stream. The data source can be kafka / S3 /
+                  continuously as a stream. The data source can be Kafka / S3 /
                   Azure.
 
                 * **pause_datasource_subscription** --
                   Temporarily unsubscribe a data source that is loading
-                  continuously as a stream. The data source can be kafka / S3 /
+                  continuously as a stream. The data source can be Kafka / S3 /
                   Azure.
 
                 * **resume_datasource_subscription** --
                   Resubscribe to a paused data source subscription. The data
-                  source can be kafka / S3 / Azure.
+                  source can be Kafka / S3 / Azure.
 
                 * **change_owner** --
                   Change the owner resource group of the table.
 
             value (str)
                 The value of the modification, depending on input parameter
-                *action*.  For example, if input parameter *action* is
+                *action*. For example, if input parameter *action* is
                 *add_column*, this would be the column name; while the column's
                 definition would be covered by the *column_type*,
                 *column_properties*, *column_default_value*, and
-                *add_column_expression* in input parameter *options*.  If input
+                *add_column_expression* in input parameter *options*. If input
                 parameter *action* is *ttl*, it would be the number of minutes
                 for the new TTL. If input parameter *action* is *refresh*, this
                 field would be blank.
@@ -18319,7 +18343,8 @@ class GPUdb(object):
 
                 * **index_type** --
                   Type of index to create, when input parameter *action* is
-                  *create_index*, or to delete, when input parameter *action*
+                  *create_index*; to refresh, when input parameter *action* is
+                  *refresh_index*; or to delete, when input parameter *action*
                   is *delete_index*.
                   Allowed values are:
 
@@ -18332,9 +18357,20 @@ class GPUdb(object):
                     <../../../../concepts/indexes/#chunk-skip-index>`__.
 
                   * **geospatial** --
-                    Create or delete a geospatial index
+                    Create or delete a `geospatial index
+                    <../../../../concepts/indexes/#geospatial-index>`__
+
+                  * **cagra** --
+                    Create or delete a `CAGRA index
+                    <../../../../concepts/indexes/#cagra-index>`__ on a `vector
+                    column <../../../../vector_search/#vector-type>`__
 
                   The default value is 'column'.
+
+                * **index_options** --
+                  Options to use when creating an index, in the format "key:
+                  value [, key: value [, ...]]". Valid options vary by index
+                  type.
 
                 The default value is an empty dict ( {} ).
 
@@ -31683,7 +31719,7 @@ class GPUdb(object):
                     For string columns, the minimum length of the randomly
                     generated strings is set to this value (default is 0). If
                     both minimum and maximum are provided, minimum must be less
-                    than or equal to max. Value needs to be within [0, 200].
+                    than or equal to max.
 
                     If the min is outside the accepted ranges for strings
                     columns and 'x' and 'y' columns for point/shape/track, then
@@ -31700,10 +31736,8 @@ class GPUdb(object):
                     such cases are 180.0 and 90.0.
 
                     For string columns, the maximum length of the randomly
-                    generated strings is set to this value (default is 200). If
-                    both minimum and maximum are provided, *max* must be
-                    greater than or equal to *min*. Value needs to be within
-                    [0, 200].
+                    generated strings. If both minimum and maximum are
+                    provided, *max* must be greater than or equal to *min*.
 
                     If the *max* is outside the accepted ranges for strings
                     columns and 'x' and 'y' columns for point/shape/track, then
@@ -31758,7 +31792,7 @@ class GPUdb(object):
                     For string columns, the minimum length of the randomly
                     generated strings is set to this value (default is 0). If
                     both minimum and maximum are provided, minimum must be less
-                    than or equal to max. Value needs to be within [0, 200].
+                    than or equal to max.
 
                     If the min is outside the accepted ranges for strings
                     columns and 'x' and 'y' columns for point/shape/track, then
@@ -31775,10 +31809,8 @@ class GPUdb(object):
                     such cases are 180.0 and 90.0.
 
                     For string columns, the maximum length of the randomly
-                    generated strings is set to this value (default is 200). If
-                    both minimum and maximum are provided, *max* must be
-                    greater than or equal to *min*. Value needs to be within
-                    [0, 200].
+                    generated strings. If both minimum and maximum are
+                    provided, *max* must be greater than or equal to *min*.
 
                     If the *max* is outside the accepted ranges for strings
                     columns and 'x' and 'y' columns for point/shape/track, then
@@ -35305,7 +35337,7 @@ class GPUdb(object):
                 input parameter *table_name* is a schema and *show_children* is
                 set to *true*, then this array is populated with the names of
                 all tables and views in the given schema; if *show_children* is
-                *false* then this array will only include the schema name
+                *false*, then this array will only include the schema name
                 itself. If input parameter *table_name* is an empty string,
                 then the array contains the names of all tables in the user's
                 default schema.
@@ -35461,9 +35493,13 @@ class GPUdb(object):
                   don't fall into existing partitions. The default value is ''.
 
                 * **attribute_indexes** --
-                  Semicolon-separated list of columns that have `indexes
-                  <../../../../concepts/indexes/#column-index>`__. Not present
-                  for schemas. The default value is ''.
+                  Semicolon-separated list of indexes. For `column (attribute)
+                  indexes <../../../../concepts/indexes/#column-index>`__, only
+                  the indexed column name will be listed. For other index
+                  types, the index type will be listed with the colon-delimited
+                  indexed column(s) and the comma-delimited index option(s)
+                  using the form:  <index_type>@<column_list>@<column_options>.
+                  Not present for schemas. The default value is ''.
 
                 * **compressed_columns** --
                   No longer supported. The default value is ''.
@@ -42085,11 +42121,13 @@ class GPUdbTable( object ):
 
         External tables cannot be modified except for their refresh method.
 
-        Create or delete an `index
-        <../../../../concepts/indexes/#column-index>`__ on a particular column.
-        This can speed up certain operations when using expressions containing
-        equality or relational operators on indexed columns. This only applies
-        to tables.
+        Create or delete a `column
+        <../../../../concepts/indexes/#column-index>`__, `chunk skip
+        <../../../../concepts/indexes/#chunk-skip-index>`__, `geospatial
+        <../../../../concepts/indexes/#geospatial-index>`__, or `CAGRA
+        <../../../../concepts/indexes/#cagra-index>`__ index. This can speed up
+        certain operations when using expressions containing equality or
+        relational operators on indexed columns. This only applies to tables.
 
         Create or delete a `foreign key
         <../../../../concepts/tables/#foreign-key>`__ on a particular column.
@@ -42126,20 +42164,29 @@ class GPUdbTable( object ):
                   No longer supported; action will be ignored.
 
                 * **create_index** --
-                  Creates either a `column (attribute) index
-                  <../../../../concepts/indexes/#column-index>`__ or `chunk
-                  skip index
-                  <../../../../concepts/indexes/#chunk-skip-index>`__,
-                  depending on the specified *index_type*, on the column name
+                  Creates a `column (attribute) index
+                  <../../../../concepts/indexes/#column-index>`__, `chunk skip
+                  index <../../../../concepts/indexes/#chunk-skip-index>`__,
+                  `geospatial index
+                  <../../../../concepts/indexes/#geospatial-index>`__, or
+                  `CAGRA index <../../../../concepts/indexes/#cagra-index>`__
+                  (depending on the specified *index_type*), on the column name
                   specified in input parameter *value*. If this column already
                   has the specified index, an error will be returned.
 
+                * **refresh_index** --
+                  Refreshes an index identified by *index_type*, on the column
+                  name specified in input parameter *value*. Currently
+                  applicable only to CAGRA indices.
+
                 * **delete_index** --
-                  Deletes either a `column (attribute) index
-                  <../../../../concepts/indexes/#column-index>`__ or `chunk
-                  skip index
-                  <../../../../concepts/indexes/#chunk-skip-index>`__,
-                  depending on the specified *index_type*, on the column name
+                  Deletes a `column (attribute) index
+                  <../../../../concepts/indexes/#column-index>`__, `chunk skip
+                  index <../../../../concepts/indexes/#chunk-skip-index>`__,
+                  `geospatial index
+                  <../../../../concepts/indexes/#geospatial-index>`__, or
+                  `CAGRA index <../../../../concepts/indexes/#cagra-index>`__
+                  (depending on the specified *index_type*), on the column name
                   specified in input parameter *value*. If this column does not
                   have the specified index, an error will be returned.
 
@@ -42152,8 +42199,8 @@ class GPUdbTable( object ):
 
                 * **move_to_schema** --
                   Moves a table or view into a schema named input parameter
-                  *value*.  If the schema provided is nonexistent, an error
-                  will be thrown. If input parameter *value* is empty, then the
+                  *value*. If the schema provided is nonexistent, an error will
+                  be thrown. If input parameter *value* is empty, then the
                   table or view will be placed in the user's default schema.
 
                 * **protected** --
@@ -42173,19 +42220,19 @@ class GPUdbTable( object ):
 
                 * **add_comment** --
                   Adds the comment specified in input parameter *value* to the
-                  table specified in input parameter *table_name*.  Use
+                  table specified in input parameter *table_name*. Use
                   *column_name* to set the comment for a column.
 
                 * **add_column** --
                   Adds the column specified in input parameter *value* to the
-                  table specified in input parameter *table_name*.  Use
+                  table specified in input parameter *table_name*. Use
                   *column_type* and *column_properties* in input parameter
                   *options* to set the column's type and properties,
                   respectively.
 
                 * **change_column** --
                   Changes type and properties of the column specified in input
-                  parameter *value*.  Use *column_type* and *column_properties*
+                  parameter *value*. Use *column_type* and *column_properties*
                   in input parameter *options* to set the column's type and
                   properties, respectively. Note that primary key and/or shard
                   key columns cannot be changed. All unchanging column
@@ -42315,28 +42362,28 @@ class GPUdbTable( object ):
 
                 * **cancel_datasource_subscription** --
                   Permanently unsubscribe a data source that is loading
-                  continuously as a stream. The data source can be kafka / S3 /
+                  continuously as a stream. The data source can be Kafka / S3 /
                   Azure.
 
                 * **pause_datasource_subscription** --
                   Temporarily unsubscribe a data source that is loading
-                  continuously as a stream. The data source can be kafka / S3 /
+                  continuously as a stream. The data source can be Kafka / S3 /
                   Azure.
 
                 * **resume_datasource_subscription** --
                   Resubscribe to a paused data source subscription. The data
-                  source can be kafka / S3 / Azure.
+                  source can be Kafka / S3 / Azure.
 
                 * **change_owner** --
                   Change the owner resource group of the table.
 
             value (str)
                 The value of the modification, depending on input parameter
-                *action*.  For example, if input parameter *action* is
+                *action*. For example, if input parameter *action* is
                 *add_column*, this would be the column name; while the column's
                 definition would be covered by the *column_type*,
                 *column_properties*, *column_default_value*, and
-                *add_column_expression* in input parameter *options*.  If input
+                *add_column_expression* in input parameter *options*. If input
                 parameter *action* is *ttl*, it would be the number of minutes
                 for the new TTL. If input parameter *action* is *refresh*, this
                 field would be blank.
@@ -42426,7 +42473,8 @@ class GPUdbTable( object ):
 
                 * **index_type** --
                   Type of index to create, when input parameter *action* is
-                  *create_index*, or to delete, when input parameter *action*
+                  *create_index*; to refresh, when input parameter *action* is
+                  *refresh_index*; or to delete, when input parameter *action*
                   is *delete_index*.
                   Allowed values are:
 
@@ -42439,9 +42487,20 @@ class GPUdbTable( object ):
                     <../../../../concepts/indexes/#chunk-skip-index>`__.
 
                   * **geospatial** --
-                    Create or delete a geospatial index
+                    Create or delete a `geospatial index
+                    <../../../../concepts/indexes/#geospatial-index>`__
+
+                  * **cagra** --
+                    Create or delete a `CAGRA index
+                    <../../../../concepts/indexes/#cagra-index>`__ on a `vector
+                    column <../../../../vector_search/#vector-type>`__
 
                   The default value is 'column'.
+
+                * **index_options** --
+                  Options to use when creating an index, in the format "key:
+                  value [, key: value [, ...]]". Valid options vary by index
+                  type.
 
                 The default value is an empty dict ( {} ).
 
@@ -44938,7 +44997,7 @@ class GPUdbTable( object ):
                 input parameter *table_name* is a schema and *show_children* is
                 set to *true*, then this array is populated with the names of
                 all tables and views in the given schema; if *show_children* is
-                *false* then this array will only include the schema name
+                *false*, then this array will only include the schema name
                 itself. If input parameter *table_name* is an empty string,
                 then the array contains the names of all tables in the user's
                 default schema.
@@ -45094,9 +45153,13 @@ class GPUdbTable( object ):
                   don't fall into existing partitions. The default value is ''.
 
                 * **attribute_indexes** --
-                  Semicolon-separated list of columns that have `indexes
-                  <../../../../concepts/indexes/#column-index>`__. Not present
-                  for schemas. The default value is ''.
+                  Semicolon-separated list of indexes. For `column (attribute)
+                  indexes <../../../../concepts/indexes/#column-index>`__, only
+                  the indexed column name will be listed. For other index
+                  types, the index type will be listed with the colon-delimited
+                  indexed column(s) and the comma-delimited index option(s)
+                  using the form:  <index_type>@<column_list>@<column_options>.
+                  Not present for schemas. The default value is ''.
 
                 * **compressed_columns** --
                   No longer supported. The default value is ''.

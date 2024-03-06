@@ -3,6 +3,17 @@
 
 ## Version 7.2
 
+### Version 7.2.0.2 -- TBD
+
+#### Changed Endpoints
+
+##### Non-breaking changes
+
+-   Added ``cagra`` to ``index_type`` option in ``/alter/table``
+-   Added ``index_options`` option in ``/alter/table``
+-   Added ``refresh_index`` to ``action`` in ``/alter/table``
+
+
 ### Version 7.2.0.0 -- 2024-02-11
 
 #### Added
