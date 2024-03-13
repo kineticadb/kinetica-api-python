@@ -71,7 +71,7 @@ class GPUdbSqlIterator():
                 The parameter list that will be appended to.
 
             sql_params (list of native types)
-                The SQL parameters that will be subsituted for tokens (e.g. $1 $2)
+                The SQL parameters that will be substituted for tokens (e.g. $1 $2)
         """
         if (len(sql_params) == 0):
             return

@@ -1508,12 +1508,12 @@ class GPUdbRecordColumn(object):
                             _ColumnType.FLOAT,
                             _ColumnType.DOUBLE,
                             _ColumnType.STRING,
-                            _ColumnType.BYTES,
+                            _ColumnType.BYTES
     ]
 
     # All non-numeric data types
     _non_numeric_data_types = [ _ColumnType.STRING,
-                                _ColumnType.BYTES,
+                                _ColumnType.BYTES
     ]
 
     # All allowed numeric data types
@@ -4932,10 +4932,11 @@ class GPUdb(object):
     _DEFAULT_HOST_MANAGER_PORT       = 9300
     _DEFAULT_HTTPD_HOST_MANAGER_PORT = 8082
 
-    # The timeout (in seconds) used for checking the status of a node; we
-    # use a small timeout so that it does not take a long time to figure out
-    # that a rank is down.  Using 1 second.
-    __DEFAULT_INTERNAL_ENDPOINT_CALL_TIMEOUT = 1
+    # The timeout (in seconds) used for checking the status of a node; we used
+    # to use a small timeout so that it does not take a long time to figure out
+    # that a rank is down, but connections over high-traffic networks or the
+    # cloud may encounter significant connection wait times.  Using 20 seconds.
+    __DEFAULT_INTERNAL_ENDPOINT_CALL_TIMEOUT = 20
 
     # The number of times that the API will attempt to submit a host
     # manager endpoint request.  We need this in case the user chose
@@ -4948,7 +4949,7 @@ class GPUdb(object):
         "To fix, either:  "
         "1) Add the server's certificate or a CA cert to the system CA certificates file, or "
         "2) Skip the certificate check using the skip_ssl_cert_verification option.  "
-        "Examples:  https://docs.kinetica.com/7.1/api/concepts/#https-without-certificate-validation"
+        "Examples:  https://docs.kinetica.com/7.2/api/concepts/#https-without-certificate-validation"
     )
 
     END_OF_SET = -9999
@@ -4957,7 +4958,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.0.2"
+    api_version = "7.2.0.3"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5002,14 +5003,6 @@ class GPUdb(object):
                 be honored (only if no options is given).  I.e., if options
                 is given, no positional or keyword argument can be given.  See
                 :class:`Options` for all available properties.
-
-                In order to be backward-compatible, this argument will be
-                checked to see if it is the *port* argument from the 7.0.x.y
-                version of the API.  Users are encouraged to update their code
-                to use the current interface.  Please see the documentation for
-                the latest 7.0 version to understand the comment about this
-                `port` argument.  If you are getting started with this API with
-                version 7.1.0.0 or later, then ignore this whole paragraph.
 
                 .. seealso:: :class:`GPUdb.Options`
         """
@@ -10172,8 +10165,7 @@ class GPUdb(object):
         # end if
 
         try:
-            ping_timeout = 1 # 1 second
-            http_conn = self.__initialize_http_connection( url, ping_timeout )
+            http_conn = self.__initialize_http_connection( url, __DEFAULT_INTERNAL_ENDPOINT_CALL_TIMEOUT )
 
             # Ping is a get, unlike all endpoints which are post
             headers = {
@@ -10272,21 +10264,41 @@ class GPUdb(object):
     # end get_server_debug_information
 
 
-    def to_df(self, sql, **kwargs):
+    def to_df(self,
+              sql: str,
+              sql_params: list = [],
+              batch_size: int = 5000,
+              sql_opts: dict = {},
+              show_progress: bool = False):
         """Runs the given query and converts the result to a Pandas Data Frame.
 
-        Parameters:
+        Args:
             sql (str)
                 The SQL query to run
+
+            sql_params (list)
+                The SQL parameters that will be substituted for tokens (e.g. $1 $2)
+
             batch_size (int)
                 The number of records to retrieve at a time from the database
 
+            sql_opts (dict)
+                The options for SQL execution, matching the options passed to
+                :meth:`GPUdb.execute_sql`. Defaults to None.
+
+            show_progress (bool)
+                Whether to display progress on the console or not. Defaults to False.
+
+        Raises:
+            GPUdbException: 
+
         Returns:
-            A Pandas Data Frame containing the result set of the SQL query.
+            pd.DataFrame: A Pandas Data Frame containing the result set of the SQL query or None if
+                there are no results
         """
         from . import gpudb_dataframe
 
-        return gpudb_dataframe.DataFrameUtils.sql_to_df(self, sql, **kwargs)
+        return gpudb_dataframe.DataFrameUtils.sql_to_df(self, sql, sql_params, batch_size, sql_opts, show_progress)
     # end to_df
 
 
@@ -10295,16 +10307,17 @@ class GPUdb(object):
 
         Parameters:
             sql (str)
-                The SQL to execute
+                The SQL query to run
 
             batch_size(int)
-                The number of rows to retrieve per batch
+                The number of records to retrieve at a time from the database
 
             sql_params(list of native types)
-                The SQL parameters that will be subsituted for tokens (e.g. $1 $2)
+                The SQL parameters that will be substituted for tokens (e.g. $1 $2)
 
             sql_opts(dict)
-                The parameters that will be passed to the /execute/sql endpoint
+                The options for SQL execution, matching the options passed to
+                :meth:`GPUdb.execute_sql`. Defaults to None.
 
         Returns: 
             An instance of GPUdbSqlIterator.
@@ -10326,13 +10339,14 @@ class GPUdb(object):
 
         Parameters:
             sql (str)
-                The SQL to execute
+                The SQL query to run
 
             sql_params(list of native types)
-                The SQL parameters that will be subsituted for tokens (e.g. $1 $2)
+                The SQL parameters that will be substituted for tokens (e.g. $1 $2)
 
             sql_opts(dict)
-                The parameters that will be passed to the /execute/sql endpoint
+                The options for SQL execution, matching the options passed to
+                :meth:`GPUdb.execute_sql`. Defaults to None.
 
         Returns: 
             The returned row or None.
@@ -10363,10 +10377,11 @@ class GPUdb(object):
                 The SQL to execute
 
             sql_params(list of native types)
-                The SQL parameters that will be subsituted for tokens (e.g. $1 $2)
+                The SQL parameters that will be substituted for tokens (e.g. $1 $2)
 
             sql_opts(dict)
-                The parameters that will be passed to the /execute/sql endpoint
+                The options for SQL execution, matching the options passed to
+                :meth:`GPUdb.execute_sql`. Defaults to None.
 
         Returns:
             Number of records affected
@@ -17791,7 +17806,7 @@ class GPUdb(object):
 
                 * **communicator_test** --
                   Invoke the communicator test and report timing results. Value
-                  string is is a semicolon separated list of [key]=[value]
+                  string is a semicolon separated list of [key]=[value]
                   expressions.  Expressions are: num_transactions=[num] where
                   num is the number of request reply transactions to invoke per
                   test; message_size=[bytes] where bytes is the size in bytes
@@ -19762,6 +19777,9 @@ class GPUdb(object):
 
                 * **schema_registry_credential** --
                   Confluent Schema registry Credential object name.
+
+                * **schema_registry_port** --
+                  Confluent Schema registry port (optional).
 
                 The default value is an empty dict ( {} ).
 
@@ -22245,7 +22263,7 @@ class GPUdb(object):
                   The default value is 'insert'.
 
                 * **monitor_id** --
-                  ID to to use for this monitor instead of a randomly generated
+                  ID to use for this monitor instead of a randomly generated
                   one
 
                 * **datasink_name** --
@@ -25270,10 +25288,10 @@ class GPUdb(object):
     # end export_records_to_files
 
     # begin export_records_to_table
-    def export_records_to_table( self, table_name = None, remote_query = None,
+    def export_records_to_table( self, table_name = None, remote_query = '',
                                  options = {} ):
-        """Exports records from source table to  specified target table in an
-        external database
+        """Exports records from source table to the specified target table in
+        an external database
 
         Parameters:
 
@@ -25285,7 +25303,7 @@ class GPUdb(object):
 
             remote_query (str)
                 Parameterized insert query to export gpudb table data into
-                remote database
+                remote database. The default value is ''.
 
             options (dict of str to str)
                 Optional parameters.
@@ -25293,11 +25311,44 @@ class GPUdb(object):
 
                 * **batch_size** --
                   Batch size, which determines how many rows to export per
-                  round trip.
+                  round trip. The default value is '200000'.
 
                 * **datasink_name** --
                   Name of an existing external data sink to which table name
                   specified in input parameter *table_name* will be exported
+
+                * **jdbc_session_init_statement** --
+                  Executes the statement per each jdbc session before doing
+                  actual load. The default value is ''.
+
+                * **jdbc_connection_init_statement** --
+                  Executes the statement once before doing actual load. The
+                  default value is ''.
+
+                * **remote_table** --
+                  Name of the target table to which source table is exported.
+                  When this option is specified remote_query cannot be
+                  specified. The default value is ''.
+
+                * **use_st_geomfrom_casts** --
+                  Wraps parametrized variables with st_geomfromtext or
+                  st_geomfromwkb based on source column type.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **use_indexed_parameters** --
+                  Uses $n style syntax when generating insert query for
+                  remote_table option.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
                 The default value is an empty dict ( {} ).
 
@@ -34294,8 +34345,8 @@ class GPUdb(object):
             A dict with the following entries--
 
             result (bool)
-                Indicates a success. This call will fails of the graph
-                specified in the request does not exist.
+                Indicates a success. This call will fail if the graph specified
+                in the request does not exist.
 
             load (list of ints)
                 A percentage approximating the current computational load on
@@ -34311,10 +34362,10 @@ class GPUdb(object):
                 Id(s) of the graph(s).
 
             graph_owner_user_names (list of str)
-                Owner the graph(s) and associated solution table(s).
+                Owner of the graph(s) and associated solution table(s).
 
             graph_owner_resource_groups (list of str)
-                Owner resource groups(s) of the graph(s).
+                Owner of the resource groups(s) of the graph(s).
 
             directed (list of bools)
                 Whether or not the edges of the graph have directions
@@ -34340,8 +34391,8 @@ class GPUdb(object):
                 on launch).
 
             is_partitioned (list of bools)
-                Indicated if the graph data data is distributed across all
-                available servers.
+                Indicates if the graph data is distributed across all available
+                servers.
 
             is_sync_db (list of bools)
                 Shows whether or not the graph is linked to the original tables
@@ -35506,8 +35557,8 @@ class GPUdb(object):
 
                 * **column_info** --
                   JSON-encoded string representing a map of column name to
-                  information including memory usage if if the
-                  *get_column_info* option is *true*. The default value is ''.
+                  information including memory usage if the *get_column_info*
+                  option is *true*. The default value is ''.
 
                 * **global_access_mode** --
                   Returns the global access mode (i.e. lock status) for the
@@ -38503,7 +38554,7 @@ class GPUdbTable( object ):
         if use_multihead_io:
             self._multihead_retriever = RecordRetriever( self.db, self.qualified_name,
                                                          self.gpudbrecord_type,
-                                                         is_table_replicated = self._is_replicated)
+                                                         is_table_replicated = self._is_replicated )
         # end if
 
         # Set the encoding function for data to be inserted
@@ -40064,13 +40115,73 @@ class GPUdbTable( object ):
     # end to_df
 
     @classmethod
-    def from_df(cls, df, db, table_name, **kwargs):
+    def from_df(cls,
+                df,
+                db: GPUdb,
+                table_name: str,
+                column_types: dict = {},
+                clear_table: bool = False,
+                create_table: bool = True,
+                load_data: bool = True,
+                show_progress: bool = False,
+                batch_size: int = 5000,
+                **kwargs):
+        """ Load a Data Frame into a table; optionally dropping any existing table,
+        creating it if it doesn't exist, and loading data into it; and then returning a
+        GPUdbTable reference to the table.
+
+
+        Args:
+            df (pd.DataFrame)
+                The Pandas Data Frame to load into a table
+
+            db (GPUdb)
+                GPUdb instance
+
+            table_name (str)
+                Name of the target Kinetica table for the Data Frame loading
+
+            column_types (dict)
+                Optional Kinetica column properties to apply to the column type definitions inferred
+                from the Data Frame; map of column name to a list of column properties for that
+                column, excluding the inferred base type. For example::
+                
+                    { "middle_name": [ 'char64', 'nullable' ], "state": [ 'char2', 'dict' ] }
+
+            clear_table (bool)
+                Whether to drop an existing table of the same name or not before creating this one.
+
+            create_table (bool)
+                Whether to create the table if it doesn't exist or not.
+
+            load_data (bool)
+                Whether to load data into the target table or not.
+
+            show_progress (bool)
+                Whether to show progress of the operation on the console.
+
+            batch_size (int)
+                The number of records at a time to load into the target table.
+
+        Raises:
+            GPUdbException: 
+
+        Returns:
+            GPUdbTable: a GPUdbTable instance created from the Data Frame passed in 
         """
-        Load a table from a dataframe, optionally creating it if it doesn't exist,
-        and returning a GPUdbTable reference to the table.
-        """
+
         from . import gpudb_dataframe
-        return gpudb_dataframe.DataFrameUtils.df_to_table(df, db, table_name, **kwargs)
+        return gpudb_dataframe.DataFrameUtils.df_to_table(
+                df,
+                db,
+                table_name,
+                column_types,
+                clear_table,
+                create_table,
+                load_data,
+                show_progress,
+                batch_size,
+                **kwargs)
     # end from_df
 
 
@@ -43244,7 +43355,7 @@ class GPUdbTable( object ):
                   The default value is 'insert'.
 
                 * **monitor_id** --
-                  ID to to use for this monitor instead of a randomly generated
+                  ID to use for this monitor instead of a randomly generated
                   one
 
                 * **datasink_name** --
@@ -45166,8 +45277,8 @@ class GPUdbTable( object ):
 
                 * **column_info** --
                   JSON-encoded string representing a map of column name to
-                  information including memory usage if if the
-                  *get_column_info* option is *true*. The default value is ''.
+                  information including memory usage if the *get_column_info*
+                  option is *true*. The default value is ''.
 
                 * **global_access_mode** --
                   Returns the global access mode (i.e. lock status) for the
