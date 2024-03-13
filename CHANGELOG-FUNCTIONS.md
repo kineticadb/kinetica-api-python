@@ -28,6 +28,12 @@
     -  ``/delete/files``
 -   Added ``/admin/ha/refresh``
 -   Added ``evict_to_cold`` option to ``/alter/system/properties``
+-   Added options ``execute_at_startup`` and ``execute_at_startup_as``  to ``/execute/proc`` endpoint to facilitate running procs (UDFs) on startup
+-   Added option ``clear_execute_at_startup`` to ``/kill/proc`` endpoint to remove a startup proc (UDF) instance
+-   Added option ``verify_orphaned_tables_only`` to ``/admin/verifydb`` endpoint
+-   Added 'orphaned_tables_total_size' to response for endpoint ``/admin/verifydb``
+-   Added new action ``rebuild`` to ``/alter/environment``
+-   Added option ``show_current_user`` to ``/show/security`` endpoint
 
 #### Added
 -   Added new endpoints to support UDF python environment management:

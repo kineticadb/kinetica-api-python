@@ -13,7 +13,6 @@
 
 from __future__ import print_function
 
-import string
 
 try:
     from io import BytesIO
@@ -30,8 +29,6 @@ try:
 except ImportError:
     #python3
     from urllib.parse import urlencode
-
-import socket
 
 import base64
 import copy
@@ -71,7 +68,7 @@ gpudb_module_path = os.path.dirname(os.path.abspath(__file__))
 
 # Search for our modules first, probably don't need imp or virt envs.
 for gpudb_path in [gpudb_module_path, gpudb_module_path + "/packages"]:
-    if not gpudb_path in sys.path:
+    if gpudb_path not in sys.path:
         sys.path.append(gpudb_path)
 
 
@@ -4719,10 +4716,11 @@ class GPUdb(object):
     _DEFAULT_HOST_MANAGER_PORT       = 9300
     _DEFAULT_HTTPD_HOST_MANAGER_PORT = 8082
 
-    # The timeout (in seconds) used for checking the status of a node; we
-    # use a small timeout so that it does not take a long time to figure out
-    # that a rank is down.  Using 1 second.
-    __DEFAULT_INTERNAL_ENDPOINT_CALL_TIMEOUT = 1
+    # The timeout (in seconds) used for checking the status of a node; we used
+    # to use a small timeout so that it does not take a long time to figure out
+    # that a rank is down, but connections over high-traffic networks or the
+    # cloud may encounter significant connection wait times.  Using 20 seconds.
+    __DEFAULT_INTERNAL_ENDPOINT_CALL_TIMEOUT = 20
 
     # The number of times that the API will attempt to submit a host
     # manager endpoint request.  We need this in case the user chose
@@ -4744,7 +4742,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.9.10"
+    api_version = "7.1.9.11"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -9959,8 +9957,7 @@ class GPUdb(object):
         # end if
 
         try:
-            ping_timeout = 1 # 1 second
-            http_conn = self.__initialize_http_connection( url, ping_timeout )
+            http_conn = self.__initialize_http_connection( url, __DEFAULT_INTERNAL_ENDPOINT_CALL_TIMEOUT )
 
             # Ping is a get, unlike all endpoints which are post
             headers = {
@@ -10059,22 +10056,137 @@ class GPUdb(object):
     # end get_server_debug_information
 
 
-    def to_df(self, sql, **kwargs):
+    def to_df(self,
+              sql,
+              sql_params = [],
+              batch_size = 5000,
+              sql_opts = {},
+              show_progress = False):
         """Runs the given query and converts the result to a Pandas Data Frame.
+
+        Args:
+            sql (str)
+                The SQL query to run
+
+            sql_params (list)
+                The SQL parameters that will be substituted for tokens (e.g. $1 $2)
+
+            batch_size (int)
+                The number of records to retrieve at a time from the database
+
+            sql_opts (dict)
+                The options for SQL execution, matching the options passed to
+                :meth:`GPUdb.execute_sql`. Defaults to None.
+
+            show_progress (bool)
+                Whether to display progress on the console or not. Defaults to False.
+
+        Raises:
+            GPUdbException: 
+
+        Returns:
+            pd.DataFrame: A Pandas Data Frame containing the result set of the SQL query or None if
+                there are no results
+        """
+        from . import gpudb_dataframe
+
+        return gpudb_dataframe.DataFrameUtils.sql_to_df(self, sql, sql_params, batch_size, sql_opts, show_progress)
+    # end to_df
+
+
+    def query(self, sql, batch_size = 5000, sql_params = [], sql_opts = {}):
+        """Execute a SQL query and return a GPUdbSqlIterator
 
         Parameters:
             sql (str)
                 The SQL query to run
-            batch_size (int)
+
+            batch_size(int)
                 The number of records to retrieve at a time from the database
 
-        Returns:
-            A Pandas Data Frame containing the result set of the SQL query.
-        """
-        from . import gpudb_dataframe
-        return gpudb_dataframe.DataFrameUtils.sql_to_df(self, sql, **kwargs)
+            sql_params(list of native types)
+                The SQL parameters that will be substituted for tokens (e.g. $1 $2)
 
-    # end to_df
+            sql_opts(dict)
+                The options for SQL execution, matching the options passed to
+                :meth:`GPUdb.execute_sql`. Defaults to None.
+
+        Returns: 
+            An instance of GPUdbSqlIterator.
+        """
+        from . import gpudb_sql_iterator
+
+        sql_iterator = gpudb_sql_iterator.GPUdbSqlIterator(db=self, 
+                sql=sql, 
+                batch_size=batch_size, 
+                sql_params=sql_params,
+                sql_opts=sql_opts)
+        
+        return sql_iterator
+    # end query
+
+
+    def query_one(self, sql, sql_params = [], sql_opts = {}):
+        """Execute a SQL query that returns only one row.
+
+        Parameters:
+            sql (str)
+                The SQL query to run
+
+            sql_params(list of native types)
+                The SQL parameters that will be substituted for tokens (e.g. $1 $2)
+
+            sql_opts(dict)
+                The options for SQL execution, matching the options passed to
+                :meth:`GPUdb.execute_sql`. Defaults to None.
+
+        Returns: 
+            The returned row or None.
+        """
+        from . import gpudb_sql_iterator
+
+        with gpudb_sql_iterator.GPUdbSqlIterator(db=self, 
+                sql=sql, 
+                sql_params=sql_params,
+                batch_size=2,
+                sql_opts=sql_opts) as sql_iterator:
+            
+            if(sql_iterator.total_count == 0):
+                return None
+            elif(sql_iterator.total_count > 1):
+                raise GPUdbException("More than one result was returned")
+
+            row = sql_iterator.__next__()
+            return row
+    # end query_one
+
+
+    def execute(self, sql, sql_params = [], sql_opts = {}):
+        """Execute a SQL query and return the rowcount.
+
+        Parameters:
+            sql (str)
+                The SQL to execute
+
+            sql_params(list of native types)
+                The SQL parameters that will be substituted for tokens (e.g. $1 $2)
+
+            sql_opts(dict)
+                The options for SQL execution, matching the options passed to
+                :meth:`GPUdb.execute_sql`. Defaults to None.
+
+        Returns:
+            Number of records affected
+        """
+        from . import gpudb_sql_iterator
+
+        gpudb_sql_iterator.GPUdbSqlIterator._set_sql_params(sql_opts, sql_params)
+        response = self.execute_sql(statement=sql, options=sql_opts)
+        gpudb_sql_iterator.GPUdbSqlIterator._check_error(response)
+        count_affected = response['count_affected']
+        return count_affected
+    # end execute
+
 
     # ------------- END convenience functions ------------------------------------
 
@@ -10322,9 +10434,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/admin/verifydb"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_verify_db_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_verify_db_response","fields":[{"name":"verified_ok","type":"boolean"},{"name":"error_list","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_verify_db_response","fields":[{"name":"verified_ok","type":"boolean"},{"name":"error_list","type":{"type":"array","items":"string"}},{"name":"orphaned_tables_total_size","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("verified_ok", "boolean"), ("error_list", "array", [("string")]), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("verified_ok", "boolean"), ("error_list", "array", [("string")]), ("orphaned_tables_total_size", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/verifydb"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -13936,6 +14048,16 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **verify_orphaned_tables_only** --
+                  If *true*, only the presence of orphaned table directories
+                  will be checked, all persistence checks will be skipped.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
         Returns:
             A dict with the following entries--
 
@@ -13946,6 +14068,11 @@ class GPUdb(object):
             error_list (list of str)
                 List of errors found while validating the database internal
                 state.  The default value is an empty list ( [] ).
+
+            orphaned_tables_total_size (long)
+                If *verify_persist* is *true*, *verify_orphaned_tables_only* is
+                *true* or *delete_orphaned_tables* is *true*, this is the sum
+                in bytes of all orphaned tables found.  Otherwise, -1.
 
             info (dict of str to str)
                 Additional information.
@@ -17025,6 +17152,10 @@ class GPUdb(object):
                   Uninstalls all packages in the environment and resets it to
                   the original state at time of creation
 
+                * **rebuild** --
+                  Recreates the environment and re-installs all packages,
+                  upgrades the packages if necessary based on dependencies
+
             value (str)
                 The value of the modification, depending on input parameter
                 *action*.  For example, if input parameter *action* is
@@ -17420,7 +17551,7 @@ class GPUdb(object):
 
                 * **communicator_test** --
                   Invoke the communicator test and report timing results. Value
-                  string is is a semicolon separated list of [key]=[value]
+                  string is a semicolon separated list of [key]=[value]
                   expressions.  Expressions are: num_transactions=[num] where
                   num is the number of request reply transactions to invoke per
                   test; message_size=[bytes] where bytes is the size in bytes
@@ -17449,6 +17580,9 @@ class GPUdb(object):
                 * **max_get_records_size** --
                   The maximum number of records the database will serve for a
                   given data retrieval call.  The default value is '20000'.
+
+                * **max_grbc_batch_size** --
+                  <DEVELOPER>
 
                 * **enable_audit** --
                   Enable or disable auditing.
@@ -17591,13 +17725,14 @@ class GPUdb(object):
 
         External tables cannot be modified except for their refresh method.
 
-        Create or delete an `index
-        <../../../../concepts/indexes/#column-index>`__ on a
-        particular column. This can speed up certain operations when using
-        expressions
-        containing equality or relational operators on indexed columns. This
-        only
-        applies to tables.
+        Create or delete a `column
+        <../../../../concepts/indexes/#column-index>`__,
+        `chunk skip <../../../../concepts/indexes/#chunk-skip-index>`__, or
+        `geospatial <../../../../concepts/indexes/#geospatial-index>`__ index.
+        This can speed up
+        certain operations when using expressions containing equality or
+        relational
+        operators on indexed columns. This only applies to tables.
 
         Create or delete a `foreign key
         <../../../../concepts/tables/#foreign-key>`__
@@ -17634,10 +17769,10 @@ class GPUdb(object):
 
             table_name (str)
                 Table on which the operation will be performed, in
-                [schema_name.]table_name format, using standard `name
-                resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__.  Must
-                be an existing table or view.
+                [schema_name.]table_name format,
+                using standard `name resolution rules
+                <../../../../concepts/tables/#table-name-resolution>`__.
+                Must be an existing table or view.
 
             action (str)
                 Modification operation to be applied
@@ -17647,22 +17782,28 @@ class GPUdb(object):
                   No longer supported; action will be ignored.
 
                 * **create_index** --
-                  Creates either a `column (attribute) index
-                  <../../../../concepts/indexes/#column-index>`__ or `chunk
-                  skip index
-                  <../../../../concepts/indexes/#chunk-skip-index>`__,
-                  depending on the specified *index_type*, on the column name
-                  specified in input parameter *value*. If this column already
-                  has the specified index, an error will be returned.
+                  Creates a `column (attribute) index
+                  <../../../../concepts/indexes/#column-index>`__,
+                  `chunk skip index
+                  <../../../../concepts/indexes/#chunk-skip-index>`__, or
+                  `geospatial index
+                  <../../../../concepts/indexes/#geospatial-index>`__
+                  (depending on the specified *index_type*), on the column name
+                  specified in input parameter *value*.
+                  If this column already has the specified index, an error will
+                  be returned.
 
                 * **delete_index** --
-                  Deletes either a `column (attribute) index
-                  <../../../../concepts/indexes/#column-index>`__ or `chunk
-                  skip index
-                  <../../../../concepts/indexes/#chunk-skip-index>`__,
-                  depending on the specified *index_type*, on the column name
-                  specified in input parameter *value*. If this column does not
-                  have the specified index, an error will be returned.
+                  Deletes a `column (attribute) index
+                  <../../../../concepts/indexes/#column-index>`__,
+                  `chunk skip index
+                  <../../../../concepts/indexes/#chunk-skip-index>`__, or
+                  `geospatial index
+                  <../../../../concepts/indexes/#geospatial-index>`__
+                  (depending on the specified *index_type*), on the column name
+                  specified in input parameter *value*.
+                  If this column does not have the specified index, an error
+                  will be returned.
 
                 * **move_to_collection** --
                   [DEPRECATED--please use *move_to_schema* and use
@@ -17673,9 +17814,11 @@ class GPUdb(object):
 
                 * **move_to_schema** --
                   Moves a table or view into a schema named input parameter
-                  *value*.  If the schema provided is nonexistent, an error
-                  will be thrown. If input parameter *value* is empty, then the
-                  table or view will be placed in the user's default schema.
+                  *value*.
+                  If the schema provided is nonexistent, an error will be
+                  thrown.
+                  If input parameter *value* is empty, then the table or view
+                  will be placed in the user's default schema.
 
                 * **protected** --
                   No longer used.  Previously set whether the given input
@@ -17694,21 +17837,22 @@ class GPUdb(object):
 
                 * **add_column** --
                   Adds the column specified in input parameter *value* to the
-                  table specified in input parameter *table_name*.  Use
-                  *column_type* and *column_properties* in input parameter
-                  *options* to set the column's type and properties,
-                  respectively.
+                  table specified in input parameter *table_name*.
+                  Use *column_type* and *column_properties* in input parameter
+                  *options*
+                  to set the column's type and properties, respectively.
 
                 * **change_column** --
                   Changes type and properties of the column specified in input
-                  parameter *value*.  Use *column_type* and *column_properties*
-                  in input parameter *options* to set the column's type and
-                  properties, respectively. Note that primary key and/or shard
-                  key columns cannot be changed. All unchanging column
-                  properties must be listed for the change to take place, e.g.,
-                  to add dictionary encoding to an existing 'char4' column,
-                  both 'char4' and 'dict' must be specified in the input
-                  parameter *options* map.
+                  parameter *value*.
+                  Use *column_type* and *column_properties* in input parameter
+                  *options* to set
+                  the column's type and properties, respectively. Note that
+                  primary key and/or shard key columns cannot be changed.
+                  All unchanging column properties must be listed for the
+                  change to take place, e.g., to add dictionary encoding to
+                  an existing 'char4' column, both 'char4' and 'dict' must be
+                  specified in the input parameter *options* map.
 
                 * **set_column_compression** --
                   No longer supported; action will be ignored.
@@ -17831,31 +17975,34 @@ class GPUdb(object):
 
                 * **cancel_datasource_subscription** --
                   Permanently unsubscribe a data source that is loading
-                  continuously as a stream. The data source can be kafka / S3 /
+                  continuously as a stream. The data source can be Kafka / S3 /
                   Azure.
 
                 * **pause_datasource_subscription** --
                   Temporarily unsubscribe a data source that is loading
-                  continuously as a stream. The data source can be kafka / S3 /
+                  continuously as a stream. The data source can be Kafka / S3 /
                   Azure.
 
                 * **resume_datasource_subscription** --
                   Resubscribe to a paused data source subscription. The data
-                  source can be kafka / S3 / Azure.
+                  source can be Kafka / S3 / Azure.
 
                 * **change_owner** --
                   Change the owner resource group of the table.
 
             value (str)
                 The value of the modification, depending on input parameter
-                *action*.  For example, if input parameter *action* is
-                *add_column*, this would be the column name; while the column's
-                definition would be covered by the *column_type*,
-                *column_properties*, *column_default_value*, and
-                *add_column_expression* in input parameter *options*.  If input
-                parameter *action* is *ttl*, it would be the number of minutes
-                for the new TTL. If input parameter *action* is *refresh*, this
-                field would be blank.
+                *action*.
+                For example, if input parameter *action* is *add_column*, this
+                would be the column name;
+                while the column's definition would be covered by the
+                *column_type*,
+                *column_properties*, *column_default_value*,
+                and *add_column_expression* in input parameter *options*.
+                If input parameter *action* is *ttl*, it would be the number of
+                minutes for the new TTL.
+                If input parameter *action* is *refresh*, this field would be
+                blank.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -17939,8 +18086,9 @@ class GPUdb(object):
 
                 * **index_type** --
                   Type of index to create, when input parameter *action* is
-                  *create_index*, or to delete, when input parameter *action*
-                  is *delete_index*.
+                  *create_index*,
+                  or to delete, when input parameter *action* is
+                  *delete_index*.
                   Allowed values are:
 
                   * **column** --
@@ -18857,6 +19005,7 @@ class GPUdb(object):
                 * hdfs
                 * jdbc
                 * kafka
+                * confluent
 
             identity (str)
                 User of the credential to be created.
@@ -18960,6 +19109,12 @@ class GPUdb(object):
 
                 * **s3_encryption_customer_key** --
                   Customer encryption key to encrypt or decrypt data
+
+                * **s3_encryption_type** --
+                  Server side encryption type
+
+                * **s3_kms_key_id** --
+                  KMS key
 
                 * **hdfs_kerberos_keytab** --
                   Kerberos keytab file location for the given HDFS user.  This
@@ -19105,7 +19260,7 @@ class GPUdb(object):
                 'storage_provider_type://[storage_path[:storage_port]]' format.
 
                 Supported storage provider types are
-                'azure','gcs','hdfs','jdbc','kafka' and 's3'.
+                'azure','gcs','hdfs','jdbc','kafka', 'confluent' and 's3'.
 
             user_name (str)
                 Name of the remote system user; may be an empty string
@@ -19258,6 +19413,16 @@ class GPUdb(object):
                   * false
 
                   The default value is 'true'.
+
+                * **schema_registry_location** --
+                  Location of Confluent Schema registry in
+                  '[storage_path[:storage_port]]' format.
+
+                * **schema_registry_credential** --
+                  Confluent Schema registry Credential object name.
+
+                * **schema_registry_port** --
+                  Confluent Schema registry port (optional).
 
         Returns:
             A dict with the following entries--
@@ -21774,7 +21939,7 @@ class GPUdb(object):
                   The default value is 'insert'.
 
                 * **monitor_id** --
-                  ID to to use for this monitor instead of a randomly generated
+                  ID to use for this monitor instead of a randomly generated
                   one
 
                 * **datasink_name** --
@@ -23744,6 +23909,24 @@ class GPUdb(object):
                   of lines output exceeds the maximum, earlier lines are
                   discarded.  The default value is '100'.
 
+                * **execute_at_startup** --
+                  If *true*, an instance of the proc will run when the database
+                  is started instead of running immediately. The output
+                  parameter *run_id* can be retrieved using
+                  :meth:`GPUdb.show_proc` and used in
+                  :meth:`GPUdb.show_proc_status`.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **execute_at_startup_as** --
+                  Sets the alternate user name to execute this proc instance as
+                  when *execute_at_startup* is *true*.  The default value is
+                  ''.
+
         Returns:
             A dict with the following entries--
 
@@ -24772,7 +24955,7 @@ class GPUdb(object):
     # begin export_records_to_table
     def export_records_to_table( self, table_name = None, remote_query = '', options
                                  = {} ):
-        """Exports records from source table to  specified target table in an
+        """Exports records from source table to the specified target table in an
         external database
 
         Parameters:
@@ -24795,7 +24978,7 @@ class GPUdb(object):
 
                 * **batch_size** --
                   Batch size, which determines how many rows to export per
-                  round trip.
+                  round trip.  The default value is '200000'.
 
                 * **datasink_name** --
                   Name of an existing external data sink to which table name
@@ -31694,6 +31877,19 @@ class GPUdb(object):
                   instance(s) where a matching run tag was provided to
                   :meth:`GPUdb.execute_proc`.  The default value is ''.
 
+                * **clear_execute_at_startup** --
+                  If *true*, kill and remove the instance of the proc matching
+                  the auto-start run ID that was created to run when the
+                  database is started. The auto-start run ID was returned from
+                  :meth:`GPUdb.execute_proc` and can be retrieved using
+                  :meth:`GPUdb.show_proc`.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
         Returns:
             A dict with the following entries--
 
@@ -31891,6 +32087,9 @@ class GPUdb(object):
                 * **match_clusters** --
                   Matches the graph nodes with a cluster index using Louvain
                   clustering algorithm
+
+                * **match_pattern** --
+                  Matches a pattern in the graph
 
                 The default value is 'markov_chain'.
 
@@ -32279,6 +32478,16 @@ class GPUdb(object):
 
                   The default value is 'true'.
 
+                * **force_undirected** --
+                  For the *match_pattern* solver only. Pattern matching will be
+                  using both pattern and graph as undirected if set to true.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
         Returns:
             A dict with the following entries--
 
@@ -32476,7 +32685,7 @@ class GPUdb(object):
         IMPORTANT: It's highly recommended that you review the
         `Network Graphs & Solvers
         <../../../../graph_solver/network_graph_solver/>`__
-        concepts documentation and
+        concepts documentation, and
         `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`__
         before using this endpoint.
 
@@ -32876,6 +33085,11 @@ class GPUdb(object):
                   Default is to send to the server, amongst those containing
                   the corresponding graph, that has the most computational
                   bandwidth.
+
+                * **output_charn_length** --
+                  When specified (>0 and <=256), limits the number of char
+                  length on the output tables for string based nodes. The
+                  default length is 64.  The default value is '64'.
 
         Returns:
             A dict with the following entries--
@@ -33823,7 +34037,7 @@ class GPUdb(object):
 
 
     # begin show_environment
-    def show_environment( self, environment_name = None, options = {} ):
+    def show_environment( self, environment_name = '', options = {} ):
         """Shows information about a specified `user-defined function
         <../../../../concepts/udf/>`__ (UDF) environment or all environments.
         Returns detailed information about existing environments.
@@ -33834,7 +34048,7 @@ class GPUdb(object):
                 Name of the environment on which to retrieve information. The
                 name must refer to a currently existing environment. If '*' or
                 an empty value is specified, information about all environments
-                will be returned.
+                will be returned.  The default value is ''.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -33988,8 +34202,8 @@ class GPUdb(object):
             A dict with the following entries--
 
             result (bool)
-                Indicates a success. This call will fails of the graph
-                specified in the request does not exist.
+                Indicates a success. This call will fail if the graph specified
+                in the request does not exist.
 
             load (list of ints)
                 A percentage approximating the current computational load on
@@ -34005,10 +34219,10 @@ class GPUdb(object):
                 Id(s) of the graph(s).
 
             graph_owner_user_names (list of str)
-                Owner the graph(s) and associated solution table(s).
+                Owner of the graph(s) and associated solution table(s).
 
             graph_owner_resource_groups (list of str)
-                Owner resource groups(s) of the graph(s).
+                Owner of the resource groups(s) of the graph(s).
 
             directed (list of bools)
                 Whether or not the edges of the graph have directions
@@ -34034,8 +34248,8 @@ class GPUdb(object):
                 on launch).
 
             is_partitioned (list of bools)
-                Indicated if the graph data data is distributed across all
-                available servers.
+                Indicated if the graph data is distributed across all available
+                servers.
 
             is_sync_db (list of bools)
                 Shows whether or not the graph is linked to the original tables
@@ -34258,6 +34472,10 @@ class GPUdb(object):
 
                 * **error** --
                   The proc instance failed with an error.
+
+                * **none** --
+                  The proc instance does not have a status, i.e. it has not yet
+                  ran.
 
             statuses (dict of str to dicts of str to str)
                 Statuses for the returned run IDs, grouped by data segment ID.
@@ -34564,6 +34782,17 @@ class GPUdb(object):
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
                 ).
+                Allowed keys are:
+
+                * **show_current_user** --
+                  If *true*, returns only security information for the current
+                  user.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -34921,6 +35150,18 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **get_cached_sizes** --
+                  If *true* then the number of records in each table, along
+                  with a cumulative count, will be returned; blank, otherwise.
+                  This version will return the sizes cached at rank 0, which
+                  may be stale if there is a multihead insert occuring.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **show_children** --
                   If input parameter *table_name* is a schema, then *true* will
                   return information about the tables and views in the schema,
@@ -34964,14 +35205,16 @@ class GPUdb(object):
 
             table_names (list of str)
                 If input parameter *table_name* is a table or view, then the
-                single element of the array is input parameter *table_name*. If
-                input parameter *table_name* is a schema and *show_children* is
-                set to *true*, then this array is populated with the names of
-                all tables and views in the given schema; if *show_children* is
-                *false* then this array will only include the schema name
-                itself. If input parameter *table_name* is an empty string,
-                then the array contains the names of all tables in the user's
-                default schema.
+                single element of the array is input parameter *table_name*.
+                If input parameter *table_name* is a schema and *show_children*
+                is set to *true*,
+                then this array is populated with the names of all tables and
+                views in the given schema;
+                if *show_children* is *false*,
+                then this array will only include the schema name itself.
+                If input parameter *table_name* is an empty string, then the
+                array contains the names of all tables in the user's default
+                schema.
 
             table_descriptions (list of lists of str)
                 List of descriptions for the respective tables in output
@@ -39393,13 +39636,73 @@ class GPUdbTable( object ):
     # end to_df
 
     @classmethod
-    def from_df(cls, df, db, table_name, **kwargs):
+    def from_df(cls,
+                df,
+                db,
+                table_name,
+                column_types = {},
+                clear_table = False,
+                create_table = True,
+                load_data = True,
+                show_progress = False,
+                batch_size = 5000,
+                **kwargs):
+        """ Load a Data Frame into a table; optionally dropping any existing table,
+        creating it if it doesn't exist, and loading data into it; and then returning a
+        GPUdbTable reference to the table.
+
+
+        Args:
+            df (pd.DataFrame)
+                The Pandas Data Frame to load into a table
+
+            db (GPUdb)
+                GPUdb instance
+
+            table_name (str)
+                Name of the target Kinetica table for the Data Frame loading
+
+            column_types (dict)
+                Optional Kinetica column properties to apply to the column type definitions inferred
+                from the Data Frame; map of column name to a list of column properties for that
+                column, excluding the inferred base type. For example::
+                
+                    { "middle_name": [ 'char64', 'nullable' ], "state": [ 'char2', 'dict' ] }
+
+            clear_table (bool)
+                Whether to drop an existing table of the same name or not before creating this one.
+
+            create_table (bool)
+                Whether to create the table if it doesn't exist or not.
+
+            load_data (bool)
+                Whether to load data into the target table or not.
+
+            show_progress (bool)
+                Whether to show progress of the operation on the console.
+
+            batch_size (int)
+                The number of records at a time to load into the target table.
+
+        Raises:
+            GPUdbException: 
+
+        Returns:
+            GPUdbTable: a GPUdbTable instance created from the Data Frame passed in 
         """
-        Load a table from a dataframe, optionally creating it if it doesn't exist,
-        and returning a GPUdbTable reference to the table.
-        """
+
         from . import gpudb_dataframe
-        return gpudb_dataframe.DataFrameUtils.df_to_table(df, db, table_name, **kwargs)
+        return gpudb_dataframe.DataFrameUtils.df_to_table(
+                df,
+                db,
+                table_name,
+                column_types,
+                clear_table,
+                create_table,
+                load_data,
+                show_progress,
+                batch_size,
+                **kwargs)
     # end from_df
 
 
@@ -41474,13 +41777,14 @@ class GPUdbTable( object ):
 
         External tables cannot be modified except for their refresh method.
 
-        Create or delete an `index
-        <../../../../concepts/indexes/#column-index>`__ on a
-        particular column. This can speed up certain operations when using
-        expressions
-        containing equality or relational operators on indexed columns. This
-        only
-        applies to tables.
+        Create or delete a `column
+        <../../../../concepts/indexes/#column-index>`__,
+        `chunk skip <../../../../concepts/indexes/#chunk-skip-index>`__, or
+        `geospatial <../../../../concepts/indexes/#geospatial-index>`__ index.
+        This can speed up
+        certain operations when using expressions containing equality or
+        relational
+        operators on indexed columns. This only applies to tables.
 
         Create or delete a `foreign key
         <../../../../concepts/tables/#foreign-key>`__
@@ -41523,22 +41827,28 @@ class GPUdbTable( object ):
                   No longer supported; action will be ignored.
 
                 * **create_index** --
-                  Creates either a `column (attribute) index
-                  <../../../../concepts/indexes/#column-index>`__ or `chunk
-                  skip index
-                  <../../../../concepts/indexes/#chunk-skip-index>`__,
-                  depending on the specified *index_type*, on the column name
-                  specified in input parameter *value*. If this column already
-                  has the specified index, an error will be returned.
+                  Creates a `column (attribute) index
+                  <../../../../concepts/indexes/#column-index>`__,
+                  `chunk skip index
+                  <../../../../concepts/indexes/#chunk-skip-index>`__, or
+                  `geospatial index
+                  <../../../../concepts/indexes/#geospatial-index>`__
+                  (depending on the specified *index_type*), on the column name
+                  specified in input parameter *value*.
+                  If this column already has the specified index, an error will
+                  be returned.
 
                 * **delete_index** --
-                  Deletes either a `column (attribute) index
-                  <../../../../concepts/indexes/#column-index>`__ or `chunk
-                  skip index
-                  <../../../../concepts/indexes/#chunk-skip-index>`__,
-                  depending on the specified *index_type*, on the column name
-                  specified in input parameter *value*. If this column does not
-                  have the specified index, an error will be returned.
+                  Deletes a `column (attribute) index
+                  <../../../../concepts/indexes/#column-index>`__,
+                  `chunk skip index
+                  <../../../../concepts/indexes/#chunk-skip-index>`__, or
+                  `geospatial index
+                  <../../../../concepts/indexes/#geospatial-index>`__
+                  (depending on the specified *index_type*), on the column name
+                  specified in input parameter *value*.
+                  If this column does not have the specified index, an error
+                  will be returned.
 
                 * **move_to_collection** --
                   [DEPRECATED--please use *move_to_schema* and use
@@ -41549,9 +41859,11 @@ class GPUdbTable( object ):
 
                 * **move_to_schema** --
                   Moves a table or view into a schema named input parameter
-                  *value*.  If the schema provided is nonexistent, an error
-                  will be thrown. If input parameter *value* is empty, then the
-                  table or view will be placed in the user's default schema.
+                  *value*.
+                  If the schema provided is nonexistent, an error will be
+                  thrown.
+                  If input parameter *value* is empty, then the table or view
+                  will be placed in the user's default schema.
 
                 * **protected** --
                   No longer used.  Previously set whether the given input
@@ -41570,21 +41882,22 @@ class GPUdbTable( object ):
 
                 * **add_column** --
                   Adds the column specified in input parameter *value* to the
-                  table specified in input parameter *table_name*.  Use
-                  *column_type* and *column_properties* in input parameter
-                  *options* to set the column's type and properties,
-                  respectively.
+                  table specified in input parameter *table_name*.
+                  Use *column_type* and *column_properties* in input parameter
+                  *options*
+                  to set the column's type and properties, respectively.
 
                 * **change_column** --
                   Changes type and properties of the column specified in input
-                  parameter *value*.  Use *column_type* and *column_properties*
-                  in input parameter *options* to set the column's type and
-                  properties, respectively. Note that primary key and/or shard
-                  key columns cannot be changed. All unchanging column
-                  properties must be listed for the change to take place, e.g.,
-                  to add dictionary encoding to an existing 'char4' column,
-                  both 'char4' and 'dict' must be specified in the input
-                  parameter *options* map.
+                  parameter *value*.
+                  Use *column_type* and *column_properties* in input parameter
+                  *options* to set
+                  the column's type and properties, respectively. Note that
+                  primary key and/or shard key columns cannot be changed.
+                  All unchanging column properties must be listed for the
+                  change to take place, e.g., to add dictionary encoding to
+                  an existing 'char4' column, both 'char4' and 'dict' must be
+                  specified in the input parameter *options* map.
 
                 * **set_column_compression** --
                   No longer supported; action will be ignored.
@@ -41707,31 +42020,34 @@ class GPUdbTable( object ):
 
                 * **cancel_datasource_subscription** --
                   Permanently unsubscribe a data source that is loading
-                  continuously as a stream. The data source can be kafka / S3 /
+                  continuously as a stream. The data source can be Kafka / S3 /
                   Azure.
 
                 * **pause_datasource_subscription** --
                   Temporarily unsubscribe a data source that is loading
-                  continuously as a stream. The data source can be kafka / S3 /
+                  continuously as a stream. The data source can be Kafka / S3 /
                   Azure.
 
                 * **resume_datasource_subscription** --
                   Resubscribe to a paused data source subscription. The data
-                  source can be kafka / S3 / Azure.
+                  source can be Kafka / S3 / Azure.
 
                 * **change_owner** --
                   Change the owner resource group of the table.
 
             value (str)
                 The value of the modification, depending on input parameter
-                *action*.  For example, if input parameter *action* is
-                *add_column*, this would be the column name; while the column's
-                definition would be covered by the *column_type*,
-                *column_properties*, *column_default_value*, and
-                *add_column_expression* in input parameter *options*.  If input
-                parameter *action* is *ttl*, it would be the number of minutes
-                for the new TTL. If input parameter *action* is *refresh*, this
-                field would be blank.
+                *action*.
+                For example, if input parameter *action* is *add_column*, this
+                would be the column name;
+                while the column's definition would be covered by the
+                *column_type*,
+                *column_properties*, *column_default_value*,
+                and *add_column_expression* in input parameter *options*.
+                If input parameter *action* is *ttl*, it would be the number of
+                minutes for the new TTL.
+                If input parameter *action* is *refresh*, this field would be
+                blank.
 
             options (dict of str to str)
                 Optional parameters.  The default value is an empty dict ( {}
@@ -41815,8 +42131,9 @@ class GPUdbTable( object ):
 
                 * **index_type** --
                   Type of index to create, when input parameter *action* is
-                  *create_index*, or to delete, when input parameter *action*
-                  is *delete_index*.
+                  *create_index*,
+                  or to delete, when input parameter *action* is
+                  *delete_index*.
                   Allowed values are:
 
                   * **column** --
@@ -42598,7 +42915,7 @@ class GPUdbTable( object ):
                   The default value is 'insert'.
 
                 * **monitor_id** --
-                  ID to to use for this monitor instead of a randomly generated
+                  ID to use for this monitor instead of a randomly generated
                   one
 
                 * **datasink_name** --
@@ -44348,6 +44665,18 @@ class GPUdbTable( object ):
 
                   The default value is 'false'.
 
+                * **get_cached_sizes** --
+                  If *true* then the number of records in each table, along
+                  with a cumulative count, will be returned; blank, otherwise.
+                  This version will return the sizes cached at rank 0, which
+                  may be stale if there is a multihead insert occuring.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **show_children** --
                   If input parameter *table_name* is a schema, then *true* will
                   return information about the tables and views in the schema,
@@ -44392,14 +44721,16 @@ class GPUdbTable( object ):
 
             table_names (list of str)
                 If input parameter *table_name* is a table or view, then the
-                single element of the array is input parameter *table_name*. If
-                input parameter *table_name* is a schema and *show_children* is
-                set to *true*, then this array is populated with the names of
-                all tables and views in the given schema; if *show_children* is
-                *false* then this array will only include the schema name
-                itself. If input parameter *table_name* is an empty string,
-                then the array contains the names of all tables in the user's
-                default schema.
+                single element of the array is input parameter *table_name*.
+                If input parameter *table_name* is a schema and *show_children*
+                is set to *true*,
+                then this array is populated with the names of all tables and
+                views in the given schema;
+                if *show_children* is *false*,
+                then this array will only include the schema name itself.
+                If input parameter *table_name* is an empty string, then the
+                array contains the names of all tables in the user's default
+                schema.
 
             table_descriptions (list of lists of str)
                 List of descriptions for the respective tables in output

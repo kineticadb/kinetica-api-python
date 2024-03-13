@@ -95,6 +95,8 @@ class GPUdbSqlIterator():
         self.retrieved_count += 1
         return rec_values
 
+    next = __next__
+
     def _check_fetch(self):
         if (self.records is not None and self.rec_pos < len(self.records)):
             # nothing to do

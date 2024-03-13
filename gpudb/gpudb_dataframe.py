@@ -24,6 +24,7 @@ from . import GPUdbException
 
 
 class DataFrameUtils:
+
     _COL_TYPE = GPUdbRecordColumn._ColumnType
     _LOG = logging.getLogger("gpudb.DataFrameUtils")
     TQDM_NCOLS = None
@@ -37,12 +38,13 @@ class DataFrameUtils:
     def bytes_to_vec(cls, bvec):
         return np.frombuffer(bvec, dtype=np.float32)
 
+
     @classmethod
     def sql_to_df(cls, db,
                   sql,
-                  param_list= None,
+                  param_list = None,
                   batch_size = BATCH_SIZE,
-                  sql_opts=None,
+                  sql_opts = None,
                   show_progress = False):
         """Create a dataframe from the results of a SQL query.
 
@@ -145,6 +147,7 @@ class DataFrameUtils:
             data_list.append(col_data)
         return pd.concat(data_list, axis=1)
 
+
     @classmethod
     def table_to_df(cls, db,
                     table_name,
@@ -168,6 +171,7 @@ class DataFrameUtils:
                              batch_size=batch_size,
                              show_progress=show_progress)
 
+
     @classmethod
     def table_type_as_df(cls, gpudb_table):
         """Convert a GPUdbTable's type schema (column list) into a dataframe. 
@@ -186,37 +190,61 @@ class DataFrameUtils:
             col_list.append(col_type)
         return pd.DataFrame(col_list, columns=['name', 'type', 'properties'])
 
+
     @classmethod
     def df_to_table(cls, df,
                     db,
                     table_name,
-                    column_types = None,
+                    column_types = {},
                     clear_table = False,
                     create_table = True,
                     load_data = True,
                     show_progress = False,
                     batch_size = BATCH_SIZE,
                     **kwargs):
-        """ Load a dataframe into a table; optionally dropping any existing table,
+        """ Load a Data Frame into a table; optionally dropping any existing table,
         creating it if it doesn't exist, and loading data into it; and then returning a
         GPUdbTable reference to the table.
 
 
         Args:
-            db (GPUdb): a GPUdb instance
-            table_name (str): the Kinetica table name
-            column_types (dict): Kinetica column specs. Defaults to None.
-            clear_table (bool): whether to clear records from the existing table or not. Defaults to False.
-            create_table (bool): whether to create a non-existing table or not. Defaults to True.
-            load_data (bool): whether to load data into the table or not. Defaults to True.
-            show_progress (bool): whether to show progress of the operation. Defaults to False.
-            batch_size (int): a batch size to use for loading data into the table. Defaults to BATCH_SIZE.
+            df (pd.DataFrame)
+                The Pandas Data Frame to load into a table
+
+            db (GPUdb)
+                GPUdb instance
+
+            table_name (str)
+                Name of the target Kinetica table for the Data Frame loading
+
+            column_types (dict)
+                Optional Kinetica column properties to apply to the column type definitions inferred
+                from the Data Frame; map of column name to a list of column properties for that
+                column, excluding the inferred base type. Defaults to empty map. For example::
+                
+                    { "middle_name": [ 'char64', 'nullable' ], "state": [ 'char2', 'dict' ] }
+
+            clear_table (bool)
+                Whether to drop an existing table of the same name or not before creating this one.
+                Defaults to False.
+
+            create_table (bool)
+                Whether to create the table if it doesn't exist or not. Defaults to True.
+
+            load_data (bool)
+                Whether to load data into the target table or not. Defaults to True.
+
+            show_progress (bool)
+                Whether to show progress of the operation on the console. Defaults to False.
+
+            batch_size (int)
+                The number of records at a time to load into the target table. Defaults to BATCH_SIZE.
 
         Raises:
             GPUdbException: 
 
         Returns:
-            GPUdbTable: a GPUdbTable instance created from the dataframe passed in 
+            GPUdbTable: a GPUdbTable instance created from the Data Frame passed in 
         """        
 
         has_table_resp = db.has_table(table_name)
@@ -290,6 +318,7 @@ class DataFrameUtils:
         cls._LOG.debug("Rows inserted: {}".format(rows_inserted))
         return rows_inserted
 
+
     @classmethod
     def _table_convert_df_for_insert(cls, df):
         """ Convert dataframe for insert into Kinetica table. """
@@ -317,14 +346,15 @@ class DataFrameUtils:
         'bool': [_COL_TYPE.INT, GPUdbColumnProperty.BOOLEAN]
     }
 
+
     @classmethod
     def _table_types_from_df(cls, df,
-                             col_type_override = None):
+                             col_type_override):
         """ Create GPUdb column types from a DataFrame. """
         type_list = []
 
         # create a copy because we will be modifying this.
-        col_type_override = col_type_override.copy()
+        col_type_override = col_type_override.copy() if col_type_override is not None else {}
 
         for col_name, col_data in df.items():
             np_type = col_data.dtype.name
@@ -350,16 +380,22 @@ class DataFrameUtils:
                 else:
                     raise GPUdbException("{}: Type not supported: {}".format(col_name, type(ref_val)))
 
-            col_attr_override = None
-            if (col_type_override is not None):
-                col_attr_override = col_type_override.get(col_name)
-
+            col_attr_override = col_type_override.pop(col_name, None)
+            # replace the column attributes, if provided
             if (col_attr_override is not None):
-                # replace the column attribute if provided
-                col_type = [col_type[0], col_attr_override]
+                if isinstance(col_attr_override, str):
+                    col_type = [col_type[0]] + [prop.strip() for prop in col_attr_override.split(',')]
+                elif isinstance(col_attr_override, list):
+                    col_type = [col_type[0]] + col_attr_override
+                else:
+                    raise GPUdbException("{}: Type properties not supported: {}".format(col_attr_override, type(col_attr_override)))
 
             type_def = [col_name] + col_type
             type_list.append(type_def)
-        return type_list
 
+        if(len(col_type_override) > 0):
+            raise GPUdbException("Column type map has unknown columns: {}".format(list(col_type_override.keys())))
+
+        return type_list
+    
 # end class DataFrameUtils
