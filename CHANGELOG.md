@@ -2,6 +2,12 @@
 
 ## Version 7.2
 
+### Version 7.2.0.4 - 2024-03-14
+
+#### Fixed
+-   Constant timeout reference for rank connections
+
+
 ### Version 7.2.0.3 - 2024-03-13
 
 #### Added
@@ -44,6 +50,12 @@
 
 
 ## Version 7.1
+
+### Version 7.1.9.12 - 2024-03-14
+
+#### Fixed
+-   Constant timeout reference for rank connections
+
 
 ### Version 7.1.9.11 - 2024-03-13
 
