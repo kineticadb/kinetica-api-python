@@ -4742,7 +4742,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.9.11"
+    api_version = "7.1.9.12"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -9957,7 +9957,7 @@ class GPUdb(object):
         # end if
 
         try:
-            http_conn = self.__initialize_http_connection( url, __DEFAULT_INTERNAL_ENDPOINT_CALL_TIMEOUT )
+            http_conn = self.__initialize_http_connection( url, self.__DEFAULT_INTERNAL_ENDPOINT_CALL_TIMEOUT )
 
             # Ping is a get, unlike all endpoints which are post
             headers = {
