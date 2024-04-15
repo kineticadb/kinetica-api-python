@@ -31,7 +31,7 @@ class KifsFileInfo(object):
     """KifsFileInfo - the class for storing/accessing the KIFS
         file name and size.
     """
-    def __init__(self, file_name: str, file_size: int):
+    def __init__(self, file_name, file_size):
         self.file_name = file_name
         self.file_size = file_size
         
@@ -74,7 +74,7 @@ class GPUdbFileHandler(object):
     
     """
     
-    def __init__(self, db: GPUdb) -> None:
+    def __init__(self, db):
         """
         Args:
             db (GPUdb): A GPUdb instance
@@ -85,7 +85,7 @@ class GPUdbFileHandler(object):
 
 
     @classmethod
-    def __from(cls, db: GPUdb):
+    def __from(cls, db):
         """Create an instance of GPUdbFileHandler
 
         Args:
@@ -98,7 +98,7 @@ class GPUdbFileHandler(object):
     
 
     @classmethod
-    def from_url_info(cls, host: str = "http://127.0.0.1:9191", username: str = None, password: str = None):
+    def from_url_info(cls, host="http://127.0.0.1:9191", username=None, password=None):
         """Method to create a GPUdbFileHandler instance given a host string, user name and password
 
         Args:
@@ -118,7 +118,7 @@ class GPUdbFileHandler(object):
 
     
     @classmethod
-    def from_db_instance(cls, db: GPUdb):
+    def from_db_instance(cls, db):
         """Method to create a GPUdbFileHandler instance given a GPUdb instance
 
         Args:
@@ -130,7 +130,7 @@ class GPUdbFileHandler(object):
         return cls.__from(db)
 
     
-    def __is_multi_part(self, file_name: str, op_mode: OpMode) -> Tuple[bool, int]:
+    def __is_multi_part(self, file_name, op_mode):
         if op_mode == OpMode.UPLOAD:
             size = self.__get_local_file_size(file_name)
             return size > FILE_SIZE_THRESHOLD, size
@@ -140,7 +140,7 @@ class GPUdbFileHandler(object):
             return size > FILE_SIZE_THRESHOLD, size
 
     
-    def __upload_multi_part(self, file_name: str, kifs_path: str):
+    def __upload_multi_part(self, file_name, kifs_path):
         kifs_file_name = kifs_path + KIFS_PATH_SEPARATOR + Path(file_name).name
 
         upload_id = self.__upload_multi_part_init(kifs_file_name)
@@ -148,22 +148,22 @@ class GPUdbFileHandler(object):
         part_number = 1
 
         with open(file_name, mode="rb") as f:
-            chunk: bytes = f.read(buffer_size)
+            chunk = f.read(buffer_size)
             if chunk:
                 self.__upload_multi_part_part(kifs_file_name, upload_id, part_number, chunk)
             else:
                 self.__upload_multi_part_cancel(kifs_file_name, upload_id)
                 raise gpudb.GPUdbException("No data found")
             while chunk:
-                chunk: bytes = f.read(buffer_size)
+                chunk = f.read(buffer_size)
                 part_number += 1
                 self.__upload_multi_part_part(kifs_file_name, upload_id, part_number, chunk)
             
             self.__upload_multi_part_complete(kifs_file_name, upload_id)
                 
 
-    def __upload_multi_part_init(self, file_name: str, options: dict = {}) -> uuid.uuid4:
-        upload_id: uuid.uuid4 = uuid.uuid4()
+    def __upload_multi_part_init(self, file_name, options):
+        upload_id = uuid.uuid4()
         options["multipart_upload_uuid"] = upload_id
         options["multipart_operation"] = MultipartOperation.INIT.value
         resp = self._db.upload_files([file_name], [], options)
@@ -177,7 +177,7 @@ class GPUdbFileHandler(object):
         return upload_id
 
     
-    def __upload_multi_part_part(self, file_name: str, id: uuid.uuid4, part_number: int, data: bytes, options: dict = {}) -> None:
+    def __upload_multi_part_part(self, file_name, id, part_number, data, options):
         options["multipart_upload_uuid"] = id
         options["multipart_upload_part_number"] = part_number
         options["multipart_operation"] = MultipartOperation.UPLOAD_PART.value
@@ -192,7 +192,8 @@ class GPUdbFileHandler(object):
             raise gpudb.GPUdbException(status_message)
 
 
-    def __upload_multi_part_complete(self, file_name: str, id: uuid.uuid4, options: dict = {}) -> None:
+    def __upload_multi_part_complete(self, file_name, id, options):
+
         options["multipart_upload_uuid"] = id
         options["multipart_operation"] = MultipartOperation.COMPLETE.value
         resp = self._db.upload_files([file_name], [], options)
@@ -204,19 +205,19 @@ class GPUdbFileHandler(object):
             raise gpudb.GPUdbException(status_message)
 
     
-    def __upload_multi_part_cancel(self, file_name: str, id: uuid.uuid4, options: dict = {}) -> None:
+    def __upload_multi_part_cancel(self, file_name, id, options):
         options["multipart_upload_uuid"] = id
         options["multipart_operation"] = MultipartOperation.CANCEL.value
         self._db.upload_files([file_name], None, options)
 
 
-    def __upload_full(self, file_name: str, kifs_path: str) -> None:
+    def __upload_full(self, file_name, kifs_path):
         kifs_file_name = kifs_path + KIFS_PATH_SEPARATOR + Path(file_name).name
         
         with open(file_name, mode="rb") as f:
-            chunk: bytes = f.read(self.__get_local_file_size(file_name))
+            chunk = f.read(self.__get_local_file_size(file_name))
             if chunk:
-                resp: dict = self._db.upload_files([kifs_file_name], [chunk])
+                resp = self._db.upload_files([kifs_file_name], [chunk])
                 status = resp["status_info"]["status"]
 
                 if status == "ERROR":
@@ -224,7 +225,7 @@ class GPUdbFileHandler(object):
                     raise gpudb.GPUdbException(status_message)
 
     
-    def upload_file(self, file_name: str, kifs_path: str) -> None:
+    def upload_file(self, file_name, kifs_path):
         """API to upload a single file to a KIFS directory
 
         Args:
@@ -232,7 +233,7 @@ class GPUdbFileHandler(object):
             kifs_path (str): A KIFS directory to upload (must be existing)
         """
         if not self.__check_local_file(file_name):
-            raise gpudb.GPUdbException(f"${file_name} is not valid, cannot upload ...")
+            raise gpudb.GPUdbException("{} is not valid, cannot upload ...".format(file_name))
 
         is_multi_part, _ = self.__is_multi_part(file_name, op_mode=OpMode.UPLOAD)
         
@@ -242,7 +243,7 @@ class GPUdbFileHandler(object):
             self.__upload_full(file_name, kifs_path)
 
     
-    def upload_files(self, file_names: list, kifs_path: str) -> None:
+    def upload_files(self, file_names, kifs_path):
         """API to upload a list of files to a KIFS directory
 
         Args:
@@ -253,30 +254,30 @@ class GPUdbFileHandler(object):
             self.upload_file(file, kifs_path)
 
     
-    def __download_full(self, file_name: str, file_size: int, local_dir: str) -> None:
-        resp: dict = self._db.download_files([file_name], [], [], {})
+    def __download_full(self, file_name, file_size, local_dir):
+        resp = self._db.download_files([file_name], [], [], {})
         local_file_name = local_dir + os.sep + file_name.split(KIFS_PATH_SEPARATOR)[-1]
         
         with open(local_file_name, mode="bw") as f:
             written = f.write(resp["file_data"][0])
             if written != file_size:
-                raise gpudb.GPUdbException(f"Failed to write file ${file_name}")
+                raise gpudb.GPUdbException("Failed to write file {}".format(file_name))
     
     
-    def __download_multi_part(self, file_name: str, file_size: int, local_dir: str) -> None:
-        local_file_name: str = local_dir + os.sep + file_name.split(KIFS_PATH_SEPARATOR)[-1]
-        offset: int = 0
+    def __download_multi_part(self, file_name, file_size, local_dir):
+        local_file_name = local_dir + os.sep + file_name.split(KIFS_PATH_SEPARATOR)[-1]
+        offset = 0
         
         with open(local_file_name, mode="bw") as f:
             while offset < file_size:
-                resp: dict = self._db.download_files([file_name], [offset], [FILE_SIZE_THRESHOLD])
+                resp = self._db.download_files([file_name], [offset], [FILE_SIZE_THRESHOLD])
                 if resp["file_data"]:
                     f.write(resp["file_data"][0])
                 offset += FILE_SIZE_THRESHOLD
             pass
     
     
-    def download_file(self, file_name: str, local_dir: str) -> None:
+    def download_file(self, file_name, local_dir):
         """API to download a single file to a local directory
             A large file greater than 60MB in size will be downloaded in parts.
 
@@ -298,7 +299,7 @@ class GPUdbFileHandler(object):
             self.__download_full(file_name, size, local_dir)
 
     
-    def download_files(self, file_names: list, local_dir: str) -> None:
+    def download_files(self, file_names, local_dir):
         """API to download a list of file from KIFS
 
         Args:
@@ -315,7 +316,7 @@ class GPUdbFileHandler(object):
             self.download_file(file, local_dir)
 
     
-    def __check_local_dir(self, local_dir: str) -> bool:
+    def __check_local_dir(self, local_dir):
         """used for downloading files
 
         Args:
@@ -327,15 +328,15 @@ class GPUdbFileHandler(object):
         return os.path.isdir(local_dir)
     
     
-    def __check_local_file(self, file_path: str) -> bool:
+    def __check_local_file(self, file_path):
         return os.path.isfile(file_path)
 
     
-    def __get_local_file_size(self, file_name: str) -> int:
+    def __get_local_file_size(self, file_name):
         return os.stat(file_name).st_size
     
     
-    def __get_kifs_file_info(self, file_name: str) -> KifsFileInfo:
+    def __get_kifs_file_info(self, file_name):
         resp = self._db.show_files([file_name])
         
         kifs_file_info = KifsFileInfo()

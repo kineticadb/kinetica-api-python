@@ -2,6 +2,22 @@
 
 ## Version 7.1
 
+### Version 7.1.9.13 - 2024-04-15
+
+#### Added
+-   Server connection timeout parameter for handling timeouts for server status
+    checks; this operates independently of the exiting timeout for user endpoint
+    requests
+
+#### Changed
+-   Deprecated `GPUdb.is_kinetica_running()` function
+
+#### Fixed
+-   Handling of empty dataframes & strings in `GPUdbTable.from_df()`
+-   Ability to use `gpudb_dataframe` & `gpudb_file_handler` modules in
+    Python 2.7
+
+
 ### Version 7.1.9.12 - 2024-03-14
 
 #### Fixed

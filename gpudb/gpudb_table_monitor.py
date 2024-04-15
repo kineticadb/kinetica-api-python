@@ -851,7 +851,7 @@ class GPUdbTableMonitor(object):
                 ABORT = 1
                 """
                 int: If a decoding error occurs and ``ABORT`` is specified, then
-                the the program aborts (quits with an exception)
+                the program aborts (quits with an exception)
                 """
 
                 SKIP = 2
@@ -1664,7 +1664,7 @@ class _UpdateWatcherTask(_BaseTask):
                  ):
 
         """
-        Constructor the the class _UpdateWatcherTask which inherits from
+        Constructor of the class _UpdateWatcherTask which inherits from
         _BaseTask
 
         Parameters:

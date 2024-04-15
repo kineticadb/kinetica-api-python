@@ -245,7 +245,10 @@ class DataFrameUtils:
 
         Returns:
             GPUdbTable: a GPUdbTable instance created from the Data Frame passed in 
-        """        
+        """
+
+        if(df.empty):
+            raise GPUdbException("Dataframe cannot be empty.")
 
         has_table_resp = db.has_table(table_name)
         cls._check_error(has_table_resp)
@@ -364,14 +367,16 @@ class DataFrameUtils:
                 # need to inspect the type directly
                 ref_val = col_data[0]
                 if isinstance(ref_val, str):
+                    col_type = [cls._COL_TYPE.STRING]
                     max_len = col_data.map(len).max()
+                    max_len = max(max_len,2)
                     spow = None
                     try:
                         spow = 2 ** ceil(log(max_len,2))
                     except:
                         spow = 2 ** ceil(log2(max_len))
-
-                    col_type = [cls._COL_TYPE.STRING, 'char{}'.format(spow)]
+                    if(spow <= 256):
+                        col_type += [ 'char{}'.format(spow) ]
 
                 elif isinstance(ref_val, list) or isinstance(ref_val, np.ndarray):
                     vec_dim = len(ref_val)

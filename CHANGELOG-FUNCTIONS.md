@@ -34,6 +34,7 @@
 -   Added 'orphaned_tables_total_size' to response for endpoint ``/admin/verifydb``
 -   Added new action ``rebuild`` to ``/alter/environment``
 -   Added option ``show_current_user`` to ``/show/security`` endpoint
+-   Added option ``show_worker_info`` to ``/admin/show/jobs`` endpoint
 
 #### Added
 -   Added new endpoints to support UDF python environment management:
