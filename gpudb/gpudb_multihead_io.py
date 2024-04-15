@@ -2637,7 +2637,7 @@ class GPUdbIngestor:
 
             # We did switch to a different cluster; now check the health
             # of the cluster, starting with the head node
-            if not self.gpudb.is_kinetica_running( curr_url ):
+            if not self.gpudb._GPUdb__is_system_running( curr_url ):
                 continue # try the next cluster because this head node is down
             # end if
 
@@ -2662,7 +2662,7 @@ class GPUdbIngestor:
                 # Check the health of all the worker ranks
                 for worker_rank in worker_ranks.worker_urls:
                     worker_rank = GPUdb.URL( worker_rank )
-                    if ( not self.gpudb.is_kinetica_running( worker_rank ) ):
+                    if ( not self.gpudb._GPUdb__is_system_running( worker_rank ) ):
                         is_cluster_healthy = False
                     # end if
                 # end for
@@ -3828,7 +3828,7 @@ class RecordRetriever:
 
             # We did switch to a different cluster; now check the health
             # of the cluster, starting with the head node
-            if not self.gpudb.is_kinetica_running( curr_url ):
+            if not self.gpudb._GPUdb__is_system_running( curr_url ):
                 continue # try the next cluster because this head node is down
             # end if
 
@@ -3852,7 +3852,7 @@ class RecordRetriever:
                 # Check the health of all the worker ranks
                 for worker_rank in worker_ranks.worker_urls:
                     worker_rank = GPUdb.URL( worker_rank )
-                    if ( not self.gpudb.is_kinetica_running( worker_rank ) ):
+                    if ( not self.gpudb._GPUdb__is_system_running( worker_rank ) ):
                         is_cluster_healthy = False
                     # end if
                 # end for

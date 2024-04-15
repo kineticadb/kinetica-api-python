@@ -15,6 +15,9 @@ from __future__ import print_function
 import struct
 from typing import Any, List, Union
 import typing
+import functools
+import warnings
+
 
 
 try:
@@ -140,6 +143,22 @@ logging.Logger.trace = trace
 
 
 # -----------------------------------------------------------------
+
+def deprecated(func):
+    """This is a decorator which can be used to mark functions
+    as deprecated. It will result in a warning being emitted
+    when the function is used."""
+
+    @functools.wraps(func)
+    def new_func(*args, **kwargs):
+        warnings.simplefilter('always', DeprecationWarning)  # turn off filter
+        warnings.warn("Call to deprecated function {}.".format(func.__name__),
+                      category=DeprecationWarning,
+                      stacklevel=2)
+        warnings.simplefilter('default', DeprecationWarning)  # reset filter
+        return func(*args, **kwargs)
+
+    return new_func
 
 
 # Some string constants used throughout the program
@@ -2291,7 +2310,7 @@ class GPUdbRecord( object ):
             return decoded_datum
         # end if
 
-        # Decode the list of data data
+        # Decode the list of data
         decoded_data = []
         for json_datum in json_string_data:
             json_datum = _Util.ensure_str( json_datum )
@@ -2920,21 +2939,22 @@ class GPUdb(object):
         """
 
         # Names of properties
-        __disable_auto_discovery_str             = "disable_auto_discovery"
-        __disable_failover_str                   = "disable_failover"
-        __encoding_str                           = "encoding"
-        __ha_failover_order_str                  = "ha_failover_order"
-        __host_manager_port_str                  = "host_manager_port"
-        __hostname_regex_str                     = "hostname_regex"
-        __http_headers_str                       = "http_headers"
-        __initial_connection_attempt_timeout_str = "initial_connection_attempt_timeout"
-        __logging_level_str                      = "logging_level"
-        __password_str                           = "password"
-        __primary_host_str                       = "primary_host"
-        __protocol_str                           = "protocol"
-        __skip_ssl_cert_verification_str         = "skip_ssl_cert_verification"
-        __timeout_str                            = "timeout"
-        __username_str                           = "username"
+        __disable_auto_discovery_str             = "_Options__disable_auto_discovery"
+        __disable_failover_str                   = "_Options__disable_failover"
+        __encoding_str                           = "_Options__encoding"
+        __ha_failover_order_str                  = "_Options__ha_failover_order"
+        __host_manager_port_str                  = "_Options__host_manager_port"
+        __hostname_regex_str                     = "_Options__hostname_regex"
+        __http_headers_str                       = "_Options__http_headers"
+        __initial_connection_attempt_timeout_str = "_Options__initial_connection_attempt_timeout"
+        __server_connection_timeout_str          = "_Options__server_connection_timeout"
+        __logging_level_str                      = "_Options__logging_level"
+        __password_str                           = "_Options__password"
+        __primary_host_str                       = "_Options__primary_host"
+        __protocol_str                           = "_Options__protocol"
+        __skip_ssl_cert_verification_str         = "_Options__skip_ssl_cert_verification"
+        __timeout_str                            = "_Options__timeout"
+        __username_str                           = "_Options__username"
 
         _supported_options = [ __disable_auto_discovery_str,
                                __disable_failover_str,
@@ -2944,6 +2964,7 @@ class GPUdb(object):
                                __hostname_regex_str,
                                __http_headers_str,
                                __initial_connection_attempt_timeout_str,
+                               __server_connection_timeout_str,
                                __logging_level_str,
                                __password_str,
                                __primary_host_str,
@@ -2981,6 +3002,7 @@ class GPUdb(object):
             self.__hostname_regex                     = None
             self.__http_headers                       = {}
             self.__initial_connection_attempt_timeout = 0
+            self.__server_connection_timeout          = GPUdb._DEFAULT_SERVER_CONNECTION_TIMEOUT
             self.__logging_level                      = None
             self.__password                           = None
             self.__primary_host                       = None
@@ -2994,7 +3016,9 @@ class GPUdb(object):
 
             # Work like a copy constructor; get the dict out of an Options object
             if isinstance( options, GPUdb.Options ):
-                options = options.as_json()
+                options = options.__dict__
+            elif isinstance( options, dict ):  # Handle kwargs which is a dict
+                options = self.__prepend_class_prefix_to_keys(options, '_Options__')
             # end if
 
             if not isinstance( options, dict ):
@@ -3006,17 +3030,17 @@ class GPUdb(object):
             # and map them to the new names:
             # * connection -> protocol
             # * no_init_db_contact -> disable_auto_discovery
-            if "connection" in options:
-                options[ self.__protocol_str ] = options.pop( "connection" )
+            if "_Options__connection" in options:
+                options[ self.__protocol_str ] = options.pop( "_Options__connection" )
 
-            if "no_init_db_contact" in options:
-                options[ self.__disable_auto_discovery_str ] = options.pop( "no_init_db_contact" )
+            if "_Options__no_init_db_contact" in options:
+                options[ self.__disable_auto_discovery_str ] = options.pop( "_Options__no_init_db_contact" )
 
-            if "cluster_reconnect_count" in options:
-                del options["cluster_reconnect_count"]
+            if "_Options__cluster_reconnect_count" in options:
+                del options["_Options__cluster_reconnect_count"]
                 
-            if "intra_cluster_failover_timeout" in options:
-                del options["intra_cluster_failover_timeout"]
+            if "_Options__intra_cluster_failover_timeout" in options:
+                del options["_Options__intra_cluster_failover_timeout"]
 
             # Check for invalid options
             unsupported_options = set( options.keys() ).difference( self._supported_options )
@@ -3025,102 +3049,62 @@ class GPUdb(object):
 
             # Extract and save each option
             for (key, val) in options.items():
-                setattr( self, key, val )
+                setattr( self, key, val.upper() if key == '_Options__encoding' else val )
         # end __init__
+
+        def __prepend_class_prefix_to_keys(self, d, prefix):
+            return {prefix + key if not key.startswith(prefix) else key: value for key, value in d.items()}
+
+
+        def __exposed_fields(self) -> List[str]:
+
+            return ['_Options__disable_auto_discovery',
+                    '_Options__disable_failover',
+                    '_Options__encoding',
+                    '_Options__ha_failover_order',
+                    '_Options__host_manager_port',
+                    '_Options__hostname_regex',
+                    '_Options__http_headers',
+                    '_Options__server_connection_timeout',
+                    '_Options__logging_level',
+                    '_Options__primary_host',
+                    '_Options__protocol',
+                    '_Options__skip_ssl_cert_verification',
+                    '_Options__timeout',
+                    '_Options__username',
+                ]
 
 
         def __str__( self ):
             """String representation of the cluster.
             """
-            return ("{{"
-                    " {username_str}: {username},"
-                    " {password_str}: {password},"
-                    " {skip_ssl_cert_verification_str}: {skip_ssl_cert_verification},"
-                    " {primary_host_str}: {primary_host},"
-                    " {hostname_regex_str}: {hostname_regex},"
-                    " {disable_failover_str}: {disable_failover},"
-                    " {disable_auto_discovery_str}: {disable_auto_discovery},"
-                    " {ha_failover_order_str}: {ha_failover_order},"
-                    " {http_headers_str}: {http_headers},"
-                    " {host_manager_port_str}: {host_manager_port},"
-                    " {timeout_str}: {timeout},"
-                    " {encoding_str}: {encoding},"
-                    " {initial_connection_attempt_timeout_str}: {initial_connection_attempt_timeout},"
-                    " {logging_level_str}: {logging_level},"
-                    " {protocol_str}: {protocol}"
-                    " }}"
-                    "".format(
-                        disable_auto_discovery_str  = self.__disable_auto_discovery_str,
-                        disable_auto_discovery      = self.disable_auto_discovery,
-                        disable_failover_str        = self.__disable_failover_str,
-                        disable_failover            = self.disable_failover,
-                        encoding_str                = self.__encoding_str,
-                        encoding                    = self.encoding,
-                        ha_failover_order_str       = self.__ha_failover_order_str,
-                        ha_failover_order           = self.ha_failover_order,
-                        host_manager_port_str       = self.__host_manager_port_str,
-                        host_manager_port           = self.host_manager_port,
-                        hostname_regex_str          = self.__hostname_regex_str,
-                        hostname_regex              = self.hostname_regex,
-                        http_headers_str            = self.__http_headers_str,
-                        http_headers                = self.http_headers,
-                        initial_connection_attempt_timeout_str = self.__initial_connection_attempt_timeout_str,
-                        initial_connection_attempt_timeout     = self.initial_connection_attempt_timeout,
-                        logging_level_str                   = self.__logging_level_str,
-                        logging_level                       = self.logging_level,
-                        password_str                        = self.__password_str,
-                        password                            = "********",
-                        primary_host_str                    = self.__primary_host_str,
-                        primary_host                        = self.primary_host,
-                        protocol_str                        = self.__protocol_str,
-                        protocol                            = self.protocol,
-                        skip_ssl_cert_verification_str      = self.__skip_ssl_cert_verification_str,
-                        skip_ssl_cert_verification          = self.skip_ssl_cert_verification,
-                        timeout_str                         = self.__timeout_str,
-                        timeout                             = self.timeout,
-                        username_str                        = self.__username_str,
-                        username                            = self.username
-                    )
-            )
+            field_list = [s[len('_Options__'):] if s.startswith('_Options__') else s for s in self.__dict__.keys() if s in self.__exposed_fields()]
+            value_list = [value for key, value in vars(self).items() if key in self.__exposed_fields()]
+            final_list = list(zip(field_list, value_list))
+
+            return '\n'.join(str(x) for x in final_list)
+
         # end __str__
 
 
         def __eq__( self, other ):
             """Override the equality operator.
             """
+            if self is other:
+                return True
+
             # Check the type of the other object
             if not isinstance( other, GPUdb.Options ):
                 return False
 
-            if ( self.disable_auto_discovery != other.disable_auto_discovery ):
+            # Check member count
+            if len(vars(self)) != len(vars(other)):
                 return False
 
-            if ( self.disable_failover != other.disable_failover ):
-                return False
-
-            if ( self.encoding != other.encoding ):
-                return False
-
-            if ( self.ha_failover_order != other.ha_failover_order ):
-                return False
-
-            if ( self.host_manager_port != other.host_manager_port ):
-                return False
-
-            if ( self.hostname_regex != other.hostname_regex ):
-                return False
-
-            if ( self.http_headers != other.http_headers ):
-                return False
-
-            if ( self.initial_connection_attempt_timeout != other.initial_connection_attempt_timeout ):
-                return False
-
-            if ( self.logging_level != other.logging_level ):
-                return False
-
-            if ( self.password != other.password ):
-                return False
+            # Compare each member
+            for key in vars(self):
+                if getattr(self, key) != getattr(other, key):
+                    return False
 
             # The primary host equivalence is only strict for given hosts;
             # None and empty string are considered to be equivalent to each
@@ -3130,18 +3114,6 @@ class GPUdb(object):
                     return False
                 # end inner if
             elif ( self.primary_host != other.primary_host ):
-                return False
-
-            if ( self.protocol != other.protocol ):
-                return False
-
-            if ( self.skip_ssl_cert_verification != other.skip_ssl_cert_verification ):
-                return False
-
-            if ( self.timeout != other.timeout ):
-                return False
-
-            if ( self.username != other.username ):
                 return False
 
             return True
@@ -3155,25 +3127,12 @@ class GPUdb(object):
         # end __ne__
 
 
-        def as_json(self):
+        def as_json(self) -> str:
             """Return the options as a JSON.  Will stringify parameters as
             needed.  For example, GPUdb.URL and GPUdb.HAFailoverOrder objects
             will be stringified.
             """
-            result = {}
-            result[ self.__disable_auto_discovery_str  ] = self.disable_auto_discovery
-            result[ self.__disable_failover_str        ] = self.disable_failover
-            result[ self.__encoding_str                ] = self.encoding
-            result[ self.__host_manager_port_str       ] = self.host_manager_port
-            result[ self.__hostname_regex_str          ] = self.hostname_regex
-            result[ self.__http_headers_str            ] = self.http_headers
-            result[ self.__initial_connection_attempt_timeout_str ] = self.initial_connection_attempt_timeout
-            result[ self.__logging_level_str                      ] = self.logging_level
-            result[ self.__password_str                           ] = self.password
-            result[ self.__protocol_str                           ] = self.protocol
-            result[ self.__skip_ssl_cert_verification_str         ] = self.skip_ssl_cert_verification
-            result[ self.__timeout_str                            ] = self.timeout
-            result[ self.__username_str                           ] = self.username
+            result = self.__dict__
 
             # Special handling of some properties is required
             if self.primary_host:
@@ -3183,12 +3142,14 @@ class GPUdb(object):
             # end if
 
             if self.ha_failover_order:
-                result[ self.__ha_failover_order_str ] = self.ha_failover_order.value
+                result[ self.__ha_failover_order_str ] = str(self.ha_failover_order)
             else:
                 result[ self.__ha_failover_order_str ] = None
             # end if
 
-            return result
+            del result['_Options__password']
+
+            return json.dumps(result, indent=4)
         # end as_json
 
 
@@ -3512,7 +3473,7 @@ class GPUdb(object):
 
             Parameters:
                 header (str)
-                    The single header to to add.
+                    The single header to add.
                 value (str)
                     Value of the single header value to add.
             """
@@ -3536,6 +3497,7 @@ class GPUdb(object):
             else:
                 self.__http_headers[ header ] = value
         # end add_http_header
+
 
         @property
         def initial_connection_attempt_timeout(self):
@@ -3587,6 +3549,59 @@ class GPUdb(object):
                                       "must be greater than or equal to zero; "
                                       "given {}".format( value ) )
             self.__initial_connection_attempt_timeout = value
+        # end setter
+
+
+        @property
+        def server_connection_timeout(self):
+            """Gets the timeout used when trying to establish a connection to the
+            database at GPUdb initialization.  The value is given in milliseconds
+            and the default is 0.  0 indicates no retry will be done; instead,
+            the user given URLs will be stored without farther discovery.
+
+            If multiple URLs are given by the user, then API will try all of them
+            once before retrying or giving up.  When this timeout is set
+            to a non-zero value, and the first attempt failed, then
+            the API will wait (sleep) for a certain amount of time and
+            try again.  Upon consecutive failures, the sleep amount
+            will be doubled.  So, before the first retry (i.e. the second
+            attempt), the API will sleep for one minute.  Before the second
+            retry, the API will sleep for two minutes, the next sleep interval
+            would be four minutes, and onward.
+            """
+            return self.__server_connection_timeout
+
+
+        @server_connection_timeout.setter
+        def server_connection_timeout(self, value):
+            """Sets the timeout used when trying to establish a connection to the
+            database at GPUdb initialization.  The value is given in milliseconds
+            and the default is 0.  0 indicates no retry will be done; instead,
+            the user given URLs will be stored without farther discovery.
+
+            If multiple URLs are given by the user, then API will try all of them
+            once before retrying or giving up.  When this timeout is set
+            to a non-zero value, and the first attempt failed, then
+            the API will wait (sleep) for a certain amount of time and
+            try again.  Upon consecutive failures, the sleep amount
+            will be doubled.  So, before the first retry (i.e. the second
+            attempt), the API will sleep for one minute.  Before the second
+            retry, the API will sleep for two minutes, the next sleep interval
+            would be four minutes, and onward.
+            """
+            try:
+                value = int( value )
+            except:
+                raise GPUdbException( "Property 'initial_connection_attempt_timeout' "
+                                      "must be numeric; "
+                                      "given {}".format( str(type(value)) ) )
+
+            # Must be >= 0
+            if (value < 0):
+                raise GPUdbException( "Property 'initial_connection_attempt_timeout' "
+                                      "must be greater than or equal to zero; "
+                                      "given {}".format( value ) )
+            self.__server_connection_timeout = value
         # end setter
 
 
@@ -4611,7 +4626,7 @@ class GPUdb(object):
         @head_rank_url.setter
         def head_rank_url( self, value ):
             """Sets the URL for the active head node of this cluster.  Must be
-            a a fully qualified URL if a string is given, for example,
+            a fully qualified URL if a string is given, for example,
             "http://1.3.4.5:9191".  Or a valid :class:`GPUdb.URL` object must
             be given.
             """
@@ -4798,7 +4813,7 @@ class GPUdb(object):
             except Exception as ex:
                 raise GPUdbException( "Could not save given value '{}' as the "
                                       "cluster's version; error: {}"
-                                      "".format( str(ex) ) )
+                                      "".format( value, str(ex) ) )
         # end setter
 
 
@@ -4936,7 +4951,9 @@ class GPUdb(object):
     # to use a small timeout so that it does not take a long time to figure out
     # that a rank is down, but connections over high-traffic networks or the
     # cloud may encounter significant connection wait times.  Using 20 seconds.
-    __DEFAULT_INTERNAL_ENDPOINT_CALL_TIMEOUT = 20
+    # __DEFAULT_INTERNAL_ENDPOINT_CALL_TIMEOUT = 20
+
+    _DEFAULT_SERVER_CONNECTION_TIMEOUT = 5  # in seconds
 
     # The number of times that the API will attempt to submit a host
     # manager endpoint request.  We need this in case the user chose
@@ -4958,7 +4975,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.0.4"
+    api_version = "7.2.0.5"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5074,7 +5091,8 @@ class GPUdb(object):
         self.__disable_auto_discovery   = self.options.disable_auto_discovery
         self.__disable_failover         = self.options.disable_failover
         self.__ha_failover_order        = self.options.ha_failover_order
-        self.__initial_connection_timeout = self.options.initial_connection_attempt_timeout
+        self.__initial_connection_attempt_timeout = self.options.initial_connection_attempt_timeout
+        self.__server_connection_timeout = self.options.server_connection_timeout
 
         # Set the logging level (only if the user set something)
         if self.__logging_level is not None:
@@ -5086,9 +5104,9 @@ class GPUdb(object):
         self.__log_debug( "Options: {}".format( str(options) ) )
 
         if self.__skip_ssl_cert_check:
-            self.__log_debug( "Bypassing SSL certificate check for HTTPS connections" );
+            self.__log_debug( "Bypassing SSL certificate check for HTTPS connections" )
         else:
-            self.__log_debug( "Using system trust store for HTTPS connections" );
+            self.__log_debug( "Using system trust store for HTTPS connections" )
 
         # Validate the encoding
         if (self.encoding.upper() == C._ENCODING_SNAPPY and not HAVE_SNAPPY):
@@ -5258,7 +5276,7 @@ class GPUdb(object):
         """Defines how to pickle the GPUdb object.
         """
         pickle_this = { "gpudb_url":  self.get_url(),
-                        "options":    self.options.as_json()
+                        "options":    self.options.__dict__
         }
         return pickle_this
     # end __getstate__
@@ -5461,7 +5479,7 @@ class GPUdb(object):
                 # problem.  TODO: Fix properly taking into consideration
                 # how to handle new options effectively.
                 # If the user does not want us to retry, parse the URLs as is
-                if ( self.__initial_connection_timeout == 0 ):
+                if ( self.__initial_connection_attempt_timeout == 0 ):
                     self.__log_debug( "Initial connection attempt timeout set to 0; "
                                       "parse the given URLs without auto discovery." )
                     self.__disable_auto_discovery = True
@@ -5469,7 +5487,7 @@ class GPUdb(object):
                     # Do we keep trying another time?  Has enough time passed?
                     curr_time   = time.time()
                     keep_trying = ( (curr_time - start_time)
-                                    <= self.__initial_connection_timeout )
+                                    <= self.__initial_connection_attempt_timeout )
                     self.__log_debug( "Keep trying to parse URLs?: {}"
                                       "".format( keep_trying ) )
                     if ( keep_trying ):
@@ -5738,7 +5756,7 @@ class GPUdb(object):
                     # reprocess the user-given URLs with auto-discovery
                     # disabled, so that the user can issue database commands,
                     # but where multi-head operations will not be available.
-                    if not self.is_kinetica_running( cluster_info.head_rank_url ):
+                    if not self.__is_system_running( cluster_info.head_rank_url ):
 
                         self.__log_warn("Disabling auto-discovery & multi-head operations--"
                                         "cluster reachable with user-given URL <{}> but not with server-known URL <{}>"
@@ -5975,7 +5993,7 @@ class GPUdb(object):
             sys_status = self.__submit_request( C._ENDPOINT_SHOW_SYSTEM_STATUS,
                                                 {"options": {}},
                                                 url = url,
-                                                timeout = self.__DEFAULT_INTERNAL_ENDPOINT_CALL_TIMEOUT,
+                                                timeout = self.__server_connection_timeout,
                                                 convert_to_attr_dict = True )
             if not sys_status.is_ok():
                 raise GPUdbException( "Could not obtain system status: {}"
@@ -8230,7 +8248,7 @@ class GPUdb(object):
 
         # If any URL is given, then no failover would be attempted!  The easiest
         # way to do this is to just call submit request raw, and propagate any
-        # exceptions that that method may throw
+        # exceptions that method may throw
         if url is not None:
             # First validate it
             if not isinstance( url, GPUdb.URL ):
@@ -8394,7 +8412,7 @@ class GPUdb(object):
 
         # If any URL is given, then no failover would be attempted!  The easiest
         # way to do this is to just call submit request raw, and propagate any
-        # exceptions that that method may throw
+        # exceptions that method may throw
         if url is not None:
             # First validate it
             if not isinstance( url, GPUdb.URL ):
@@ -8560,7 +8578,7 @@ class GPUdb(object):
 
         # If any URL is given, then no failover would be attempted!  The easiest
         # way to do this is to just call submit request raw, and propagate any
-        # exceptions that that method may throw
+        # exceptions that method may throw
         if url is not None:
             # First validate it
             if not isinstance( url, GPUdb.URL ):
@@ -8750,7 +8768,7 @@ class GPUdb(object):
 
         # If any URL is given, then no failover would be attempted!  The easiest
         # way to do this is to just call submit request raw, and propagate any
-        # exceptions that that method may throw
+        # exceptions that method may throw
         if url is not None:
             # First validate it
             if not isinstance( url, GPUdb.URL ):
@@ -10165,7 +10183,7 @@ class GPUdb(object):
         # end if
 
         try:
-            http_conn = self.__initialize_http_connection( url, self.__DEFAULT_INTERNAL_ENDPOINT_CALL_TIMEOUT )
+            http_conn = self.__initialize_http_connection( url, self.__server_connection_timeout )
 
             # Ping is a get, unlike all endpoints which are post
             headers = {
@@ -10196,7 +10214,7 @@ class GPUdb(object):
     # end ping( url )
 
 
-
+    @deprecated
     def is_kinetica_running( self, url ):
         """Verifies that GPUdb is running at the given URL (does not do any HA
         failover).
@@ -14051,6 +14069,14 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **show_worker_info** --
+                  If *true*, then information is also returned from worker
+                  ranks. By default only status from the head rank is returned.
+                  Allowed values are:
+
+                  * true
+                  * false
+
                 The default value is an empty dict ( {} ).
 
         Returns:
@@ -14080,6 +14106,9 @@ class GPUdb(object):
                   The job tag specified by the user or if unspecified by user,
                   an internally generated unique identifier for the job across
                   clusters.
+
+                * **worker_info** --
+                  Worker job information as json
 
                 The default value is an empty dict ( {} ).
         """
@@ -17742,14 +17771,6 @@ class GPUdb(object):
                 Error if empty.
                 Allowed keys are:
 
-                * **sm_omp_threads** --
-                  Set the number of OpenMP threads that will be used to service
-                  filter & aggregation requests to the specified integer value.
-
-                * **kernel_omp_threads** --
-                  Set the number of kernel OpenMP threads to the specified
-                  integer value.
-
                 * **concurrent_kernel_execution** --
                   Enables concurrent kernel execution if the value is *true*
                   and disables it if the value is *false*.
@@ -17797,7 +17818,8 @@ class GPUdb(object):
                 * **flush_to_disk** --
                   Flushes any changes to any tables to the persistent store.
                   These changes include updates to the vector store, object
-                  store, and text search store, Value string is ignored
+                  store, and text search store.  Value string can be 'true',
+                  'false' or 'text_search' to flush the text search store only.
 
                 * **clear_cache** --
                   Clears cached results.  Useful to allow repeated timing of
@@ -17938,6 +17960,13 @@ class GPUdb(object):
 
                 * **telm_persist_query_metrics** --
                   Enable or disable persisting of query metrics.
+
+                * **postgres_proxy_idle_connection_timeout** --
+                  Idle connection timeout in seconds
+
+                * **postgres_proxy_keep_alive** --
+                  Enable  postgres proxy keep alive. The default value is
+                  'false'.
 
             options (dict of str to str)
                 Optional parameters.
@@ -29736,8 +29765,8 @@ class GPUdb(object):
                 The default value is an empty dict ( {} ).
 
             record_type (RecordType)
-                A :class:`RecordType` object using which the the binary data
-                will be encoded.  If None, then it is assumed that the data is
+                A :class:`RecordType` object using which the binary data will
+                be encoded.  If None, then it is assumed that the data is
                 already encoded, and no further encoding will occur.  Default
                 is None.
 
@@ -31622,6 +31651,16 @@ class GPUdb(object):
                   Alias name for remote_query_filter_column. The default value
                   is ''.
 
+                * **truncate_strings** --
+                  If set to *true*, truncate string values that are longer than
+                  the column's type size.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting into a
                   table with a `primary key
@@ -33055,6 +33094,11 @@ class GPUdb(object):
                   * false
 
                   The default value is 'true'.
+
+                * **label_delimiter** --
+                  If provided the label string will be split according to this
+                  delimiter and each sub-string will be applied as a separate
+                  label onto the specified edge. The default value is ''.
 
                 The default value is an empty dict ( {} ).
 
@@ -35689,7 +35733,7 @@ class GPUdb(object):
 
         # Create record types for the returned types and save them
         for __type_info in zip( response.type_ids, response.type_labels, response.type_schemas, response.properties ):
-            # Create a type only if it is not colleciton or a materialized view
+            # Create a type only if it is not collection or a materialized view
             # under construction (which returns an empty string for the schema)
             if ( (__type_info[ 1 ] != "<collection>") and (__type_info[2] != "") ):
                 record_type = RecordType.from_type_schema( __type_info[ 1 ], __type_info[ 2 ], __type_info[ 3 ] )
@@ -35998,7 +36042,7 @@ class GPUdb(object):
 
         # Create record types for the returned types and save them
         for __type_info in zip( response.type_ids, response.labels, response.type_schemas, response.properties ):
-            # Create a type only if it is not colleciton or a materialized view
+            # Create a type only if it is not collection or a materialized view
             # under construction (which returns an empty string for the schema)
             if ( (__type_info[ 1 ] != "<collection>") and (__type_info[2] != "") ):
                 record_type = RecordType.from_type_schema( __type_info[ 1 ], __type_info[ 2 ], __type_info[ 3 ] )
@@ -36687,8 +36731,8 @@ class GPUdb(object):
                 The default value is an empty dict ( {} ).
 
             record_type (RecordType)
-                A :class:`RecordType` object using which the the binary data
-                will be encoded.  If None, then it is assumed that the data is
+                A :class:`RecordType` object using which the binary data will
+                be encoded.  If None, then it is assumed that the data is
                 already encoded, and no further encoding will occur.  Default
                 is None.
 
@@ -38252,7 +38296,7 @@ class GPUdbTable( object ):
                 Indicates whether or not to use multi-head input and output
                 (meaning ingestion and lookup).  Default is False.
                 Note that multi-head ingestion is more computation intensive
-                for sharded tables, and it it probably advisable only if there
+                for sharded tables, and it is probably advisable only if there
                 is a heavy ingestion load.  Choose carefully.
 
                 Please see documentation of parameters *multihead_ingest_batch_size*
@@ -38263,7 +38307,7 @@ class GPUdbTable( object ):
                 Indicates whether or not to use multi-head ingestion, if
                 available upon insertion.  Note that multi-head ingestion
                 is more computation intensive for sharded tables, and it
-                it probably advisable only if there is a heavy ingestion
+                is probably advisable only if there is a heavy ingestion
                 load.  Default is False.  Will be deprecated in version 7.0.
 
             multihead_ingest_batch_size (int)
@@ -39270,7 +39314,7 @@ class GPUdbTable( object ):
                 to the database for the insertion operation.
 
         Returns:
-            A :class:`.GPUdbTable` object with the the insert_records()
+            A :class:`.GPUdbTable` object with the insert_records()
             response fields converted to attributes and stored within.
         """
         # Extract any options that the user may have provided

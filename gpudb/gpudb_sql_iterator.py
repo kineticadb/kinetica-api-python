@@ -82,7 +82,7 @@ class GPUdbSqlIterator():
                 sql_params[idx] = str(item)
 
         json_params = json.dumps(sql_params)
-        LOG.info(f"json_params: {json_params}")
+        LOG.debug(f"json_params: {json_params}")
         sql_opts['query_parameters'] = json.dumps(sql_params)
 
 

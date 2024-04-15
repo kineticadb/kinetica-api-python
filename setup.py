@@ -90,7 +90,7 @@ c_avro_module = Extension( "gpudb.protocol",
 setup(
     name = 'gpudb',
     packages = ['gpudb'],
-    version = '7.2.0.4',
+    version = '7.2.0.5',
     description = 'Python client for Kinetica DB',
     long_description = "The client-side Python API for Kinetica.  Create, store, retrieve, and query data with ease and speed.",
     author = 'Kinetica DB, Inc.',

@@ -3,9 +3,11 @@
 
 ## Version 7.2
 
-### Version 7.2.0.2 -- TBD
+### Version 7.2.0.2 -- 2024-03-04
 
 #### Changed Endpoints
+-   Removed ``sm_omp_threads`` and ``kernel_omp_threads`` options from ``/alter/system/properties`` request
+-   Added option ``show_worker_info`` to ``/admin/show/jobs`` endpoint
 
 ##### Non-breaking changes
 

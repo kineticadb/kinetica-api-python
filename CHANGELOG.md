@@ -2,6 +2,20 @@
 
 ## Version 7.2
 
+### Version 7.2.0.5 - 2024-04-15
+
+#### Added
+-   Server connection timeout parameter for handling timeouts for server status
+    checks; this operates independently of the exiting timeout for user endpoint
+    requests
+
+#### Changed
+-   Deprecated `GPUdb.is_kinetica_running()` function
+
+#### Fixed
+-   Handling of empty dataframes & strings in `GPUdbTable.from_df()`
+
+
 ### Version 7.2.0.4 - 2024-03-14
 
 #### Fixed
@@ -49,7 +63,24 @@
 -   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
 
 
+
 ## Version 7.1
+
+### Version 7.1.9.13 - 2024-04-15
+
+#### Added
+-   Server connection timeout parameter for handling timeouts for server status
+    checks; this operates independently of the exiting timeout for user endpoint
+    requests
+
+#### Changed
+-   Deprecated `GPUdb.is_kinetica_running()` function
+
+#### Fixed
+-   Handling of empty dataframes & strings in `GPUdbTable.from_df()`
+-   Ability to use `gpudb_dataframe` & `gpudb_file_handler` modules in
+    Python 2.7
+
 
 ### Version 7.1.9.12 - 2024-03-14
 
@@ -326,12 +357,10 @@
 -   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
 
 
-
 ### Version 7.1.2.0 - 2021-01-25
 
 #### Note
 -   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
-
 
 
 ### Version 7.1.1.1 - 2020-12-16
@@ -339,7 +368,6 @@
 #### Performance Enhancements
 -   Increased overall multi-head I/O speed by reducing client-side
     workload.
-
 
 
 ### Version 7.1.1.0 - 2020-10-28
@@ -421,7 +449,6 @@
 -   `GPUdbIngestor` read-only properties:
     -   retry_count
 
-
 #### Changed
 -   GPUdbTable methods that return a GPUdbTable object now creates that object
     based on a fully qualified (i.e. with schema) name which is returned in
@@ -442,12 +469,67 @@
     -   `GPUdb.host_manager_port`
     -   `GPUdb.gpudb_url_path`
 
+#### Note
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
+
+
+
+## Version 7.0
+
+### Version 7.0.20.1 - 2022-08-31
+
+#### Fixed
+-   Memory leak in underlying C-extension library
+
+
+### Version 7.0.20.0 - 2020-11-25
+
+#### Added
+-   GPUdb methods for adding custom headers per endpoint call:
+    -   ``add_http_header()``
+    -   ``remove_http_header()``
+    -   ``get_http_headers()``
+
+#### Changed
+    GPUdb Table Monitor API
+-   The GPUdb table monitor API has been refactored to be more user friendly.
+    Here are the following breaking changes (as compared to the initial API
+    released in version 7.0.17.0):
+    -   The only exported class is ``GPUdbTableMonitor`` which acts as a global
+        namespace.  It contains the following nested public classes that the
+        user will use:
+    -   ``GPUdbTableMonitor.Client``
+    -   ``GPUdbTableMonitor.Options``
+    -   ``GPUdbTableMonitor.Callback``
+        -   ``GPUdbTableMonitor.Callback.Options`` (and its derivative
+            ``InsertDecodedOptions``)
+        -   ``GPUdbTableMonitor.Callback.Type``
+    -   The old ``GPUdbTableMonitorBase.Options`` is now
+        ``GPUdbTableMonitor.Options``.  All old options have been replaced
+        with following current option:
+        -   ``inactivity_timeout``
+    -   The following classes have been refactored or removed (users need not
+        use the refactored versions; they exist only for internal purposes):
+        -   ``GPUdbTableMonitorBase``
+        -   ``BaseTask``
+        -   ``InsertWatcherTask``
+        -   ``DeleteWatcherTask``
+        -   ``UpdateWatcherTask``
+        -   ``TableEvent``
+        -   ``NotificationEventType``
+        -   ``NotificationEvent``
+        -   ``TableEventType``
+
 
 #### Note
 -   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
 
 
-## Version 7.0
+### Version 7.0.19.0 - 2020-08-24
+
+#### Note
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
+
 
 ### Version 7.0.18.0 - 2020-07-30
 
@@ -478,7 +560,6 @@
     `table_monitor_example_basic_first.py` and
     `table_monitor_example_basic_second.py`.
     Several test cases are included in the `test/table_monitor` directory.
-
 
 #### Changed
 
@@ -546,7 +627,6 @@
 -   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
 
 
-
 ### Version 7.0.13.0 - 2020-03-10
 
 #### Changed
@@ -588,7 +668,8 @@
 #### Fixed
 -   Example script to match changed endpoint format.
 
-### Version 7.0.9.0 - 2019-09-24
+
+### Version 7.0.9.0 - 2019-11-14
 
 #### Added
 -   Support for high-availability failover when the database is in the
@@ -665,6 +746,7 @@
 ### Version 7.0.0.2 - 2019-02-26
 -   Added some logging support
 
+
 ### Version 7.0.0.1 - 2019-02-09
 -   Added support for high availability (HA) failover logic to the
     GPUdb class
@@ -674,7 +756,35 @@
 -   Added support for cluster reconfiguration to the multi-head I/O operations
 
 
+
 ## Version 6.2
+
+### Version 6.2.0.14 - 2019-08-29
+
+#### Added
+-   GPUdb class constructor parameter `skip_ssl_cert_verification` which disables
+    verifying the SSL certificate for the Kinetica server for HTTPS connections.
+
+
+### Version 6.2.0.13 - 2019-08-23
+
+#### Added
+-   The following properties to GPUdbTable regarding whether the table itself is a
+    collection or belongs to a collection:
+    -   GPUdbTable.is_collection
+    -   GPUdbTable.collection_name
+
+#### Fixed
+-   Some Python3 compatibility related issues
+
+
+### Version 6.2.0.12 - 2019-06-21
+
+#### Changed
+-   Lifted restrictions on columns with property date, time, datetime, or
+    timestamp such that no validation occurs by the client.  This allows
+    the `init_with_now` property to be applied to such columns.
+
 
 ### Version 6.2.0.11 - 2019-03-22
 -   Changed GPUdbTable constructor behavior--it no longer calls /show/table
@@ -716,6 +826,7 @@
     * GPUdbRecord -- Contains data for any given record; also has convenient
                      data encoding and decoding functions for inserting
                      and fetching data from the database server.
+
 
 
 ## Version 6.0.0 - 2017-01-24
