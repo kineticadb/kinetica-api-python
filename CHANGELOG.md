@@ -2,6 +2,14 @@
 
 ## Version 7.2
 
+### Version 7.2.0.6 - 2024-04-22
+
+#### Added
+-   `GPUdbSqlContext` class for more easily creating SQL-GPT contexts
+-   `GPUdb.get_connection()` function for connecting to a Kinetica database
+    using credentials set as environment variables; useful for Jupyter notebooks
+
+
 ### Version 7.2.0.5 - 2024-04-15
 
 #### Added

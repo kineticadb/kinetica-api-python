@@ -58,40 +58,8 @@ class GPUdbSqlIterator():
         self.paging_tables = []
 
         paging_table_name = GPUdbTable.random_name()
-        self._set_sql_params(sql_opts, sql_params)
+        GPUdb._set_sql_params(sql_opts, sql_params)
         self.sql_opts["paging_table"] = paging_table_name
-
-
-    @classmethod
-    def _set_sql_params(cls, sql_opts: dict, sql_params: list) -> None:
-        """Convert SQL parameters to JSON and set as an option for execute_sql_and_decode()
-
-        Parameters:
-            sql_opts (dict)
-                The parameter list that will be appended to.
-
-            sql_params (list of native types)
-                The SQL parameters that will be substituted for tokens (e.g. $1 $2)
-        """
-        if (len(sql_params) == 0):
-            return
-        
-        for idx, item in enumerate(sql_params):
-            if (isinstance(item, list)):
-                # assume that list type is vector
-                sql_params[idx] = str(item)
-
-        json_params = json.dumps(sql_params)
-        LOG.debug(f"json_params: {json_params}")
-        sql_opts['query_parameters'] = json.dumps(sql_params)
-
-
-    @classmethod
-    def _check_error(cls, response: dict) -> None:
-        status = response['status_info']['status']
-        if (status != 'OK'):
-            message = response['status_info']['message']
-            raise GPUdbException('[%s]: %s' % (status, message))
 
 
     def open(self):
@@ -161,7 +129,7 @@ class GPUdbSqlIterator():
             get_column_major=False,
             options=self.sql_opts)
 
-        self._check_error(response)
+        GPUdb._check_error(response)
         self.records = response['records']
 
         if (self.total_count is None):
@@ -191,4 +159,4 @@ class GPUdbSqlIterator():
             self.type_map = {name: type for (name, type) in zip(col_names, col_types)}
             self._log.debug(f"Type map: {self.type_map}")
 
-# end class KineticaSqlIterator
+# end class GPUdbSqlIterator

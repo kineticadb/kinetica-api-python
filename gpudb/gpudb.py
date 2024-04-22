@@ -60,7 +60,7 @@ if IS_PYTHON_3:
     long = int
     basestring = str
     class unicode:
-        """Ensure python 3 doesn't complain about use of unicode."""
+        """Ensure Python 3 doesn't complain about use of Unicode."""
         pass
     from collections.abc import Iterator
 else:
@@ -4975,7 +4975,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.0.5"
+    api_version = "7.2.0.6"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5898,7 +5898,7 @@ class GPUdb(object):
         """Randomly shuffles the list of high availability URL indices so that HA
         failover happens at a random fashion.  One caveat is when a primary host
         is given by the user; in that case, we need to keep the primary host's
-        index as the first one in the list so that upon failover, when we cricle
+        index as the first one in the list so that upon failover, when we circle
         back, we always pick the first/primary host up again.
 
         Also, with the new ha failover order, it's not always random.  We might
@@ -7532,6 +7532,14 @@ class GPUdb(object):
     # ------------------------------------------------------------------------
     #                 Endpoint Submission Related Methods
     # ------------------------------------------------------------------------
+    @classmethod
+    def _check_error(cls, response: dict) -> None:
+        status = response['status_info']['status']
+        if (status != 'OK'):
+            message = response['status_info']['message']
+            raise GPUdbException('[%s]: %s' % (status, message))
+
+
     def __submit_request_raw( self, url = None, endpoint = None,
                               request_body = None,
                               # enable_compression = False,
@@ -9616,7 +9624,7 @@ class GPUdb(object):
 
     def encode_datum(self, SCHEMA, datum, encoding = None):
         """
-        Returns an avro binary or JSON encoded dataum dict using its schema.
+        Returns an Avro binary or JSON encoded datum dict using its schema.
 
         Parameters:
             SCHEMA (str or avro.Schema)
@@ -9646,7 +9654,7 @@ class GPUdb(object):
 
     def encode_datum_cext(self, SCHEMA, datum, encoding = None):
         """
-        Returns an avro binary or JSON encoded dataum dict using its schema.
+        Returns an avro binary or JSON encoded datum dict using its schema.
 
         Parameters:
             SCHEMA (str or avro.Schema)
@@ -9890,8 +9898,7 @@ class GPUdb(object):
         a JSON array (stringified). The only mandatory parameter is the 'tableName'.
         The rest are all optional with suitable defaults wherever applicable.
 
-
-        Args:
+        Parameters:
             table_name (str): Name of the table
             column_names (list): the columns names to retrieve
             offset (int): the offset to start from - default 0
@@ -10290,7 +10297,7 @@ class GPUdb(object):
               show_progress: bool = False):
         """Runs the given query and converts the result to a Pandas Data Frame.
 
-        Args:
+        Parameters:
             sql (str)
                 The SQL query to run
 
@@ -10388,7 +10395,7 @@ class GPUdb(object):
 
 
     def execute(self, sql, sql_params = [], sql_opts = {}):
-        """Execute a SQL query and return the rowcount.
+        """Execute a SQL query and return the row count.
 
         Parameters:
             sql (str)
@@ -10406,12 +10413,110 @@ class GPUdb(object):
         """
         from . import gpudb_sql_iterator
 
-        gpudb_sql_iterator.GPUdbSqlIterator._set_sql_params(sql_opts, sql_params)
+        GPUdb._set_sql_params(sql_opts, sql_params)
         response = self.execute_sql(statement=sql, options=sql_opts)
-        gpudb_sql_iterator.GPUdbSqlIterator._check_error(response)
+        GPUdb._check_error(response)
         count_affected = response['count_affected']
         return count_affected
     # end execute
+
+
+    @classmethod
+    def _set_sql_params(cls, sql_opts: dict, sql_params: list) -> None:
+        """Convert SQL parameters to JSON and set as an option for execute_sql_and_decode()
+
+        Parameters:
+            sql_opts (dict)
+                The parameter list that will be appended to.
+
+            sql_params (list of native types)
+                The SQL parameters that will be substituted for tokens (e.g. $1 $2)
+        """
+        if (len(sql_params) == 0):
+            return
+        
+        for idx, item in enumerate(sql_params):
+            if (isinstance(item, list)):
+                # assume that list type is vector
+                sql_params[idx] = str(item)
+
+        json_params = json.dumps(sql_params)
+        sql_opts['query_parameters'] = json.dumps(sql_params)
+
+
+    @staticmethod
+    def get_connection(
+            enable_ssl_cert_verification = False, 
+            enable_auto_discovery = False,
+            enable_failover = False,
+            logging_level = 'INFO') -> "GPUdb":
+        """ Get a connection to Kinetica getting connection and authentication
+        information from environment variables.
+
+        This method is useful particularly for Jupyter notebooks, which won't
+        need authentication credentials embedded within them.  This, in turn,
+        helps to prevent commit of credentials to the notebook version control.
+        In addition, some features including auto-discovery and SSL certificate
+        verification are disabled by default to simplify connections for simple
+        use cases.
+
+        The following environment variables are required:
+        - `KINETICA_URL`: the url of the Kinetica server
+        - `KINETICA_USER`: the username to connect with
+        - `KINETICA_PASSWD`: the password to connect with
+
+        Parameters:
+            enable_ssl_cert_verification (bool):
+                Enable SSL certificate verification.
+    
+            enable_auto_discovery (bool):
+                Enable auto-discovery of the initial cluster nodes, as well as
+                any attached failover clusters.  This allows for both multi-head
+                ingestion & key lookup, as well as cluster failover.
+    
+            enable_failover (bool):
+                Enable failover to another cluster.
+    
+            logging_level (str):
+                Logging level for the connection. (INFO by default)
+    
+        Returns (GPUdb):
+            An active connection to Kinetica.
+        """
+
+        ENV_URL = 'KINETICA_URL'
+        ENV_USER = 'KINETICA_USER'
+        ENV_PASS = 'KINETICA_PASSWD'
+        ENV_NOT_FOUND_ERROR = 'Environment variable <{}> needs to be set when connecting with get_connection()'
+
+        if ENV_URL in os.environ:
+            url = os.environ[ENV_URL]
+        else:
+            raise GPUdbException(ENV_NOT_FOUND_ERROR.format( ENV_URL ))
+
+        if ENV_USER in os.environ:
+            user = os.environ[ENV_USER]
+        else:
+            raise GPUdbException(ENV_NOT_FOUND_ERROR.format( ENV_USER ))
+
+        if ENV_PASS in os.environ:
+            passwd = os.environ[ENV_PASS]
+        else:
+            raise GPUdbException(ENV_NOT_FOUND_ERROR.format( ENV_PASS ))
+
+        options = GPUdb.Options()
+        options.username = user
+        options.password = passwd
+        options.skip_ssl_cert_verification = not enable_ssl_cert_verification
+        options.disable_auto_discovery = not enable_auto_discovery
+        options.disable_failover = not enable_failover
+        options.logging_level = logging_level
+        kdbc = GPUdb(host = url, options = options)
+
+        kdbc.__log_info("Connected to Kinetica! (host={} api={} server={})".format(kdbc.get_url(), kdbc.api_version, str(kdbc.server_version)))
+
+        return kdbc
+    # end get_connection
 
 
     # ------------- END convenience functions ------------------------------------
@@ -38204,7 +38309,7 @@ class GPUdbTable( object ):
 
     @staticmethod
     def random_name():
-        """Returns a randomly generated uuid-based name.  Use underscores
+        """Returns a randomly generated UUID-based name.  Use underscores
         instead of hyphens.
         """
         return str( uuid.uuid4() ).replace( '-', '_' )
@@ -39146,7 +39251,7 @@ class GPUdbTable( object ):
                                                       ):
         """Convert any special value type (array, json, vector etc.) suitably
 
-        Args:
+        Parameters:
             record_type (GPUdbRecordType): the record type for these 'records'
             records (Union[Union[ list, dict], List[Record]]): A single record value (list or dict)
 
@@ -39184,7 +39289,7 @@ class GPUdbTable( object ):
                                                    ):
         """Convert any special value type (array, json, vector etc.) suitably
 
-        Args:
+        Parameters:
             record_type (GPUdbRecordType): the record type for these 'records'
             records (Union[Union[ list, dict], List[Record]]): A single record value (list or dict)
 
@@ -39756,7 +39861,7 @@ class GPUdbTable( object ):
         Note that when using the pagination feature, if the table (or the
         underlying table in case of a view) is updated (records are inserted,
         deleted or modified) the records or values retrieved may differ between
-        calls (discontiguous or overlap) based on the type of the update.
+        calls (noncontiguous or overlap) based on the type of the update.
 
         The response is returned as a dynamic schema. For details see: `dynamic
         schemas documentation <../../../../api/#dynamic-schemas>`_.
@@ -40176,7 +40281,7 @@ class GPUdbTable( object ):
         GPUdbTable reference to the table.
 
 
-        Args:
+        Parameters:
             df (pd.DataFrame)
                 The Pandas Data Frame to load into a table
 

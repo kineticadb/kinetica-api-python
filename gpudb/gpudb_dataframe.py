@@ -250,14 +250,14 @@ class DataFrameUtils:
             raise GPUdbException(f"Dataframe cannot be empty.")
 
         has_table_resp = db.has_table(table_name)
-        GPUdbSqlIterator._check_error(has_table_resp)
+        GPUdb._check_error(has_table_resp)
         if (not create_table and not has_table_resp["table_exists"]):
             raise GPUdbException(f"{table_name}) Table does not exist and create_table=false")
 
         if (clear_table):
             cls._LOG.debug(f"Clearing table: {table_name}")
             clear_resp = db.clear_table(table_name=table_name, options={'no_error_if_not_exists': 'true'})
-            GPUdbSqlIterator._check_error(clear_resp)
+            GPUdb._check_error(clear_resp)
 
         cls._LOG.debug(f"Creating table: {table_name}")
         col_types = cls._table_types_from_df(df, column_types)
