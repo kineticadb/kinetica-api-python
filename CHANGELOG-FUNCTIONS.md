@@ -14,6 +14,7 @@
 -   Added ``cagra`` to ``index_type`` option in ``/alter/table``
 -   Added ``index_options`` option in ``/alter/table``
 -   Added ``refresh_index`` to ``action`` in ``/alter/table``
+-   Added ``query_text`` to ``/admin/show/jobs`` response
 
 
 ### Version 7.2.0.0 -- 2024-02-11

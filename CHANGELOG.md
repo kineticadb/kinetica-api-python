@@ -2,6 +2,12 @@
 
 ## Version 7.2
 
+### Version 7.2.0.7 - 2024-05-07
+
+#### Fixed
+-   Issue with `as_json()` removing the password option
+
+
 ### Version 7.2.0.6 - 2024-04-22
 
 #### Added
@@ -73,6 +79,13 @@
 
 
 ## Version 7.1
+
+### Version 7.1.10.0 - 2024-05-07
+
+#### Fixed
+-   Issue with pickling options
+-   Issue with `as_json()` removing the password option
+
 
 ### Version 7.1.9.13 - 2024-04-15
 

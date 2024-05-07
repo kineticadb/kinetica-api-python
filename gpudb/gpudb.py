@@ -3132,7 +3132,7 @@ class GPUdb(object):
             needed.  For example, GPUdb.URL and GPUdb.HAFailoverOrder objects
             will be stringified.
             """
-            result = self.__dict__
+            result = self.__dict__.copy()
 
             # Special handling of some properties is required
             if self.primary_host:
@@ -4975,7 +4975,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.0.6"
+    api_version = "7.2.0.7"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -10732,9 +10732,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/admin/show/jobs"
         REQ_SCHEMA_STR = """{"type":"record","name":"admin_show_jobs_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"admin_show_jobs_response","fields":[{"name":"job_id","type":{"type":"array","items":"long"}},{"name":"status","type":{"type":"array","items":"string"}},{"name":"endpoint_name","type":{"type":"array","items":"string"}},{"name":"time_received","type":{"type":"array","items":"long"}},{"name":"auth_id","type":{"type":"array","items":"string"}},{"name":"source_ip","type":{"type":"array","items":"string"}},{"name":"user_data","type":{"type":"array","items":"string"}},{"name":"flags","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_show_jobs_response","fields":[{"name":"job_id","type":{"type":"array","items":"long"}},{"name":"status","type":{"type":"array","items":"string"}},{"name":"endpoint_name","type":{"type":"array","items":"string"}},{"name":"time_received","type":{"type":"array","items":"long"}},{"name":"auth_id","type":{"type":"array","items":"string"}},{"name":"source_ip","type":{"type":"array","items":"string"}},{"name":"query_text","type":{"type":"array","items":"string"}},{"name":"user_data","type":{"type":"array","items":"string"}},{"name":"flags","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("job_id", "array", [("long")]), ("status", "array", [("string")]), ("endpoint_name", "array", [("string")]), ("time_received", "array", [("long")]), ("auth_id", "array", [("string")]), ("source_ip", "array", [("string")]), ("user_data", "array", [("string")]), ("flags", "array", [("string")]), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("job_id", "array", [("long")]), ("status", "array", [("string")]), ("endpoint_name", "array", [("string")]), ("time_received", "array", [("long")]), ("auth_id", "array", [("string")]), ("source_ip", "array", [("string")]), ("query_text", "array", [("string")]), ("user_data", "array", [("string")]), ("flags", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/show/jobs"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -14198,6 +14198,8 @@ class GPUdb(object):
             auth_id (list of str)
 
             source_ip (list of str)
+
+            query_text (list of str)
 
             user_data (list of str)
 
@@ -20249,6 +20251,17 @@ class GPUdb(object):
                   delimiter and each sub-string will be applied as a separate
                   label onto the specified edge. The default value is ''.
 
+                * **allow_multiple_edges** --
+                  Multigraph choice; allowing multiple edges with the same node
+                  pairs if set to true, otherwise, new edges with existing same
+                  node pairs will not be inserted.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
                 The default value is an empty dict ( {} ).
 
         Returns:
@@ -20492,6 +20505,10 @@ class GPUdb(object):
                 * **chunk_size** --
                   Maximum number of records per joined-chunk for this table.
                   Defaults to the gpudb.conf file chunk size
+
+                * **enable_virtual_chunking** --
+                  Collect chunks with accumulated size less than chunk_size
+                  into a single chunk. The default value is 'false'.
 
                 The default value is an empty dict ( {} ).
 
@@ -33205,6 +33222,17 @@ class GPUdb(object):
                   delimiter and each sub-string will be applied as a separate
                   label onto the specified edge. The default value is ''.
 
+                * **allow_multiple_edges** --
+                  Multigraph choice; allowing multiple edges with the same node
+                  pairs if set to true, otherwise, new edges with existing same
+                  node pairs will not be inserted.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
                 The default value is an empty dict ( {} ).
 
         Returns:
@@ -33391,6 +33419,18 @@ class GPUdb(object):
                   When specified (>0 and <=256), limits the number of char
                   length on the output tables for string based nodes. The
                   default length is 64. The default value is '64'.
+
+                * **find_common_labels** --
+                  If set to true, for many-to-many queries or multi-level
+                  traversals, it lists the common labels between the source and
+                  target nodes and edge labels in each path. Otherwise (zero
+                  rings), it'll list all labels of the node(s) queried.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 The default value is an empty dict ( {} ).
 
@@ -40456,6 +40496,10 @@ class GPUdbTable( object ):
                 * **chunk_size** --
                   Maximum number of records per joined-chunk for this table.
                   Defaults to the gpudb.conf file chunk size
+
+                * **enable_virtual_chunking** --
+                  Collect chunks with accumulated size less than chunk_size
+                  into a single chunk. The default value is 'false'.
 
                 The default value is an empty dict ( {} ).
 
