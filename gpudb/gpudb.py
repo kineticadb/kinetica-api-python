@@ -2915,11 +2915,11 @@ class GPUdb(object):
 
 
         def as_json(self):
-            """Return the options as a JSON.  Will stringify parameters as
+            """Return the options as a dictionary.  Will stringify parameters as
             needed.  For example, GPUdb.URL and GPUdb.HAFailoverOrder objects
             will be stringified.
             """
-            result = self.__dict__
+            result = self.__dict__.copy()
 
             # Special handling of some properties is required
             if self.__primary_host:
@@ -2934,9 +2934,7 @@ class GPUdb(object):
                 result[ self.__ha_failover_order_str ] = None
             # end if
             
-            del result['_Options__password']
-
-            return json.dumps(result, indent=4)
+            return result
         # end as_json
 
 
@@ -4790,7 +4788,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.9.13"
+    api_version = "7.1.10.0"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5099,7 +5097,7 @@ class GPUdb(object):
         """Defines how to pickle the GPUdb object.
         """
         pickle_this = { "gpudb_url":  self.get_url(),
-                        "options":    self.options.__dict__
+                        "options":    self.options.as_json()
         }
         return pickle_this
     # end __getstate__
@@ -10261,6 +10259,63 @@ class GPUdb(object):
         return count_affected
     # end execute
 
+    @staticmethod
+    def get_connection(
+            enable_ssl_cert_verification=False,
+            enable_auto_discovery=False,
+            enable_failover=False,
+            logging_level='INFO'):
+        """ Get a connection to Kienetica from environment variables.
+
+        This is useful particularly for Jupyter notebooks to prevent commit of credentials
+        to version control. In addition some features including autodiscovery and ssl
+        verification are disabled by default to simplify connections for simple use cases.
+
+        The following environment variables are required:
+        - `KINETICA_URL`: the url of the Kinetica server
+        - `KINETICA_USER`: the username to connect with
+        - `KINETICA_PASSWD`: the password to connect with
+
+        Args:
+        enable_ssl_cert_verification (bool):
+            Enable SSL certificate verification.
+
+        enable_auto_discovery (bool):
+            Enable auto-discovery of the cluster. This can increase connection time.
+
+        enable_failover (bool):
+            Enable failover to another cluster.
+
+        logging_level (str):
+            Logging level for the connection. (INFO by default)
+
+        Returns (GPUdb):
+            An active connection to Kinetica.
+        """
+
+        host = os.environ['KINETICA_URL']
+        user = os.environ['KINETICA_USER']
+        passwd = os.environ['KINETICA_PASSWD']
+
+        options = GPUdb.Options()
+        options.username = user
+        options.password = passwd
+        options.skip_ssl_cert_verification = not enable_ssl_cert_verification
+        options.disable_auto_discovery = not enable_auto_discovery
+        options.disable_failover = not enable_failover
+        options.logging_level = logging_level
+        kdbc = GPUdb(host=host, options=options)
+
+        if IS_PYTHON_3:
+            from importlib.metadata import version
+            print(
+                "Connected to Kinetica! (host={} api={} server={})").format(kdbc.get_url(), version('gpudb'), str(kdbc.server_version))
+        else:
+            version = kdbc.api_version
+            print(
+                "Connected to Kinetica! (host={}  api={} server={})".format(kdbc.get_url(), version, str(kdbc.server_version)))
+
+        return kdbc
 
     # ------------- END convenience functions ------------------------------------
 
@@ -19865,6 +19920,17 @@ class GPUdb(object):
                   If provided the label string will be split according to this
                   delimiter and each sub-string will be applied as a separate
                   label onto the specified edge.  The default value is ''.
+
+                * **allow_multiple_edges** --
+                  Multigraph choice; allowing multiple edges with the same node
+                  pairs if set to true, otherwise, new edges with existing same
+                  node pairs will not be inserted.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
         Returns:
             A dict with the following entries--
@@ -33002,6 +33068,17 @@ class GPUdb(object):
                   delimiter and each sub-string will be applied as a separate
                   label onto the specified edge.  The default value is ''.
 
+                * **allow_multiple_edges** --
+                  Multigraph choice; allowing multiple edges with the same node
+                  pairs if set to true, otherwise, new edges with existing same
+                  node pairs will not be inserted.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
         Returns:
             A dict with the following entries--
 
@@ -33198,6 +33275,18 @@ class GPUdb(object):
                   When specified (>0 and <=256), limits the number of char
                   length on the output tables for string based nodes. The
                   default length is 64.  The default value is '64'.
+
+                * **find_common_labels** --
+                  If set to true, for many-to-many queries or multi-level
+                  traversals, it lists the common labels between the source and
+                  target nodes and edge labels in each path. Otherwise (zero
+                  rings), it'll list all labels of the node(s) queried.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
         Returns:
             A dict with the following entries--
@@ -35411,7 +35500,7 @@ class GPUdb(object):
 
         # Create record types for the returned types and save them
         for __type_info in zip( response.type_ids, response.type_labels, response.type_schemas, response.properties ):
-            # Create a type only if it is not colleciton or a materialized view
+            # Create a type only if it is not collection or a materialized view
             # under construction (which returns an empty string for the schema)
             if ( (__type_info[ 1 ] != "<collection>") and (__type_info[2] != "") ):
                 record_type = RecordType.from_type_schema( __type_info[ 1 ], __type_info[ 2 ], __type_info[ 3 ] )
@@ -35708,7 +35797,7 @@ class GPUdb(object):
 
         # Create record types for the returned types and save them
         for __type_info in zip( response.type_ids, response.labels, response.type_schemas, response.properties ):
-            # Create a type only if it is not colleciton or a materialized view
+            # Create a type only if it is not collection or a materialized view
             # under construction (which returns an empty string for the schema)
             if ( (__type_info[ 1 ] != "<collection>") and (__type_info[2] != "") ):
                 record_type = RecordType.from_type_schema( __type_info[ 1 ], __type_info[ 2 ], __type_info[ 3 ] )
