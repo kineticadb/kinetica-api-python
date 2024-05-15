@@ -2,11 +2,22 @@
 
 ## Version 7.1
 
-### Version 7.1.10.0 - 2024-05-07
+### Version 7.1.10.1 - 2024-05-15
+
+#### Added
+-   Added error check for missing URL in `get_connection()`
 
 #### Fixed
--   Issue with pickling options
--   Issue with `as_json()` removing the password option
+-   Issue with Pandas DataFrame inserting timestamp value into
+    `datetime` / `timestamp` column
+
+
+### Version 7.1.10.0 - 2024-05-07
+
+#### Added
+-   `GPUdbSqlContext` class for more easily creating SQL-GPT contexts
+-   `GPUdb.get_connection()` function for connecting to a Kinetica database
+    using credentials set as environment variables; useful for Jupyter notebooks
 
 
 ### Version 7.1.9.13 - 2024-04-15

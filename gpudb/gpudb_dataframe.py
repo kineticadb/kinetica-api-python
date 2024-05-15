@@ -18,6 +18,7 @@ from tqdm.auto import tqdm
 
 from . import GPUdbRecordColumn
 from . import GPUdbColumnProperty
+from . import GPUdb
 from . import GPUdbTable
 from . import GPUdbSqlIterator
 from . import GPUdbException
@@ -42,16 +43,16 @@ class DataFrameUtils:
     @classmethod
     def sql_to_df(cls, db,
                   sql,
-                  param_list = None,
+                  sql_params = [],
                   batch_size = BATCH_SIZE,
-                  sql_opts = None,
+                  sql_opts = {},
                   show_progress = False):
         """Create a dataframe from the results of a SQL query.
 
         Args:
             db (GPUdb): a GPUdb instance
             sql (str): the SQL query
-            param_list (list): the query parameters. Defaults to None.
+            sql_params (list): the query parameters. Defaults to None.
             batch_size (int): the batch size for the SQL execution results. Defaults to BATCH_SIZE.
             sql_opts (dict): the SQL options as a dict. Defaults to None.
             show_progress (bool): whether to display progress or not. Defaults to False.
@@ -61,17 +62,7 @@ class DataFrameUtils:
 
         Returns:
             pd.DataFrame: a Pandas dataframe or None if the SQL has returned no results
-        """        
-
-        if sql_opts is None:
-            sql_opts = {}
-        if (param_list is not None):
-            for idx, item in enumerate(param_list):
-                if (isinstance(item, list)):
-                    # assume that list type is vector
-                    param_list[idx] = str(item)
-            json_list = json.dumps(param_list)
-            sql_opts['query_parameters'] = json_list
+        """
 
         cls._LOG.debug('Getting records from <{}>'.format(sql))
 
@@ -81,6 +72,7 @@ class DataFrameUtils:
         result_list = []
         with GPUdbSqlIterator(db, sql,
                               batch_size=batch_size,
+                              sql_params=sql_params,
                               sql_opts=sql_opts) as sql_iter:
             if (sql_iter.type_map is None):
                 # If there are no results then we can't infer datatypes.
@@ -94,21 +86,18 @@ class DataFrameUtils:
                             ncols=cls.TQDM_NCOLS):
                 result_list.append(rec)
 
-
         result_df = cls._convert_records_to_df(result_list, sql_iter.type_map)
 
-        if (sql_iter.total_count != result_df.shape[0]):
-            raise GPUdbException(
-                "Incorrect record count: expected={} retrieved={}".format(sql_iter.total_count, result_df.shape[0]))
         return result_df
 
+
     TYPE_GPUDB_TO_NUMPY = {
-        _COL_TYPE.LONG: 'int64',
-        _COL_TYPE.INT: 'int32',
-        GPUdbColumnProperty.INT16: 'int16',
-        GPUdbColumnProperty.INT8: 'int8',
-        _COL_TYPE.DOUBLE: 'float64',
-        _COL_TYPE.FLOAT: 'float32',
+        _COL_TYPE.LONG: 'Int64',
+        _COL_TYPE.INT: 'Int64',
+        GPUdbColumnProperty.INT16: 'Int16',
+        GPUdbColumnProperty.INT8: 'Int8',
+        _COL_TYPE.DOUBLE: 'Float64',
+        _COL_TYPE.FLOAT: 'Float32',
         GPUdbColumnProperty.DATETIME: 'string'
     }
 
@@ -129,20 +118,25 @@ class DataFrameUtils:
 
         # convert each column individually to avoid un-necessary conversions
         for col_name, raw_data in zip(type_map.keys(), col_major_recs):
-            gpudb_type = type_map[col_name]
-            numpy_type = cls.TYPE_GPUDB_TO_NUMPY.get(gpudb_type)
-            col_data = pd.Series(data=raw_data,
-                                 name=col_name,
-                                 dtype=numpy_type,
-                                 index=index)
+            try:
+                gpudb_type = type_map[col_name]
+                numpy_type = cls.TYPE_GPUDB_TO_NUMPY.get(gpudb_type)
+                col_data = pd.Series(data=raw_data,
+                                    name=col_name,
+                                    dtype=numpy_type,
+                                    index=index)
 
-            # do special conversion
-            if (gpudb_type == cls._COL_TYPE.BYTES):
-                col_data = col_data.map(cls.bytes_to_vec)
-            elif (gpudb_type == GPUdbColumnProperty.TIMESTAMP):
-                col_data = pd.to_datetime(col_data, unit='ms')
-            elif (gpudb_type == GPUdbColumnProperty.DATETIME):
-                col_data = pd.to_datetime(col_data, format='%Y-%m-%d %H:%M:%S.%f')
+                # do special conversion
+                if (gpudb_type == cls._COL_TYPE.BYTES):
+                    col_data = col_data.map(cls.bytes_to_vec)
+                elif (gpudb_type == GPUdbColumnProperty.TIMESTAMP):
+                    col_data = pd.to_datetime(col_data, unit='ms')
+                elif (gpudb_type == GPUdbColumnProperty.DATETIME):
+                    col_data = pd.to_datetime(col_data, format='%Y-%m-%d %H:%M:%S.%f')
+
+            except Exception as ex:
+                msg = "Error converting column <{}> with data type <{}/{}>: {}".format(col_name, gpudb_type, numpy_type, ex)
+                raise GPUdbException(msg)
 
             data_list.append(col_data)
         return pd.concat(data_list, axis=1)
@@ -246,19 +240,19 @@ class DataFrameUtils:
         Returns:
             GPUdbTable: a GPUdbTable instance created from the Data Frame passed in 
         """
-
+        
         if(df.empty):
             raise GPUdbException("Dataframe cannot be empty.")
 
         has_table_resp = db.has_table(table_name)
-        cls._check_error(has_table_resp)
+        GPUdb._check_error(has_table_resp)
         if (not create_table and not has_table_resp["table_exists"]):
             raise GPUdbException("({}) Table does not exist and create_table=false".format(table_name))
 
         if (clear_table):
             cls._LOG.debug("Clearing table: {}".format(table_name))
             clear_resp = db.clear_table(table_name=table_name, options={'no_error_if_not_exists': 'true'})
-            cls._check_error(clear_resp)
+            GPUdb._check_error(clear_resp)
 
         cls._LOG.debug("Creating table: {}".format(table_name))
         col_types = cls._table_types_from_df(df, column_types)
@@ -271,12 +265,6 @@ class DataFrameUtils:
                                      batch_size=batch_size)
         return gpudb_table
 
-    @classmethod
-    def _check_error(cls, response):
-        status = response['status_info']['status']
-        if (status != 'OK'):
-            message = response['status_info']['message']
-            raise GPUdbException('[%s]: %s' % (status, message))
 
     @classmethod
     def df_insert_into_table(cls, df,
@@ -297,7 +285,7 @@ class DataFrameUtils:
 
         total_rows = df.shape[0]
         rows_before = gpudb_table.size()
-        converted_df = cls._table_convert_df_for_insert(df)
+        converted_df = cls._table_convert_df_for_insert(df, gpudb_table=gpudb_table)
 
         cls._LOG.debug("Inserting rows into <{}>".format(gpudb_table.table_name))
         with tqdm(total=total_rows,
@@ -323,14 +311,23 @@ class DataFrameUtils:
 
 
     @classmethod
-    def _table_convert_df_for_insert(cls, df):
+    def _table_convert_df_for_insert(cls, df, gpudb_table):
         """ Convert dataframe for insert into Kinetica table. """
         data_list = []
+
+        col_properties = gpudb_table.get_table_type().column_properties
+        cls._LOG.debug("col properties: {}".format(col_properties))
 
         for col_name, col_data in df.items():
             ref_val = col_data[0]
             if isinstance(ref_val, pd.Timestamp):
-                col_data = col_data.view(np.int64) // int(1e6)
+                col_type = col_properties[col_name][0]
+                if (col_type == GPUdbColumnProperty.TIMESTAMP):
+                    col_data = col_data.astype(np.int64) // int(1e6)
+                elif (col_type == GPUdbColumnProperty.DATETIME):
+                    col_data = col_data.astype(np.str)
+                else:
+                    raise GPUdbException("Can't convert {} to {}".format(col_name, col_type))
             elif isinstance(ref_val, list) or isinstance(ref_val, np.ndarray):
                 col_data = col_data.map(cls.vec_to_bytes)
             data_list.append(col_data)
@@ -338,15 +335,15 @@ class DataFrameUtils:
         return pd.concat(data_list, axis=1)
 
     TYPE_NUMPY_TO_GPUDB = {
-        'int64': [_COL_TYPE.LONG],
-        'int32': [_COL_TYPE.INT],
-        'int16': [_COL_TYPE.INT, GPUdbColumnProperty.INT16],
-        'int8': [_COL_TYPE.INT, GPUdbColumnProperty.INT8],
-        'float64': [_COL_TYPE.DOUBLE],
-        'float32': [_COL_TYPE.FLOAT],
-        'datetime64[ns]': [_COL_TYPE.LONG, GPUdbColumnProperty.TIMESTAMP],
-        'uint64': [_COL_TYPE.STRING, GPUdbColumnProperty.ULONG],
-        'bool': [_COL_TYPE.INT, GPUdbColumnProperty.BOOLEAN]
+        'int64':           [_COL_TYPE.LONG],
+        'int32':           [_COL_TYPE.INT],
+        'int16':           [_COL_TYPE.INT, GPUdbColumnProperty.INT16],
+        'int8':            [_COL_TYPE.INT, GPUdbColumnProperty.INT8],
+        'float64':         [_COL_TYPE.DOUBLE],
+        'float32':         [_COL_TYPE.FLOAT],
+        'datetime64[ns]':  [_COL_TYPE.LONG, GPUdbColumnProperty.TIMESTAMP],
+        'uint64':          [_COL_TYPE.STRING, GPUdbColumnProperty.ULONG],
+        'bool':            [_COL_TYPE.INT, GPUdbColumnProperty.BOOLEAN]
     }
 
 
@@ -356,8 +353,11 @@ class DataFrameUtils:
         """ Create GPUdb column types from a DataFrame. """
         type_list = []
 
+        if(col_type_override is None):
+            raise TypeError("col_type_override must be a dictionary.")
+
         # create a copy because we will be modifying this.
-        col_type_override = col_type_override.copy() if col_type_override is not None else {}
+        col_type_override = col_type_override.copy()
 
         for col_name, col_data in df.items():
             np_type = col_data.dtype.name

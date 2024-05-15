@@ -4788,7 +4788,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.1.10.0"
+    api_version = "7.1.10.1"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -7353,6 +7353,14 @@ class GPUdb(object):
     # ------------------------------------------------------------------------
     #                 Endpoint Submission Related Methods
     # ------------------------------------------------------------------------
+    @classmethod
+    def _check_error(cls, response):
+        status = response['status_info']['status']
+        if (status != 'OK'):
+            message = response['status_info']['message']
+            raise GPUdbException('[%s]: %s' % (status, message))
+
+
     def __submit_request_raw( self, url = None, endpoint = None,
                               request_body = None,
                               # enable_compression = False,
@@ -10136,7 +10144,7 @@ class GPUdb(object):
               show_progress = False):
         """Runs the given query and converts the result to a Pandas Data Frame.
 
-        Args:
+        Parameters:
             sql (str)
                 The SQL query to run
 
@@ -10234,7 +10242,7 @@ class GPUdb(object):
 
 
     def execute(self, sql, sql_params = [], sql_opts = {}):
-        """Execute a SQL query and return the rowcount.
+        """Execute a SQL query and return the row count.
 
         Parameters:
             sql (str)
@@ -10252,50 +10260,96 @@ class GPUdb(object):
         """
         from . import gpudb_sql_iterator
 
-        gpudb_sql_iterator.GPUdbSqlIterator._set_sql_params(sql_opts, sql_params)
+        GPUdb._set_sql_params(sql_opts, sql_params)
         response = self.execute_sql(statement=sql, options=sql_opts)
-        gpudb_sql_iterator.GPUdbSqlIterator._check_error(response)
+        GPUdb._check_error(response)
         count_affected = response['count_affected']
         return count_affected
     # end execute
 
+
+    @classmethod
+    def _set_sql_params(cls, sql_opts, sql_params):
+        """Convert SQL parameters to JSON and set as an option for execute_sql_and_decode()
+
+        Parameters:
+            sql_opts (dict)
+                The parameter list that will be appended to.
+
+            sql_params (list of native types)
+                The SQL parameters that will be substituted for tokens (e.g. $1 $2)
+        """
+        if (len(sql_params) == 0):
+            return
+        
+        for idx, item in enumerate(sql_params):
+            if (isinstance(item, list)):
+                # assume that list type is vector
+                sql_params[idx] = str(item)
+
+        json_params = json.dumps(sql_params)
+        sql_opts['query_parameters'] = json.dumps(sql_params)
+
+
     @staticmethod
     def get_connection(
-            enable_ssl_cert_verification=False,
-            enable_auto_discovery=False,
-            enable_failover=False,
-            logging_level='INFO'):
-        """ Get a connection to Kienetica from environment variables.
+            enable_ssl_cert_verification = False, 
+            enable_auto_discovery = False,
+            enable_failover = False,
+            logging_level = 'INFO'):
+        """ Get a connection to Kinetica getting connection and authentication
+        information from environment variables.
 
-        This is useful particularly for Jupyter notebooks to prevent commit of credentials
-        to version control. In addition some features including autodiscovery and ssl
-        verification are disabled by default to simplify connections for simple use cases.
+        This method is useful particularly for Jupyter notebooks, which won't
+        need authentication credentials embedded within them.  This, in turn,
+        helps to prevent commit of credentials to the notebook version control.
+        In addition, some features including auto-discovery and SSL certificate
+        verification are disabled by default to simplify connections for simple
+        use cases.
 
         The following environment variables are required:
         - `KINETICA_URL`: the url of the Kinetica server
         - `KINETICA_USER`: the username to connect with
         - `KINETICA_PASSWD`: the password to connect with
 
-        Args:
-        enable_ssl_cert_verification (bool):
-            Enable SSL certificate verification.
-
-        enable_auto_discovery (bool):
-            Enable auto-discovery of the cluster. This can increase connection time.
-
-        enable_failover (bool):
-            Enable failover to another cluster.
-
-        logging_level (str):
-            Logging level for the connection. (INFO by default)
-
+        Parameters:
+            enable_ssl_cert_verification (bool):
+                Enable SSL certificate verification.
+    
+            enable_auto_discovery (bool):
+                Enable auto-discovery of the initial cluster nodes, as well as
+                any attached failover clusters.  This allows for both multi-head
+                ingestion & key lookup, as well as cluster failover.
+    
+            enable_failover (bool):
+                Enable failover to another cluster.
+    
+            logging_level (str):
+                Logging level for the connection. (INFO by default)
+    
         Returns (GPUdb):
             An active connection to Kinetica.
         """
 
-        host = os.environ['KINETICA_URL']
-        user = os.environ['KINETICA_USER']
-        passwd = os.environ['KINETICA_PASSWD']
+        ENV_URL = 'KINETICA_URL'
+        ENV_USER = 'KINETICA_USER'
+        ENV_PASS = 'KINETICA_PASSWD'
+        ENV_NOT_FOUND_ERROR = 'Environment variable <{}> needs to be set when connecting with get_connection()'
+
+        if ENV_URL in os.environ:
+            url = os.environ[ENV_URL]
+        else:
+            raise GPUdbException(ENV_NOT_FOUND_ERROR.format( ENV_URL ))
+
+        if ENV_USER in os.environ:
+            user = os.environ[ENV_USER]
+        else:
+            kdbc.__log_warn("Attempting to log in with no username set in environment variable <{}>!".format(ENV_USER))
+
+        if ENV_PASS in os.environ:
+            passwd = os.environ[ENV_PASS]
+        else:
+            kdbc.__log_warn("Attempting to log in with no password set in environment variable <{}>!".format(ENV_PASS))
 
         options = GPUdb.Options()
         options.username = user
@@ -10304,18 +10358,13 @@ class GPUdb(object):
         options.disable_auto_discovery = not enable_auto_discovery
         options.disable_failover = not enable_failover
         options.logging_level = logging_level
-        kdbc = GPUdb(host=host, options=options)
+        kdbc = GPUdb(host = url, options = options)
 
-        if IS_PYTHON_3:
-            from importlib.metadata import version
-            print(
-                "Connected to Kinetica! (host={} api={} server={})").format(kdbc.get_url(), version('gpudb'), str(kdbc.server_version))
-        else:
-            version = kdbc.api_version
-            print(
-                "Connected to Kinetica! (host={}  api={} server={})".format(kdbc.get_url(), version, str(kdbc.server_version)))
+        kdbc.__log_info("Connected to Kinetica! (host={} api={} server={})".format(kdbc.get_url(), kdbc.api_version, str(kdbc.server_version)))
 
         return kdbc
+    # end get_connection
+
 
     # ------------- END convenience functions ------------------------------------
 
@@ -32181,7 +32230,7 @@ class GPUdb(object):
         concepts documentation, the
         `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`__,
         and/or some
-        `/match/graph examples <../../../../guide-tags/graph-match/>`__
+        `/match/graph examples <../../../../guide-tags/graph---match/>`__
         before using this endpoint.
 
         Parameters:
@@ -33152,7 +33201,7 @@ class GPUdb(object):
         concepts documentation, the
         `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`__,
         and/or some
-        `/match/graph examples <../../../../guide-tags/graph-query>`__
+        `/match/graph examples <../../../../guide-tags/graph---query>`__
         before using this endpoint.
 
         Parameters:
@@ -35893,7 +35942,7 @@ class GPUdb(object):
         concepts documentation, the
         `Graph REST Tutorial <../../../../guides/graph_rest_guide/>`__,
         and/or some
-        `/solve/graph examples <../../../../guide-tags/graph-solve>`__
+        `/solve/graph examples <../../../../guide-tags/graph---solve>`__
         before using this endpoint.
 
         Parameters:
@@ -39849,7 +39898,7 @@ class GPUdbTable( object ):
         GPUdbTable reference to the table.
 
 
-        Args:
+        Parameters:
             df (pd.DataFrame)
                 The Pandas Data Frame to load into a table
 
@@ -45485,6 +45534,8 @@ class GPUdbTableOptions(object):
     __is_automatic_partition      = "is_automatic_partition"
     __ttl                         = "ttl"
     __chunk_size                  = "chunk_size"
+    __chunk_column_max_memory     = "chunk_column_max_memory"
+    __chunk_max_memory            = "chunk_max_memory"
     __strategy_definition         = "strategy_definition"
     __is_result_table             = "is_result_table"
     __create_temp_table           = "create_temp_table"

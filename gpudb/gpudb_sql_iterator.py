@@ -6,11 +6,13 @@
 # ---------------------------------------------------------------------------
 
 import logging
+import json
 
 from . import GPUdb
 from . import GPUdbTable
 from . import GPUdbException
 
+LOG = logging.getLogger(__name__)
 
 class GPUdbSqlIterator():
     """  Iterates over the records of a given query.
@@ -31,7 +33,6 @@ class GPUdbSqlIterator():
                             ncols=cls.TQDM_NCOLS):
                 result_list.append(rec)
 
-    
     """
 
     _log = logging.getLogger("gpudb.GPUdbSqlIterator")
@@ -39,11 +40,10 @@ class GPUdbSqlIterator():
     def __init__(self,
                  db,
                  sql,
-                 batch_size,
-                 sql_opts=None):
-        self.rec_pos = 0
-        if sql_opts is None:
-            sql_opts = {}
+                 batch_size = 5000,
+                 sql_params = [],
+                 sql_opts = {}):
+
         self.sql = sql
         self.db = db
         self.batch_size = batch_size
@@ -58,7 +58,9 @@ class GPUdbSqlIterator():
         self.paging_tables = []
 
         paging_table_name = GPUdbTable.random_name()
+        GPUdb._set_sql_params(sql_opts, sql_params)
         self.sql_opts["paging_table"] = paging_table_name
+
 
     def open(self):
         # optional call
@@ -95,7 +97,6 @@ class GPUdbSqlIterator():
         self.retrieved_count += 1
         return rec_values
 
-    next = __next__
 
     def _check_fetch(self):
         if (self.records is not None and self.rec_pos < len(self.records)):
@@ -111,6 +112,7 @@ class GPUdbSqlIterator():
 
         self._execute_sql()
         self.offset += self.batch_size
+        
 
     def _execute_sql(self):
         limit = self.batch_size
@@ -127,11 +129,7 @@ class GPUdbSqlIterator():
             get_column_major=False,
             options=self.sql_opts)
 
-        status = response['status_info']['status']
-        if (status != 'OK'):
-            message = response['status_info']['message']
-            raise GPUdbException('[%s]: %s' % (status, message))
-
+        GPUdb._check_error(response)
         self.records = response['records']
 
         if (self.total_count is None):
@@ -161,4 +159,4 @@ class GPUdbSqlIterator():
             self.type_map = {name: type for (name, type) in zip(col_names, col_types)}
             self._log.debug("Type map: {}".format(self.type_map))
 
-# end class KineticaSqlIterator
+# end class GPUdbSqlIterator
