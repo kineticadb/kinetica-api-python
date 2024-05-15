@@ -291,7 +291,7 @@ class DataFrameUtils:
 
         total_rows = df.shape[0]
         rows_before = gpudb_table.size()
-        converted_df = cls._table_convert_df_for_insert(df)
+        converted_df = cls._table_convert_df_for_insert(df, gpudb_table=gpudb_table)
 
         cls._LOG.debug(f"Inserting rows into <{gpudb_table.table_name}>")
         with tqdm(total=total_rows,
@@ -318,14 +318,23 @@ class DataFrameUtils:
 
     @classmethod
     @typechecked
-    def _table_convert_df_for_insert(cls, df: pd.DataFrame) -> pd.DataFrame:
+    def _table_convert_df_for_insert(cls, df: pd.DataFrame, gpudb_table: GPUdbTable) -> pd.DataFrame:
         """ Convert dataframe for insert into Kinetica table. """
         data_list = []
+
+        col_properties = gpudb_table.get_table_type().column_properties
+        cls._LOG.debug(f"col properties: {col_properties}")
 
         for col_name, col_data in df.items():
             ref_val = col_data[0]
             if isinstance(ref_val, pd.Timestamp):
-                col_data = col_data.astype(np.int64) // int(1e6)
+                col_type = col_properties[col_name][0]
+                if (col_type == GPUdbColumnProperty.TIMESTAMP):
+                    col_data = col_data.astype(np.int64) // int(1e6)
+                elif (col_type == GPUdbColumnProperty.DATETIME):
+                    col_data = col_data.astype(np.str)
+                else:
+                    raise GPUdbException(f"Can't convert {col_name} to {col_type}")
             elif isinstance(ref_val, list) or isinstance(ref_val, np.ndarray):
                 col_data = col_data.map(cls.vec_to_bytes)
             data_list.append(col_data)

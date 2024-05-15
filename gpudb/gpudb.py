@@ -659,8 +659,9 @@ class _Util(object):
             if isinstance(column_value, str):
                 # convert stringified list of floats to Python list
                 column_value = eval(column_value)
-                
-            if isinstance(column_value, list) and all(isinstance(e, float) for e in column_value):
+            if isinstance(column_value, list):
+                column_value = [float(num) if isinstance(num, int) else num for num in column_value]
+            if all(isinstance(e, float) for e in column_value):
                 dims = column.get_vector_dimensions()
                 # pack as bytes
                 converted_column_value = struct.pack("%sf" % dims, *column_value)
@@ -4975,7 +4976,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.0.7"
+    api_version = "7.2.0.8"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -32336,7 +32337,7 @@ class GPUdb(object):
         & Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
         documentation, the `Graph REST Tutorial
         <../../../../guides/graph_rest_guide/>`__, and/or some `/match/graph
-        examples <../../../../guide-tags/graph-match/>`__ before using this
+        examples <../../../../guide-tags/graph---match/>`__ before using this
         endpoint.
 
         Parameters:
@@ -33297,7 +33298,7 @@ class GPUdb(object):
         & Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
         documentation, the `Graph REST Tutorial
         <../../../../guides/graph_rest_guide/>`__, and/or some `/match/graph
-        examples <../../../../guide-tags/graph-query>`__ before using this
+        examples <../../../../guide-tags/graph---query>`__ before using this
         endpoint.
 
         Parameters:
@@ -36338,7 +36339,7 @@ class GPUdb(object):
         & Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
         documentation, the `Graph REST Tutorial
         <../../../../guides/graph_rest_guide/>`__, and/or some `/solve/graph
-        examples <../../../../guide-tags/graph-solve>`__ before using this
+        examples <../../../../guide-tags/graph---solve>`__ before using this
         endpoint.
 
         Parameters:
