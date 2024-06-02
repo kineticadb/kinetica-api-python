@@ -4976,7 +4976,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.0.8"
+    api_version = "7.2.0.9"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -18034,8 +18034,8 @@ class GPUdb(object):
                 * **egress_single_file_max_size** --
                   Max file size (in MB) to allow saving to a single file. May
                   be overridden by target limitations. The default value is
-                  '100'. The minimum allowed value is '1'. The maximum allowed
-                  value is '200'.
+                  '10000'. The minimum allowed value is '1'. The maximum
+                  allowed value is '200000'.
 
                 * **max_concurrent_kernels** --
                   Sets the max_concurrent_kernels value of the conf. The
@@ -25373,6 +25373,10 @@ class GPUdb(object):
                   * overwrite
 
                   The default value is 'true'.
+
+                * **single_file_max_size** --
+                  Max file size (in MB) to allow saving to a single file. May
+                  be overridden by target limitations. The default value is ''.
 
                 * **text_delimiter** --
                   Specifies the character to write out to delimit field values

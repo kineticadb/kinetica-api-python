@@ -2,6 +2,19 @@
 
 ## Version 7.2
 
+### Version 7.2.0.9 - 2024-06-02
+
+#### Added
+-   Python3 PEP 249 DB API interface
+
+#### Changed
+-   Minimum required Python version is 3.8
+-   Project metadata moved to TOML format
+
+#### Notes
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes.
+
+
 ### Version 7.2.0.8 - 2024-05-15
 
 #### Fixed
