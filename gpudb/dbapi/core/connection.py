@@ -2,33 +2,24 @@
 Connection object for Kinetica which fits the DB API spec.
 
 """
-import re
 from enum import Enum, unique
 # pylint: disable=c-extension-no-member
 from typing import Dict, Optional, Sequence, Tuple, Union, Any
 
 from gpudb import GPUdb
-from gpudb.dbapi.core.cursor import Cursor
-from gpudb.dbapi.core.exceptions import convert_runtime_errors, ProgrammingError
+from gpudb.dbapi import *
+from gpudb.dbapi.core.cursor import Cursor, ParamStyle
+from gpudb.dbapi.core.exceptions import convert_runtime_errors
 from gpudb.dbapi.core.utils import raise_if_closed, ignore_transaction_error
-from gpudb.dbapi.pep249 import (SQLQuery,
+from gpudb.dbapi.pep249 import (Connection,
+                                SQLQuery,
                                 QueryParameters,
                                 ProcName,
                                 ProcArgs,
                                 CursorExecuteMixin,
-                                ConcreteErrorMixin,
-                                Connection)
-from gpudb.dbapi import *
+                                ConcreteErrorMixin)
 
-__all__ = ["KineticaConnection", "ParamStyle"]
-
-
-@unique
-class ParamStyle(Enum):
-    QMARK = "qmark"
-    NUMERIC = "numeric"
-    FORMAT = "format"
-    NUMERIC_DOLLAR = "numeric_dollar"
+__all__ = ["KineticaConnection"]
 
 
 DEFAULT_CONFIGURATION: Dict[str, Tuple[Any, Union[type, Tuple[type, ...]]]] = {
@@ -148,17 +139,6 @@ class KineticaConnection(
         Returns:
             Cursor: a Cursor containing the results of the query
         """
-        valid, placeholder = KineticaConnection.__is_valid_statement(sql_statement)
-        if valid:
-            if placeholder == ParamStyle.QMARK:
-                sql_statement = KineticaConnection.__process_params_qmark(sql_statement)
-            elif placeholder == ParamStyle.NUMERIC:
-                sql_statement = KineticaConnection.__process_params_numeric(sql_statement)
-            elif placeholder == ParamStyle.FORMAT:
-                sql_statement = KineticaConnection.__process_params_format(sql_statement)
-        else:
-            raise ProgrammingError("Invalid SQL statement {}; has non-supported parameter placeholders {}"
-                                   .format(sql_statement, placeholder))
         return self.cursor().execute(sql_statement, parameters)
 
     def executemany(
@@ -169,6 +149,30 @@ class KineticaConnection(
 
         .. seealso:: :func:`execute`
 
+        Example - inserting multiple records
+        ::
+
+            con1 = gpudb.connect("kinetica://", connect_args={
+                'url': 'http://localhost:9191',
+                'username': '',
+                'password': '',
+                'bypass_ssl_cert_check': True})
+
+            create_query = ("create table ki_home.test_table (i integer not null, bi bigint not null) using table "
+                            "properties (no_error_if_exists=TRUE)")
+            con1.execute(create_query)
+
+            i = 1
+            bi = 1000
+            num_pairs = 50000
+
+            # Generate a list of pairs with the same values and monotonically increasing first value
+            pairs = [[i + x, bi + x] for x in range(num_pairs)]
+            insert_many_query = "insert into ki_home.test_table (i, bi) values ($1, $2)"
+            con1.executemany(insert_many_query, pairs)
+            con1.close()
+
+
         Args:
             operation (SQLQuery): the SQL query
             seq_of_parameters (Sequence[QueryParameters]): a list of parameters (tuples)
@@ -176,16 +180,7 @@ class KineticaConnection(
         Returns:
             Cursor: a Cursor instance to iterate over the results
         """
-        cursor_list = []
-        for params in seq_of_parameters:
-            cursor = self.execute(operation, params)
-            cursor_list.append(cursor)
-        last_cursor = cursor_list[:-1][0]
-
-        for cursor in cursor_list:
-            cursor.close()
-
-        return last_cursor
+        return self.cursor().executemany(operation, seq_of_parameters)
 
     def executescript(self, script: SQLQuery) -> Cursor:
         """ This method executes an SQL script which is a ';' separated list of SQL statements.
@@ -222,127 +217,3 @@ class KineticaConnection(
     def closed(self):
         return self._closed
 
-    @staticmethod
-    def __has_qmark_params(sql_statement):
-        valid, placeholder = KineticaConnection.__is_valid_statement(sql_statement)
-        return placeholder == ParamStyle.QMARK and valid
-
-    @staticmethod
-    def __has_numeric_params(sql_statement):
-        valid, placeholder = KineticaConnection.__is_valid_statement(sql_statement)
-        return placeholder == ParamStyle.NUMERIC and valid
-
-    @staticmethod
-    def __has_format_params(sql_statement):
-        valid, placeholder = KineticaConnection.__is_valid_statement(sql_statement)
-        return placeholder == ParamStyle.FORMAT and valid
-
-    @staticmethod
-    def __is_valid_statement(sql_statement: str) -> Tuple[Union[bool, Any], Union[str, None]]:
-        placeholders = list(KineticaConnection.__extract_parameter_placeholders(sql_statement).keys())
-
-        if len(placeholders) > 1:
-            raise ProgrammingError("SQL statement {} contains different parameter placeholder formats {}"
-                                   .format(sql_statement, placeholders))
-
-        placeholder = placeholders[0] if len(placeholders) == 1 else None
-        supported_paramstyles = [e.value for e in ParamStyle]
-        return placeholder is None or placeholder.value in supported_paramstyles, placeholder
-
-    @staticmethod
-    def __extract_parameter_placeholders(sql_statement: str):
-        # Define regular expression patterns to match different DBAPI v2 placeholders
-        patterns = {
-            ParamStyle.QMARK: r'\?',  # Question mark style
-            ParamStyle.NUMERIC: r':(\d+)',  # Numeric style (e.g., :1, :2)
-            ParamStyle.NUMERIC_DOLLAR: r'\$\d+',  # Numeric dollar style (e.g., $1, $2)
-            # 'named': r':\w+',  # Named style (e.g., :name)
-            ParamStyle.FORMAT: r'%[sdifl]',  # ANSI C printf format codes (e.g., %s)
-            # 'pyformat': r'%\(\w+\)s'  # Python extended format codes (e.g., %(name)s)
-        }
-
-        # Dictionary to hold found placeholders
-        placeholders = {}
-
-        # Extract placeholders based on patterns
-        for key, pattern in patterns.items():
-            found = re.findall(pattern, sql_statement)
-            if len(found) > 0:
-                placeholders[key] = found
-
-        return placeholders
-
-    @staticmethod
-    def __process_params_qmark(query: str):
-        """ Replace all occurrences of '?' with $1, $2, ..., $n in the SQL statement
-
-        Args:
-            query (str): the SQL statement
-
-        Returns:
-            str: the modified SQL statement
-        """
-        
-        # Initialize a counter to keep track of the occurrences of '?'
-        counter = 1
-
-        # Find the last occurrence of '?'
-        last_question_mark_index = query.rfind('?')
-
-        # Replace all occurrences of '?' with $1, $2, ..., $n
-        replaced_string = ''
-        for char in query:
-            if char == '?':
-                replaced_string += f'${counter}'
-                # Increment the counter until the last occurrence of '?'
-                if counter < last_question_mark_index + 1:
-                    counter += 1
-            else:
-                replaced_string += char
-
-        return replaced_string
-
-    @staticmethod
-    def __process_params_numeric(query: str):
-        """ Replace each ':n' with corresponding '$n' in the SQL statement
-
-        Args:
-            query (str): the SQL statement
-
-        Returns:
-            str: the modified SQL statement
-        """
-        
-        pattern = r':(\d+)'
-
-        # Find all matches and store unique numbers in a set to avoid duplicates
-        matches = sorted(set(re.findall(pattern, query)), key=int)
-
-        # Replace each ':n' with corresponding '$n'
-        for i, match in enumerate(matches, start=1):
-            query = re.sub(r':{}'.format(match), r'${}'.format(i), query)
-
-        return query
-
-    @staticmethod
-    def __process_params_format(query: str):
-        """ Replace each ANSI C format specifier with corresponding $n in the SQL statement
-
-        Args:
-            query (str): the SQL statement
-
-        Returns:
-            str: the modified SQL statement
-        """
-        
-        # Regular expression pattern to match ANSI C format specifiers
-        pattern = r'%[sdifl]'
-
-        # Find all matches
-        matches = re.findall(pattern, query)
-
-        # Replace each format specifier with corresponding $n
-        for i, match in enumerate(matches, start=1):
-            query = query.replace(match, f'${i}', 1)
-
-        return query

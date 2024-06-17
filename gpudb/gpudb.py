@@ -4976,7 +4976,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.0.9"
+    api_version = "7.2.0.10"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -10412,7 +10412,6 @@ class GPUdb(object):
         Returns:
             Number of records affected
         """
-        from . import gpudb_sql_iterator
 
         GPUdb._set_sql_params(sql_opts, sql_params)
         response = self.execute_sql(statement=sql, options=sql_opts)
@@ -10441,7 +10440,6 @@ class GPUdb(object):
                 # assume that list type is vector
                 sql_params[idx] = str(item)
 
-        json_params = json.dumps(sql_params)
         sql_opts['query_parameters'] = json.dumps(sql_params)
 
 
@@ -12500,9 +12498,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/model"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_model_request","fields":[{"name":"model_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_model_response","fields":[{"name":"model_names","type":{"type":"array","items":"string"}},{"name":"entity_ids","type":{"type":"array","items":"int"}},{"name":"input_schemas","type":{"type":"array","items":"string"}},{"name":"output_schemas","type":{"type":"array","items":"string"}},{"name":"registry_list","type":{"type":"array","items":"string"}},{"name":"container_list","type":{"type":"array","items":"string"}},{"name":"run_function_list","type":{"type":"array","items":"string"}},{"name":"deployments","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_model_response","fields":[{"name":"model_names","type":{"type":"array","items":"string"}},{"name":"entity_ids","type":{"type":"array","items":"int"}},{"name":"input_schemas","type":{"type":"array","items":"string"}},{"name":"output_schemas","type":{"type":"array","items":"string"}},{"name":"registry_list","type":{"type":"array","items":"string"}},{"name":"container_list","type":{"type":"array","items":"string"}},{"name":"run_function_list","type":{"type":"array","items":"string"}},{"name":"deployments","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("model_names", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("model_names", "array", [("string")]), ("entity_ids", "array", [("int")]), ("input_schemas", "array", [("string")]), ("output_schemas", "array", [("string")]), ("registry_list", "array", [("string")]), ("container_list", "array", [("string")]), ("run_function_list", "array", [("string")]), ("deployments", "array", [("string")]), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("model_names", "array", [("string")]), ("entity_ids", "array", [("int")]), ("input_schemas", "array", [("string")]), ("output_schemas", "array", [("string")]), ("registry_list", "array", [("string")]), ("container_list", "array", [("string")]), ("run_function_list", "array", [("string")]), ("deployments", "array", [("string")]), ("options", "array", [("map", [("string")])]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/model"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -18232,9 +18230,9 @@ class GPUdb(object):
                   parameter *value* would have been either 'true' or 'false'.
 
                 * **rename_table** --
-                  Renames a table or view within its current schema to input
-                  parameter *value*. Has the same naming restrictions as
-                  `tables <../../../../concepts/tables/>`__.
+                  Renames a table or view to input parameter *value*. Has the
+                  same naming restrictions as `tables
+                  <../../../../concepts/tables/>`__.
 
                 * **ttl** --
                   Sets the `time-to-live <../../../../concepts/ttl/>`__ in
@@ -19502,13 +19500,15 @@ class GPUdb(object):
                 * azure_oauth
                 * azure_sas
                 * azure_storage_key
+                * confluent
                 * docker
                 * gcs_service_account_id
                 * gcs_service_account_keys
                 * hdfs
                 * jdbc
                 * kafka
-                * confluent
+                * nvidia_api_key
+                * openai_api_key
 
             identity (str)
                 User of the credential to be created.
@@ -32417,6 +32417,9 @@ class GPUdb(object):
                 * **match_pattern** --
                   Matches a pattern in the graph
 
+                * **match_embedding** --
+                  Creates vector node embeddings
+
                 The default value is 'markov_chain'.
 
             solution_table (str)
@@ -32678,10 +32681,10 @@ class GPUdb(object):
                   is '10'.
 
                 * **num_loops_per_cycle** --
-                  For the *match_clusters* solver only. Terminates the cluster
-                  exchanges within the first step iterations of a cycle (inner
-                  loop) unless convergence is reached. The default value is
-                  '10'.
+                  For the *match_clusters* and *match_embedding* solvers only.
+                  Terminates the cluster exchanges within the first step
+                  iterations of a cycle (inner loop) unless convergence is
+                  reached. The default value is '10'.
 
                 * **num_output_clusters** --
                   For the *match_clusters* solver only.  Limits the output to
@@ -32690,9 +32693,10 @@ class GPUdb(object):
                   is '0'.
 
                 * **max_num_clusters** --
-                  For the *match_clusters* solver only. If set (value greater
-                  than zero), it terminates when the number of clusters goes
-                  below than this number. The default value is '0'.
+                  For the *match_clusters* and *match_embedding* solvers only.
+                  If set (value greater than zero), it terminates when the
+                  number of clusters goes below than this number. For embedding
+                  solver the default is 8. The default value is '0'.
 
                 * **cluster_quality_metric** --
                   For the *match_clusters* solver only. The quality metric for
@@ -32782,9 +32786,10 @@ class GPUdb(object):
                   penalty for full charging. The default value is '30000.0'.
 
                 * **max_hops** --
-                  For the *match_similarity* solver only. Searches within this
-                  maximum hops for source and target node pairs to compute the
-                  Jaccard scores. The default value is '3'.
+                  For the *match_similarity* and *match_embedding* solvers
+                  only. Searches within this maximum hops for source and target
+                  node pairs to compute the Jaccard scores. The default value
+                  is '3'.
 
                 * **traversal_node_limit** --
                   For the *match_similarity* solver only. Limits the traversal
@@ -32804,14 +32809,20 @@ class GPUdb(object):
                   The default value is 'true'.
 
                 * **force_undirected** --
-                  For the *match_pattern* solver only. Pattern matching will be
-                  using both pattern and graph as undirected if set to true.
+                  For the *match_pattern* and *match_embedding* solvers only.
+                  Pattern matching will be using both pattern and graph as
+                  undirected if set to true.
                   Allowed values are:
 
                   * true
                   * false
 
                   The default value is 'false'.
+
+                * **max_vector_dimension** --
+                  For the *match_embedding* solver only. Limits the number of
+                  dimensions in node vector embeddings. The default value is
+                  '1000'.
 
                 The default value is an empty dict ( {} ).
 
@@ -42519,9 +42530,9 @@ class GPUdbTable( object ):
                   parameter *value* would have been either 'true' or 'false'.
 
                 * **rename_table** --
-                  Renames a table or view within its current schema to input
-                  parameter *value*. Has the same naming restrictions as
-                  `tables <../../../../concepts/tables/>`__.
+                  Renames a table or view to input parameter *value*. Has the
+                  same naming restrictions as `tables
+                  <../../../../concepts/tables/>`__.
 
                 * **ttl** --
                   Sets the `time-to-live <../../../../concepts/ttl/>`__ in

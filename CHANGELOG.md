@@ -2,6 +2,12 @@
 
 ## Version 7.2
 
+### Version 7.2.0.10 - 2024-06-17
+
+#### Changed
+-   Completed synchronous DB API interface; added batch insert handling
+
+
 ### Version 7.2.0.9 - 2024-06-02
 
 #### Added

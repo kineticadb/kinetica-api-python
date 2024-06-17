@@ -2,12 +2,17 @@
 Cursor object for Kinetica which fits the DB API spec.
 
 """
+import json
+import re
 # pylint: disable=c-extension-no-member
 import weakref
-from typing import Optional, Sequence, Type, Union, TYPE_CHECKING, List, Iterator
+from enum import Enum, unique
+from itertools import islice
+from typing import Optional, Sequence, Type, Union, TYPE_CHECKING, List, Iterator, Tuple, Any
 
-from gpudb import GPUdbSqlIterator, GPUdb
+from gpudb import GPUdbSqlIterator, GPUdbException
 from gpudb.dbapi.core.exceptions import (
+    ProgrammingError,
     NotSupportedError,
     convert_runtime_errors,
 )
@@ -19,7 +24,16 @@ if TYPE_CHECKING:
     # pylint: disable=cyclic-import
     from gpudb.dbapi.core import KineticaConnection
 
-__all__ = ["Cursor"]
+
+@unique
+class ParamStyle(Enum):
+    QMARK = "qmark"
+    NUMERIC = "numeric"
+    FORMAT = "format"
+    NUMERIC_DOLLAR = "numeric_dollar"
+
+
+__all__ = ["Cursor", "ParamStyle"]
 
 kinetica_to_python_type_map = {
     'boolean': 'bool',
@@ -51,6 +65,7 @@ kinetica_to_python_type_map = {
     'wkb': 'str',
 }
 
+
 # pylint: disable=too-many-ancestors
 class Cursor(
     CursorConnectionMixin,
@@ -62,6 +77,8 @@ class Cursor(
     PEP 249.
 
     """
+
+    __INSERT_BATCH_SIZE = 50000
 
     def __init__(self, connection: "KineticaConnection", query: SQLQuery = None, query_params: QueryParameters = None):
         self._connection: KineticaConnection = weakref.proxy(connection)
@@ -202,12 +219,28 @@ class Cursor(
         Returns:
             Cursor: Returns an instance of self which is used by KineticaConnection
         """
-        
+
+        sql_statement = None
+        valid, placeholder = Cursor.__is_valid_statement(operation)
+        if valid:
+            if placeholder == ParamStyle.QMARK:
+                sql_statement = Cursor.__process_params_qmark(operation)
+            elif placeholder == ParamStyle.NUMERIC:
+                sql_statement = Cursor.__process_params_numeric(operation)
+            elif placeholder == ParamStyle.FORMAT:
+                sql_statement = Cursor.__process_params_format(operation)
+        else:
+            raise ProgrammingError("Invalid SQL statement {}; has non-supported parameter placeholders {}"
+                                   .format(operation, placeholder))
+
+        sql_statement = sql_statement or operation
+
         internal_cursor = GPUdbSqlIterator(self._connection.connection,
-                                           operation, sql_params=parameters if parameters else [])
+                                           sql_statement, sql_params=parameters if parameters else [])
         self._cursors.append(internal_cursor)
         self.arraysize = self._cursors[-1].batch_size
-        self._cursors[-1].execute(operation)
+        self._cursors[-1]._GPUdbSqlIterator__execute(sql_statement, parameters=json.dumps(parameters))
+
         self._closed = False
         return self
 
@@ -220,7 +253,39 @@ class Cursor(
     def executemany(
         self, operation: SQLQuery, seq_of_parameters: Sequence[QueryParameters]
     ) -> "Cursor":
-        raise NotImplementedError("This method is not implemented ...")
+
+        def split_list_iter(lst, size):
+            it = iter(lst)
+            return [list(islice(it, size)) for _ in range(0, len(lst), size)]
+
+        valid, placeholder = Cursor.__is_valid_statement(operation)
+        if not valid:
+            raise GPUdbException(f"Invalid SQL statement : {operation}")
+
+        statement_type = Cursor.__check_sql_statement_type(operation)
+
+        if statement_type == 'INSERT':
+
+            json_lists = split_list_iter(seq_of_parameters, Cursor.__INSERT_BATCH_SIZE)
+
+            for json_list in json_lists:
+                resp = self.connection.connection.execute_sql_and_decode(
+                    operation, options={"query_parameters": json_list})
+                if resp and resp["status_info"]["status"] == "ERROR":
+                    raise GPUdbException(resp["status_info"]["message"])
+
+            return self
+        else:
+            cursor_list = []
+            for params in seq_of_parameters:
+                cursor = self.execute(operation, params)
+                cursor_list.append(cursor)
+            last_cursor = cursor_list[:-1][0]
+
+            for cursor in cursor_list:
+                cursor.close()
+
+            return last_cursor
 
     @raise_if_closed
     @convert_runtime_errors
@@ -244,7 +309,7 @@ class Cursor(
     @raise_if_closed
     @convert_runtime_errors
     def fetchall(self) -> ResultSet:
-        return self._cursor.fetchall()
+        return self.fetchmany()
 
     def __iter__(self) -> Union[Iterator[dict], Iterator[tuple]]:
         """Iteration over the result set."""
@@ -253,3 +318,164 @@ class Cursor(
             if _next is None:
                 break
             yield _next
+
+    @staticmethod
+    def __has_qmark_params(sql_statement):
+        valid, placeholder = Cursor.__is_valid_statement(sql_statement)
+        return placeholder == ParamStyle.QMARK and valid
+
+    @staticmethod
+    def __has_numeric_params(sql_statement):
+        valid, placeholder = Cursor.__is_valid_statement(sql_statement)
+        return placeholder == ParamStyle.NUMERIC and valid
+
+    @staticmethod
+    def __has_format_params(sql_statement):
+        valid, placeholder = Cursor.__is_valid_statement(sql_statement)
+        return placeholder == ParamStyle.FORMAT and valid
+
+    @staticmethod
+    def __is_valid_statement(sql_statement: str) -> Tuple[Union[bool, Any], Union[str, None]]:
+        placeholders = list(Cursor.__extract_parameter_placeholders(sql_statement).keys())
+
+        if len(placeholders) > 1:
+            raise ProgrammingError("SQL statement {} contains different parameter placeholder formats {}"
+                                   .format(sql_statement, placeholders))
+
+        placeholder = placeholders[0] if len(placeholders) == 1 else None
+        supported_paramstyles = [e.value for e in ParamStyle]
+        return placeholder is None or placeholder.value in supported_paramstyles, placeholder
+
+    @staticmethod
+    def __extract_parameter_placeholders(sql_statement: str):
+        # Define regular expression patterns to match different DBAPI v2 placeholders
+        patterns = {
+            ParamStyle.QMARK: r'\?',  # Question mark style
+            ParamStyle.NUMERIC: r':(\d+)',  # Numeric style (e.g., :1, :2)
+            ParamStyle.NUMERIC_DOLLAR: r'\$\d+',  # Numeric dollar style (e.g., $1, $2)
+            # 'named': r':\w+',  # Named style (e.g., :name)
+            ParamStyle.FORMAT: r'%[sdifl]',  # ANSI C printf format codes (e.g., %s)
+            # 'pyformat': r'%\(\w+\)s'  # Python extended format codes (e.g., %(name)s)
+        }
+
+        # Dictionary to hold found placeholders
+        placeholders = {}
+
+        # Extract placeholders based on patterns
+        for key, pattern in patterns.items():
+            found = re.findall(pattern, sql_statement)
+            if len(found) > 0:
+                placeholders[key] = found
+
+        return placeholders
+
+    @staticmethod
+    def __process_params_qmark(query: str):
+        """ Replace all occurrences of '?' with $1, $2, ..., $n in the SQL statement
+
+        Args:
+            query (str): the SQL statement
+
+        Returns:
+            str: the modified SQL statement
+        """
+
+        # Initialize a counter to keep track of the occurrences of '?'
+        counter = 1
+
+        # Find the last occurrence of '?'
+        last_question_mark_index = query.rfind('?')
+
+        # Replace all occurrences of '?' with $1, $2, ..., $n
+        replaced_string = ''
+        for char in query:
+            if char == '?':
+                replaced_string += f'${counter}'
+                # Increment the counter until the last occurrence of '?'
+                if counter < last_question_mark_index + 1:
+                    counter += 1
+            else:
+                replaced_string += char
+
+        return replaced_string
+
+    @staticmethod
+    def __process_params_numeric(query: str):
+        """ Replace each ':n' with corresponding '$n' in the SQL statement
+
+        Args:
+            query (str): the SQL statement
+
+        Returns:
+            str: the modified SQL statement
+        """
+
+        pattern = r':(\d+)'
+
+        # Find all matches and store unique numbers in a set to avoid duplicates
+        matches = sorted(set(re.findall(pattern, query)), key=int)
+
+        # Replace each ':n' with corresponding '$n'
+        for i, match in enumerate(matches, start=1):
+            query = re.sub(r':{}'.format(match), r'${}'.format(i), query)
+
+        return query
+
+    @staticmethod
+    def __process_params_format(query: str):
+        """ Replace each ANSI C format specifier with corresponding $n in the SQL statement
+
+        Args:
+            query (str): the SQL statement
+
+        Returns:
+            str: the modified SQL statement
+        """
+
+        # Regular expression pattern to match ANSI C format specifiers
+        pattern = r'%[sdifl]'
+
+        # Find all matches
+        matches = re.findall(pattern, query)
+
+        # Replace each format specifier with corresponding $n
+        for i, match in enumerate(matches, start=1):
+            query = query.replace(match, f'${i}', 1)
+
+        return query
+
+    @staticmethod
+    def __extract_table_name_from_insert_statement(sql):
+        # Define a regex pattern to match the table name in an INSERT statement
+        pattern = r"INSERT\s+INTO\s+([a-zA-Z0-9_]+\.[a-zA-Z0-9_]+|[a-zA-Z0-9_]+)"
+
+        # Search for the pattern in the SQL statement
+        match = re.search(pattern, sql, re.IGNORECASE)
+
+        # If a match is found, return the table name
+        if match:
+            return match.group(1)
+        else:
+            # If no match is found, return None or raise an error
+            return None
+
+    @staticmethod
+    def __check_sql_statement_type(sql):
+        # Trim leading/trailing whitespace and make the statement uppercase for comparison
+        sql = sql.strip().upper()
+
+        # Patterns to match INSERT, DELETE, and UPDATE statements
+        patterns = {
+            'INSERT': r'^INSERT\s+INTO',
+            'DELETE': r'^DELETE\s+FROM',
+            'UPDATE': r'^UPDATE\s+'
+        }
+
+        # Check each pattern against the SQL statement
+        for statement_type, pattern in patterns.items():
+            if re.match(pattern, sql):
+                return statement_type
+
+        # If no match is found, return None
+        return None
+

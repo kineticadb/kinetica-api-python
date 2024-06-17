@@ -180,9 +180,9 @@ class GPUdbSqlIterator():
             self.type_map = {name: type for (name, type) in zip(col_names, col_types)}
             self._log.debug(f"Type map: {self.type_map}")
 
-    def execute(self, sql: str, parameters=None):
+    def __execute(self, sql: str, parameters=None):
         self.sql = sql
-        GPUdb._set_sql_params(self.sql_opts, parameters if parameters else [])
+        self.sql_opts["query_parameters"] = parameters
         self.open()
         self.close()
         return self
