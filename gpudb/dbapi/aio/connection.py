@@ -1,40 +1,25 @@
 """
-Connection object for Kinetica which fits the DB API spec.
+Async connection object for Kinetica which fits the DB API spec.
 
 """
-
-from enum import Enum, unique
-
-# pylint: disable=c-extension-no-member
-from typing import Dict, Optional, Sequence, Tuple, Union, Any
-
-from gpudb import GPUdb
+from typing import Optional, Union, Sequence
 from gpudb.dbapi.core.cursor import Cursor, ParamStyle
-from gpudb.dbapi.core.exceptions import convert_runtime_errors
-from gpudb.dbapi.core.utils import raise_if_closed, ignore_transaction_error
-from gpudb.dbapi.pep249 import (
-    Connection,
+from gpudb.dbapi.pep249.exceptions import ProgrammingError
+from gpudb.gpudb import GPUdb  # pylint: disable=no-name-in-module
+from ..pep249 import aiopep249
+from ..pep249.aiopep249 import (
     SQLQuery,
-    QueryParameters,
     ProcName,
     ProcArgs,
-    CursorExecuteMixin,
-    ConcreteErrorMixin,
+    QueryParameters,
 )
-from gpudb.dbapi.pep249.exceptions import ProgrammingError
-
-__all__ = ["KineticaConnection"]
-
-
-DEFAULT_CONFIGURATION: Dict[str, Tuple[Any, Union[type, Tuple[type, ...]]]] = {
-    "paramstyle": (None, (type(None), str)),  # standard/kinetica/qmark
-}
+from .cursor import AsyncCursor
+from .utils import to_thread
 
 
-# pylint: disable=too-many-ancestors
-class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
+class AsyncKineticaConnection(aiopep249.AsyncCursorExecuteMixin, aiopep249.AsyncConnection):
     """
-    A DB API 2.0 compliant connection for Kinetica, as outlined in
+    A DB API 2.0 compliant async connection for Kinetica, as outlined in
     PEP 249.
 
     """
@@ -80,31 +65,24 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
 
         self._connection = GPUdb(host=url, options=options)
 
-    @raise_if_closed
-    @convert_runtime_errors
-    def commit(self) -> None:
+
+    async def commit(self) -> None:
         return None
 
-    @raise_if_closed
-    @ignore_transaction_error
-    @convert_runtime_errors
-    def rollback(self) -> None:
+    async def rollback(self) -> None:
         return None
 
-    @convert_runtime_errors
-    def close(self) -> None:
+    async def close(self) -> None:
         """Close the database connection."""
         if self._closed:
             return
 
         self._closed = True
 
-    @raise_if_closed
-    @convert_runtime_errors
-    def cursor(self) -> Cursor:
-        return Cursor(self)
+    async def cursor(self) -> AsyncCursor:
+        return AsyncCursor(self, Cursor(self))
 
-    def callproc(
+    async def callproc(
         self, procname: ProcName, parameters: Optional[ProcArgs] = None
     ) -> Optional[ProcArgs]:
         """ This method is used to call a Kinetica procedure.
@@ -122,11 +100,12 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
         Returns:
             Optional[ProcArgs]: None
         """
-        return self.cursor().callproc(procname, parameters)
+        cursor = await self.cursor()
+        return await cursor.callproc(procname, parameters)
 
-    def execute(
-        self, sql_statement: SQLQuery, parameters: Optional[QueryParameters] = None
-    ) -> Cursor:
+    async def execute(
+        self, operation: SQLQuery, parameters: Optional[QueryParameters] = None
+    ) -> AsyncCursor:
         """The method to execute a single SQL statement (query or command) and return a cursor.
 
         Parameters may be provided as sequence or mapping and will be bound to variables in the operation.
@@ -135,7 +114,7 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
         .. seealso:: :obj:`ParamStyle`
 
         Args:
-            sql_statement (SQLQuery): the SQL statement (query or command) to execute
+            operation (SQLQuery): the SQL statement (query or command) to execute
             parameters (Optional[QueryParameters], optional): the parameters to the query;
                 typically a heterogeneous list. Defaults to None.
 
@@ -145,38 +124,16 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
         Returns:
             Cursor: a Cursor containing the results of the query
         """
-        return self.cursor().execute(sql_statement, parameters)
+        cursor = await self.cursor()
+        return await cursor.execute(operation, parameters)
 
-    def executemany(
+    async def executemany(
         self, operation: SQLQuery, seq_of_parameters: Sequence[QueryParameters]
-    ) -> Cursor:
+    ) -> AsyncCursor:
         """Method used to execute the same statement with a sequence of parameter values.
             The cursor is only returned from the last execution
 
         .. seealso:: :func:`execute`
-
-        Example - inserting multiple records
-        ::
-
-            con1 = gpudb.connect("kinetica://", connect_args={
-                'url': 'http://localhost:9191',
-                'username': '',
-                'password': '',
-                'bypass_ssl_cert_check': True})
-
-            create_query = ("create table ki_home.test_table (i integer not null, bi bigint not null) using table "
-                            "properties (no_error_if_exists=TRUE)")
-            con1.execute(create_query)
-
-            i = 1
-            bi = 1000
-            num_pairs = 50000
-
-            # Generate a list of pairs with the same values and monotonically increasing first value
-            pairs = [[i + x, bi + x] for x in range(num_pairs)]
-            insert_many_query = "insert into ki_home.test_table (i, bi) values ($1, $2)"
-            con1.executemany(insert_many_query, pairs)
-            con1.close()
 
 
         Args:
@@ -186,9 +143,10 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
         Returns:
             Cursor: a Cursor instance to iterate over the results
         """
-        return self.cursor().executemany(operation, seq_of_parameters)
+        cursor = await self.cursor()
+        return await cursor.executemany(operation, seq_of_parameters)
 
-    def executescript(self, script: SQLQuery) -> Cursor:
+    async def executescript(self, script: SQLQuery) -> AsyncCursor:
         """This method executes an SQL script which is a ';' separated list of SQL statements.
 
         .. seealso:: :func:`execute`
@@ -207,12 +165,12 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
         if sql_statements and len(sql_statements) > 0:
             cursor_list = []
             for sql_statement in sql_statements:
-                cursor = self.execute(sql_statement)
+                cursor = await self.execute(sql_statement)
                 cursor_list.append(cursor)
             last_cursor = cursor_list[:-1][0]
 
             for cursor in cursor_list:
-                cursor.close()
+                await cursor.close()
 
         return last_cursor
 

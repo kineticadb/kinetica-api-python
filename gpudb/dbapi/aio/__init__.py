@@ -1,35 +1,47 @@
 """
-Pure Python DB API wrapper around Kinetica Python API.
+Pure Python DB API wrapper around Kinetica Python API. This
+async implementation uses the sync implementation and asyncio.to_thread.
+
 
 """
-
-from typing import Optional, Union, Dict, Any, overload
-
-
-from gpudb.dbapi.core import *
-from gpudb.dbapi.aio import *
+from typing import Any, Dict, overload
 from gpudb.dbapi.pep249.type_constructors import *
+from gpudb.dbapi.core.exceptions import (
+    DatabaseError,
+    DataError,
+    Error,
+    InterfaceError,
+    IntegrityError,
+    InternalError,
+    NotSupportedError,
+    OperationalError,
+    ProgrammingError,
+)
+from .connection import AsyncKineticaConnection
+
+from .cursor import AsyncCursor
+
+# from .. import __version__
 
 __all__ = [
     "apilevel",
     "threadsafety",
     "paramstyle",
-    "connect",
     "aconnect",
-    "KineticaConnection",
-    "Cursor",
-    "TimestampFromTicks",
-    "TimeFromTicks",
-    "DateFromTicks",
+    "AsyncKineticaConnection",
+    "AsyncCursor",
+    "Binary",
+    "STRING",
+    "BINARY",
+    "NUMBER",
+    "DATETIME",
+    "ROWID",
     "Date",
     "Time",
     "Timestamp",
-    "ROWID",
-    "DATETIME",
-    "NUMBER",
-    "BINARY",
-    "STRING",
-    "Binary",
+    "DateFromTicks",
+    "TimeFromTicks",
+    "TimestampFromTicks",
     "Error",
     "InterfaceError",
     "DatabaseError",
@@ -41,8 +53,6 @@ __all__ = [
     "ProgrammingError",
 ]
 
-__version__ = "0.0.1"
-
 # pylint: disable=invalid-name
 apilevel = "2.0"
 threadsafety = 1
@@ -50,10 +60,10 @@ paramstyle = "qmark"
 
 
 @overload
-def connect(
+def aconnect(
     connection_string: str = "kinetica://", *, connect_args: Dict[str, Any] = ...
-) -> KineticaConnection:
-    """The global method to return a Kinetica connection
+) -> AsyncKineticaConnection:
+    """The global method to return an async Kinetica connection
 
     Example
     ::
@@ -86,16 +96,16 @@ def connect(
             in the module :py:mod:`gpudb`
 
     Returns:
-        KineticaConnection: an instance of the :class:`KineticaConnection`
+        KineticaConnection: an instance of the :class:`AsyncKineticaConnection`
     """
     ...
 
 
-def connect(
+def aconnect(
     connection_string: str = "kinetica://",
     **kwargs: Dict[str, Any],
-) -> KineticaConnection:
-    """The global method to return a Kinetica connection
+) -> AsyncKineticaConnection:
+    """The global method to return an async Kinetica connection
 
     Example
     ::
@@ -114,8 +124,8 @@ def connect(
         **kwargs (Dict[str, Any]): the arguments passed to the overloaded method :meth:`connect`
 
     Raises:
-        ProgrammingError: Raised in case wrong connection parameters are detected or a connection fails for some
-        other reason
+        ProgrammingError: Raised in case wrong connection parameters are 
+        detected or a connection fails for some other reason
 
     Returns:
         KineticaConnection: a :class:`KineticaConnection` instance
@@ -141,7 +151,7 @@ def connect(
     username = username if username else ""
     password = password if password else ""
 
-    return KineticaConnection(
+    return AsyncKineticaConnection(
         url=url,
         username=username,
         password=password,

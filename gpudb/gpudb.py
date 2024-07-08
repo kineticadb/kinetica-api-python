@@ -3079,7 +3079,8 @@ class GPUdb(object):
         def __str__( self ):
             """String representation of the cluster.
             """
-            field_list = [s[len('_Options__'):] if s.startswith('_Options__') else s for s in self.__dict__.keys() if s in self.__exposed_fields()]
+            field_list = [s[len('_Options__'):] if s.startswith('_Options__') else s for s in self.__dict__.keys()
+                          if s in self.__exposed_fields()]
             value_list = [value for key, value in vars(self).items() if key in self.__exposed_fields()]
             final_list = list(zip(field_list, value_list))
 
@@ -4976,7 +4977,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.0.10"
+    api_version = "7.2.0.11"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -19587,6 +19588,17 @@ class GPUdb(object):
                   Name of the Amazon S3 region where the given bucket is
                   located
 
+                * **s3_verify_ssl** --
+                  Set to false for testing purposes or when necessary to bypass
+                  TLS errors (e.g. self-signed certificates). This value is
+                  true by default.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
                 * **s3_use_virtual_addressing** --
                   When true (default), the requests URI should be specified in
                   virtual-hosted-style format where the bucket name is part of
@@ -19791,6 +19803,17 @@ class GPUdb(object):
                 * **s3_region** --
                   Name of the Amazon S3 region where the given bucket is
                   located
+
+                * **s3_verify_ssl** --
+                  Set to false for testing purposes or when necessary to bypass
+                  TLS errors (e.g. self-signed certificates). This value is
+                  true by default.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
                 * **s3_use_virtual_addressing** --
                   When true (default), the requests URI should be specified in

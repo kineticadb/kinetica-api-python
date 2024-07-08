@@ -2,13 +2,25 @@
 Cursor object for Kinetica which fits the DB API spec.
 
 """
+
 import json
 import re
+
 # pylint: disable=c-extension-no-member
 import weakref
 from enum import Enum, unique
 from itertools import islice
-from typing import Optional, Sequence, Type, Union, TYPE_CHECKING, List, Iterator, Tuple, Any
+from typing import (
+    Optional,
+    Sequence,
+    Type,
+    Union,
+    TYPE_CHECKING,
+    List,
+    Iterator,
+    Tuple,
+    Any,
+)
 
 from gpudb import GPUdbSqlIterator, GPUdbException
 from gpudb.dbapi.core.exceptions import (
@@ -17,8 +29,18 @@ from gpudb.dbapi.core.exceptions import (
     convert_runtime_errors,
 )
 from gpudb.dbapi.core.utils import raise_if_closed, ignore_transaction_error
-from gpudb.dbapi.pep249 import SQLQuery, QueryParameters, ColumnDescription, ProcName, ProcArgs, ResultRow, ResultSet, \
-    CursorConnectionMixin, IterableCursorMixin, TransactionalCursor
+from gpudb.dbapi.pep249 import (
+    SQLQuery,
+    QueryParameters,
+    ColumnDescription,
+    ProcName,
+    ProcArgs,
+    ResultRow,
+    ResultSet,
+    CursorConnectionMixin,
+    IterableCursorMixin,
+    TransactionalCursor,
+)
 
 if TYPE_CHECKING:
     # pylint: disable=cyclic-import
@@ -36,42 +58,38 @@ class ParamStyle(Enum):
 __all__ = ["Cursor", "ParamStyle"]
 
 kinetica_to_python_type_map = {
-    'boolean': 'bool',
-    'int8': 'int',
-    'int16': 'int',
-    'int': 'int',
-    'long': 'int',
-    'float': 'float',
-    'double': 'float',
-    'decimal': 'decimal.Decimal',
-    'string': 'str',
-    'char1': 'str',
-    'char2': 'str',
-    'char4': 'str',
-    'char8': 'str',
-    'char16': 'str',
-    'char32': 'str',
-    'char64': 'str',
-    'char128': 'str',
-    'char256': 'str',
-    'ipv4': 'int',
-    'uuid': 'uuid.UUID',
-    'wkt': 'str',
-    "date": 'datetime.date',
-    'datetime': 'datetime.datetime',
-    'time': 'datetime.time',
-    'timestamp': 'int',
-    'bytes': 'bytes',
-    'wkb': 'str',
+    "boolean": "bool",
+    "int8": "int",
+    "int16": "int",
+    "int": "int",
+    "long": "int",
+    "float": "float",
+    "double": "float",
+    "decimal": "decimal.Decimal",
+    "string": "str",
+    "char1": "str",
+    "char2": "str",
+    "char4": "str",
+    "char8": "str",
+    "char16": "str",
+    "char32": "str",
+    "char64": "str",
+    "char128": "str",
+    "char256": "str",
+    "ipv4": "int",
+    "uuid": "uuid.UUID",
+    "wkt": "str",
+    "date": "datetime.date",
+    "datetime": "datetime.datetime",
+    "time": "datetime.time",
+    "timestamp": "int",
+    "bytes": "bytes",
+    "wkb": "str",
 }
 
 
 # pylint: disable=too-many-ancestors
-class Cursor(
-    CursorConnectionMixin,
-    IterableCursorMixin,
-    TransactionalCursor
-):
+class Cursor(CursorConnectionMixin, IterableCursorMixin, TransactionalCursor):
     """
     A DB API 2.0 compliant cursor for Kinetica, as outlined in
     PEP 249.
@@ -80,7 +98,12 @@ class Cursor(
 
     __INSERT_BATCH_SIZE = 50000
 
-    def __init__(self, connection: "KineticaConnection", query: SQLQuery = None, query_params: QueryParameters = None):
+    def __init__(
+        self,
+        connection: "KineticaConnection",
+        query: SQLQuery = None,
+        query_params: QueryParameters = None,
+    ):
         self._connection: KineticaConnection = weakref.proxy(connection)
         self._sql = query
         self._query_params = query_params
@@ -139,10 +162,10 @@ class Cursor(
             scale
             null_ok
 
-        The first two items (name and type_code) are mandatory, the other five 
+        The first two items (name and type_code) are mandatory, the other five
         are optional and are set to None if no meaningful values can be provided.
 
-        This attribute will be None for operations that do not return rows or 
+        This attribute will be None for operations that do not return rows or
         if the cursor has not had an operation invoked via the .execute*() method yet.
 
         Returns:
@@ -153,8 +176,10 @@ class Cursor(
             ('field_4', <class 'float'>, None, None, None, None, None)]
         """
         try:
-            return [(n, eval(kinetica_to_python_type_map[t]), None, None, None, None, None)
-                    for n, t in self._cursors[-1].type_map.items()]
+            return [
+                (n, eval(kinetica_to_python_type_map[t]), None, None, None, None, None)
+                for n, t in self._cursors[-1].type_map.items()
+            ]
         except RuntimeError:
             return None
 
@@ -208,12 +233,12 @@ class Cursor(
     def execute(
         self, operation: SQLQuery, parameters: Optional[QueryParameters] = None
     ) -> "Cursor":
-        """ Executes an SQL statement and returns a Cursor instance which can 
+        """Executes an SQL statement and returns a Cursor instance which can
             used to iterate over the results of the query
 
         Args:
             operation (SQLQuery): an SQL statement
-            parameters (Optional[QueryParameters], optional): the parameters 
+            parameters (Optional[QueryParameters], optional): the parameters
                 to the SQL statement; typically a heterogeneous list. Defaults to None.
 
         Returns:
@@ -230,16 +255,24 @@ class Cursor(
             elif placeholder == ParamStyle.FORMAT:
                 sql_statement = Cursor.__process_params_format(operation)
         else:
-            raise ProgrammingError("Invalid SQL statement {}; has non-supported parameter placeholders {}"
-                                   .format(operation, placeholder))
+            raise ProgrammingError(
+                "Invalid SQL statement {}; has non-supported parameter placeholders {}".format(
+                    operation, placeholder
+                )
+            )
 
         sql_statement = sql_statement or operation
 
-        internal_cursor = GPUdbSqlIterator(self._connection.connection,
-                                           sql_statement, sql_params=parameters if parameters else [])
+        internal_cursor = GPUdbSqlIterator(
+            self._connection.connection,
+            sql_statement,
+            sql_params=parameters if parameters else [],
+        )
         self._cursors.append(internal_cursor)
         self.arraysize = self._cursors[-1].batch_size
-        self._cursors[-1]._GPUdbSqlIterator__execute(sql_statement, parameters=json.dumps(parameters))
+        self._cursors[-1]._GPUdbSqlIterator__execute(
+            sql_statement, parameters=json.dumps(parameters)
+        )
 
         self._closed = False
         return self
@@ -253,7 +286,6 @@ class Cursor(
     def executemany(
         self, operation: SQLQuery, seq_of_parameters: Sequence[QueryParameters]
     ) -> "Cursor":
-
         def split_list_iter(lst, size):
             it = iter(lst)
             return [list(islice(it, size)) for _ in range(0, len(lst), size)]
@@ -264,13 +296,13 @@ class Cursor(
 
         statement_type = Cursor.__check_sql_statement_type(operation)
 
-        if statement_type == 'INSERT':
-
+        if statement_type == "INSERT":
             json_lists = split_list_iter(seq_of_parameters, Cursor.__INSERT_BATCH_SIZE)
 
             for json_list in json_lists:
                 resp = self.connection.connection.execute_sql_and_decode(
-                    operation, options={"query_parameters": json_list})
+                    operation, options={"query_parameters": json_list}
+                )
                 if resp and resp["status_info"]["status"] == "ERROR":
                     raise GPUdbException(resp["status_info"]["message"])
 
@@ -299,7 +331,7 @@ class Cursor(
         if size is None:
             size = self.arraysize
         result_set = []
-        for i in range(size):
+        for _ in range(size):
             row = self.fetchone()
             if row is None:
                 break
@@ -335,26 +367,34 @@ class Cursor(
         return placeholder == ParamStyle.FORMAT and valid
 
     @staticmethod
-    def __is_valid_statement(sql_statement: str) -> Tuple[Union[bool, Any], Union[str, None]]:
-        placeholders = list(Cursor.__extract_parameter_placeholders(sql_statement).keys())
+    def __is_valid_statement(
+        sql_statement: str,
+    ) -> Tuple[Union[bool, Any], Union[str, None]]:
+        placeholders = list(
+            Cursor.__extract_parameter_placeholders(sql_statement).keys()
+        )
 
         if len(placeholders) > 1:
-            raise ProgrammingError("SQL statement {} contains different parameter placeholder formats {}"
-                                   .format(sql_statement, placeholders))
+            raise ProgrammingError(
+                f"SQL statement {sql_statement} contains different parameter placeholder formats {placeholders}"
+            )
 
         placeholder = placeholders[0] if len(placeholders) == 1 else None
         supported_paramstyles = [e.value for e in ParamStyle]
-        return placeholder is None or placeholder.value in supported_paramstyles, placeholder
+        return (
+            placeholder is None or placeholder.value in supported_paramstyles,
+            placeholder,
+        )
 
     @staticmethod
     def __extract_parameter_placeholders(sql_statement: str):
         # Define regular expression patterns to match different DBAPI v2 placeholders
         patterns = {
-            ParamStyle.QMARK: r'\?',  # Question mark style
-            ParamStyle.NUMERIC: r':(\d+)',  # Numeric style (e.g., :1, :2)
-            ParamStyle.NUMERIC_DOLLAR: r'\$\d+',  # Numeric dollar style (e.g., $1, $2)
+            ParamStyle.QMARK: r"\?",  # Question mark style
+            ParamStyle.NUMERIC: r":(\d+)",  # Numeric style (e.g., :1, :2)
+            ParamStyle.NUMERIC_DOLLAR: r"\$\d+",  # Numeric dollar style (e.g., $1, $2)
             # 'named': r':\w+',  # Named style (e.g., :name)
-            ParamStyle.FORMAT: r'%[sdifl]',  # ANSI C printf format codes (e.g., %s)
+            ParamStyle.FORMAT: r"%[sdifl]",  # ANSI C printf format codes (e.g., %s)
             # 'pyformat': r'%\(\w+\)s'  # Python extended format codes (e.g., %(name)s)
         }
 
@@ -371,7 +411,7 @@ class Cursor(
 
     @staticmethod
     def __process_params_qmark(query: str):
-        """ Replace all occurrences of '?' with $1, $2, ..., $n in the SQL statement
+        """Replace all occurrences of '?' with $1, $2, ..., $n in the SQL statement
 
         Args:
             query (str): the SQL statement
@@ -384,13 +424,13 @@ class Cursor(
         counter = 1
 
         # Find the last occurrence of '?'
-        last_question_mark_index = query.rfind('?')
+        last_question_mark_index = query.rfind("?")
 
         # Replace all occurrences of '?' with $1, $2, ..., $n
-        replaced_string = ''
+        replaced_string = ""
         for char in query:
-            if char == '?':
-                replaced_string += f'${counter}'
+            if char == "?":
+                replaced_string += f"${counter}"
                 # Increment the counter until the last occurrence of '?'
                 if counter < last_question_mark_index + 1:
                     counter += 1
@@ -401,7 +441,7 @@ class Cursor(
 
     @staticmethod
     def __process_params_numeric(query: str):
-        """ Replace each ':n' with corresponding '$n' in the SQL statement
+        """Replace each ':n' with corresponding '$n' in the SQL statement
 
         Args:
             query (str): the SQL statement
@@ -410,20 +450,20 @@ class Cursor(
             str: the modified SQL statement
         """
 
-        pattern = r':(\d+)'
+        pattern = r":(\d+)"
 
         # Find all matches and store unique numbers in a set to avoid duplicates
         matches = sorted(set(re.findall(pattern, query)), key=int)
 
         # Replace each ':n' with corresponding '$n'
         for i, match in enumerate(matches, start=1):
-            query = re.sub(r':{}'.format(match), r'${}'.format(i), query)
+            query = re.sub(f":{match}", f"${i}", query)
 
         return query
 
     @staticmethod
     def __process_params_format(query: str):
-        """ Replace each ANSI C format specifier with corresponding $n in the SQL statement
+        """Replace each ANSI C format specifier with corresponding $n in the SQL statement
 
         Args:
             query (str): the SQL statement
@@ -433,14 +473,14 @@ class Cursor(
         """
 
         # Regular expression pattern to match ANSI C format specifiers
-        pattern = r'%[sdifl]'
+        pattern = r"%[sdifl]"
 
         # Find all matches
         matches = re.findall(pattern, query)
 
         # Replace each format specifier with corresponding $n
         for i, match in enumerate(matches, start=1):
-            query = query.replace(match, f'${i}', 1)
+            query = query.replace(match, f"${i}", 1)
 
         return query
 
@@ -466,9 +506,9 @@ class Cursor(
 
         # Patterns to match INSERT, DELETE, and UPDATE statements
         patterns = {
-            'INSERT': r'^INSERT\s+INTO',
-            'DELETE': r'^DELETE\s+FROM',
-            'UPDATE': r'^UPDATE\s+'
+            "INSERT": r"^INSERT\s+INTO",
+            "DELETE": r"^DELETE\s+FROM",
+            "UPDATE": r"^UPDATE\s+",
         }
 
         # Check each pattern against the SQL statement
@@ -478,4 +518,3 @@ class Cursor(
 
         # If no match is found, return None
         return None
-

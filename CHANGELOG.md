@@ -2,6 +2,12 @@
 
 ## Version 7.2
 
+### Version 7.2.0.11 - 2024-07-08
+
+#### Changed
+-   Completed asynchronous DB API interface
+
+
 ### Version 7.2.0.10 - 2024-06-17
 
 #### Changed

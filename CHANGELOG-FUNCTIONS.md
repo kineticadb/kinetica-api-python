@@ -50,6 +50,7 @@
 -   Added option ``allow_multiple_edges`` to ``/create/graph`` endpoint to allow a graph to have multiple edges between pairs of nodes; otherwise, duplicate edges are ignored
 -   Added option ``allow_multiple_edges`` to ``/modify/graph`` endpoint to allow a graph to have multiple edges between pairs of nodes; otherwise, duplicate edges are ignored
 -   Added option ``find_common_labels`` to ``/query/graph`` endpoint to list common labels between source & target nodes
+-   Added option ``s3_verify_ssl`` to ``/create/datasink`` and ``/create/datasource`` endpoints to disable SSL verification
 
 
 ### Version 7.1.9.0
