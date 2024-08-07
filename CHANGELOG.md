@@ -2,6 +2,12 @@
 
 ## Version 7.2
 
+### Version 7.2.0.12 - 2024-08-07
+
+#### Changed
+-   Improved handling of null vectors in DataFrames
+
+
 ### Version 7.2.0.11 - 2024-07-08
 
 #### Changed

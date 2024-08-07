@@ -4977,7 +4977,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.0.11"
+    api_version = "7.2.0.12"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -21978,6 +21978,18 @@ class GPUdb(object):
 
                   The default value is 'delimited_text'.
 
+                * **flatten_columns** --
+                  Specifies how to handle nested columns.
+                  Allowed values are:
+
+                  * **true** --
+                    Break up nested columns to multiple columns
+
+                  * **false** --
+                    Treat nested columns as json columns instead of flattening
+
+                  The default value is 'false'.
+
                 * **gdal_configuration_options** --
                   Comma separated list of gdal conf options, for the specific
                   requets: key=value. The default value is ''.
@@ -30392,6 +30404,18 @@ class GPUdb(object):
 
                   The default value is 'delimited_text'.
 
+                * **flatten_columns** --
+                  Specifies how to handle nested columns.
+                  Allowed values are:
+
+                  * **true** --
+                    Break up nested columns to multiple columns
+
+                  * **false** --
+                    Treat nested columns as json columns instead of flattening
+
+                  The default value is 'false'.
+
                 * **gdal_configuration_options** --
                   Comma separated list of gdal conf options, for the specific
                   requets: key=value. The default value is ''.
@@ -31125,6 +31149,18 @@ class GPUdb(object):
                     ShapeFile file format
 
                   The default value is 'delimited_text'.
+
+                * **flatten_columns** --
+                  Specifies how to handle nested columns.
+                  Allowed values are:
+
+                  * **true** --
+                    Break up nested columns to multiple columns
+
+                  * **false** --
+                    Treat nested columns as json columns instead of flattening
+
+                  The default value is 'false'.
 
                 * **gdal_configuration_options** --
                   Comma separated list of gdal conf options, for the specific
@@ -32846,6 +32882,51 @@ class GPUdb(object):
                   For the *match_embedding* solver only. Limits the number of
                   dimensions in node vector embeddings. The default value is
                   '1000'.
+
+                * **optimize_embedding_weights** --
+                  For the *match_embedding* solvers only. Solves to find the
+                  optimal weights per sub feature in vector emdeddings.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **embedding_weights** --
+                  For the *match_embedding* solver only. User specified weights
+                  per sub feature in vector embeddings. The string contains the
+                  comma separated float values for each sub-feature in the
+                  vector space. These values will ONLY be used if
+                  'optimize_embedding_weights' is false. The default value is
+                  '1.0,1.0,1.0,1.0'.
+
+                * **optimization_sampling_size** --
+                  For the *match_embedding* solver only. Sets the number of
+                  random nodes from the graph for solving the weights using
+                  stochastic gradient descent. The default value is '1000'.
+
+                * **optimization_max_iterations** --
+                  For the *match_embedding* solver only. When the iterations
+                  (epochs) for the convergence of the stochastic gradient
+                  descent algorithm reaches this number it bails out unless
+                  relative error between consecutive iterations is below the
+                  'optimization_error_tolerance' option. The default value is
+                  '1000'.
+
+                * **optimization_error_tolerance** --
+                  For the *match_embedding* solver only. When the relative
+                  error between all of the weights' consecutive iterations
+                  falls below this threshold the optimization cycle is
+                  interrupted unless the number of iterations reaches the limit
+                  set by the option 'max_optimization_iterations'. The default
+                  value is '0.001'.
+
+                * **optimization_iteration_rate** --
+                  For the *match_embedding* solver only. It is otherwise known
+                  as the learning rate, which is the proportionality constant
+                  in fornt of the gradient term in successive iterations. The
+                  default value is '0.3'.
 
                 The default value is an empty dict ( {} ).
 

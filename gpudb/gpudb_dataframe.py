@@ -34,8 +34,8 @@ class DataFrameUtils:
         return np.array(vec).astype(np.float32).tobytes()
 
     @classmethod
-    def bytes_to_vec(cls, bvec: bytes) -> bytes:
-        return np.frombuffer(bvec, dtype=np.float32)
+    def bytes_to_vec(cls, bvec: bytes) -> np.ndarray:
+        return None if not bvec else np.frombuffer(bvec, dtype=np.float32)
 
 
     @classmethod
