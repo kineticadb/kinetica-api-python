@@ -2,6 +2,16 @@
 
 ## Version 7.2
 
+### Version 7.2.1.0 - 2024.09.08
+
+#### Added
+-   OAuth2 authentication support
+-   Support for SQLAlchemy integration
+
+#### Changed
+-   Upgraded internal `tabulate` to 0.9.0
+
+
 ### Version 7.2.0.12 - 2024-08-07
 
 #### Changed

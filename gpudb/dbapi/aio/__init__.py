@@ -110,6 +110,7 @@ def aconnect(
     Example
     ::
 
+        #  Basic authentication
         con = gpudb.connect("kinetica://",
                      connect_args={
                          'url': 'http://localhost:9191',
@@ -118,6 +119,13 @@ def aconnect(
                          'options': {'bypass_ssl_cert_check': True},
                      })
 
+        #  oauth2 authentication
+        con = gpudb.connect("kinetica://",
+                     connect_args={
+                         'url': 'http://localhost:9191',
+                         'oauth_token': 'token_value',
+                         'options': {'bypass_ssl_cert_check': True},
+                     })
 
     Args:
         connection_string (str, optional): the connection string which must be 'kinetica://'
@@ -140,8 +148,8 @@ def aconnect(
     def extract_connect_args(connect_args, *values):
         return (connect_args.get(arg, None) for arg in values)
 
-    url, username, password, options = extract_connect_args(
-        connection_args, "url", "username", "password", "options"
+    url, username, password, oauth_token, options = extract_connect_args(
+        connection_args, "url", "username", "password", "oauth_token", "options"
     )
 
     if not url or not len(url) > 0:
@@ -150,10 +158,12 @@ def aconnect(
         )
     username = username if username else ""
     password = password if password else ""
+    oauth_token = oauth_token if oauth_token else ""
 
     return AsyncKineticaConnection(
         url=url,
         username=username,
         password=password,
+        oauth_token=oauth_token,
         connection_options=options if options else {},
     )

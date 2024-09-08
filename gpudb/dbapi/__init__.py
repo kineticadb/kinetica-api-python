@@ -49,48 +49,6 @@ threadsafety = 1
 paramstyle = "qmark"
 
 
-@overload
-def connect(
-    connection_string: str = "kinetica://", *, connect_args: Dict[str, Any] = ...
-) -> KineticaConnection:
-    """The global method to return a Kinetica connection
-
-    Example
-    ::
-
-        con = gpudb.connect("kinetica://",
-                     connect_args={
-                         'url': 'http://localhost:9191',
-                         'username': 'user',
-                         'password': 'password',
-                         'options': {'bypass_ssl_cert_check': True},
-                     })
-
-
-    Args:
-        connection_string (str): the connection string which must be 'kinetica://'
-        connect_args (Dict[str, Any], optional): a mandatory `dict` like
-
-            connect_args={
-                'url': 'http://localhost:9191',
-
-                'username': 'user',
-
-                'password': 'password',
-
-                'options': {'bypass_ssl_cert_check': True},
-            })
-
-            The keys that are valid for the `options` dict within `connect_args` 
-            is the same set that is allowed by the class :class:`GPUDB.Options` 
-            in the module :py:mod:`gpudb`
-
-    Returns:
-        KineticaConnection: an instance of the :class:`KineticaConnection`
-    """
-    ...
-
-
 def connect(
     connection_string: str = "kinetica://",
     **kwargs: Dict[str, Any],
@@ -100,14 +58,20 @@ def connect(
     Example
     ::
 
+        #  Basic authentication
         con = gpudb.connect("kinetica://",
-                     connect_args={
-                         'url': 'http://localhost:9191',
-                         'username': 'user',
-                         'password': 'password',
-                         'options': {'bypass_ssl_cert_check': True},
-                     })
+                        url=URL,
+                        username=USER,
+                        password=PASS,
+                        bypass_ssl_cert_check=BYPASS_SSL_CERT_CHECK,
+                        )
 
+        #  oauth2 authentication
+        con = gpudb.connect("kinetica://",
+                        url=URL,
+                        oauth_token="token_Value",
+                        bypass_ssl_cert_check=BYPASS_SSL_CERT_CHECK,
+                        )
 
     Args:
         connection_string (str, optional): the connection string which must be 'kinetica://'
@@ -123,15 +87,11 @@ def connect(
     if connection_string is None or connection_string != "kinetica://":
         raise ProgrammingError("'connection_string' has to be 'kinetica://'")
 
-    connection_args = kwargs.pop("connect_args", None)
-    if not connection_args or len(connection_args) == 0:
-        raise ProgrammingError("'connection_args' cannot be None or empty")
-
     def extract_connect_args(connect_args, *values):
         return (connect_args.get(arg, None) for arg in values)
 
-    url, username, password, options = extract_connect_args(
-        connection_args, "url", "username", "password", "options"
+    url, username, password, oauth_token, options = extract_connect_args(
+        kwargs, "url", "username", "password", "oauth_token", "options"
     )
 
     if not url or not len(url) > 0:
@@ -140,10 +100,12 @@ def connect(
         )
     username = username if username else ""
     password = password if password else ""
+    oauth_token = oauth_token if oauth_token else ""
 
     return KineticaConnection(
         url=url,
         username=username,
         password=password,
+        oauth_token=oauth_token,
         connection_options=options if options else {},
     )

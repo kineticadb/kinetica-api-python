@@ -31,6 +31,8 @@ class DataFrameUtils:
 
     @classmethod
     def vec_to_bytes(cls, vec: list) -> bytes:
+        if vec is None:
+            return None
         return np.array(vec).astype(np.float32).tobytes()
 
     @classmethod
@@ -326,7 +328,8 @@ class DataFrameUtils:
         cls._LOG.debug(f"col properties: {col_properties}")
 
         for col_name, col_data in df.items():
-            ref_val = col_data[0]
+            ref_val = col_data.loc[col_data.first_valid_index()]
+
             if isinstance(ref_val, pd.Timestamp):
                 col_type = col_properties[col_name][0]
                 if (col_type == GPUdbColumnProperty.TIMESTAMP):
@@ -368,35 +371,43 @@ class DataFrameUtils:
             np_type = col_data.dtype.name
             col_type = cls.TYPE_NUMPY_TO_GPUDB.get(np_type)
 
-            if (col_type is None):
+            if col_type is not None:
+                col_type_base = col_type[0]
+                col_type_attr = col_type[1:]
+            else:
                 # need to inspect the type directly
-                ref_val = col_data[0]
+                ref_val = col_data.loc[col_data.first_valid_index()]
+
                 if isinstance(ref_val, str):
-                    col_type = [cls._COL_TYPE.STRING]
-                    max_len = col_data.map(len).max()
+                    col_type_base = cls._COL_TYPE.STRING
+                    max_len = col_data.map(lambda x: len(x) if x is not None else 0).max()
                     max_len = max(max_len,2)
                     spow = 2 ** ceil(log2(max_len))
                     if(spow <= 256):
-                        col_type += [f'char{spow}']
-
+                        col_type_attr = [f'char{spow}']
                 elif isinstance(ref_val, list) or isinstance(ref_val, np.ndarray):
                     vec_dim = len(ref_val)
-                    col_type = [cls._COL_TYPE.BYTES, f'vector({vec_dim})']
-
+                    col_type_base = cls._COL_TYPE.BYTES
+                    col_type_attr = [f'vector({vec_dim})']
                 else:
                     raise GPUdbException(f"{col_name}: Type not supported: {type(ref_val)}")
-
-            col_attr_override = col_type_override.pop(col_name, None)
+            
+                # only add nullable if the type is string or vector
+                has_null = col_data.isnull().any()
+                if has_null:
+                    col_type_attr.append(GPUdbColumnProperty.NULLABLE)
+                
             # replace the column attributes, if provided
+            col_attr_override = col_type_override.pop(col_name, None)
             if (col_attr_override is not None):
                 if isinstance(col_attr_override, str):
-                    col_type = [col_type[0]] + [prop.strip() for prop in col_attr_override.split(',')]
+                    col_type_attr = [prop.strip() for prop in col_attr_override.split(',')]
                 elif isinstance(col_attr_override, list):
-                    col_type = [col_type[0]] + col_attr_override
+                    col_type_attr =  col_attr_override
                 else:
                     raise GPUdbException(f"{col_attr_override}: Type properties not supported: {type(col_attr_override)}")
 
-            type_def = [col_name] + col_type
+            type_def = [col_name, col_type_base] + col_type_attr
             type_list.append(type_def)
 
         if(len(col_type_override) > 0):

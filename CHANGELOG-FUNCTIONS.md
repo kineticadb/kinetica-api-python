@@ -3,6 +3,13 @@
 
 ## Version 7.2
 
+### Version 7.2.1.0
+
+##### Non-breaking changes
+
+-   Added ``hnsw`` to ``index_type`` option in ``/alter/table``
+
+
 ### Version 7.2.0.2 -- 2024-03-04
 
 #### Changed Endpoints

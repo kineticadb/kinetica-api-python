@@ -5,6 +5,7 @@ Cursor object for Kinetica which fits the DB API spec.
 
 import json
 import re
+import datetime, uuid, decimal
 
 # pylint: disable=c-extension-no-member
 import weakref
@@ -175,13 +176,15 @@ class Cursor(CursorConnectionMixin, IterableCursorMixin, TransactionalCursor):
             ('field_3', <class 'str'>, None, None, None, None, None),
             ('field_4', <class 'float'>, None, None, None, None, None)]
         """
-        try:
-            return [
-                (n, eval(kinetica_to_python_type_map[t]), None, None, None, None, None)
-                for n, t in self._cursors[-1].type_map.items()
-            ]
-        except RuntimeError:
-            return None
+        if self._cursors and len(self._cursors) > 0 and self._cursors[-1].type_map:
+            try:
+                return [
+                    (n, eval(kinetica_to_python_type_map[t]), None, None, None, None, None)
+                    for n, t in self._cursors[-1].type_map.items()
+                ]
+            except RuntimeError:
+                return None
+        return None
 
     @property
     def rowcount(self) -> int:
@@ -266,7 +269,7 @@ class Cursor(CursorConnectionMixin, IterableCursorMixin, TransactionalCursor):
         internal_cursor = GPUdbSqlIterator(
             self._connection.connection,
             sql_statement,
-            sql_params=parameters if parameters else [],
+            sql_params=list(parameters) if parameters else [],
         )
         self._cursors.append(internal_cursor)
         self.arraysize = self._cursors[-1].batch_size
@@ -301,7 +304,7 @@ class Cursor(CursorConnectionMixin, IterableCursorMixin, TransactionalCursor):
 
             for json_list in json_lists:
                 resp = self.connection.connection.execute_sql_and_decode(
-                    operation, options={"query_parameters": json_list}
+                    operation, options={"query_parameters": json.dumps(json_list)}
                 )
                 if resp and resp["status_info"]["status"] == "ERROR":
                     raise GPUdbException(resp["status_info"]["message"])
@@ -518,3 +521,30 @@ class Cursor(CursorConnectionMixin, IterableCursorMixin, TransactionalCursor):
 
         # If no match is found, return None
         return None
+
+    @staticmethod
+    def classify_sql_statement(sql):
+        # Remove leading/trailing whitespace and convert to uppercase
+        sql = sql.strip().upper()
+
+        # Check for DDL
+        ddl_keywords = ['CREATE', 'ALTER', 'DROP', 'TRUNCATE', 'RENAME']
+        if any(sql.startswith(keyword) for keyword in ddl_keywords):
+            return 'DDL'
+
+        # Check for DML
+        dml_keywords = ['INSERT', 'UPDATE', 'DELETE', 'MERGE']
+        if any(sql.startswith(keyword) for keyword in dml_keywords):
+            return 'DML'
+
+        # Check for Query (SELECT statement)
+        if sql.startswith('SELECT'):
+            return 'QUERY'
+
+        # Check for other types if needed (optional)
+        other_keywords = ['GRANT', 'REVOKE', 'CALL', 'EXPLAIN']
+        if any(sql.startswith(keyword) for keyword in other_keywords):
+            return 'OTHER'
+
+        # If no matches found
+        return 'UNKNOWN'

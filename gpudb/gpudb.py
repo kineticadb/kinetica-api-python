@@ -2956,6 +2956,7 @@ class GPUdb(object):
         __skip_ssl_cert_verification_str         = "_Options__skip_ssl_cert_verification"
         __timeout_str                            = "_Options__timeout"
         __username_str                           = "_Options__username"
+        __oauth_token_str                         = "_Options__oauth_token"
 
         _supported_options = [ __disable_auto_discovery_str,
                                __disable_failover_str,
@@ -2972,7 +2973,8 @@ class GPUdb(object):
                                __protocol_str,
                                __skip_ssl_cert_verification_str,
                                __timeout_str,
-                               __username_str
+                               __username_str,
+                               __oauth_token_str
         ]
 
 
@@ -3011,6 +3013,7 @@ class GPUdb(object):
             self.__skip_ssl_cert_verification         = False
             self.__timeout                            = None # means indefinite wait
             self.__username                           = None
+            self.__oauth_token                         = None
 
             if (options is None):
                 return # nothing to do
@@ -3050,7 +3053,9 @@ class GPUdb(object):
 
             # Extract and save each option
             for (key, val) in options.items():
-                setattr( self, key, val.upper() if key == '_Options__encoding' else val )
+                # Get property name without namespace
+                prop_name = key.replace("_Options__", "")
+                setattr( self, prop_name, val )
         # end __init__
 
         def __prepend_class_prefix_to_keys(self, d, prefix):
@@ -3150,6 +3155,7 @@ class GPUdb(object):
             # end if
 
             del result['_Options__password']
+            del result['_Options__oauth_token']
 
             return json.dumps(result, indent=4)
         # end as_json
@@ -3862,6 +3868,22 @@ class GPUdb(object):
                                       "None; given '{}' type {}"
                                       "".format( value, str(type(value)) ) )
             self.__username = value
+        # end setter
+
+        @property
+        def oauth_token(self):
+            """Gets the OAuth2 token to be used for authentication to GPUdb."""
+            return self.__oauth_token
+
+        @oauth_token.setter
+        def oauth_token(self, value):
+            """Sets the OAuth2 token to be used for authentication to GPUdb."""
+            if not isinstance(value, (basestring, unicode, type(None))):
+                raise GPUdbException("Property 'oauth_token' must be a string or "
+                                     "None; given '{}' type {}"
+                                     "".format(value, str(type(value))))
+            self.__oauth_token = value
+
         # end setter
 
     # end class Options
@@ -4977,7 +4999,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.0.12"
+    api_version = "7.2.1.0"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5084,6 +5106,7 @@ class GPUdb(object):
         self.__encoding   = self.options.encoding
         self.__username   = self.options.username
         self.__password   = self.options.password
+        self.__oauth_token = self.options.oauth_token
         self.__logging_level = self.options.logging_level
         self.__primary_host  = self.options.primary_host
         self.__protocol      = self.options.protocol
@@ -5212,19 +5235,7 @@ class GPUdb(object):
         self.__log_debug( "Using (possibly modified) URLs: {}".format( hosts ) )
 
         # Set up the credentials to be used per POST
-        self.auth = None
-        if self.username is not None:
-            self.__log_debug('Setting up credentials with username <%s>' % self.username)
-            if IS_PYTHON_3:
-                # base64 encode the username and password
-                self.auth = ('%s:%s' % (self.username, self.password) )
-                self.auth = _Util.str_to_bytes( self.auth )
-                self.auth = base64.b64encode( self.auth ).decode( "ascii" ).replace('\n', '')
-                self.auth = ("Basic %s" % self.auth)
-            else: # Python 2.x
-                self.auth = base64.encodestring('%s:%s' % (self.username, self.password)).replace('\n', '')
-                self.auth = ("Basic %s" % self.auth)
-        # end if
+        self.__create_authorization_header()
 
         # We need to keep a running count of how many times we've failed and had
         # to switch to a different HA ring head node (useful for multi-head I/O)
@@ -5244,6 +5255,27 @@ class GPUdb(object):
         if( not self.__perform_version_check() ):
             self.__log_warn("API and server versions don't match")
     # end __construct
+
+
+    def __create_authorization_header(self):
+        """Set the authentication header for the connection with the following
+        scheme:
+        
+        * If an OAuth2 token is given, use OAuth2 authentication
+        * Otherwise, if a username is given, use user/pass authentication
+        * Otherwise, do not set an authentication header (no auth setups)
+        """
+        self.auth = None
+        if self.oauth_token is not None:
+            self.__log_debug('Setting up authentication with OAuth2 token')
+            self.auth = f"Bearer {self.oauth_token}"
+            return
+
+        if self.username is not None:
+            self.__log_debug('Setting up credentials with username <%s>' % self.username)
+            self.auth = f"Basic {base64.b64encode(f'{self.username}:{self.password}'.encode()).decode('ascii')}"
+            return
+    # end __create_authorization_header
 
 
     def __eq__( self, other ):
@@ -7117,6 +7149,11 @@ class GPUdb(object):
     def password(self):
         """Gets the password to be used for authentication to GPUdb."""
         return self.__password
+
+    @property
+    def oauth_token(self):
+        """Gets the OAuth2 token to be used for authentication to GPUdb."""
+        return self.__oauth_token
 
     @property
     def encoding(self):
@@ -14733,6 +14770,11 @@ class GPUdb(object):
 
                   The default value is 'value'.
 
+                * **order_by** --
+                  Comma-separated list of the columns to be sorted by as well
+                  as the sort direction, e.g., 'timestamp asc, x desc'. The
+                  default value is ''.
+
                 * **strategy_definition** --
                   The `tier strategy
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
@@ -14833,6 +14875,13 @@ class GPUdb(object):
                 * **cube** --
                   This option is used to specify the multidimensional
                   aggregates.
+
+                * **shard_key** --
+                  Comma-separated list of the columns to be sharded on; e.g.
+                  'column1, column2'.  The columns specified must be present in
+                  input parameter *column_names*.  If any alias is given for
+                  any column name, the alias must be used, rather than the
+                  original column name. The default value is ''.
 
                 The default value is an empty dict ( {} ).
 
@@ -15087,6 +15136,11 @@ class GPUdb(object):
 
                   The default value is 'value'.
 
+                * **order_by** --
+                  Comma-separated list of the columns to be sorted by as well
+                  as the sort direction, e.g., 'timestamp asc, x desc'. The
+                  default value is ''.
+
                 * **strategy_definition** --
                   The `tier strategy
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
@@ -15187,6 +15241,13 @@ class GPUdb(object):
                 * **cube** --
                   This option is used to specify the multidimensional
                   aggregates.
+
+                * **shard_key** --
+                  Comma-separated list of the columns to be sharded on; e.g.
+                  'column1, column2'.  The columns specified must be present in
+                  input parameter *column_names*.  If any alias is given for
+                  any column name, the alias must be used, rather than the
+                  original column name. The default value is ''.
 
                 The default value is an empty dict ( {} ).
 
@@ -16046,6 +16107,11 @@ class GPUdb(object):
 
                   The default value is 'ascending'.
 
+                * **order_by** --
+                  Comma-separated list of the columns to be sorted by as well
+                  as the sort direction, e.g., 'timestamp asc, x desc'. The
+                  default value is ''.
+
                 * **result_table** --
                   The name of the table used to store the results, in
                   [schema_name.]table_name format, using standard `name
@@ -16305,6 +16371,11 @@ class GPUdb(object):
                   * descending
 
                   The default value is 'ascending'.
+
+                * **order_by** --
+                  Comma-separated list of the columns to be sorted by as well
+                  as the sort direction, e.g., 'timestamp asc, x desc'. The
+                  default value is ''.
 
                 * **result_table** --
                   The name of the table used to store the results, in
@@ -17316,7 +17387,8 @@ class GPUdb(object):
                   Timeout in seconds for reading from this storage provider
 
                 * **credential** --
-                  Name of the Credential object to be used in data source
+                  Name of the `credential <../../../../concepts/credentials>`__
+                  object to be used in data source
 
                 * **s3_bucket_name** --
                   Name of the Amazon S3 bucket to use as the data source
@@ -17366,7 +17438,7 @@ class GPUdb(object):
                   use as the data source
 
                 * **azure_oauth_token** --
-                  Oauth token to access given storage container
+                  OAuth token to access given storage container
 
                 * **gcs_bucket_name** --
                   Name of the Google Cloud Storage bucket to use as the data
@@ -17380,7 +17452,7 @@ class GPUdb(object):
                   the data source
 
                 * **kafka_url** --
-                  The publicly-accessible full path URL to the kafka broker,
+                  The publicly-accessible full path URL to the Kafka broker,
                   e.g., 'http://172.123.45.67:9300'.
 
                 * **kafka_topic_name** --
@@ -18065,6 +18137,9 @@ class GPUdb(object):
                 * **ai_api_connection_timeout** --
                   AI API connection timeout in seconds
 
+                * **ai_api_embeddings_model** --
+                  AI API model name
+
                 * **telm_persist_query_metrics** --
                   Enable or disable persisting of query metrics.
 
@@ -18139,8 +18214,9 @@ class GPUdb(object):
         Create or delete a `column
         <../../../../concepts/indexes/#column-index>`__, `chunk skip
         <../../../../concepts/indexes/#chunk-skip-index>`__, `geospatial
-        <../../../../concepts/indexes/#geospatial-index>`__, or `CAGRA
-        <../../../../concepts/indexes/#cagra-index>`__ index. This can speed up
+        <../../../../concepts/indexes/#geospatial-index>`__, `CAGRA
+        <../../../../concepts/indexes/#cagra-index>`__, or `HNSW
+        <../../../../concepts/indexes/#hnsw-index>`__ index. This can speed up
         certain operations when using expressions containing equality or
         relational operators on indexed columns. This only applies to tables.
 
@@ -18190,8 +18266,9 @@ class GPUdb(object):
                   <../../../../concepts/indexes/#column-index>`__, `chunk skip
                   index <../../../../concepts/indexes/#chunk-skip-index>`__,
                   `geospatial index
-                  <../../../../concepts/indexes/#geospatial-index>`__, or
-                  `CAGRA index <../../../../concepts/indexes/#cagra-index>`__
+                  <../../../../concepts/indexes/#geospatial-index>`__, `CAGRA
+                  index <../../../../concepts/indexes/#cagra-index>`__, or
+                  `HNSW index <../../../../concepts/indexes/#hnsw-index>`__
                   (depending on the specified *index_type*), on the column name
                   specified in input parameter *value*. If this column already
                   has the specified index, an error will be returned.
@@ -18206,8 +18283,9 @@ class GPUdb(object):
                   <../../../../concepts/indexes/#column-index>`__, `chunk skip
                   index <../../../../concepts/indexes/#chunk-skip-index>`__,
                   `geospatial index
-                  <../../../../concepts/indexes/#geospatial-index>`__, or
-                  `CAGRA index <../../../../concepts/indexes/#cagra-index>`__
+                  <../../../../concepts/indexes/#geospatial-index>`__, `CAGRA
+                  index <../../../../concepts/indexes/#cagra-index>`__, or
+                  `HNSW index <../../../../concepts/indexes/#hnsw-index>`__
                   (depending on the specified *index_type*), on the column name
                   specified in input parameter *value*. If this column does not
                   have the specified index, an error will be returned.
@@ -18515,6 +18593,11 @@ class GPUdb(object):
                   * **cagra** --
                     Create or delete a `CAGRA index
                     <../../../../concepts/indexes/#cagra-index>`__ on a `vector
+                    column <../../../../vector_search/#vector-type>`__
+
+                  * **hnsw** --
+                    Create or delete an `HNSW index
+                    <../../../../concepts/indexes/#hnsw-index>`__ on a `vector
                     column <../../../../vector_search/#vector-type>`__
 
                   The default value is 'column'.
@@ -19795,7 +19878,8 @@ class GPUdb(object):
                   Timeout in seconds for reading from this storage provider
 
                 * **credential** --
-                  Name of the Credential object to be used in data source
+                  Name of the `credential <../../../../concepts/credentials>`__
+                  object to be used in data source
 
                 * **s3_bucket_name** --
                   Name of the Amazon S3 bucket to use as the data source
@@ -19816,15 +19900,17 @@ class GPUdb(object):
                   The default value is 'true'.
 
                 * **s3_use_virtual_addressing** --
-                  When true (default), the requests URI should be specified in
-                  virtual-hosted-style format where the bucket name is part of
-                  the domain name in the URL.
-
-                  Otherwise set to false to use path-style URI for requests.
+                  Whether to use virtual addressing when referencing the Amazon
+                  S3 source.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    The requests URI should be specified in
+                    virtual-hosted-style format where the bucket name is part
+                    of the domain name in the URL.
+
+                  * **false** --
+                    Use path-style URI for requests.
 
                   The default value is 'true'.
 
@@ -19869,7 +19955,7 @@ class GPUdb(object):
                   use as the data source
 
                 * **azure_oauth_token** --
-                  Oauth token to access given storage container
+                  OAuth token to access given storage container
 
                 * **gcs_bucket_name** --
                   Name of the Google Cloud Storage bucket to use as the data
@@ -19933,14 +20019,15 @@ class GPUdb(object):
                   The default value is 'true'.
 
                 * **schema_registry_location** --
-                  Location of Confluent Schema registry in
+                  Location of Confluent Schema Registry in
                   '[storage_path[:storage_port]]' format.
 
                 * **schema_registry_credential** --
-                  Confluent Schema registry Credential object name.
+                  Confluent Schema Registry `credential
+                  <../../../../concepts/credentials>`__ object name.
 
                 * **schema_registry_port** --
-                  Confluent Schema registry port (optional).
+                  Confluent Schema Registry port (optional).
 
                 The default value is an empty dict ( {} ).
 
@@ -20087,8 +20174,8 @@ class GPUdb(object):
         """Creates a new graph network using given nodes, edges, weights, and
         restrictions.
 
-        IMPORTANT: It's highly recommended that you review the `Network Graphs
-        & Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
+        IMPORTANT: It's highly recommended that you review the `Graphs &
+        Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
         documentation, the `Graph REST Tutorial
         <../../../../guides/graph_rest_guide/>`__, and/or some `graph examples
         <../../../../guide-tags/graph/>`__ before using this endpoint.
@@ -20285,6 +20372,12 @@ class GPUdb(object):
                   * false
 
                   The default value is 'true'.
+
+                * **embedding_table** --
+                  If table exists (should be generated by the match/graph
+                  match_embedding solver), the vector embeddings for the newly
+                  inserted nodes will be appended into this table. The default
+                  value is ''.
 
                 The default value is an empty dict ( {} ).
 
@@ -21638,7 +21731,7 @@ class GPUdb(object):
 
                 * **type_id** --
                   ID of a currently registered `type
-                  <../../../../concepts/types/>`__. The default value is ''.
+                  <../../../../concepts/types/>`__.
 
                 * **no_error_if_exists** --
                   If *true*, prevents an error from occurring if the table
@@ -21729,7 +21822,7 @@ class GPUdb(object):
 
                 * **is_automatic_partition** --
                   If *true*, a new partition will be created for values which
-                  don't fall into an existing partition.  Currently only
+                  don't fall into an existing partition.  Currently, only
                   supported for `list partitions
                   <../../../../concepts/tables/#partitioning-by-list>`__.
                   Allowed values are:
@@ -21779,47 +21872,28 @@ class GPUdb(object):
                 Optional parameters.
                 Allowed keys are:
 
-                * **avro_header_bytes** --
-                  Optional number of bytes to skip when reading an avro record.
-
-                * **avro_num_records** --
-                  Optional number of avro records, if data includes only
-                  records.
-
-                * **avro_schema** --
-                  Optional string representing avro schema, for insert records
-                  in avro format, that does not include is schema.
-
-                * **avro_schemaless** --
-                  When user provides 'avro_schema', avro data is assumed to be
-                  schemaless, unless specified. Default is 'true' when given
-                  avro_schema. Igonred when avro_schema is not given.
-                  Allowed values are:
-
-                  * true
-                  * false
-
                 * **bad_record_table_name** --
-                  Optional name of a table to which records that were rejected
-                  are written.  The bad-record-table has the following columns:
+                  Name of a table to which records that were rejected are
+                  written. The bad-record-table has the following columns:
                   line_number (long), line_rejected (string), error_message
-                  (string).
+                  (string).  When *error_handling* is *abort*, bad records
+                  table is not populated.
 
                 * **bad_record_table_limit** --
                   A positive integer indicating the maximum number of records
-                  that can be  written to the bad-record-table.   Default value
-                  is 10000
+                  that can be written to the bad-record-table. The default
+                  value is '10000'.
 
                 * **bad_record_table_limit_per_input** --
-                  For subscriptions: A positive integer indicating the maximum
+                  For subscriptions, a positive integer indicating the maximum
                   number of records that can be written to the bad-record-table
                   per file/payload. Default value will be
-                  'bad_record_table_limit' and total size of the table per rank
-                  is limited to 'bad_record_table_limit'
+                  *bad_record_table_limit* and total size of the table per rank
+                  is limited to *bad_record_table_limit*.
 
                 * **batch_size** --
-                  Internal tuning parameter--number of records per batch when
-                  inserting data.
+                  Number of records to insert per batch when inserting data.
+                  The default value is '50000'.
 
                 * **column_formats** --
                   For each target column specified, applies the
@@ -21868,14 +21942,14 @@ class GPUdb(object):
                   data to skip.  Mutually exclusive with *columns_to_load*.
 
                 * **compression_type** --
-                  Optional: compression type.
+                  Source data compression type.
                   Allowed values are:
 
                   * **none** --
-                    Uncompressed
+                    No compression.
 
                   * **auto** --
-                    Default. Auto detect compression type
+                    Auto detect compression type
 
                   * **gzip** --
                     gzip file compression.
@@ -21992,7 +22066,7 @@ class GPUdb(object):
 
                 * **gdal_configuration_options** --
                   Comma separated list of gdal conf options, for the specific
-                  requets: key=value. The default value is ''.
+                  requets: key=value
 
                 * **ignore_existing_pk** --
                   Specifies the record collision error-suppression policy for
@@ -22044,14 +22118,18 @@ class GPUdb(object):
 
                 * **jdbc_fetch_size** --
                   The JDBC fetch size, which determines how many rows to fetch
-                  per round trip.
+                  per round trip. The default value is '50000'.
+
+                * **kafka_consumers_per_rank** --
+                  Number of Kafka consumer threads per rank (valid range 1-6).
+                  The default value is '1'.
 
                 * **kafka_group_id** --
-                  The group id to be used consuming data from a kakfa topic
-                  (valid only for kafka datasource subscriptions).
+                  The group id to be used when consuming data from a Kafka
+                  topic (valid only for Kafka datasource subscriptions).
 
                 * **kafka_offset_reset_policy** --
-                  Policy to determine whether the data consumption starts
+                  Policy to determine whether the Kafka data consumption starts
                   either at earliest offset or latest offset.
                   Allowed values are:
 
@@ -22060,13 +22138,27 @@ class GPUdb(object):
 
                   The default value is 'earliest'.
 
+                * **kafka_optimistic_ingest** --
+                  Enable optimistic ingestion where Kafka topic offsets and
+                  table data are committed independently to achieve
+                  parallelism.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **kafka_subscription_cancel_after** --
-                  Sets the subscription lifespan (in minutes). Expired
+                  Sets the Kafka subscription lifespan (in minutes). Expired
                   subscription will be cancelled automatically.
 
+                * **kafka_type_inference_fetch_timeout** --
+                  Maximum time to collect Kafka messages before type
+                  inferencing on the set of them.
+
                 * **layer** --
-                  Optional: geo files layer(s) name(s): comma separated. The
-                  default value is ''.
+                  Geo files layer(s) name(s): comma separated.
 
                 * **loading_mode** --
                   Scheme for distributing the extraction and loading of data
@@ -22115,29 +22207,29 @@ class GPUdb(object):
                   The default value is 'head'.
 
                 * **local_time_offset** --
-                  For Avro local timestamp columns
+                  Apply an offset to Avro local timestamp columns.
 
                 * **max_records_to_load** --
-                  Limit the number of records to load in this request: If this
-                  number is larger than a batch_size, then the number of
+                  Limit the number of records to load in this request: if this
+                  number is larger than *batch_size*, then the number of
                   records loaded will be limited to the next whole number of
-                  batch_size (per working thread). The default value is ''.
+                  *batch_size* (per working thread).
 
                 * **num_tasks_per_rank** --
-                  Optional: number of tasks for reading file per rank. Default
-                  will be external_file_reader_num_tasks
+                  Number of tasks for reading file per rank. Default will be
+                  system configuration parameter,
+                  external_file_reader_num_tasks.
 
                 * **poll_interval** --
                   If *true*, the number of seconds between attempts to load
                   external files into the table.  If zero, polling will be
                   continuous as long as data is found.  If no data is found,
                   the interval will steadily increase to a maximum of 60
-                  seconds.
+                  seconds. The default value is '0'.
 
                 * **primary_keys** --
-                  Optional: comma separated list of column names, to set as
-                  primary keys, when not specified in the type. The default
-                  value is ''.
+                  Comma separated list of column names to set as primary keys,
+                  when not specified in the type.
 
                 * **refresh_method** --
                   Method by which the table can be refreshed from its source
@@ -22155,14 +22247,13 @@ class GPUdb(object):
 
                   The default value is 'manual'.
 
-                * schema_registry_schema_id
-                * schema_registry_schema_name
-                * schema_registry_schema_version
+                * **schema_registry_schema_name** --
+                  Name of the Avro schema in the schema registry to use when
+                  reading Avro records.
 
                 * **shard_keys** --
-                  Optional: comma separated list of column names, to set as
-                  primary keys, when not specified in the type. The default
-                  value is ''.
+                  Comma separated list of column names to set as shard keys,
+                  when not specified in the type.
 
                 * **skip_lines** --
                   Skip number of lines from begining of file.
@@ -22178,13 +22269,16 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **table_insert_mode** --
-                  Optional: table_insert_mode. When inserting records from
-                  multiple files: if table_per_file then insert from each file
-                  into a new table. Currently supported only for shapefiles.
+                  Insertion scheme to use when inserting records from multiple
+                  shapefiles.
                   Allowed values are:
 
-                  * single
-                  * table_per_file
+                  * **single** --
+                    Insert all records into a single table.
+
+                  * **table_per_file** --
+                    Insert records from each file into a new table
+                    corresponding to that file.
 
                   The default value is 'single'.
 
@@ -22263,13 +22357,14 @@ class GPUdb(object):
                 * **text_search_columns** --
                   Add 'text_search' property to internally inferenced string
                   columns. Comma seperated list of column names or '*' for all
-                  columns. To add text_search property only to string columns
-                  of minimum size, set also the option
-                  'text_search_min_column_length'
+                  columns. To add 'text_search' property only to string columns
+                  greater than or equal to a minimum size, also set the
+                  *text_search_min_column_length*
 
                 * **text_search_min_column_length** --
-                  Set minimum column size. Used only when 'text_search_columns'
-                  has a value.
+                  Set the minimum column size for strings to apply the
+                  'text_search' property to. Used only when
+                  *text_search_columns* has a value.
 
                 * **truncate_strings** --
                   If set to *true*, truncate string values that are longer than
@@ -22292,7 +22387,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **type_inference_mode** --
-                  optimize type inference for:
+                  Optimize type inferencing for either speed or accuracy.
                   Allowed values are:
 
                   * **accuracy** --
@@ -22309,17 +22404,16 @@ class GPUdb(object):
                   Remote SQL query from which data will be sourced
 
                 * **remote_query_filter_column** --
-                  Name of column to be used for splitting the query into
+                  Name of column to be used for splitting *remote_query* into
                   multiple sub-queries using the data distribution of given
-                  column. The default value is ''.
+                  column
 
                 * **remote_query_increasing_column** --
                   Column on subscribed remote query result that will increase
-                  for new records (e.g., TIMESTAMP). The default value is ''.
+                  for new records (e.g., TIMESTAMP).
 
                 * **remote_query_partition_column** --
-                  Alias name for remote_query_filter_column. The default value
-                  is ''.
+                  Alias name for *remote_query_filter_column*.
 
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting into a
@@ -22327,7 +22421,7 @@ class GPUdb(object):
                   <../../../../concepts/tables/#primary-keys>`__. If set to
                   *true*, any existing table record with primary key values
                   that match those of a record being inserted will be replaced
-                  by that new record (the new data will be "upserted"). If set
+                  by that new record (the new data will be 'upserted'). If set
                   to *false*, any existing table record with primary key values
                   that match those of a record being inserted will remain
                   unchanged, while the new record will be rejected and the
@@ -25540,7 +25634,7 @@ class GPUdb(object):
                   * true
                   * false
 
-                  The default value is 'true'.
+                  The default value is 'false'.
 
                 The default value is an empty dict ( {} ).
 
@@ -28820,6 +28914,9 @@ class GPUdb(object):
                 * **connect** --
                   Connect access on the given data source or data sink.
 
+                * **create** --
+                  Ability to create new objects of this type.
+
                 * **delete** --
                   Delete rows from tables.
 
@@ -29395,6 +29492,9 @@ class GPUdb(object):
 
                 * **connect** --
                   Connect access on the given data source or data sink.
+
+                * **create** --
+                  Ability to create new objects of this type.
 
                 * **delete** --
                   Delete rows from tables.
@@ -30074,17 +30174,19 @@ class GPUdb(object):
                 Not implemented yet. The default value is an empty dict ( {} ).
 
             create_table_options (dict of str to str)
-                Options used when creating the target table.
+                Options from :meth:`GPUdb.create_table`, allowing the structure
+                of the table to be defined independently of the data source,
+                when creating the target table.
                 Allowed keys are:
 
                 * **type_id** --
                   ID of a currently registered `type
-                  <../../../../concepts/types/>`__. The default value is ''.
+                  <../../../../concepts/types/>`__.
 
                 * **no_error_if_exists** --
                   If *true*, prevents an error from occurring if the table
                   already exists and is of the given type.  If a table with the
-                  same ID but a different type exists, it is still an error.
+                  same name but a different type exists, it is still an error.
                   Allowed values are:
 
                   * true
@@ -30095,7 +30197,7 @@ class GPUdb(object):
                 * **is_replicated** --
                   Affects the `distribution scheme
                   <../../../../concepts/tables/#distribution>`__ for the
-                  table's data.  If *true* and the given type has no explicit
+                  table's data.  If *true* and the given table has no explicit
                   `shard key <../../../../concepts/tables/#shard-key>`__
                   defined, the table will be `replicated
                   <../../../../concepts/tables/#replication>`__.  If *false*,
@@ -30103,7 +30205,7 @@ class GPUdb(object):
                   <../../../../concepts/tables/#sharding>`__ according to the
                   shard key specified in the given *type_id*, or `randomly
                   sharded <../../../../concepts/tables/#random-sharding>`__, if
-                  no shard key is specified.  Note that a type containing a
+                  no shard key is specified. Note that a type containing a
                   shard key cannot be used to create a replicated table.
                   Allowed values are:
 
@@ -30170,7 +30272,7 @@ class GPUdb(object):
 
                 * **is_automatic_partition** --
                   If *true*, a new partition will be created for values which
-                  don't fall into an existing partition.  Currently only
+                  don't fall into an existing partition.  Currently, only
                   supported for `list partitions
                   <../../../../concepts/tables/#partitioning-by-list>`__.
                   Allowed values are:
@@ -30220,48 +30322,28 @@ class GPUdb(object):
                 Optional parameters.
                 Allowed keys are:
 
-                * **avro_header_bytes** --
-                  Optional number of bytes to skip when reading an avro record.
-
-                * **avro_num_records** --
-                  Optional number of avro records, if data includes only
-                  records.
-
-                * **avro_schema** --
-                  Optional string representing avro schema, if data includes
-                  only records.
-
-                * **avro_schemaless** --
-                  When user provides 'avro_schema', avro data is assumed to be
-                  schemaless, unless specified. Default is 'true' when given
-                  avro_schema. Igonred when avro_schema is not given.
-                  Allowed values are:
-
-                  * true
-                  * false
-
                 * **bad_record_table_name** --
-                  Optional name of a table to which records that were rejected
-                  are written.  The bad-record-table has the following columns:
+                  Name of a table to which records that were rejected are
+                  written. The bad-record-table has the following columns:
                   line_number (long), line_rejected (string), error_message
-                  (string). When error handling is Abort, bad records table is
-                  not populated.
+                  (string).  When *error_handling* is *abort*, bad records
+                  table is not populated.
 
                 * **bad_record_table_limit** --
                   A positive integer indicating the maximum number of records
-                  that can be  written to the bad-record-table.   Default value
-                  is 10000
+                  that can be written to the bad-record-table. The default
+                  value is '10000'.
 
                 * **bad_record_table_limit_per_input** --
-                  For subscriptions: A positive integer indicating the maximum
+                  For subscriptions, a positive integer indicating the maximum
                   number of records that can be written to the bad-record-table
                   per file/payload. Default value will be
-                  'bad_record_table_limit' and total size of the table per rank
-                  is limited to 'bad_record_table_limit'
+                  *bad_record_table_limit* and total size of the table per rank
+                  is limited to *bad_record_table_limit*.
 
                 * **batch_size** --
-                  Internal tuning parameter--number of records per batch when
-                  inserting data.
+                  Number of records to insert per batch when inserting data.
+                  The default value is '50000'.
 
                 * **column_formats** --
                   For each target column specified, applies the
@@ -30310,14 +30392,14 @@ class GPUdb(object):
                   data to skip.  Mutually exclusive with *columns_to_load*.
 
                 * **compression_type** --
-                  Optional: compression type.
+                  Source data compression type.
                   Allowed values are:
 
                   * **none** --
-                    Uncompressed file
+                    No compression.
 
                   * **auto** --
-                    Default. Auto detect compression type
+                    Auto detect compression type
 
                   * **gzip** --
                     gzip file compression.
@@ -30418,7 +30500,7 @@ class GPUdb(object):
 
                 * **gdal_configuration_options** --
                   Comma separated list of gdal conf options, for the specific
-                  requets: key=value. The default value is ''.
+                  requets: key=value
 
                 * **ignore_existing_pk** --
                   Specifies the record collision error-suppression policy for
@@ -30468,12 +30550,16 @@ class GPUdb(object):
 
                   The default value is 'full'.
 
+                * **kafka_consumers_per_rank** --
+                  Number of Kafka consumer threads per rank (valid range 1-6).
+                  The default value is '1'.
+
                 * **kafka_group_id** --
-                  The group id to be used consuming data from a kakfa topic
-                  (valid only for kafka datasource subscriptions).
+                  The group id to be used when consuming data from a Kafka
+                  topic (valid only for Kafka datasource subscriptions).
 
                 * **kafka_offset_reset_policy** --
-                  Policy to determine whether the data consumption starts
+                  Policy to determine whether the Kafka data consumption starts
                   either at earliest offset or latest offset.
                   Allowed values are:
 
@@ -30482,13 +30568,27 @@ class GPUdb(object):
 
                   The default value is 'earliest'.
 
+                * **kafka_optimistic_ingest** --
+                  Enable optimistic ingestion where Kafka topic offsets and
+                  table data are committed independently to achieve
+                  parallelism.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **kafka_subscription_cancel_after** --
-                  Sets the subscription lifespan (in minutes). Expired
+                  Sets the Kafka subscription lifespan (in minutes). Expired
                   subscription will be cancelled automatically.
 
+                * **kafka_type_inference_fetch_timeout** --
+                  Maximum time to collect Kafka messages before type
+                  inferencing on the set of them.
+
                 * **layer** --
-                  Optional: geo files layer(s) name(s): comma separated. The
-                  default value is ''.
+                  Geo files layer(s) name(s): comma separated.
 
                 * **loading_mode** --
                   Scheme for distributing the extraction and loading of data
@@ -30537,38 +30637,37 @@ class GPUdb(object):
                   The default value is 'head'.
 
                 * **local_time_offset** --
-                  For Avro local timestamp columns
+                  Apply an offset to Avro local timestamp columns.
 
                 * **max_records_to_load** --
-                  Limit the number of records to load in this request: If this
-                  number is larger than a batch_size, then the number of
+                  Limit the number of records to load in this request: if this
+                  number is larger than *batch_size*, then the number of
                   records loaded will be limited to the next whole number of
-                  batch_size (per working thread). The default value is ''.
+                  *batch_size* (per working thread).
 
                 * **num_tasks_per_rank** --
-                  Optional: number of tasks for reading file per rank. Default
-                  will be external_file_reader_num_tasks
+                  Number of tasks for reading file per rank. Default will be
+                  system configuration parameter,
+                  external_file_reader_num_tasks.
 
                 * **poll_interval** --
                   If *true*, the number of seconds between attempts to load
                   external files into the table.  If zero, polling will be
                   continuous as long as data is found.  If no data is found,
                   the interval will steadily increase to a maximum of 60
-                  seconds.
+                  seconds. The default value is '0'.
 
                 * **primary_keys** --
-                  Optional: comma separated list of column names, to set as
-                  primary keys, when not specified in the type. The default
-                  value is ''.
+                  Comma separated list of column names to set as primary keys,
+                  when not specified in the type.
 
-                * schema_registry_schema_id
-                * schema_registry_schema_name
-                * schema_registry_schema_version
+                * **schema_registry_schema_name** --
+                  Name of the Avro schema in the schema registry to use when
+                  reading Avro records.
 
                 * **shard_keys** --
-                  Optional: comma separated list of column names, to set as
-                  primary keys, when not specified in the type. The default
-                  value is ''.
+                  Comma separated list of column names to set as shard keys,
+                  when not specified in the type.
 
                 * **skip_lines** --
                   Skip number of lines from begining of file.
@@ -30584,13 +30683,16 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **table_insert_mode** --
-                  Optional: table_insert_mode. When inserting records from
-                  multiple files: if table_per_file then insert from each file
-                  into a new table. Currently supported only for shapefiles.
+                  Insertion scheme to use when inserting records from multiple
+                  shapefiles.
                   Allowed values are:
 
-                  * single
-                  * table_per_file
+                  * **single** --
+                    Insert all records into a single table.
+
+                  * **table_per_file** --
+                    Insert records from each file into a new table
+                    corresponding to that file.
 
                   The default value is 'single'.
 
@@ -30669,13 +30771,14 @@ class GPUdb(object):
                 * **text_search_columns** --
                   Add 'text_search' property to internally inferenced string
                   columns. Comma seperated list of column names or '*' for all
-                  columns. To add text_search property only to string columns
-                  of minimum size, set also the option
-                  'text_search_min_column_length'
+                  columns. To add 'text_search' property only to string columns
+                  greater than or equal to a minimum size, also set the
+                  *text_search_min_column_length*
 
                 * **text_search_min_column_length** --
-                  Set minimum column size. Used only when 'text_search_columns'
-                  has a value.
+                  Set the minimum column size for strings to apply the
+                  'text_search' property to. Used only when
+                  *text_search_columns* has a value.
 
                 * **truncate_strings** --
                   If set to *true*, truncate string values that are longer than
@@ -30698,7 +30801,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **type_inference_mode** --
-                  optimize type inference for:
+                  Optimize type inferencing for either speed or accuracy.
                   Allowed values are:
 
                   * **accuracy** --
@@ -30717,7 +30820,7 @@ class GPUdb(object):
                   <../../../../concepts/tables/#primary-keys>`__. If set to
                   *true*, any existing table record with primary key values
                   that match those of a record being inserted will be replaced
-                  by that new record (the new data will be "upserted"). If set
+                  by that new record (the new data will be 'upserted'). If set
                   to *false*, any existing table record with primary key values
                   that match those of a record being inserted will remain
                   unchanged, while the new record will be rejected and the
@@ -32396,8 +32499,8 @@ class GPUdb(object):
         latitude/longitude points to an existing underlying road network graph
         using a given solution type.
 
-        IMPORTANT: It's highly recommended that you review the `Network Graphs
-        & Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
+        IMPORTANT: It's highly recommended that you review the `Graphs &
+        Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
         documentation, the `Graph REST Tutorial
         <../../../../guides/graph_rest_guide/>`__, and/or some `/match/graph
         examples <../../../../guide-tags/graph---match/>`__ before using this
@@ -33128,8 +33231,8 @@ class GPUdb(object):
         """Update an existing graph network using given nodes, edges, weights,
         restrictions, and options.
 
-        IMPORTANT: It's highly recommended that you review the `Network Graphs
-        & Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
+        IMPORTANT: It's highly recommended that you review the `Graphs &
+        Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
         documentation, and `Graph REST Tutorial
         <../../../../guides/graph_rest_guide/>`__ before using this endpoint.
 
@@ -33353,6 +33456,12 @@ class GPUdb(object):
 
                   The default value is 'true'.
 
+                * **embedding_table** --
+                  If table exists (should be generated by the match/graph
+                  match_embedding solver), the vector embeddings for the newly
+                  inserted nodes will be appended into this table. The default
+                  value is ''.
+
                 The default value is an empty dict ( {} ).
 
         Returns:
@@ -33397,7 +33506,7 @@ class GPUdb(object):
     # begin query_graph
     def query_graph( self, graph_name = None, queries = None, restrictions = [],
                      adjacency_table = '', rings = 1, options = {} ):
-        """Employs a topological query on a network graph generated a-priori by
+        """Employs a topological query on a graph generated a-priori by
         :meth:`GPUdb.create_graph` and returns a list of adjacent edge(s) or
         node(s), also known as an adjacency list, depending on what's been
         provided to the endpoint; providing edges will return nodes and
@@ -33413,8 +33522,8 @@ class GPUdb(object):
         To return the adjacency list in the response, leave input parameter
         *adjacency_table* empty.
 
-        IMPORTANT: It's highly recommended that you review the `Network Graphs
-        & Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
+        IMPORTANT: It's highly recommended that you review the `Graphs &
+        Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
         documentation, the `Graph REST Tutorial
         <../../../../guides/graph_rest_guide/>`__, and/or some `/match/graph
         examples <../../../../guide-tags/graph---query>`__ before using this
@@ -33606,8 +33715,8 @@ class GPUdb(object):
     def repartition_graph( self, graph_name = None, options = {} ):
         """Rebalances an existing partitioned graph.
 
-        IMPORTANT: It's highly recommended that you review the `Network Graphs
-        & Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
+        IMPORTANT: It's highly recommended that you review the `Graphs &
+        Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
         documentation, the `Graph REST Tutorial
         <../../../../guides/graph_rest_guide/>`__, and/or some `graph examples
         <../../../../guide-tags/graph/>`__ before using this endpoint.
@@ -33752,6 +33861,9 @@ class GPUdb(object):
 
                 * **connect** --
                   Connect access on the given data source or data sink.
+
+                * **create** --
+                  Ability to create new objects of this type.
 
                 * **delete** --
                   Delete rows from tables.
@@ -35952,6 +36064,10 @@ class GPUdb(object):
                   Semicolon-separated list of datasource names the table has
                   subscribed to. The default value is ''.
 
+                * **null_modifying_columns** --
+                  Comma-separated list of null modifying column names. The
+                  default value is ''.
+
             sizes (list of longs)
                 If *get_sizes* is *true*, an array containing the number of
                 records of each corresponding table in output parameter
@@ -36454,8 +36570,8 @@ class GPUdb(object):
         page rank, travelling salesman, etc.) using source nodes, destination
         nodes, and additional, optional weights and restrictions.
 
-        IMPORTANT: It's highly recommended that you review the `Network Graphs
-        & Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
+        IMPORTANT: It's highly recommended that you review the `Graphs &
+        Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
         documentation, the `Graph REST Tutorial
         <../../../../guides/graph_rest_guide/>`__, and/or some `/solve/graph
         examples <../../../../guide-tags/graph---solve>`__ before using this
@@ -37985,7 +38101,7 @@ class GPUdb(object):
         """Generate an image containing isolines for travel results using an
         existing graph. Isolines represent curves of equal cost, with cost
         typically referring to the time or distance assigned as the weights of
-        the underlying graph. See `Network Graphs & Solvers
+        the underlying graph. See `Graphs & Solvers
         <../../../../graph_solver/network_graph_solver/>`__ for more
         information on graphs.
 
@@ -41262,6 +41378,11 @@ class GPUdbTable( object ):
 
                   The default value is 'value'.
 
+                * **order_by** --
+                  Comma-separated list of the columns to be sorted by as well
+                  as the sort direction, e.g., 'timestamp asc, x desc'. The
+                  default value is ''.
+
                 * **strategy_definition** --
                   The `tier strategy
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
@@ -41362,6 +41483,13 @@ class GPUdbTable( object ):
                 * **cube** --
                   This option is used to specify the multidimensional
                   aggregates.
+
+                * **shard_key** --
+                  Comma-separated list of the columns to be sharded on; e.g.
+                  'column1, column2'.  The columns specified must be present in
+                  input parameter *column_names*.  If any alias is given for
+                  any column name, the alias must be used, rather than the
+                  original column name. The default value is ''.
 
                 The default value is an empty dict ( {} ).
 
@@ -42134,6 +42262,11 @@ class GPUdbTable( object ):
 
                   The default value is 'ascending'.
 
+                * **order_by** --
+                  Comma-separated list of the columns to be sorted by as well
+                  as the sort direction, e.g., 'timestamp asc, x desc'. The
+                  default value is ''.
+
                 * **result_table** --
                   The name of the table used to store the results, in
                   [schema_name.]table_name format, using standard `name
@@ -42549,8 +42682,9 @@ class GPUdbTable( object ):
         Create or delete a `column
         <../../../../concepts/indexes/#column-index>`__, `chunk skip
         <../../../../concepts/indexes/#chunk-skip-index>`__, `geospatial
-        <../../../../concepts/indexes/#geospatial-index>`__, or `CAGRA
-        <../../../../concepts/indexes/#cagra-index>`__ index. This can speed up
+        <../../../../concepts/indexes/#geospatial-index>`__, `CAGRA
+        <../../../../concepts/indexes/#cagra-index>`__, or `HNSW
+        <../../../../concepts/indexes/#hnsw-index>`__ index. This can speed up
         certain operations when using expressions containing equality or
         relational operators on indexed columns. This only applies to tables.
 
@@ -42593,8 +42727,9 @@ class GPUdbTable( object ):
                   <../../../../concepts/indexes/#column-index>`__, `chunk skip
                   index <../../../../concepts/indexes/#chunk-skip-index>`__,
                   `geospatial index
-                  <../../../../concepts/indexes/#geospatial-index>`__, or
-                  `CAGRA index <../../../../concepts/indexes/#cagra-index>`__
+                  <../../../../concepts/indexes/#geospatial-index>`__, `CAGRA
+                  index <../../../../concepts/indexes/#cagra-index>`__, or
+                  `HNSW index <../../../../concepts/indexes/#hnsw-index>`__
                   (depending on the specified *index_type*), on the column name
                   specified in input parameter *value*. If this column already
                   has the specified index, an error will be returned.
@@ -42609,8 +42744,9 @@ class GPUdbTable( object ):
                   <../../../../concepts/indexes/#column-index>`__, `chunk skip
                   index <../../../../concepts/indexes/#chunk-skip-index>`__,
                   `geospatial index
-                  <../../../../concepts/indexes/#geospatial-index>`__, or
-                  `CAGRA index <../../../../concepts/indexes/#cagra-index>`__
+                  <../../../../concepts/indexes/#geospatial-index>`__, `CAGRA
+                  index <../../../../concepts/indexes/#cagra-index>`__, or
+                  `HNSW index <../../../../concepts/indexes/#hnsw-index>`__
                   (depending on the specified *index_type*), on the column name
                   specified in input parameter *value*. If this column does not
                   have the specified index, an error will be returned.
@@ -42918,6 +43054,11 @@ class GPUdbTable( object ):
                   * **cagra** --
                     Create or delete a `CAGRA index
                     <../../../../concepts/indexes/#cagra-index>`__ on a `vector
+                    column <../../../../vector_search/#vector-type>`__
+
+                  * **hnsw** --
+                    Create or delete an `HNSW index
+                    <../../../../concepts/indexes/#hnsw-index>`__ on a `vector
                     column <../../../../vector_search/#vector-type>`__
 
                   The default value is 'column'.
@@ -45675,6 +45816,10 @@ class GPUdbTable( object ):
                 * **datasource_subscriptions** --
                   Semicolon-separated list of datasource names the table has
                   subscribed to. The default value is ''.
+
+                * **null_modifying_columns** --
+                  Comma-separated list of null modifying column names. The
+                  default value is ''.
 
             sizes (list of longs)
                 If *get_sizes* is *true*, an array containing the number of

@@ -46,6 +46,7 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
         url: Optional[str] = None,
         username: Optional[str] = None,
         password: Optional[str] = None,
+        oauth_token: Optional[str] = None,
         connection_options: Optional[dict] = None,
     ):
         """Constructor
@@ -57,6 +58,7 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
             url (Optional[str], optional): the Kinetica URL; has to be keyword only. Defaults to None.
             username (Optional[str], optional): the Kinetica username; has to be keyword only. Defaults to None.
             password (Optional[str], optional): the Kinetica password; has to be keyword only. Defaults to None.
+            oauth_token (Optional[str], optional): the oauth2 token; has to be keyword only. Defaults to None.
             connection_options (Optional[dict], optional): Defaults to None.
 
         Raises:
@@ -72,6 +74,9 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
         if username and len(username) > 0:
             options.username = username
             options.password = password
+
+        if oauth_token and len(oauth_token) > 0:
+            options.oauth_token = oauth_token
 
         if connection_options and "bypass_ssl_cert_check" in connection_options:
             options.skip_ssl_cert_verification = connection_options[
