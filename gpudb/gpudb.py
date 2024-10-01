@@ -852,13 +852,6 @@ class _Util(object):
 
 
 
-    # Regular expression needed for converting records to protocol.Record objects
-    re_datetime_full  = re.compile("^\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}:\d{2}\.\d{1,3}\Z")
-    re_datetime_noMS  = re.compile("^\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}:\d{2}\Z")
-    re_date_only      = re.compile("^\d{4}-\d{2}-\d{2}\Z")
-    re_time_only_ms   = re.compile("^\d{1,2}:\d{2}:\d{2}\.\d{1,3}\Z")
-    re_time_only_noMS = re.compile("^\d{1,2}:\d{2}:\d{2}\Z")
-
     @staticmethod
     def convert_binary_data_to_cext_records( db, table_name, records, record_type = None ):
         """Given a list of objects, convert them to either bytes or Record objects.
@@ -959,75 +952,6 @@ class _Util(object):
                         raise GPUdbException("TODO: *********type 'ipv4' not supported yet*********")
                     elif (col_data_type.lower() == "bytes"):
                         col_value = _Util.ensure_bytes( col_value )
-
-                    # NO NEED TO CHECK DATE & TIME FORMATS DUE TO "init_with_now";
-                    # but keeping it around in case the C-module code changes again.
-                    # # Handle datetime
-                    # elif (col_data_type == "datetime"):
-                    #     # Conversion needed if it is NOT already a datetime struct
-                    #     if not isinstance( col_value, datetime.datetime ):
-                    #         # Better be a string if not a datetime object
-                    #         if not isinstance( col_value, basestring ):
-                    #             raise GPUdbException( "'datetime' type column value must be a datetime "
-                    #                                   "object or a string, given {}".format( str( type( col_value ) ) ) )
-
-                    #         col_value = col_value.strip()
-
-                    #         if _Util.re_datetime_full.match( col_value ):
-                    #             # Full datetime with time (including milliseconds)
-                    #             col_value = datetime.datetime.strptime( col_value, "%Y-%m-%d %H:%M:%S.%f" )
-                    #         elif _Util.re_datetime_noMS.match( col_value ):
-                    #             # Date and time, but no milliseconds
-                    #             col_value = datetime.datetime.strptime( col_value, "%Y-%m-%d %H:%M:%S" )
-                    #         elif _Util.re_date_only.match( col_value ):
-                    #             # Date only (no time)
-                    #             col_value = datetime.datetime.strptime( col_value, "%Y-%m-%d" )
-                    #         else:
-                    #             raise GPUdbException( "Could not convert value to datetime pattern ('YYYY-MM-DD [HH:MM:SS[.mmm]]'); "
-                    #                                   "given '{}'".format( col_value ) )
-                    #         # end if
-                    #     # end if
-                    # elif (col_data_type == "date"): # Handle date
-                    #     # Conversion needed if it is NOT already a date struct
-                    #     if not isinstance( col_value, datetime.date ):
-                    #         # Better be a string if not a date object
-                    #         if not isinstance( col_value, basestring ):
-                    #             raise GPUdbException( "'date' type column value must be a datetime.date "
-                    #                                   "object or a string, given {}".format( str( type( col_value ) ) ) )
-
-                    #         col_value = col_value.strip()
-
-                    #         # Check that it matches the date pattern
-                    #         if _Util.re_date_only.match( col_value ):
-                    #             col_value = datetime.datetime.strptime( col_value, "%Y-%m-%d" ).date()
-                    #         else:
-                    #             raise GPUdbException( "Could not convert value to date pattern ('YYYY-MM-DD'); "
-                    #                                   "given '{}'".format( col_value ) )
-                    #         # end if
-                    #     # end if
-                    # elif (col_data_type == "time"): # Handle time
-                    #     # Conversion needed if it is NOT already a time struct
-                    #     if not isinstance( col_value, datetime.time ):
-                    #         # Better be a string if not a time object
-                    #         if not isinstance( col_value, basestring ):
-                    #             raise GPUdbException( "'time' type column value must be a datetime.time "
-                    #                                   "object or a string, given {}".format( str( type( col_value ) ) ) )
-
-                    #         col_value = col_value.strip()
-
-                    #         # Check that it matches the allowed time patterns
-                    #         if _Util.re_time_only_ms.match( col_value ):
-                    #             # Time with milliseconds
-                    #             col_value = datetime.datetime.strptime( col_value, "%H:%M:%S.%f" ).time()
-                    #         elif _Util.re_time_only_noMS.match( col_value ):
-                    #             # Time without milliseconds
-                    #             col_value = datetime.datetime.strptime( col_value, "%H:%M:%S" ).time()
-                    #         else:
-                    #             raise GPUdbException( "Could not convert value to time pattern ('HH:MM:SS[.mmm]'); "
-                    #                                   "given '{}'".format( col_value ) )
-                    #         # end if
-                    #     # end if
-                    # end handling special data type conversions
 
                     record[ col_name ] = col_value
                 # end inner loop
@@ -4995,11 +4919,11 @@ class GPUdb(object):
 
     END_OF_SET = -9999
     """(int) Used for indicating that all of the records (till the end of the
-    set are desired)--generally used for /get/records/\* functions.
+    set are desired)--generally used for /get/records/* functions.
     """
 
     # The version of this API
-    api_version = "7.2.1.0"
+    api_version = "7.2.2.0"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -18124,6 +18048,9 @@ class GPUdb(object):
                 * **tps_per_tom** --
                   Sets the tps_per_tom value of the conf. The minimum allowed
                   value is '2'. The maximum allowed value is '8192'.
+
+                * **ai_enable_rag** --
+                  Enable RAG. The default value is 'false'.
 
                 * **ai_api_provider** --
                   AI API provider type
@@ -46214,7 +46141,7 @@ class GPUdbTableIterator( Iterator ):
     be instantiated since there is no way to guarantee that getting another
     chunk would yield the 'next' set of records without duplicates or skipping
     over records.  GPUdb does not guarantee any order or returned records via
-    /get/records/\*.
+    /get/records/*.
     """
     def __init__( self, table, offset = 0, limit = 10000, db = None ):
         """Initiate the iterator with the given table, offset, and limit.

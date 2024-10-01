@@ -2,6 +2,12 @@
 
 ## Version 7.2
 
+### Version 7.2.2.0 - 2024-10-01
+
+#### Fixed
+-   Warnings related to escaped regular expression codes
+
+
 ### Version 7.2.1.0 - 2024.09.08
 
 #### Added
