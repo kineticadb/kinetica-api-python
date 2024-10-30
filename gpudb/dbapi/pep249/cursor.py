@@ -179,7 +179,7 @@ class CursorFetchMixin(metaclass=ABCMeta):
         If the size parameter is not supplied, the arraysize property will
         be used instead.
 
-        If rows in the result set have been exhausted, an an empty list
+        If rows in the result set have been exhausted, an empty list
         will be returned. If the previous call to `execute` did not
         produce a result set, an error can be raised.
 
@@ -192,7 +192,7 @@ class CursorFetchMixin(metaclass=ABCMeta):
         Fetch the remaining rows from the query result set as a list of
         sequences of Python types.
 
-        If rows in the result set have been exhausted, an an empty list
+        If rows in the result set have been exhausted, an empty list
         will be returned. If the previous call to `execute` did not
         produce a result set, an error can be raised.
 

@@ -4923,7 +4923,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.2.0"
+    api_version = "7.2.2.1"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -13463,8 +13463,8 @@ class GPUdb(object):
                 Set to true if desired state is offline.
                 Allowed values are:
 
-                * true
-                * false
+                * True
+                * False
 
             options (dict of str to str)
                 Optional parameters.
@@ -13936,8 +13936,8 @@ class GPUdb(object):
                 Whether this cluster operation is currently in progress or not.
                 Allowed values are:
 
-                * true
-                * false
+                * True
+                * False
 
             start_time (str)
                 The start time of the cluster operation.
@@ -13967,8 +13967,8 @@ class GPUdb(object):
                 progress.
                 Allowed values are:
 
-                * true
-                * false
+                * True
+                * False
 
             percent_complete (int)
                 Percent complete of this entire operation.
@@ -13977,8 +13977,8 @@ class GPUdb(object):
                 Whether this operation was a dry run.
                 Allowed values are:
 
-                * true
-                * false
+                * True
+                * False
 
             messages (list of str)
                 Updates and error messages if any.
@@ -13987,8 +13987,8 @@ class GPUdb(object):
                 Whether adding ranks is (or was) part of this operation.
                 Allowed values are:
 
-                * true
-                * false
+                * True
+                * False
 
             add_ranks_status (str)
                 If this was a rank-adding operation, the add-specific status of
@@ -14016,8 +14016,8 @@ class GPUdb(object):
                 Whether removing ranks is (or was) part of this operation.
                 Allowed values are:
 
-                * true
-                * false
+                * True
+                * False
 
             remove_ranks_status (str)
                 If this was a rank-removing operation, the removal-specific
@@ -14042,16 +14042,16 @@ class GPUdb(object):
                 operation.
                 Allowed values are:
 
-                * true
-                * false
+                * True
+                * False
 
             rebalance_unsharded_data (bool)
                 Whether rebalancing of unsharded data is (or was) part of this
                 operation.
                 Allowed values are:
 
-                * true
-                * false
+                * True
+                * False
 
             rebalance_unsharded_data_status (str)
                 If this was an operation that included rebalancing unsharded
@@ -14073,8 +14073,8 @@ class GPUdb(object):
                 operation.
                 Allowed values are:
 
-                * true
-                * false
+                * True
+                * False
 
             shard_array_version (long)
                 Version of the shard array that is (or was) being rebalanced
@@ -14660,8 +14660,8 @@ class GPUdb(object):
                   Filter expression to apply to the aggregated results.
 
                 * **sort_order** --
-                  String indicating how the returned values should be sorted -
-                  ascending or descending.
+                  [DEPRECATED--use order_by instead] String indicating how the
+                  returned values should be sorted - ascending or descending.
                   Allowed values are:
 
                   * **ascending** --
@@ -14675,7 +14675,8 @@ class GPUdb(object):
                   The default value is 'ascending'.
 
                 * **sort_by** --
-                  String determining how the results are sorted.
+                  [DEPRECATED--use order_by instead] String determining how the
+                  results are sorted.
                   Allowed values are:
 
                   * **key** --
@@ -15026,8 +15027,8 @@ class GPUdb(object):
                   Filter expression to apply to the aggregated results.
 
                 * **sort_order** --
-                  String indicating how the returned values should be sorted -
-                  ascending or descending.
+                  [DEPRECATED--use order_by instead] String indicating how the
+                  returned values should be sorted - ascending or descending.
                   Allowed values are:
 
                   * **ascending** --
@@ -15041,7 +15042,8 @@ class GPUdb(object):
                   The default value is 'ascending'.
 
                 * **sort_by** --
-                  String determining how the results are sorted.
+                  [DEPRECATED--use order_by instead] String determining how the
+                  results are sorted.
                   Allowed values are:
 
                   * **key** --
@@ -17117,9 +17119,45 @@ class GPUdb(object):
                   Name of the Amazon S3 region where the given bucket is
                   located
 
+                * **s3_verify_ssl** --
+                  Set to false for testing purposes or when necessary to bypass
+                  TLS errors (e.g. self-signed certificates). This value is
+                  true by default.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **s3_use_virtual_addressing** --
+                  When true (default), the requests URI should be specified in
+                  virtual-hosted-style format where the bucket name is part of
+                  the domain name in the URL.
+
+                  Otherwise set to false to use path-style URI for requests.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
                 * **s3_aws_role_arn** --
                   Amazon IAM Role ARN which has required S3 permissions that
                   can be assumed for the given S3 IAM user
+
+                * **s3_encryption_customer_algorithm** --
+                  Customer encryption algorithm used encrypting data
+
+                * **s3_encryption_customer_key** --
+                  Customer encryption key to encrypt or decrypt data
+
+                * **s3_encryption_type** --
+                  Server side encryption type
+
+                * **s3_kms_key_id** --
+                  KMS key
 
                 * **hdfs_kerberos_keytab** --
                   Kerberos keytab file location for the given HDFS user.  This
@@ -17321,6 +17359,32 @@ class GPUdb(object):
                   Name of the Amazon S3 region where the given bucket is
                   located
 
+                * **s3_verify_ssl** --
+                  Set to false for testing purposes or when necessary to bypass
+                  TLS errors (e.g. self-signed certificates). This value is
+                  true by default.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                * **s3_use_virtual_addressing** --
+                  Whether to use virtual addressing when referencing the Amazon
+                  S3 source.
+                  Allowed values are:
+
+                  * **true** --
+                    The requests URI should be specified in
+                    virtual-hosted-style format where the bucket name is part
+                    of the domain name in the URL.
+
+                  * **false** --
+                    Use path-style URI for requests.
+
+                  The default value is 'true'.
+
                 * **s3_aws_role_arn** --
                   Amazon IAM Role ARN which has required S3 permissions that
                   can be assumed for the given S3 IAM user
@@ -17424,6 +17488,17 @@ class GPUdb(object):
                   Updates the schema name.  If *schema_name* doesn't exist, an
                   error will be thrown. If *schema_name* is empty, then the
                   user's default schema will be used.
+
+                * **schema_registry_location** --
+                  Location of Confluent Schema Registry in
+                  '[storage_path[:storage_port]]' format.
+
+                * **schema_registry_credential** --
+                  Confluent Schema Registry `credential
+                  <../../../../concepts/credentials>`__ object name.
+
+                * **schema_registry_port** --
+                  Confluent Schema Registry port (optional).
 
             options (dict of str to str)
                 Optional parameters.
@@ -19632,6 +19707,12 @@ class GPUdb(object):
                 * **s3_encryption_customer_key** --
                   Customer encryption key to encrypt or decrypt data
 
+                * **s3_encryption_type** --
+                  Server side encryption type
+
+                * **s3_kms_key_id** --
+                  KMS key
+
                 * **hdfs_kerberos_keytab** --
                   Kerberos keytab file location for the given HDFS user.  This
                   may be a KIFS file.
@@ -20120,8 +20201,8 @@ class GPUdb(object):
                 for more details.
                 Allowed values are:
 
-                * true
-                * false
+                * True
+                * False
 
                 The default value is True.
 
@@ -20553,6 +20634,10 @@ class GPUdb(object):
                 * **enable_virtual_chunking** --
                   Collect chunks with accumulated size less than chunk_size
                   into a single chunk. The default value is 'false'.
+
+                * **enable_pk_equi_join** --
+                  Use equi-join to do primary key joins rather than using
+                  primary-key-index
 
                 The default value is an empty dict ( {} ).
 
@@ -24757,8 +24842,8 @@ class GPUdb(object):
                 Too many records. Returned a partial set.
                 Allowed values are:
 
-                * true
-                * false
+                * True
+                * False
 
             paging_table (str)
                 Name of the table that has the result records of the query.
@@ -25122,8 +25207,8 @@ class GPUdb(object):
                 Too many records. Returned a partial set.
                 Allowed values are:
 
-                * true
-                * false
+                * True
+                * False
 
             paging_table (str)
                 Name of the table that has the result records of the query.
@@ -29482,10 +29567,10 @@ class GPUdb(object):
                 permission on the specified target.
                 Allowed values are:
 
-                * **true** --
+                * **True** --
                   User has the effective queried permission
 
-                * **false** --
+                * **False** --
                   User does not have the queried permission
 
             filters (dict of str to str)
@@ -29534,8 +29619,8 @@ class GPUdb(object):
                 Indicates whether the proc exists or not.
                 Allowed values are:
 
-                * true
-                * false
+                * True
+                * False
 
             info (dict of str to str)
                 Additional information.
@@ -29609,10 +29694,10 @@ class GPUdb(object):
                 specified target input parameter *role*.
                 Allowed values are:
 
-                * **true** --
+                * **True** --
                   User has membership in the role
 
-                * **false** --
+                * **False** --
                   User does not have membership in the role
 
             info (dict of str to str)
@@ -29668,8 +29753,8 @@ class GPUdb(object):
                 Indicates whether the schema exists or not.
                 Allowed values are:
 
-                * true
-                * false
+                * True
+                * False
 
             info (dict of str to str)
                 Additional information.
@@ -29711,8 +29796,8 @@ class GPUdb(object):
                 Indicates whether the table exists or not.
                 Allowed values are:
 
-                * true
-                * false
+                * True
+                * False
 
             info (dict of str to str)
                 Additional information.
@@ -29752,8 +29837,8 @@ class GPUdb(object):
                 Indicates whether the type exists or not.
                 Allowed values are:
 
-                * true
-                * false
+                * True
+                * False
 
             info (dict of str to str)
                 Additional information.
@@ -32165,14 +32250,14 @@ class GPUdb(object):
                     100 records per series. Must be an integral value within
                     the range [1, 500]. If both min and max are specified, min
                     must be less than or equal to max. The minimum allowed
-                    value is '1'. The maximum allowed value is '500'.
+                    value is 1. The maximum allowed value is 500.
 
                   * **max** --
                     Maximum possible length for generated series; default is
                     500 records per series. Must be an integral value within
                     the range [1, 500]. If both min and max are specified, max
                     must be greater than or equal to min. The minimum allowed
-                    value is '1'. The maximum allowed value is '500'.
+                    value is 1. The maximum allowed value is 500.
 
                 The default value is an empty dict ( {} ).
 
@@ -38090,8 +38175,8 @@ class GPUdb(object):
                 the response.
                 Allowed values are:
 
-                * true
-                * false
+                * True
+                * False
 
                 The default value is True.
 
@@ -40664,6 +40749,10 @@ class GPUdbTable( object ):
                   Collect chunks with accumulated size less than chunk_size
                   into a single chunk. The default value is 'false'.
 
+                * **enable_pk_equi_join** --
+                  Use equi-join to do primary key joins rather than using
+                  primary-key-index
+
                 The default value is an empty dict ( {} ).
 
         Returns:
@@ -41271,8 +41360,8 @@ class GPUdbTable( object ):
                   Filter expression to apply to the aggregated results.
 
                 * **sort_order** --
-                  String indicating how the returned values should be sorted -
-                  ascending or descending.
+                  [DEPRECATED--use order_by instead] String indicating how the
+                  returned values should be sorted - ascending or descending.
                   Allowed values are:
 
                   * **ascending** --
@@ -41286,7 +41375,8 @@ class GPUdbTable( object ):
                   The default value is 'ascending'.
 
                 * **sort_by** --
-                  String determining how the results are sorted.
+                  [DEPRECATED--use order_by instead] String determining how the
+                  results are sorted.
                   Allowed values are:
 
                   * **key** --

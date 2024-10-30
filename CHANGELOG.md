@@ -2,6 +2,12 @@
 
 ## Version 7.2
 
+### Version 7.2.2.1 - 2024-10-30
+
+#### Fixed
+-   Numeric query parameter handling to ignore tokens in quoted strings
+
+
 ### Version 7.2.2.0 - 2024-10-01
 
 #### Fixed

@@ -453,16 +453,20 @@ class Cursor(CursorConnectionMixin, IterableCursorMixin, TransactionalCursor):
             str: the modified SQL statement
         """
 
-        pattern = r":(\d+)"
+        def replacer(match):
+            # Check if the match is within a quoted string (single or double quotes)
+            if match.group(1):  # If the first group (quoted string) is matched, return it as is
+                return match.group(0)
+            else:  # Otherwise, replace ':n' with '$n'
+                return f"${match.group(2)}"
 
-        # Find all matches and store unique numbers in a set to avoid duplicates
-        matches = sorted(set(re.findall(pattern, query)), key=int)
+        # This pattern matches either a quoted string (group 1) or a :n placeholder (group 2)
+        pattern = r"(['\"].*?['\"])|:([0-9]+)"
 
-        # Replace each ':n' with corresponding '$n'
-        for i, match in enumerate(matches, start=1):
-            query = re.sub(f":{match}", f"${i}", query)
+        # Perform the replacement using the pattern and replacer function
+        result = re.sub(pattern, replacer, query)
+        return result
 
-        return query
 
     @staticmethod
     def __process_params_format(query: str):
