@@ -2,6 +2,12 @@
 
 ## Version 7.2
 
+### Version 7.2.2.2 - 2024-11-10
+
+#### Fixed
+-   Handling of connections when connection keep-alive is active
+
+
 ### Version 7.2.2.1 - 2024-10-30
 
 #### Fixed

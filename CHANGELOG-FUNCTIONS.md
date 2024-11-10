@@ -3,6 +3,13 @@
 
 ## Version 7.2
 
+### Version 7.2.2.3 -- 2024-10-11
+
+##### Non-breaking changes
+
+-   Added ``low_cardinality`` to ``index_type`` option in ``/alter/table``
+
+
 ### Version 7.2.1.0
 
 ##### Non-breaking changes
@@ -50,6 +57,12 @@
 
 
 ## Version 7.1
+
+### Version 7.1.10.9
+
+#### Changed Endpoints
+-   Added option ``with_grant_option`` to ``/grant/permission`` endpoint to allow recipient to grant to others
+
 
 ### Version 7.1.10.0
 

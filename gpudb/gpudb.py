@@ -1384,6 +1384,12 @@ class GPUdbColumnProperty(object):
     entire) `primary key <../../../../concepts/tables/#primary-keys>`__.
     """
 
+    SOFT_PRIMARY_KEY = "soft_primary_key"
+    """str: This property indicates that this column will be part of (or the
+    entire) `soft primary key
+    <../../../../concepts/tables/#soft-primary-keys>`__.
+    """
+
     SHARD_KEY = "shard_key"
     """str: This property indicates that this column will be part of (or the
     entire) `shard key <../../../../concepts/tables/#shard-keys>`__.
@@ -4923,7 +4929,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.2.1"
+    api_version = "7.2.2.2"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -7659,6 +7665,7 @@ class GPUdb(object):
                               GPUdbException.stringify_exception( ex ) ))
             final_msg = self.__SSL_ERROR_MESSAGE_TEMPLATE.format(msg)
             self.__log_debug( final_msg )
+            http_conn.close()
             raise GPUdbUnauthorizedAccessException( final_msg )
         except Exception as ex:
             msg = ("Error posting to '{}' due to: {}"
@@ -7666,6 +7673,7 @@ class GPUdb(object):
                               GPUdbException.stringify_exception( ex ) ) )
             self.__log_debug( msg )
             # TODO: In the Java API, this is an GPUdbExitException; decide what this should be here
+            http_conn.close()
             raise GPUdbConnectionException( msg )
         # end try
 
@@ -7677,6 +7685,7 @@ class GPUdb(object):
                     "".format( url.url,
                                GPUdbException.stringify_exception( ex ) ) )
             self.__log_debug( msg )
+            http_conn.close()
             raise GPUdbConnectionException( msg )
         # end try
 
@@ -7753,6 +7762,8 @@ class GPUdb(object):
             # TODO: Or should this be an exit exception also??
             self.__log_debug( "Throwing GPUdb exception; {}".format( msg ) )
             raise GPUdbException( msg )
+        finally:
+            http_conn.close()
         # end try
 
     # end __submit_request_raw
@@ -7840,6 +7851,7 @@ class GPUdb(object):
                               GPUdbException.stringify_exception( ex ) ))
             final_msg = self.__SSL_ERROR_MESSAGE_TEMPLATE.format(msg)
             self.__log_debug( final_msg )
+            http_conn.close()
             raise GPUdbUnauthorizedAccessException( final_msg )
         except Exception as ex:
             msg = ("Error posting to '{}' due to: {}"
@@ -7847,6 +7859,7 @@ class GPUdb(object):
                               GPUdbException.stringify_exception( ex ) ) )
             self.__log_debug( msg )
             # TODO: In the Java API, this is an GPUdbExitException; decide what this should be here
+            http_conn.close()
             raise GPUdbConnectionException( msg )
         # end try
 
@@ -7858,6 +7871,7 @@ class GPUdb(object):
                     "".format( url.url,
                                GPUdbException.stringify_exception( ex ) ) )
             self.__log_debug( msg )
+            http_conn.close()
             raise GPUdbConnectionException( msg )
         # end try
 
@@ -7916,9 +7930,11 @@ class GPUdb(object):
             # TODO: Or should this be an exit exception also??
             self.__log_debug( "Throwing GPUdb exception; {}".format( msg ) )
             raise GPUdbException( msg )
+        finally:
+            http_conn.close()
         # end try
 
-    # end __submit_request_raw_json
+    # end __submit_request_raw_json_without_body
 
 
     def __submit_request_raw_json( self, url = None, endpoint = None,
@@ -8026,6 +8042,7 @@ class GPUdb(object):
                               GPUdbException.stringify_exception( ex ) ))
             final_msg = self.__SSL_ERROR_MESSAGE_TEMPLATE.format(msg)
             self.__log_debug( final_msg )
+            http_conn.close()
             raise GPUdbUnauthorizedAccessException( final_msg )
         except Exception as ex:
             msg = ("Error posting to '{}' due to: {}"
@@ -8033,6 +8050,7 @@ class GPUdb(object):
                               GPUdbException.stringify_exception( ex ) ) )
             self.__log_debug( msg )
             # TODO: In the Java API, this is an GPUdbExitException; decide what this should be here
+            http_conn.close()
             raise GPUdbConnectionException( msg )
         # end try
 
@@ -8044,6 +8062,7 @@ class GPUdb(object):
                     "".format( url.url,
                                GPUdbException.stringify_exception( ex ) ) )
             self.__log_debug( msg )
+            http_conn.close()
             raise GPUdbConnectionException( msg )
         # end try
 
@@ -8102,6 +8121,8 @@ class GPUdb(object):
             # TODO: Or should this be an exit exception also??
             self.__log_debug( "Throwing GPUdb exception; {}".format( msg ) )
             raise GPUdbException( msg )
+        finally:
+            http_conn.close()
         # end try
 
     # end __submit_request_raw_json
@@ -18214,7 +18235,8 @@ class GPUdb(object):
         External tables cannot be modified except for their refresh method.
 
         Create or delete a `column
-        <../../../../concepts/indexes/#column-index>`__, `chunk skip
+        <../../../../concepts/indexes/#column-index>`__, `low-cardinality index
+        <../../../../concepts/indexes/#low-cardinality-index>`__, `chunk skip
         <../../../../concepts/indexes/#chunk-skip-index>`__, `geospatial
         <../../../../concepts/indexes/#geospatial-index>`__, `CAGRA
         <../../../../concepts/indexes/#cagra-index>`__, or `HNSW
@@ -18265,8 +18287,11 @@ class GPUdb(object):
 
                 * **create_index** --
                   Creates a `column (attribute) index
-                  <../../../../concepts/indexes/#column-index>`__, `chunk skip
-                  index <../../../../concepts/indexes/#chunk-skip-index>`__,
+                  <../../../../concepts/indexes/#column-index>`__,
+                  `low-cardinality index
+                  <../../../../concepts/indexes/#low-cardinality-index>`__,
+                  `chunk skip index
+                  <../../../../concepts/indexes/#chunk-skip-index>`__,
                   `geospatial index
                   <../../../../concepts/indexes/#geospatial-index>`__, `CAGRA
                   index <../../../../concepts/indexes/#cagra-index>`__, or
@@ -18282,8 +18307,11 @@ class GPUdb(object):
 
                 * **delete_index** --
                   Deletes a `column (attribute) index
-                  <../../../../concepts/indexes/#column-index>`__, `chunk skip
-                  index <../../../../concepts/indexes/#chunk-skip-index>`__,
+                  <../../../../concepts/indexes/#column-index>`__,
+                  `low-cardinality index
+                  <../../../../concepts/indexes/#low-cardinality-index>`__,
+                  `chunk skip index
+                  <../../../../concepts/indexes/#chunk-skip-index>`__,
                   `geospatial index
                   <../../../../concepts/indexes/#geospatial-index>`__, `CAGRA
                   index <../../../../concepts/indexes/#cagra-index>`__, or
@@ -18583,6 +18611,10 @@ class GPUdb(object):
                   * **column** --
                     Create or delete a `column (attribute) index
                     <../../../../concepts/indexes/#column-index>`__.
+
+                  * **low_cardinality** --
+                    Create a `low-cardinality column (attribute) index
+                    <../../../../concepts/indexes/#low-cardinality-index>`__.
 
                   * **chunk_skip** --
                     Create or delete a `chunk skip index
@@ -23056,6 +23088,11 @@ class GPUdb(object):
                   This property indicates that this column will be part of (or
                   the entire) `primary key
                   <../../../../concepts/tables/#primary-keys>`__.
+
+                * **soft_primary_key** --
+                  This property indicates that this column will be part of (or
+                  the entire) `soft primary key
+                  <../../../../concepts/tables/#soft-primary-keys>`__.
 
                 * **shard_key** --
                   This property indicates that this column will be part of (or
@@ -27954,6 +27991,10 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **route_to_tom** --
+                  For multihead record retrieval without shard key expression -
+                  specifies from which tom to retrieve data.
+
                 The default value is an empty dict ( {} ).
 
         Returns:
@@ -28137,6 +28178,10 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                * **route_to_tom** --
+                  For multihead record retrieval without shard key expression -
+                  specifies from which tom to retrieve data.
 
                 The default value is an empty dict ( {} ).
 
@@ -28963,6 +29008,16 @@ class GPUdb(object):
                   Optional filter expression to apply to this grant.  Only rows
                   that match the filter will be affected. The default value is
                   ''.
+
+                * **with_grant_option** --
+                  Allow the recipient to grant the same permission (or subset)
+                  to others.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 The default value is an empty dict ( {} ).
 
@@ -42697,7 +42752,8 @@ class GPUdbTable( object ):
         External tables cannot be modified except for their refresh method.
 
         Create or delete a `column
-        <../../../../concepts/indexes/#column-index>`__, `chunk skip
+        <../../../../concepts/indexes/#column-index>`__, `low-cardinality index
+        <../../../../concepts/indexes/#low-cardinality-index>`__, `chunk skip
         <../../../../concepts/indexes/#chunk-skip-index>`__, `geospatial
         <../../../../concepts/indexes/#geospatial-index>`__, `CAGRA
         <../../../../concepts/indexes/#cagra-index>`__, or `HNSW
@@ -42741,8 +42797,11 @@ class GPUdbTable( object ):
 
                 * **create_index** --
                   Creates a `column (attribute) index
-                  <../../../../concepts/indexes/#column-index>`__, `chunk skip
-                  index <../../../../concepts/indexes/#chunk-skip-index>`__,
+                  <../../../../concepts/indexes/#column-index>`__,
+                  `low-cardinality index
+                  <../../../../concepts/indexes/#low-cardinality-index>`__,
+                  `chunk skip index
+                  <../../../../concepts/indexes/#chunk-skip-index>`__,
                   `geospatial index
                   <../../../../concepts/indexes/#geospatial-index>`__, `CAGRA
                   index <../../../../concepts/indexes/#cagra-index>`__, or
@@ -42758,8 +42817,11 @@ class GPUdbTable( object ):
 
                 * **delete_index** --
                   Deletes a `column (attribute) index
-                  <../../../../concepts/indexes/#column-index>`__, `chunk skip
-                  index <../../../../concepts/indexes/#chunk-skip-index>`__,
+                  <../../../../concepts/indexes/#column-index>`__,
+                  `low-cardinality index
+                  <../../../../concepts/indexes/#low-cardinality-index>`__,
+                  `chunk skip index
+                  <../../../../concepts/indexes/#chunk-skip-index>`__,
                   `geospatial index
                   <../../../../concepts/indexes/#geospatial-index>`__, `CAGRA
                   index <../../../../concepts/indexes/#cagra-index>`__, or
@@ -43059,6 +43121,10 @@ class GPUdbTable( object ):
                   * **column** --
                     Create or delete a `column (attribute) index
                     <../../../../concepts/indexes/#column-index>`__.
+
+                  * **low_cardinality** --
+                    Create a `low-cardinality column (attribute) index
+                    <../../../../concepts/indexes/#low-cardinality-index>`__.
 
                   * **chunk_skip** --
                     Create or delete a `chunk skip index
