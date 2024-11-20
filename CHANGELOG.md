@@ -2,6 +2,12 @@
 
 ## Version 7.2
 
+### Version 7.2.2.3 - 2024-11-20
+
+#### Fixed
+-   Builds for Mac on ARM
+
+
 ### Version 7.2.2.2 - 2024-11-10
 
 #### Fixed

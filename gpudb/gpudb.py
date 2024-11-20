@@ -4929,7 +4929,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.2.2"
+    api_version = "7.2.2.3"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -24885,7 +24885,6 @@ class GPUdb(object):
             paging_table (str)
                 Name of the table that has the result records of the query.
                 Valid, when output parameter *has_more_records* is *true*
-                (Subject to config.paging_tables_enabled)
 
             info (dict of str to str)
                 Additional information.
@@ -25250,7 +25249,6 @@ class GPUdb(object):
             paging_table (str)
                 Name of the table that has the result records of the query.
                 Valid, when output parameter *has_more_records* is *true*
-                (Subject to config.paging_tables_enabled)
 
             info (dict of str to str)
                 Additional information.
