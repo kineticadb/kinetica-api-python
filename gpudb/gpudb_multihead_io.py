@@ -69,20 +69,15 @@ except:
 # end try block
 
 
-# Python version dependent imports
-if IS_PYTHON_27_OR_ABOVE:
-    import collections
-else:
-    import ordereddict as collections # a separate package
+import collections
 
 
 
 # Handle basestring in python3
-if IS_PYTHON_3:
-    long = int
-    basestring = str
-    class unicode:
-        pass
+long = int
+basestring = str
+class unicode:
+    pass
 
 # -----------------------------------------------------------------
 #                            Logging
@@ -298,7 +293,7 @@ class GPUdbWorkerList:
             self.worker_URLs_per_rank = system_properties[ C._worker_URLs ].split( ";" )
 
             # Process the URLs per worker rank (ignoring rank-0)
-            for i in list( range(1, len(self.worker_URLs_per_rank)) ):
+            for i in range(1, len(self.worker_URLs_per_rank)):
                 urls_per_rank = self.worker_URLs_per_rank[ i ]
 
                 # Check if this rank has been removed
@@ -363,7 +358,7 @@ class GPUdbWorkerList:
             protocol = "https://" if (gpudb.connection == "HTTPS") else "http://"
 
             # Process the IP addresses per worker rank (ignoring rank-0)
-            for i in list( range(1, len(self.worker_IPs_per_rank)) ):
+            for i in range(1, len(self.worker_IPs_per_rank)):
                 ips_per_rank = self.worker_IPs_per_rank[ i ]
 
                 # Check if this rank has been removed
@@ -633,84 +628,37 @@ class _RecordKey:
     # end __will_buffer_overflow
 
 
-    # We need different versions of the following 2 functions for python 2.x vs. 3.x
-    # Note: Choosing to have two different definitions even though the difference
-    #       is only in one line to avoid excessive python version check per func
-    #       call.
-    if IS_PYTHON_3:
+    def add_charN( self, val, N ):
+        """Add a charN string to the buffer (can be null)--N bytes.
+        """
+        if (val and (len( val ) > N)): # not a null and too long
+            raise GPUdbException( "Char{N} given too long a value: {val}"
+                                  "".format( N = N, val = val ) )
+        # charN is N bytes long
+        self.__will_buffer_overflow( N )
 
-        def add_charN( self, val, N ):
-            """Add a charN string to the buffer (can be null)--N bytes.
-            """
-            if (val and (len( val ) > N)): # not a null and too long
-                raise GPUdbException( "Char{N} given too long a value: {val}"
-                                      "".format( N = N, val = val ) )
-            # charN is N bytes long
-            self.__will_buffer_overflow( N )
-
-            # Handle nulls
-            if val is None:
-                for i in list( range( 0, N ) ):
-                    self._buffer_value += struct.pack( "=b", 0 )
-                return
-            # end if
-
-            byte_count = len( val )
-
-            # Trim the string if longer than
-            if byte_count > N:
-                byte_count = N
-
-            # First, pad with any zeroes "at the end"
-            for i in list( range(N, byte_count, -1) ):
+        # Handle nulls
+        if val is None:
+            for i in range( N ):
                 self._buffer_value += struct.pack( "=b", 0 )
+            return
+        # end if
+
+        byte_count = len( val )
+
+        # Trim the string if longer than
+        if byte_count > N:
+            byte_count = N
+
+        # First, pad with any zeroes "at the end"
+        for i in range(N, byte_count, -1):
+            self._buffer_value += struct.pack( "=b", 0 )
 
 
-            # Then, put the string in little-endian order
-            b = bytes( val[-1::-1], "utf-8" )
-            self._buffer_value += b
-        # end add_charN
-
-    else: # python 2.x
-
-
-        def add_charN( self, val, N ):
-            """Add a charN string to the buffer (can be null)--N bytes.
-            """
-            if (val and (len( val ) > N)): # not a null and too long
-                raise GPUdbException( "Char{N} given too long a value: {val}"
-                                      "".format( N = N, val = val ) )
-
-            # charN is N bytes long
-            self.__will_buffer_overflow( N )
-
-            # Handle nulls
-            if val is None:
-                for i in list( range( 0, N ) ):
-                    self._buffer_value += struct.pack( "=b", 0 )
-                return
-            # end if
-
-            # Convert the string to little endian
-            # -----------------------------------
-            if isinstance( val, unicode ):
-                val = str( val )
-            byte_count = len( val )
-
-            # Trim the string if longer than
-            if byte_count > N:
-                byte_count = N
-
-            # First, pad with any zeroes "at the end"
-            for i in list( range(N, byte_count, -1) ):
-                self._buffer_value += struct.pack( "=b", 0 )
-
-
-            # Then, put the string in little-endian order
-            self._buffer_value += val[-1::-1]
-        # end add_charN
-
-    # end if-else for python version
+        # Then, put the string in little-endian order
+        b = bytes( val[-1::-1], "utf-8" )
+        self._buffer_value += b
+    # end add_charN
 
 
 
@@ -994,7 +942,7 @@ class _RecordKey:
 
 
     def add_datetime( self, val ):
-        """Add a datetime (given as a string or in a date stuct) to the buffer
+        """Add a datetime (given as a string or in a date struct) to the buffer
         (can be null)--four bytes.
 
         Parameters:
@@ -1004,7 +952,7 @@ class _RecordKey:
                 are optional.
                 The allowable range is '1000-01-01 00:00:00.000' through
                 '2900-01-01 23:59:59.999'.
-                The year must be withing the range [1000, 2900].
+                The year must be within the range [1000, 2900].
         """
         # ints are four bytes long
         self.__will_buffer_overflow( _ColumnTypeSize.DATETIME )
@@ -1694,7 +1642,7 @@ class _RecordKey:
         # Handle nulls
         if val is None:
             # Add 16 0s
-            for i in list( range( 0, _ColumnTypeSize.UUID ) ):
+            for i in range( _ColumnTypeSize.UUID ):
                 self._buffer_value += struct.pack( "=b", 0 )
             # end for
             return
@@ -1868,7 +1816,7 @@ class _RecordKeyBuilder:
         self._key_types = []
 
         # Go over all columns and see which ones are primary or shard keys
-        for i in list( range(0, len( record_type.columns )) ):
+        for i in range(len( record_type.columns )):
             column_name = self._record_column_names[ i ]
             column_type = record_type.columns[ i ].column_type
             column_properties = self._column_properties[ column_name ] \
@@ -1984,8 +1932,8 @@ class _RecordKeyBuilder:
 
         Parameters:
 
-            record (OrderedDict or GPUdbRecord)
-                The object based on which the key is to be built.
+            record (list, dict, OrderedDict, GPUdbRecord, or Record)
+                The object from which the key is to be built.
 
         Returns:
             A _RecordKey object.
@@ -2000,8 +1948,7 @@ class _RecordKeyBuilder:
         # end if
 
         # Check that we got a valid record by size
-        if isinstance( record, (dict, GPUdbRecord, Record,
-                                collections.OrderedDict) ):
+        if isinstance( record, (dict, Record, collections.OrderedDict) ):
             # Got a dict-compatible object; make sure we have the correct
             # number of columns (need to explicitly convert to a list for
             # python 3)
@@ -2017,8 +1964,7 @@ class _RecordKeyBuilder:
             # Need to explicitly convert to a list for python 3
             column_values = list( record.values() )
         elif isinstance( record, list ):
-            # Got a dict-compatible object; make sure we have the correct
-            # number of columns
+            # Got a list; make sure we have the correct number of columns
             num_columns = len(record)
             if ( num_columns != len(self._record_column_names)):
                 raise GPUdbException( "Given record must be of the type '{}'"
@@ -2031,7 +1977,7 @@ class _RecordKeyBuilder:
 
             column_values = record
         else:
-            # We need to at least have a
+            # We need to at least have a dict-compatible object
             raise GPUdbException( "Give record must be a dict-compatible object "
                                   "(dict, OrderedDict, GPUdbRecord, Record) or "
                                   "a list; got {}".format( str(type( record )) ) )
@@ -2102,7 +2048,7 @@ class _RecordKeyBuilder:
         record_key = _RecordKey( self._key_buffer_size )
 
         # Add each routing column's value to the key
-        for i in list( range( 0, len( self.routing_key_indices ) ) ):
+        for i in range( len( self.routing_key_indices ) ):
             # Extract the value for the relevant routing column
             value = key_values[ i ]
 
@@ -2163,7 +2109,7 @@ class _RecordKeyBuilder:
 
         # Generate the expression predicates per column
         predicates = []
-        for i in list( range( 0, len( self.routing_key_indices ) ) ):
+        for i in range( len( self.routing_key_indices ) ):
             # Extract the value for the relevant routing column
             key_value = key_values[ i ]
             col_type = self._key_types[ i ]
@@ -2220,7 +2166,7 @@ class _RecordKeyBuilder:
 
 
     def build_expression_with_dict( self, values_dict, extra_expression = "" ):
-        """Builds an expressiong of the format "(x = 1) and is_null(y) and ..."
+        """Builds an expression of the format "(x = 1) and is_null(y) and ..."
         where the column names would be the key's column names, and the values
         would be key's values, using the function 'is_null()' for null values,
         based on the given dict.
@@ -2309,7 +2255,7 @@ class _WorkerQueue:
             raise GPUdbException( "Constructor parameter 'update_on_existing_pk' must be a "
                                   "boolean value; given: %s" % update_on_existing_pk )
 
-        url = str( url ) # in case it's unicode
+        url = str( url ) # in case it's Unicode
 
         # Save the values
         self.url = url
@@ -2322,6 +2268,9 @@ class _WorkerQueue:
     # end WorkerQueue __init__
 
 
+
+    def get_count(self):
+        return len(self.record_queue)
 
     def insert( self, record, key ):
         """Insert a record into the queue (if it checks out).  Return
@@ -2471,7 +2420,7 @@ class GPUdbIngestor:
                                   "a boolean value; given %s"
                                   % str( type( is_table_replicated ) ) )
 
-        # Class level logger so that setting it for ond instance doesn't
+        # Class level logger so that setting it for one instance doesn't
         # set it for ALL instances after that change (even if it is
         # outside of the scope of the first instance whose log level was
         # changed
@@ -2520,8 +2469,8 @@ class GPUdbIngestor:
 
         # Save the appropriate key builders
         if self.primary_key_builder.has_key():
-            # If both pk and shard keys exist; check that they're not the same
-            # If so, set them to be the same
+            # If both primary and shard keys exist; check that they're not the
+            # same; if so, set them to be the same
             if ( not self.shard_key_builder.has_key()
                  or self.shard_key_builder.has_same_key( self.primary_key_builder ) ):
                 self.shard_key_builder = self.primary_key_builder
@@ -2617,7 +2566,7 @@ class GPUdbIngestor:
         Raises:
             GPUdbException if a successful failover could not be achieved.
         """
-        for i in range(0, self.gpudb.ha_ring_size):
+        for i in range(self.gpudb.ha_ring_size):
             # Try to switch to a new cluster
             try:
                 self.__log_debug( "Forced HA failover attempt #{}".format( i ) )
@@ -2826,7 +2775,7 @@ class GPUdbIngestor:
                 new_worker_queues.append( wq )
             except Exception as e:
                 # In case the exception has no message, we need to stringify
-                # the exceptio properly to at least get the exception type
+                # the exception properly to at least get the exception type
                 raise GPUdbException( GPUdbException.stringify_exception( e ) )
         # end loop over workers
 
@@ -3035,7 +2984,7 @@ class GPUdbIngestor:
         were being inserted if needed (for example, to retry).
 
         Parameters:
-            record (dict, :class:`gpudb.GPUdbRecord`, collections.OrderedDict, Record)
+            record (list, dict, collections.OrderedDict, :class:`gpudb.GPUdbRecord`, Record, or JSON)
                 The record to insert.
 
             record_encoding (str)
@@ -3073,9 +3022,9 @@ class GPUdbIngestor:
             if is_array:
                 raise GPUdbException("Input parameter 'record' cannot be a JSON array, must be a single JSON record")
 
-        if not isinstance(record, (list, GPUdbRecord, collections.OrderedDict)) and not record_is_json:
-            raise GPUdbException( "Input parameter 'record' must be a GPUdbRecord or an "
-                                  "OrderedDict or a valid JSON; given %s" % str(type(record)) )
+        if not isinstance(record, (list, GPUdbRecord, collections.OrderedDict, Record)) and not record_is_json:
+            raise GPUdbException( "Input parameter 'record' must be a list, dict, OrderedDict, GPUdbRecord, Record, "
+                                  "or valid JSON; given %s" % str(type(record)) )
 
         if record_encoding.lower() not in ("json", "binary"):
             raise GPUdbException( "Input parameter 'record_encoding' must be "
@@ -3151,8 +3100,8 @@ class GPUdbIngestor:
         multiple calls to GPUdb may occur.
 
         Parameters:
-            records (:class:`gpudb.GPUdbRecord`, collections.OrderedDict, Record)
-                The records to insert.
+            record (list, dict, collections.OrderedDict, :class:`gpudb.GPUdbRecord`, Record, or JSON)
+                The record(s) to insert.
 
             record_encoding (str)
                 The encoding to use for the insertion.  Allowed values are:
@@ -3805,7 +3754,7 @@ class RecordRetriever:
         # We'll need to know which URL we're using at the moment
         curr_url = old_url
 
-        for i in range(0, self.gpudb.ha_ring_size):
+        for i in range(self.gpudb.ha_ring_size):
             # Try to switch to a new cluster
             try:
                 self.__log_debug( "Forced HA failover attempt #{}".format( i ) )

@@ -3,6 +3,14 @@
 
 ## Version 7.2
 
+### Version 7.2.2.5 -- 2024-12-10
+
+##### Non-breaking changes
+
+-   Added ``activated`` option to ``/create/user/internal`` and ``/create/user/external``
+-   Added ``set_activated`` action to ``/alter/user``
+
+
 ### Version 7.2.2.3 -- 2024-10-11
 
 ##### Non-breaking changes

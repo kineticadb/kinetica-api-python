@@ -2,6 +2,12 @@
 
 ## Version 7.2
 
+### Version 7.2.2.4 - 2025-01-06
+
+#### Added
+-   Support for inserting Record type objects
+
+
 ### Version 7.2.2.3 - 2024-11-20
 
 #### Fixed

@@ -2324,7 +2324,7 @@ class GPUdbRecord( object ):
         num_records = len( dynamic_json_data["column_1"] )
 
         # Create all the records
-        for i in list( range(0, num_records) ):
+        for i in range(num_records):
             record = collections.OrderedDict()
 
             # Create a single record
@@ -2488,7 +2488,7 @@ class GPUdbRecord( object ):
             # Check that the order of the columns is ok
             # (we can only check string vs. numeric types, really;
             # we can also check for nulls)
-            for i in list( range(0, num_columns) ):
+            for i in range(num_columns):
                 column_name = self._record_type.columns[ i ].name
                 # The given value for this column
                 column_val = column_values[ i ]
@@ -2515,7 +2515,7 @@ class GPUdbRecord( object ):
 
             # We will disregard the order in which the column values were listed
             # in column_values (this should help the user somewhat)
-            for i in list( range(0, num_columns) ):
+            for i in range(num_columns):
                 column_name = self._record_type.columns[ i ].name
                 column_val  = column_values[ column_name ]
 
@@ -4929,7 +4929,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.2.3"
+    api_version = "7.2.2.4"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5871,7 +5871,7 @@ class GPUdb(object):
         # Re-create the list of HA URL indices (automatically in an
         # monotonically increasing order)
         self.__cluster_indices = []
-        for i in range(0, self.__get_ha_ring_size()):
+        for i in range(self.__get_ha_ring_size()):
             self.__cluster_indices.append( i )
         # end
 
@@ -6189,7 +6189,7 @@ class GPUdb(object):
 
             # Parse each entry (corresponds to a rank, could be an
             # empty slot for a removed rank)
-            for i in range(0, len(url_lists)):
+            for i in range(len(url_lists)):
                 rank_url_str = url_lists[i]
 
                 # Handle removed ranks (corresponds to empty strings)
@@ -6299,7 +6299,7 @@ class GPUdb(object):
 
         # Extract the hostnames from the system properties
         cluster_host_names = []
-        for i in range(0, num_hosts):
+        for i in range(num_hosts):
             # Each hostname is listed individually in the system properties
             # as 'conf.host<i>_public_urls'
             hostname_key = "conf.host{}_public_urls".format( i )
@@ -6315,8 +6315,7 @@ class GPUdb(object):
             found = False
 
             # Try to find a usable hostname for this host
-            for j in range(0, len(hostnames)):
-                hostname = hostnames[ j ]
+            for hostname in hostnames:
 
                 # If a regex is given, get a matching hostname--if there isn't
                 # a match, throw an error.  If no regex is given, take
@@ -6573,15 +6572,14 @@ class GPUdb(object):
         ha_ring_head_nodes_url_lists = ha_ring_head_nodes_str.split(";")
 
         # Parse each entry (corresponds to a cluster)
-        for i in range(0, len(ha_ring_head_nodes_url_lists)):
+        for ha_ring_head_nodes_url_list in ha_ring_head_nodes_url_lists:
 
             # Each cluster's head node can have multiple URLs associated with it
-            urls = ha_ring_head_nodes_url_lists[ i ].split(",")
+            url_strs = ha_ring_head_nodes_url_list.split(",")
             found = False
 
             # Pick one URL out of the many
-            for j in range(0, len(urls)):
-                url_str = urls[ j ]
+            for url_str in url_strs:
                 # If a regex is given, get a matching URL--if there isn't
                 # a match, throw an error.  If no regex is given, take
                 # the first URL.
@@ -6624,7 +6622,7 @@ class GPUdb(object):
                     # match the given reges
                     msg = ("No matching IP/hostname found for cluster with head "
                            "node URLs {} (given hostname regex {})"
-                           "".format( ha_ring_head_nodes_url_lists[ i ],
+                           "".format( ha_ring_head_nodes_url_list,
                                       hostname_regex.pattern ) )
                     raise GPUdbHostnameRegexFailureException( msg )
                 # end if
@@ -6632,7 +6630,7 @@ class GPUdb(object):
                 # We couldn't find it for some other reason
                 raise GPUdbException("No matching IP/hostname found "
                                      "for cluster with head node URLs {}"
-                                     "".format( ha_ring_head_nodes_url_lists[ i ] ) )
+                                     "".format( ha_ring_head_nodes_url_list ) )
             # end if
         # end for
 
@@ -8787,7 +8785,7 @@ class GPUdb(object):
         # We want to capture the original exception
         original_exception = None
 
-        for i in range(0, self.__HOST_MANAGER_SUBMIT_REQUEST_RETRY_COUNT):
+        for i in range(self.__HOST_MANAGER_SUBMIT_REQUEST_RETRY_COUNT):
             # We need a snapshot of the current state re: HA failover.  When
             # multiple threads work on this object, we'll need to know how
             # many times we've switched clusters *before* attempting another
@@ -18097,6 +18095,10 @@ class GPUdb(object):
                   Enable overlapped-equi-join filter. The default value is
                   'true'.
 
+                * **enable_one_step_compound_equi_join** --
+                  Enable the one_step compound-equi-join algorithm. The default
+                  value is 'true'.
+
                 * **kafka_batch_size** --
                   Maximum number of records to be ingested in a single batch.
                   The default value is '1000'. The minimum allowed value is
@@ -18973,8 +18975,21 @@ class GPUdb(object):
                 Modification operation to be applied to the user.
                 Allowed values are:
 
+                * **set_activated** --
+                  Is the user allowed to login.
+
+                * **true** --
+                  User may login
+
+                * **false** --
+                  User may not login
+
                 * **set_comment** --
                   Sets the comment for an internal user.
+
+                * **set_default_schema** --
+                  Set the default_schema for an internal user. An empty string
+                  means the user will have no default schema.
 
                 * **set_password** --
                   Sets the password of the user. The user must be an internal
@@ -18984,10 +18999,6 @@ class GPUdb(object):
                   Sets the resource group for an internal user. The resource
                   group must exist, otherwise, an empty string assigns the user
                   to the default resource group.
-
-                * **set_default_schema** --
-                  Set the default_schema for an internal user. An empty string
-                  means the user will have no default schema.
 
             value (str)
                 The value of the modification, depending on input parameter
@@ -22302,6 +22313,10 @@ class GPUdb(object):
                 * **skip_lines** --
                   Skip number of lines from begining of file.
 
+                * **start_offsets** --
+                  Starting offsets by partition to fetch from kafka. A comma
+                  separated list of partition:offset pairs.
+
                 * **subscribe** --
                   Continuously poll the data source to check for new data and
                   load it into the table.
@@ -23423,12 +23438,17 @@ class GPUdb(object):
                 Optional parameters.
                 Allowed keys are:
 
-                * **resource_group** --
-                  Name of an existing resource group to associate with this
-                  user
+                * **activated** --
+                  Is the user allowed to login.
+                  Allowed values are:
 
-                * **default_schema** --
-                  Default schema to associate with this user
+                  * **true** --
+                    User may login
+
+                  * **false** --
+                    User may not login
+
+                  The default value is 'true'.
 
                 * **create_home_directory** --
                   When *true*, a home directory in KiFS is created for this
@@ -23440,10 +23460,17 @@ class GPUdb(object):
 
                   The default value is 'true'.
 
+                * **default_schema** --
+                  Default schema to associate with this user
+
                 * **directory_data_limit** --
                   The maximum capacity to apply to the created directory if
                   *create_home_directory* is *true*. Set to -1 to indicate no
                   upper limit. If empty, the system default limit is applied.
+
+                * **resource_group** --
+                  Name of an existing resource group to associate with this
+                  user
 
                 The default value is an empty dict ( {} ).
 
@@ -23488,12 +23515,17 @@ class GPUdb(object):
                 Optional parameters.
                 Allowed keys are:
 
-                * **resource_group** --
-                  Name of an existing resource group to associate with this
-                  user
+                * **activated** --
+                  Is the user allowed to login.
+                  Allowed values are:
 
-                * **default_schema** --
-                  Default schema to associate with this user
+                  * **true** --
+                    User may login
+
+                  * **false** --
+                    User may not login
+
+                  The default value is 'true'.
 
                 * **create_home_directory** --
                   When *true*, a home directory in KiFS is created for this
@@ -23505,10 +23537,17 @@ class GPUdb(object):
 
                   The default value is 'true'.
 
+                * **default_schema** --
+                  Default schema to associate with this user
+
                 * **directory_data_limit** --
                   The maximum capacity to apply to the created directory if
                   *create_home_directory* is *true*. Set to -1 to indicate no
                   upper limit. If empty, the system default limit is applied.
+
+                * **resource_group** --
+                  Name of an existing resource group to associate with this
+                  user
 
                 The default value is an empty dict ( {} ).
 
@@ -30737,6 +30776,10 @@ class GPUdb(object):
                 * **skip_lines** --
                   Skip number of lines from begining of file.
 
+                * **start_offsets** --
+                  Starting offsets by partition to fetch from kafka. A comma
+                  separated list of partition:offset pairs.
+
                 * **subscribe** --
                   Continuously poll the data source to check for new data and
                   load it into the table.
@@ -32647,6 +32690,9 @@ class GPUdb(object):
                 * **match_embedding** --
                   Creates vector node embeddings
 
+                * **match_isochrone** --
+                  Solves for isochrones for a set of input sources
+
                 The default value is 'markov_chain'.
 
             solution_table (str)
@@ -33095,6 +33141,11 @@ class GPUdb(object):
                   as the learning rate, which is the proportionality constant
                   in fornt of the gradient term in successive iterations. The
                   default value is '0.3'.
+
+                * **max_radius** --
+                  For the *match_isochrone* solver only. Sets the maximal
+                  reachability limmit for computing isochrones. Zero means no
+                  limit. The default value is '0.0'.
 
                 The default value is an empty dict ( {} ).
 
@@ -35794,6 +35845,15 @@ class GPUdb(object):
                 Optional parameters.
                 Allowed keys are:
 
+                * **dependencies** --
+                  Include view dependencies in the output.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **force_synchronous** --
                   If *true* then the table sizes will wait for read lock before
                   returning.
@@ -35803,6 +35863,18 @@ class GPUdb(object):
                   * false
 
                   The default value is 'true'.
+
+                * **get_cached_sizes** --
+                  If *true* then the number of records in each table, along
+                  with a cumulative count, will be returned; blank, otherwise.
+                  This version will return the sizes cached at rank 0, which
+                  may be stale if there is a multihead insert occuring.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **get_sizes** --
                   If *true* then the number of records in each table, along
@@ -35814,11 +35886,10 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-                * **get_cached_sizes** --
-                  If *true* then the number of records in each table, along
-                  with a cumulative count, will be returned; blank, otherwise.
-                  This version will return the sizes cached at rank 0, which
-                  may be stale if there is a multihead insert occuring.
+                * **no_error_if_not_exists** --
+                  If *false* will return an error if the provided input
+                  parameter *table_name* does not exist. If *true* then it will
+                  return an empty result.
                   Allowed values are:
 
                   * true
@@ -35839,17 +35910,6 @@ class GPUdb(object):
                   * false
 
                   The default value is 'true'.
-
-                * **no_error_if_not_exists** --
-                  If *false* will return an error if the provided input
-                  parameter *table_name* does not exist. If *true* then it will
-                  return an empty result.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
 
                 * **get_column_info** --
                   If *true* then column info (memory usage, etc) will be
@@ -39545,7 +39605,7 @@ class GPUdbTable( object ):
                 encoded_data.append( encoded_record )
         elif not all( _Util.is_list_or_dict( i ) for i in args):
             # Some values are lists or dicts, but not all--this is an error case
-            raise GPUdbException( "Arguments must be either contain no list, or contain only "
+            raise GPUdbException( "Arguments must either contain no list, or contain only "
                                   "lists or dicts; i.e. it must not be a mix; "
                                   "given {0}".format( args ) )
         elif (len( args ) == 1):
@@ -39554,7 +39614,7 @@ class GPUdbTable( object ):
                 # At least one element within the list is also a list
                 if not all( _Util.is_list_or_dict( i ) for i in args[0]):
                     # But not all elements are lists/dict; this is an error case
-                    raise GPUdbException( "Arguments must be either a single list, multiple lists, "
+                    raise GPUdbException( "Arguments must be a single list, multiple lists, "
                                           "a list of lists, or contain no lists; i.e. it must not be "
                                           "a mix of lists and non-lists; given a list with mixed "
                                           "elements: {0}".format( args ) )
@@ -39566,6 +39626,9 @@ class GPUdbTable( object ):
                         encoded_data.append( encoded_record )
                     # end for
                 # end inner-most if-else
+            elif any(isinstance( record, Record) for record in args[0]) or any(isinstance( record, GPUdbRecord) for record in args[0]):
+                for record in args[0]:
+                    encoded_data.append( record )
             else:
                 # A single list--a single record
                 encoded_record = self._record_encoding_function( *args )
@@ -45562,6 +45625,15 @@ class GPUdbTable( object ):
                 Optional parameters.
                 Allowed keys are:
 
+                * **dependencies** --
+                  Include view dependencies in the output.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **force_synchronous** --
                   If *true* then the table sizes will wait for read lock before
                   returning.
@@ -45571,6 +45643,18 @@ class GPUdbTable( object ):
                   * false
 
                   The default value is 'true'.
+
+                * **get_cached_sizes** --
+                  If *true* then the number of records in each table, along
+                  with a cumulative count, will be returned; blank, otherwise.
+                  This version will return the sizes cached at rank 0, which
+                  may be stale if there is a multihead insert occuring.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **get_sizes** --
                   If *true* then the number of records in each table, along
@@ -45582,11 +45666,10 @@ class GPUdbTable( object ):
 
                   The default value is 'false'.
 
-                * **get_cached_sizes** --
-                  If *true* then the number of records in each table, along
-                  with a cumulative count, will be returned; blank, otherwise.
-                  This version will return the sizes cached at rank 0, which
-                  may be stale if there is a multihead insert occuring.
+                * **no_error_if_not_exists** --
+                  If *false* will return an error if the provided input
+                  parameter *table_name* does not exist. If *true* then it will
+                  return an empty result.
                   Allowed values are:
 
                   * true
@@ -45607,17 +45690,6 @@ class GPUdbTable( object ):
                   * false
 
                   The default value is 'true'.
-
-                * **no_error_if_not_exists** --
-                  If *false* will return an error if the provided input
-                  parameter *table_name* does not exist. If *true* then it will
-                  return an empty result.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
 
                 * **get_column_info** --
                   If *true* then column info (memory usage, etc) will be
