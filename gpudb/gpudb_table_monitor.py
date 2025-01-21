@@ -1,4 +1,5 @@
 import threading
+import time
 import types
 import uuid
 
@@ -118,7 +119,6 @@ class GPUdbTableMonitor(object):
                     the monitor instance. The details are given in the
                     :class:`GPUdbTableMonitor.Options` section.
             """
-            # super(GPUdbTableMonitor.Client, self).__init__()
 
             if not self.__check_params(db, table_name):
                 raise GPUdbException(
@@ -130,45 +130,15 @@ class GPUdbTableMonitor(object):
             self.full_url = self.db.gpudb_full_url
             self.table_name = table_name
             self.task_list = list()
-
-            self._set_of_callbacks = set()
-
-            self._insert_decoded_callback = None
-            self._insert_raw_callback = None
-            self._deleted_callback = None
-            self._updated_callback = None
-            self._table_altered_callback = None
-            self._table_dropped_callback = None
-
-            no_callbacks = all(cb is None for cb in callback_list)
-            if no_callbacks:
-                raise GPUdbException("No callbacks defined ... cannot proceed")
-
-            monitor_callbacks = any(
-                (cb is not None)
-                and (
-                        cb.callback_type in GPUdbTableMonitor.Callback.Type.monitor_types()
-                )
-                and (cb.event_callback is not None)
-                for cb in callback_list)
-
-            if not monitor_callbacks:
-                raise GPUdbException(
-                    "No callbacks defined to create table monitors "
-                    "... cannot proceed")
-
-            check_callbacks = all([isinstance(func, GPUdbTableMonitor.Callback)
-                                   for func in callback_list])
-
-            self.__operation_list = set()
+            self.options = options if options is not None else GPUdbTableMonitor.Options.default()
 
             # Setup the logger for this instance
             self._id = str(uuid.uuid4())
 
             # self._logger is kept protected since it is also accessed from
-            # GPUtbTableMonitorBase derived classes.
+            # Client derived classes.
             self._logger = logging.getLogger(
-                "gpudb_table_monitor.GPUdbTableMonitorBase_instance_" + self._id)
+                "gpudb_table_monitor.Client_instance_" + self._id)
 
             handler = logging.StreamHandler()
             formatter = logging.Formatter("%(asctime)s %(levelname)-8s {%("
@@ -180,61 +150,141 @@ class GPUdbTableMonitor(object):
 
             # Prevent logging statements from being duplicated
             self._logger.propagate = False
+            self._logger.setLevel(logging.INFO)
 
-            if not check_callbacks:
-                raise GPUdbException(
-                    "callbacks must be of type : 'Callback'")
+            # check whether the socket connection can be made
+            if not self.__zmq_check_connection(self.options):
+                raise GPUdbException("Could not connect to table monitor; socket connection failed ...")
             else:
-                self._set_of_callbacks = set(callback_list)
+                #  Proceed only if the socket connection is successful
+                self._logger.info("Connected to socket successfully ...")
+                self._set_of_callbacks = set()
 
-                # Parse the set of callbacks and populate the respective instance
-                # variables
-                for cb in self._set_of_callbacks:
-                    if cb.callback_type == GPUdbTableMonitor.Callback.Type.INSERT_DECODED:
-                        self._insert_decoded_callback = cb
-                    elif cb.callback_type == GPUdbTableMonitor.Callback.Type.INSERT_RAW:
-                        self._insert_raw_callback = cb
-                    elif cb.callback_type == GPUdbTableMonitor.Callback.Type.UPDATED:
-                        self._updated_callback = cb
-                    elif cb.callback_type == GPUdbTableMonitor.Callback.Type.DELETED:
-                        self._deleted_callback = cb
-                    elif cb.callback_type == GPUdbTableMonitor.Callback.Type.TABLE_ALTERED:
-                        self._table_altered_callback = cb
-                    elif cb.callback_type == GPUdbTableMonitor.Callback.Type.TABLE_DROPPED:
-                        self._table_dropped_callback = cb
-                    else:
-                        self._logger.error("Unrecognized callback type ... ")
-                        raise GPUdbException(
-                            "Unrecognized callback type passed ... cannot parse")
+                self._insert_decoded_callback = None
+                self._insert_raw_callback = None
+                self._deleted_callback = None
+                self._updated_callback = None
+                self._table_altered_callback = None
+                self._table_dropped_callback = None
 
-            self.__operation_list = self.__get_operation_list_from_callbacks()
+                no_callbacks = callback_list is None or all(cb is None for cb in callback_list)
+                if no_callbacks:
+                    raise GPUdbException("No callbacks defined ... cannot proceed")
 
-            if ((self.__operation_list is None)
-                    or (len(self.__operation_list) == 0)):
-                raise GPUdbException(
-                    "Cannot determine table monitors needed from "
-                    "the callback objects passed in ...")
+                monitor_callbacks = any(
+                    (cb is not None)
+                    and (
+                            cb.callback_type in GPUdbTableMonitor.Callback.Type.monitor_types()
+                    )
+                    and (cb.event_callback is not None)
+                    for cb in callback_list)
 
-            if options is None:
-                # This is the default, created internally
-                self.options = GPUdbTableMonitor.Options.default()
-            else:
-                # User has passed in options, check everything for validity
-                if isinstance(options, GPUdbTableMonitor.Options):
-                    try:
-                        self.options = options
-
-                    except GPUdbException as ge:
-                        self._logger.error(ge.message)
-                        raise GPUdbException(ge)
-
-                else:
+                if not monitor_callbacks:
                     raise GPUdbException(
-                        "Passed in options is not of the expected "
-                        "type: Expected "
-                        "'Options' type")
+                        "No callbacks defined to create table monitors "
+                        "... cannot proceed")
+
+                check_callbacks = all([isinstance(func, GPUdbTableMonitor.Callback)
+                                       for func in callback_list])
+
+                self.__operation_list = set()
+
+                if not check_callbacks:
+                    raise GPUdbException(
+                        "callbacks must be of type : 'Callback'")
+                else:
+                    self._set_of_callbacks = set(callback_list)
+
+                    # Parse the set of callbacks and populate the respective instance
+                    # variables
+                    for cb in self._set_of_callbacks:
+                        if cb.callback_type == GPUdbTableMonitor.Callback.Type.INSERT_DECODED:
+                            self._insert_decoded_callback = cb
+                        elif cb.callback_type == GPUdbTableMonitor.Callback.Type.INSERT_RAW:
+                            self._insert_raw_callback = cb
+                        elif cb.callback_type == GPUdbTableMonitor.Callback.Type.UPDATED:
+                            self._updated_callback = cb
+                        elif cb.callback_type == GPUdbTableMonitor.Callback.Type.DELETED:
+                            self._deleted_callback = cb
+                        elif cb.callback_type == GPUdbTableMonitor.Callback.Type.TABLE_ALTERED:
+                            self._table_altered_callback = cb
+                        elif cb.callback_type == GPUdbTableMonitor.Callback.Type.TABLE_DROPPED:
+                            self._table_dropped_callback = cb
+                        else:
+                            self._logger.error("Unrecognized callback type ... ")
+                            raise GPUdbException(
+                                "Unrecognized callback type passed ... cannot parse")
+
+                self.__operation_list = self.__get_operation_list_from_callbacks()
+
+                if ((self.__operation_list is None)
+                        or (len(self.__operation_list) == 0)):
+                    raise GPUdbException(
+                        "Cannot determine table monitors needed from "
+                        "the callback objects passed in ...")
+
+                if options is None:
+                    # This is the default, created internally
+                    self.options = GPUdbTableMonitor.Options.default()
+                else:
+                    # User has passed in options, check everything for validity
+                    if isinstance(options, GPUdbTableMonitor.Options):
+                        try:
+                            self.options = options
+                            self.port = options.monitor_port
+
+                        except GPUdbException as ge:
+                            self._logger.error(ge.message)
+                            raise GPUdbException(ge)
+
+                    else:
+                        raise GPUdbException(
+                            "Passed in options is not of the expected "
+                            "type: Expected "
+                            "'Options' type")
+            # END check for socket connect
 
         # End __init__ Client
+
+        def __zmq_check_connection(self, options):
+            import zmq.utils, zmq.utils.monitor
+
+            zmq_url = f"tcp://{self.db.host}:{options.monitor_port}"
+            context = zmq.Context()
+            socket = context.socket(zmq.SUB)
+            socket.connect(zmq_url)
+
+            # Monitor the socket for events
+            monitor = socket.get_monitor_socket(
+                zmq.EVENT_CONNECTED | zmq.EVENT_CONNECT_RETRIED | zmq.EVENT_DISCONNECTED)
+
+            try:
+                # Listen for monitor events
+                max_retries = options.max_retries
+                num_retries = 0
+                wait_interval = options.wait_interval  # seconds
+                while num_retries < max_retries:
+                    event = zmq.utils.monitor.recv_monitor_message(monitor)
+                    event_id = event["event"]
+                    endpoint = event['endpoint'].decode('utf-8')
+
+                    if event_id == zmq.EVENT_CONNECTED:
+                        self._logger.info(f"Socket connected to {endpoint}")
+                        return True
+                    elif event_id == zmq.EVENT_CONNECT_RETRIED:
+                        self._logger.warning(f"Retrying connection to {endpoint}")
+                    elif event_id == zmq.EVENT_DISCONNECTED:
+                        self._logger.error(f"Socket disconnected from {endpoint}")
+                        return False
+
+                    time.sleep(wait_interval)
+
+                    num_retries += 1
+            except zmq.ZMQError as e:
+                self._logger.error(f"Error: {e}")
+                return False
+            finally:
+                socket.close()
 
         def __get_operation_list_from_callbacks(self):
             """Internal method to retrieve a set of _TableEvent objects which is
@@ -463,9 +513,18 @@ class GPUdbTableMonitor(object):
         """
         __inactivity_timeout = 'inactivity_timeout'
         __INACTIVITY_TIMEOUT_DEFAULT = 20 * 60 * 1000
+        __max_retries = "max_retries"
+        __MAX_RETRIES_DEFAULT = 5
+        __wait_interval = "wait_interval"
+        __WAIT_INTERVAL_DEFAULT = 1  # seconds
+        __monitor_port = "monitor_port"
+        __DEFAULT_PORT = 9002
 
         _supported_options = [
-            __inactivity_timeout
+            __inactivity_timeout,
+            __max_retries,
+            __wait_interval,
+            __monitor_port
         ]
 
         @staticmethod
@@ -493,6 +552,9 @@ class GPUdbTableMonitor(object):
             # Set default values
             # Default is 0.1 minutes = 6 secs
             self._inactivity_timeout = self.__INACTIVITY_TIMEOUT_DEFAULT
+            self._max_retries = self.__MAX_RETRIES_DEFAULT
+            self._wait_interval = self.__WAIT_INTERVAL_DEFAULT  # seconds
+            self._monitor_port = self.__DEFAULT_PORT
 
             if _dict is None:
                 return  # nothing to do
@@ -561,12 +623,81 @@ class GPUdbTableMonitor(object):
             # Convert the value to milliseconds
             self._inactivity_timeout = val * 60 * 1000
 
+        @property
+        def max_retries(self):
+            return self._max_retries
+
+        @max_retries.setter
+        def max_retries(self, val):
+            """This is the setter for the property `max_retries`.
+
+            Parameters:
+                val (int)
+                    The number of times to retry to get a connection to the table monitor socket
+            """
+            if not isinstance(val, int) or val < 0:
+                raise GPUdbException(
+                    "Property 'max_retries' must be of type 'int' and "
+                    "greater than 0; given {}".format(str(val)))
+
+            self._max_retries = val
+
+
+        @property
+        def wait_interval(self):
+            return self._wait_interval
+
+        @wait_interval.setter
+        def wait_interval(self, val):
+            """This is the setter for the property `wait_interval`.
+
+            Parameters:
+                val (int)
+                    The number of seconds to wait before retrying to get a connection to the table monitor socket
+            """
+            if not isinstance(val, int) or val < 0:
+                raise GPUdbException(
+                    "Property 'wait_interval' must be of type 'int' and "
+                    "greater than 0; given {}".format(str(val)))
+
+            self._wait_interval = val
+
+
+        @property
+        def monitor_port(self):
+            return self._monitor_port
+
+        @monitor_port.setter
+        def monitor_port(self, val):
+            """This is the setter for the property `monitor_port`.
+
+            Parameters:
+                val (int)
+                    The port to use to connect to the table monitor
+            """
+            if not isinstance(val, int) or val < 0:
+                raise GPUdbException(
+                    "Property 'monitor_port' must be of type 'int' and "
+                    "greater than 0; given {}".format(str(val)))
+
+            self._monitor_port = val
+
+
         def as_json(self):
             """Return the options as a JSON"""
             result = {}
 
             if self.__inactivity_timeout is not None:
                 result[self.__inactivity_timeout] = self._inactivity_timeout
+
+            if self.__max_retries is not None:
+                result[self.__max_retries] = self._max_retries
+
+            if self.__wait_interval is not None:
+                result[self.__wait_interval] = self._wait_interval
+
+            if self.__monitor_port is not None:
+                result[self.__monitor_port] = self._monitor_port
 
             return result
 
@@ -1057,7 +1188,7 @@ class _BaseTask(threading.Thread):
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.SUB)
         self.kill = False
-        self.zmq_url = 'tcp://' + self.db.host + ':9002'
+        self.zmq_url = f"tcp://{self.db.host}:{self._options.monitor_port}"
         self.full_url = self.db.gpudb_full_url
         self.record_type = None
 
@@ -1154,6 +1285,7 @@ class _BaseTask(threading.Thread):
 
     # End _remove_table_monitor _BaseTask
 
+
     def _connect_to_topic(self, table_monitor_queue_url, topic_id):
 
         """ Create a connection to the message queue published to by the
@@ -1165,12 +1297,9 @@ class _BaseTask(threading.Thread):
         self._logger.debug("Starting...")
         self.socket.connect(table_monitor_queue_url)
 
-        if sys.version_info[:3] > (3, 0):
-            topicid = "".join(chr(x) for x in bytearray(topic_id, 'utf-8'))
-        else:
-            topicid = topic_id.decode('utf-8')
+        topic_id = "".join(chr(x) for x in bytearray(topic_id, 'utf-8'))
 
-        self.socket.setsockopt_string(zmq.SUBSCRIBE, topicid)
+        self.socket.setsockopt_string(zmq.SUBSCRIBE, topic_id)
 
         self._logger.debug(" Started!")
 
@@ -1269,7 +1398,6 @@ class _BaseTask(threading.Thread):
                     self.type_schema = new_type_schema
 
                     # Connect to the new topic_id
-                    self.zmq_url = "tcp://" + self.db.host + ":9002"
                     self._connect_to_topic(
                         table_monitor_queue_url=self.zmq_url,
                         topic_id=self.topic_id)
@@ -1558,11 +1686,7 @@ class _InsertWatcherTask(_BaseTask):
                 Multi-part messages received from a single socket poll.
         """
 
-        if IS_PYTHON_2:
-            topic_id_recvd = "".join(
-                chr(x) for x in bytearray(messages[0], 'utf-8'))
-        else:
-            topic_id_recvd = str(messages[0], 'utf-8')
+        topic_id_recvd = str(messages[0], 'utf-8')
 
         self._logger.info("Topic_id_received = " + topic_id_recvd)
 
@@ -1714,11 +1838,7 @@ class _UpdateWatcherTask(_BaseTask):
 
         """
 
-        if sys.version_info[0] == 2:
-            topic_id_recvd = "".join(
-                chr(x) for x in bytearray(messages[0], 'utf-8'))
-        else:
-            topic_id_recvd = str(messages[0], 'utf-8')
+        topic_id_recvd = str(messages[0], 'utf-8')
 
         # Process all messages, skipping the (first) topic frame
 
@@ -1818,11 +1938,7 @@ class _DeleteWatcherTask(_BaseTask):
         """
         self._logger.debug("Messages  = %s" % messages)
 
-        if sys.version_info[0] == 2:
-            topic_id_recvd = "".join(
-                chr(x) for x in bytearray(messages[0], 'utf-8'))
-        else:
-            topic_id_recvd = str(messages[0], 'utf-8')
+        topic_id_recvd = str(messages[0], 'utf-8')
 
         # Process all messages, skipping the (first) topic frame
 

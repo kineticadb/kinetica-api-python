@@ -3,6 +3,13 @@
 
 ## Version 7.2
 
+### Version 7.2.2.7 -- 2025-01-01
+
+##### Non-breaking changes
+
+-   Added ``update_with_now`` column property to ``/create/type``
+
+
 ### Version 7.2.2.5 -- 2024-12-10
 
 ##### Non-breaking changes

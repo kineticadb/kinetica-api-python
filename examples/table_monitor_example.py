@@ -341,8 +341,9 @@ if __name__ == '__main__':
                                                             'run '
                                                             'example against')
     parser.add_argument('--port', default='9191', help='Kinetica port')
-    parser.add_argument('--username', help='Username of user to run example with')
-    parser.add_argument('--password', help='Password of user')
+    parser.add_argument('--monitor_port', default='9002', help='Kinetica table monitor port')
+    parser.add_argument('--username', default='admin', help='Username of user to run example with')
+    parser.add_argument('--password', default='Kinetica1!', help='Password of user')
 
     args = parser.parse_args()
 
@@ -351,7 +352,6 @@ if __name__ == '__main__':
                        username=args.username, password=args.password)
     
     # Identify the message queue, running on port 9002
-    table_monitor_queue_url = "tcp://" + args.host + ":9002"
     tablename = 'examples.table_monitor_history'
 
     # If command line arg is clear, just clear tables and exit
@@ -366,7 +366,10 @@ if __name__ == '__main__':
     # This is the main client code
 
     # Create a GPUdbTableMonitor class
-    monitor = GPUdbTableMonitorExample( h_db, tablename )
+    options = GPUdbTableMonitor.Options()
+    print(options.as_dict())
+    # options.monitor_port = 9004
+    monitor = GPUdbTableMonitorExample( h_db, tablename, options=options )
     monitor.logging_level = logging.DEBUG
 
     # Start the monitor

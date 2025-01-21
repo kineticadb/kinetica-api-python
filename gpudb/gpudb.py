@@ -1429,6 +1429,11 @@ class GPUdbColumnProperty(object):
     randomly-generated UUIDs upon insert.
     """
 
+    UPDATE_WITH_NOW = "update_with_now"
+    """str: For 'date', 'time', 'datetime', or 'timestamp' column types, always
+    update the field with 'NOW()' upon any update.
+    """
+
 # end class GPUdbColumnProperty
 
 
@@ -4929,7 +4934,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.2.4"
+    api_version = "7.2.2.5"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -14843,7 +14848,9 @@ class GPUdb(object):
                 Avro JSON encoded response.
 
             total_number_of_records (long)
-                Total/Filtered number of records.
+                Total/Filtered number of records.  This may be an over-estimate
+                if a limit was applied and there are additional records (i.e.,
+                when output parameter *has_more_records* is true).
 
             has_more_records (bool)
                 Too many records. Returned a partial set.
@@ -15230,7 +15237,9 @@ class GPUdb(object):
                 output parameter *json_encoded_response*.
 
             total_number_of_records (long)
-                Total/Filtered number of records.
+                Total/Filtered number of records.  This may be an over-estimate
+                if a limit was applied and there are additional records (i.e.,
+                when output parameter *has_more_records* is true).
 
             has_more_records (bool)
                 Too many records. Returned a partial set.
@@ -18174,6 +18183,10 @@ class GPUdb(object):
                 * **postgres_proxy_keep_alive** --
                   Enable  postgres proxy keep alive. The default value is
                   'false'.
+
+                * **kifs_directory_data_limit** --
+                  The default maximum capacity to apply when creating a KiFS
+                  directory (bytes). The minimum allowed value is '-1'.
 
             options (dict of str to str)
                 Optional parameters.
@@ -23147,6 +23160,10 @@ class GPUdb(object):
                 * **init_with_uuid** --
                   For 'uuid' type, replace empty strings and invalid UUID
                   values with randomly-generated UUIDs upon insert.
+
+                * **update_with_now** --
+                  For 'date', 'time', 'datetime', or 'timestamp' column types,
+                  always update the field with 'NOW()' upon any update.
 
                 The default value is an empty dict ( {} ).
 
@@ -41656,7 +41673,9 @@ class GPUdbTable( object ):
                 output parameter *json_encoded_response*.
 
             total_number_of_records (long)
-                Total/Filtered number of records.
+                Total/Filtered number of records.  This may be an over-estimate
+                if a limit was applied and there are additional records (i.e.,
+                when output parameter *has_more_records* is true).
 
             has_more_records (bool)
                 Too many records. Returned a partial set.

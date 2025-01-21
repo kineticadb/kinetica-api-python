@@ -2,6 +2,13 @@
 
 ## Version 7.2
 
+### Version 7.2.2.5 - 2025-01-21
+
+#### Added
+-   Check for a blocked table monitor port in `GPUdbTableMonitor` invocations
+-   Configurable table monitor port
+
+
 ### Version 7.2.2.4 - 2025-01-06
 
 #### Added
