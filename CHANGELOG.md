@@ -2,6 +2,12 @@
 
 ## Version 7.2
 
+### Version 7.2.2.6 - 2025-02-06
+
+#### Added
+-   Failback to a primary cluster after failing over to a secondary cluster
+
+
 ### Version 7.2.2.5 - 2025-01-21
 
 #### Added

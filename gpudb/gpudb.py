@@ -13,6 +13,8 @@
 
 from __future__ import print_function
 import struct
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, List, Union
 import typing
 import functools
@@ -140,7 +142,7 @@ def trace( self, message, *args, **kws ):
 
 logging.Logger.trace = trace
 
-
+DEFAULT_FAILBACK_POLLING_INTERVAL = 5  # seconds
 
 # -----------------------------------------------------------------
 
@@ -2726,9 +2728,148 @@ class GPUdbRecord( object ):
 # end class GPUdbRecord
 
 
+class FailbackPollerService:
+
+    DEFAULT_START_DELAY = 0
+    DEFAULT_TERMINATION_TIMEOUT = 5  # seconds
+
+    _instance_lock = threading.Lock()
+    _instance = None  # To enforce singleton behavior
+
+    def __new__(cls, *args, **kwargs):
+        with cls._instance_lock:
+            if cls._instance is None:
+                cls._instance = super(FailbackPollerService, cls).__new__(cls)
+        return cls._instance
 
 
+    def __init__(self, db, options):
+        if not hasattr(self, "initialized"):
+            self.db: GPUdb = db
+            self.primary_url = db.get_primary_host()
+            self.polling_interval = options.polling_interval
+            self.scheduler = None
+            self.is_running = False
+            self.lock = threading.Lock()
 
+            self.initialized = True  # Ensure __init__ is only called once
+
+    def start(self):
+        self.db.log_debug(f"Primary URL is {self.primary_url}")
+        with self.lock:
+            if self.is_running:
+                self.db.log.info("Poller is already running.")
+                return
+
+            self.db.log_debug("Starting the poller...")
+            self.is_running = True
+            self.scheduler = ThreadPoolExecutor(max_workers=1)
+
+            # Schedule the poller task
+            self.scheduler.submit(self._run_polling)
+
+    def _run_polling(self):
+        time.sleep(self.DEFAULT_START_DELAY)
+        while self.is_running:
+            try:
+                self.db.log_debug("Polling...")
+                if self._poll():
+                    self._reset_cluster_pointers()
+                    self.stop()  # Stop if polling operation is successful
+                time.sleep(self.polling_interval)
+            except Exception as e:
+                self._handle_exception(e)
+
+    def _poll(self):
+        kinetica_running = self.db.is_kinetica_running(self.primary_url)
+        self.db.log_debug(f"'is_kinetica_running' called with {self.primary_url}")
+
+        if kinetica_running:
+            try:
+                # {"disable_auto_discovery": True, "disable_failover": True}
+                options = GPUdb.Options()
+                options.disable_failover = True
+                options.disable_auto_discovery = True
+                options.username = self.db.username
+                options.password = self.db.password
+
+                db = GPUdb(self.db.get_url(stringified=False), options)
+                self.db.log_debug(f"Failback to primary cluster [{self.primary_url}] succeeded")
+            except Exception as e:
+                self.db.log.warning(f"Failback to primary cluster at [{self.primary_url}] did not succeed; exception {e}")
+        else:
+            self.db.log_warn(f"Kinetica is not running at: {self.primary_url}")
+
+        return kinetica_running
+
+    def _reset_cluster_pointers(self):
+        host_addresses = self.db.all_cluster_info
+        index_of_primary_cluster = next(
+            (i for i, x in enumerate(host_addresses) if x.is_primary_cluster), -1
+        )
+
+        if index_of_primary_cluster != -1:
+            self.db.log.info(f"Failing back to cluster at index {index_of_primary_cluster} with URL {host_addresses[index_of_primary_cluster].head_rank_url}")
+            self.db._set_curr_cluster_index_pointer(index_of_primary_cluster)
+        else:
+            self.db.log.info(f"Primary cluster could not be located for URL: {self.primary_url}")
+
+    def _handle_exception(self, e):
+        self.db.log.warning(f"Warning: Exception during polling: {e}")
+
+    def stop(self):
+        with self.lock:
+            if not self.is_running:
+            # if not FailbackPollerService.is_running:
+                self.db.log_warn("Poller is already stopped.")
+                return
+
+            self.db.log_debug("Stopping the poller...")
+            self.is_running = False
+            # FailbackPollerService.is_running = False
+            if self.scheduler:
+                self.scheduler.shutdown(wait=False)
+                self.scheduler = None
+                FailbackPollerService._instance = None  # Allow another instance to be created
+
+    def restart(self):
+        self.db.log_debug("Restarting the poller...")
+        self.stop()
+        self.start()
+
+# end class FailbackPollerService
+
+
+class FailbackOptions:
+    POLLING_INTERVAL = DEFAULT_FAILBACK_POLLING_INTERVAL
+
+    def __init__(self, polling_interval=None):
+        """
+        Initializes FailbackOptions with a specified polling interval.
+        If no polling interval is provided, the default value is used.
+        """
+        self.polling_interval = polling_interval if polling_interval is not None else self.POLLING_INTERVAL
+
+    @classmethod
+    def default_options(cls):
+        """
+        Returns an instance of FailbackOptions with the default polling interval.
+        """
+        return cls()
+
+    def __str__(self):
+        """
+        Returns a string representation of the FailbackOptions instance.
+        """
+        return f"FailbackOptions [pollingInterval={self.polling_interval}]"
+
+    def get_polling_interval(self):
+        """
+        Returns the polling interval value.
+        """
+        return self.polling_interval
+
+# end class FailbackOptions
 
 
 # ---------------------------------------------------------------------------
@@ -2891,7 +3032,8 @@ class GPUdb(object):
         __skip_ssl_cert_verification_str         = "_Options__skip_ssl_cert_verification"
         __timeout_str                            = "_Options__timeout"
         __username_str                           = "_Options__username"
-        __oauth_token_str                         = "_Options__oauth_token"
+        __oauth_token_str                        = "_Options__oauth_token"
+        __failback_options_str                   = "_Options__failback_options"
 
         _supported_options = [ __disable_auto_discovery_str,
                                __disable_failover_str,
@@ -2909,7 +3051,8 @@ class GPUdb(object):
                                __skip_ssl_cert_verification_str,
                                __timeout_str,
                                __username_str,
-                               __oauth_token_str
+                               __oauth_token_str,
+                               __failback_options_str
         ]
 
 
@@ -2948,7 +3091,8 @@ class GPUdb(object):
             self.__skip_ssl_cert_verification         = False
             self.__timeout                            = None # means indefinite wait
             self.__username                           = None
-            self.__oauth_token                         = None
+            self.__oauth_token                        = None
+            self.__failback_options                   = FailbackOptions.default_options()
 
             if (options is None):
                 return # nothing to do
@@ -3013,6 +3157,7 @@ class GPUdb(object):
                     '_Options__skip_ssl_cert_verification',
                     '_Options__timeout',
                     '_Options__username',
+                    '_Options__failback_options',
                 ]
 
 
@@ -3820,6 +3965,16 @@ class GPUdb(object):
             self.__oauth_token = value
 
         # end setter
+
+        @property
+        def failback_options(self):
+            return self.__failback_options
+
+        @failback_options.setter
+        def failback_options(self, value):
+            if not isinstance(value, FailbackOptions):
+                raise GPUdbException(f"Property 'failback_options' must be of type {type(FailbackOptions)}")
+            self.__failback_options = value
 
     # end class Options
 
@@ -4905,6 +5060,7 @@ class GPUdb(object):
     # Default host manager port for http and httpd
     _DEFAULT_HOST_MANAGER_PORT       = 9300
     _DEFAULT_HTTPD_HOST_MANAGER_PORT = 8082
+    _DEFAULT_FAILBACK_POLLING_INTERVAL = 5
 
     # The timeout (in seconds) used for checking the status of a node; we used
     # to use a small timeout so that it does not take a long time to figure out
@@ -4934,7 +5090,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.2.5"
+    api_version = "7.2.2.6"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -4983,8 +5139,16 @@ class GPUdb(object):
                 .. seealso:: :class:`GPUdb.Options`
         """
         # Call the internal function to initialize the object
+        self.__cluster_info: list[GPUdb.ClusterAddressInfo] = []
+        self.poller_service: FailbackPollerService = None
         self.__construct( host, options, *args, **kwargs )
     # end __init__
+
+    def __del__(self):
+        """Destructor: Ensure the poller service is stopped when the object is deleted."""
+        self.__log_info("Destructor called, stopping failback poller service.")
+        if self.poller_service is not None:
+            self.poller_service.stop()
 
 
     def __construct( self, host = None, options = None, *args, **kwargs ):
@@ -5182,7 +5346,7 @@ class GPUdb(object):
 
         # Parse the user given URLs (will throw an error if no connection
         # can be established)
-        self.__parse_urls( hosts )
+        self.__process_urls(hosts)
 
         # Check version compatibility with the server
         # -------------------------------------------
@@ -5392,7 +5556,7 @@ class GPUdb(object):
     # end __parse_options
 
 
-    def __parse_urls( self, urls ):
+    def __process_urls(self, urls):
         """Parse the given list of URLs which may have, in any order, URLs
         for head node (rank-0) or worker ranks of any number of clusters.
         Sort it all out and save information in a list of objects each
@@ -5424,7 +5588,7 @@ class GPUdb(object):
                 # Parse the URLs (a single attempt)
                 self.__log_debug( "Attempting to parse the user-given URLs: {}"
                                   "".format( [str(u) for u in urls]) )
-                self.__parse_urls_once( urls )
+                self.__process_cluster_information_for_all_urls(urls)
                 self.__log_debug( "Parsed the user-given URLs successfully: {}"
                                   "".format( [ str(c)
                                                for c in self.all_cluster_info ]) )
@@ -5498,7 +5662,7 @@ class GPUdb(object):
 
 
 
-    def __parse_urls_once( self, urls ):
+    def __process_cluster_information_for_all_urls(self, urls):
         """
         Parse the given list of URLs which may have, in any order, URLs
         for head node (rank-0) or worker ranks of any number of clusters.
@@ -5594,9 +5758,6 @@ class GPUdb(object):
         self.__log_debug( "Consolidated list of {} URLs to process: {}"
                           "".format( len(url_deque),
                                      [str(u) for u in list( url_deque )] ) )
-
-        # Note that we're updating the member here
-        self.__cluster_info = []
 
         # We will store API-discovered URLs even if we cannot communicate with
         # any server at that address (it might be temporarily down)
@@ -5907,7 +6068,7 @@ class GPUdb(object):
 
         # This will keep track of which cluster to pick next (an index of
         # randomly shuffled indices)
-        self.__set_curr_cluster_index_pointer( 0 )
+        self._set_curr_cluster_index_pointer(0)
     # end __randomize_clusters
 
 
@@ -6684,7 +6845,7 @@ class GPUdb(object):
     # end __get_curr_cluster_index_pointer
 
 
-    def __set_curr_cluster_index_pointer( self, value ):
+    def _set_curr_cluster_index_pointer(self, value):
         """Set the current cluster index.  Only positive integers allowed.
         """
         try:
@@ -7142,6 +7303,11 @@ class GPUdb(object):
         """
         return self._known_types
     # end get_known_types
+
+    @property
+    def host_addresses(self):
+        return self.__host_addresses
+
 
     def get_known_type(self, type_id, lookup_type = True ):
         """Given an type ID, return any associated known type; if
@@ -9092,7 +9258,7 @@ class GPUdb(object):
         self.__log_debug( "Cluster fail-over attempts across all threads vs. total clusters in ring: {} vs. {}"
                           "".format( count_cluster_switches_since_invocation, ha_ring_size ) )
         if ( have_switched_clusters_across_the_ring ):
-            all_head_rank_urls = [ str(cluster.head_rank_url) for cluster in self.__cluster_info ]
+            all_head_rank_urls = [ str(cluster.head_rank_url) for cluster in self.all_cluster_info ]
             raise GPUdbHAUnavailableException("Fail-over attempted as many times as clusters in the ring; URLs attempted: {}"
                                               "".format( all_head_rank_urls ) )
         # end if
@@ -9107,30 +9273,40 @@ class GPUdb(object):
             return curr_url
         # end if
 
-        # This thread is the first one here--select the next cluster to use
-        # during this HA failover
-        self.__select_next_cluster()
+        while not self.is_kinetica_running(curr_url):
+            # This thread is the first one here--select the next cluster to use
+            # during this HA failover
+            self.__select_next_cluster()
 
-        # If we've circled back, shuffle the indices again so that future
-        # requests go to a different randomly selected cluster, but also
-        # let the caller know that we've circled back
-        curr_url = self.get_url( stringified = False )
-        if ( curr_url == old_url ):
-            self.__log_debug( "Current URL is the same as the original URL: {}; randomizing URLs and throwing exception"
-                              "".format( str(old_url)) )
-            # Re-shuffle and set the index counter to zero
-            self.__randomize_clusters()
+            # If we've circled back, shuffle the indices again so that future
+            # requests go to a different randomly selected cluster, but also
+            # let the caller know that we've circled back
+            curr_url = self.get_url( stringified = False )
+            if ( curr_url == old_url ):
+                self.__log_debug( "Current URL is the same as the original URL: {}; randomizing URLs and throwing exception"
+                                  "".format( str(old_url)) )
+                # Re-shuffle and set the index counter to zero
+                self.__randomize_clusters()
 
-            # Let the user know that we've circled back
-            all_head_rank_urls = [ str(cluster.head_rank_url) for cluster in self.__cluster_info ]
-            raise GPUdbHAUnavailableException("Circled back to original URL; no clusters available for fail-over among these: {}"
-                                              "".format( all_head_rank_urls ) )
-        # end if
+                # Let the user know that we've circled back
+                all_head_rank_urls = [ str(cluster.head_rank_url) for cluster in self.__cluster_info ]
+                raise GPUdbHAUnavailableException("Circled back to original URL; no clusters available for fail-over among these: {}"
+                                                  "".format( all_head_rank_urls ) )
+            # end if
+
+        # Invoke the Failback poller here
+        if self.__check_failback_conditions():
+            failback_options: FailbackOptions = FailbackOptions.default_options()
+            self.poller_service = FailbackPollerService(self, failback_options)
+            self.poller_service.start()
 
         # Haven't circled back to the old URL; so return the new one
         self.__log_debug( "Switched to fail-over URL: {}".format( self.get_url() ) )
         return self.get_url( stringified = False )
     # end __switch_url
+
+    def __check_failback_conditions(self):
+        return self.get_primary_host is not None and self.ha_ring_size > 1
 
 
     def __switch_hm_url( self, old_url, old_num_cluster_switches ):
@@ -9242,7 +9418,7 @@ class GPUdb(object):
         ))
 
         # Increment the index by one (mod url list length)
-        self.__set_curr_cluster_index_pointer( (curr_url_index_pointer + 1) % self.__get_ha_ring_size() )
+        self._set_curr_cluster_index_pointer((curr_url_index_pointer + 1) % self.__get_ha_ring_size())
 
         # Keep a running count of how many times we had to switch clusters
         self.__increment_num_cluster_switches()
@@ -14680,6 +14856,16 @@ class GPUdb(object):
                   Filter expression to apply to the table prior to computing
                   the aggregate group by.
 
+                * **chunked_expression_evaluation** --
+                  evaluate the filter expression during group-by chunk
+                  processing.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **having** --
                   Filter expression to apply to the aggregated results.
 
@@ -15048,6 +15234,16 @@ class GPUdb(object):
                 * **expression** --
                   Filter expression to apply to the table prior to computing
                   the aggregate group by.
+
+                * **chunked_expression_evaluation** --
+                  evaluate the filter expression during group-by chunk
+                  processing.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **having** --
                   Filter expression to apply to the aggregated results.
@@ -17127,7 +17323,8 @@ class GPUdb(object):
                   Destination for the output data in format
                   'destination_type://path[:port]'.
 
-                  Supported destination types are 'http', 'https' and 'kafka'.
+                  Supported destination types are 'azure', 'gcs', 'hdfs',
+                  'http', 'https', 'jdbc', 'kafka', and 's3'.
 
                 * **connection_timeout** --
                   Timeout in seconds for connecting to this sink
@@ -17148,26 +17345,31 @@ class GPUdb(object):
                   located
 
                 * **s3_verify_ssl** --
-                  Set to false for testing purposes or when necessary to bypass
-                  TLS errors (e.g. self-signed certificates). This value is
-                  true by default.
+                  Whether to verify SSL connections.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Connect with SSL verification
+
+                  * **false** --
+                    Connect without verifying the SSL connection; for testing
+                    purposes, bypassing TLS errors, self-signed certificates,
+                    etc.
 
                   The default value is 'true'.
 
                 * **s3_use_virtual_addressing** --
-                  When true (default), the requests URI should be specified in
-                  virtual-hosted-style format where the bucket name is part of
-                  the domain name in the URL.
-
-                  Otherwise set to false to use path-style URI for requests.
+                  Whether to use virtual addressing when referencing the Amazon
+                  S3 sink.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    The requests URI should be specified in
+                    virtual-hosted-style format where the bucket name is part
+                    of the domain name in the URL.
+
+                  * **false** --
+                    Use path-style URI for requests.
 
                   The default value is 'true'.
 
@@ -17231,6 +17433,12 @@ class GPUdb(object):
                   Google Cloud service account keys to use for authenticating
                   the data sink
 
+                * **jdbc_driver_jar_path** --
+                  JDBC driver jar file location.  This may be a KIFS file.
+
+                * **jdbc_driver_class_name** --
+                  Name of the JDBC driver class
+
                 * **kafka_url** --
                   The publicly-accessible full path URL to the kafka broker,
                   e.g., 'http://172.123.45.67:9300'.
@@ -17280,13 +17488,13 @@ class GPUdb(object):
 
                 * **json_format** --
                   The desired format of JSON encoded notifications message.
-
-                  If *nested*, records are returned as an array. Otherwise,
-                  only a single record per messages is returned.
                   Allowed values are:
 
-                  * flat
-                  * nested
+                  * **flat** --
+                    A single record is returned per message
+
+                  * **nested** --
+                    Records are returned as an array per message
 
                   The default value is 'flat'.
 
@@ -17352,8 +17560,8 @@ class GPUdb(object):
                   'storage_provider_type://[storage_path[:storage_port]]'
                   format.
 
-                  Supported storage provider types are
-                  'azure','gcs','hdfs','kafka' and 's3'.
+                  Supported storage provider types are 'azure', 'gcs', 'hdfs',
+                  'jdbc', 'kafka', 'confluent', and 's3'.
 
                 * **user_name** --
                   Name of the remote system user; may be an empty string
@@ -17388,13 +17596,16 @@ class GPUdb(object):
                   located
 
                 * **s3_verify_ssl** --
-                  Set to false for testing purposes or when necessary to bypass
-                  TLS errors (e.g. self-signed certificates). This value is
-                  true by default.
+                  Whether to verify SSL connections.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Connect with SSL verification
+
+                  * **false** --
+                    Connect without verifying the SSL connection; for testing
+                    purposes, bypassing TLS errors, self-signed certificates,
+                    etc.
 
                   The default value is 'true'.
 
@@ -17467,18 +17678,18 @@ class GPUdb(object):
                   Google Cloud service account keys to use for authenticating
                   the data source
 
+                * **jdbc_driver_jar_path** --
+                  JDBC driver jar file location.  This may be a KIFS file.
+
+                * **jdbc_driver_class_name** --
+                  Name of the JDBC driver class
+
                 * **kafka_url** --
                   The publicly-accessible full path URL to the Kafka broker,
                   e.g., 'http://172.123.45.67:9300'.
 
                 * **kafka_topic_name** --
                   Name of the Kafka topic to use as the data source
-
-                * **jdbc_driver_jar_path** --
-                  JDBC driver jar file location.  This may be a KIFS file.
-
-                * **jdbc_driver_class_name** --
-                  Name of the JDBC driver class
 
                 * **anonymous** --
                   Create an anonymous connection to the storage
@@ -19704,7 +19915,7 @@ class GPUdb(object):
                 'storage_provider_type://path[:port]'.
 
                 Supported storage provider types are 'azure', 'gcs', 'hdfs',
-                'http', 'https', 'jdbc', 'kafka' and 's3'.
+                'http', 'https', 'jdbc', 'kafka', and 's3'.
 
             options (dict of str to str)
                 Optional parameters.
@@ -19730,26 +19941,31 @@ class GPUdb(object):
                   located
 
                 * **s3_verify_ssl** --
-                  Set to false for testing purposes or when necessary to bypass
-                  TLS errors (e.g. self-signed certificates). This value is
-                  true by default.
+                  Whether to verify SSL connections.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Connect with SSL verification
+
+                  * **false** --
+                    Connect without verifying the SSL connection; for testing
+                    purposes, bypassing TLS errors, self-signed certificates,
+                    etc.
 
                   The default value is 'true'.
 
                 * **s3_use_virtual_addressing** --
-                  When true (default), the requests URI should be specified in
-                  virtual-hosted-style format where the bucket name is part of
-                  the domain name in the URL.
-
-                  Otherwise set to false to use path-style URI for requests.
+                  Whether to use virtual addressing when referencing the Amazon
+                  S3 sink.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    The requests URI should be specified in
+                    virtual-hosted-style format where the bucket name is part
+                    of the domain name in the URL.
+
+                  * **false** --
+                    Use path-style URI for requests.
 
                   The default value is 'true'.
 
@@ -19833,13 +20049,13 @@ class GPUdb(object):
 
                 * **json_format** --
                   The desired format of JSON encoded notifications message.
-
-                  If *nested*, records are returned as an array. Otherwise,
-                  only a single record per messages is returned.
                   Allowed values are:
 
-                  * flat
-                  * nested
+                  * **flat** --
+                    A single record is returned per message
+
+                  * **nested** --
+                    Records are returned as an array per message
 
                   The default value is 'flat'.
 
@@ -19913,8 +20129,8 @@ class GPUdb(object):
                 Location of the remote storage in
                 'storage_provider_type://[storage_path[:storage_port]]' format.
 
-                Supported storage provider types are
-                'azure','gcs','hdfs','jdbc','kafka', 'confluent' and 's3'.
+                Supported storage provider types are 'azure', 'gcs', 'hdfs',
+                'jdbc', 'kafka', 'confluent', and 's3'.
 
             user_name (str)
                 Name of the remote system user; may be an empty string
@@ -19953,13 +20169,16 @@ class GPUdb(object):
                   located
 
                 * **s3_verify_ssl** --
-                  Set to false for testing purposes or when necessary to bypass
-                  TLS errors (e.g. self-signed certificates). This value is
-                  true by default.
+                  Whether to verify SSL connections.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    Connect with SSL verification
+
+                  * **false** --
+                    Connect without verifying the SSL connection; for testing
+                    purposes, bypassing TLS errors, self-signed certificates,
+                    etc.
 
                   The default value is 'true'.
 
@@ -21689,9 +21908,6 @@ class GPUdb(object):
                   The `tier strategy
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
-
-                * **is_virtual_union** --
-                  <DEVELOPER>
 
                 The default value is an empty dict ( {} ).
 
@@ -41488,6 +41704,16 @@ class GPUdbTable( object ):
                 * **expression** --
                   Filter expression to apply to the table prior to computing
                   the aggregate group by.
+
+                * **chunked_expression_evaluation** --
+                  evaluate the filter expression during group-by chunk
+                  processing.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **having** --
                   Filter expression to apply to the aggregated results.
