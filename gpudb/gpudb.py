@@ -5139,8 +5139,6 @@ class GPUdb(object):
                 .. seealso:: :class:`GPUdb.Options`
         """
         # Call the internal function to initialize the object
-        self.__cluster_info: list[GPUdb.ClusterAddressInfo] = []
-        self.poller_service: FailbackPollerService = None
         self.__construct( host, options, *args, **kwargs )
     # end __init__
 
@@ -5249,6 +5247,8 @@ class GPUdb(object):
         # Set the synchronicity override mode to be default
         self._ha_sync_mode = GPUdb.HASynchronicityMode.DEFAULT
 
+        self.poller_service: FailbackPollerService = None
+
         # Load all gpudb schemas
         self.load_gpudb_schemas()
         self.__load_logger_schemas()
@@ -5341,6 +5341,7 @@ class GPUdb(object):
         self.__num_cluster_switches = 0 # For the new submit_request route
 
         # Some defaults
+        self.__cluster_info: list[GPUdb.ClusterAddressInfo] = []
         self.__cluster_indices = []
         self.__curr_cluster_index_pointer = 0
 
