@@ -2962,8 +2962,14 @@ class GPUdb(object):
         NONE         = "REPL_NONE"
         # Synchronize all endpoint calls
         SYNCHRONOUS  = "REPL_SYNC"
+        # Sends a http request directly to each cluster, executes the query locally,
+        # and waits for the response from each cluster
+        SYNCHRONOUS_PARALLEL = "REPL_SYNC_PARALLEL"
         # Do NOT synchronize any endpoint call
         ASYNCHRONOUS = "REPL_ASYNC"
+        # Queues a request to RMQ for each cluster, executes the query locally, and returns to the user
+        ASYNCHRONOUS_PARALLEL = "REPL_ASYNC_PARALLEL"
+
     # end inner class HASynchronicityMode
 
 
@@ -5090,7 +5096,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.2.6"
+    api_version = "7.2.2.7"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5144,7 +5150,6 @@ class GPUdb(object):
 
     def __del__(self):
         """Destructor: Ensure the poller service is stopped when the object is deleted."""
-        self.__log_info("Destructor called, stopping failback poller service.")
         if self.poller_service is not None:
             self.poller_service.stop()
 

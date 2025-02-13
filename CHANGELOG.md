@@ -2,6 +2,15 @@
 
 ## Version 7.2
 
+### Version 7.2.2.7 - 2025-02-13
+
+#### Added
+-   Support for parallel HA modes
+
+#### Changed
+-   Removed logging of failback poller shutdown in `GPUdb` destructor
+
+
 ### Version 7.2.2.6 - 2025-02-06
 
 #### Added
