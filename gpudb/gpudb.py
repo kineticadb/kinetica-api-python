@@ -2728,118 +2728,6 @@ class GPUdbRecord( object ):
 # end class GPUdbRecord
 
 
-class FailbackPollerService:
-
-    DEFAULT_START_DELAY = 0
-    DEFAULT_TERMINATION_TIMEOUT = 5  # seconds
-
-    _instance_lock = threading.Lock()
-    _instance = None  # To enforce singleton behavior
-
-    def __new__(cls, *args, **kwargs):
-        with cls._instance_lock:
-            if cls._instance is None:
-                cls._instance = super(FailbackPollerService, cls).__new__(cls)
-        return cls._instance
-
-
-    def __init__(self, db, options):
-        if not hasattr(self, "initialized"):
-            self.db: GPUdb = db
-            self.primary_url = db.get_primary_host()
-            self.polling_interval = options.polling_interval
-            self.scheduler = None
-            self.is_running = False
-            self.lock = threading.Lock()
-
-            self.initialized = True  # Ensure __init__ is only called once
-
-    def start(self):
-        self.db.log_debug(f"Primary URL is {self.primary_url}")
-        with self.lock:
-            if self.is_running:
-                self.db.log.info("Poller is already running.")
-                return
-
-            self.db.log_debug("Starting the poller...")
-            self.is_running = True
-            self.scheduler = ThreadPoolExecutor(max_workers=1)
-
-            # Schedule the poller task
-            self.scheduler.submit(self._run_polling)
-
-    def _run_polling(self):
-        time.sleep(self.DEFAULT_START_DELAY)
-        while self.is_running:
-            try:
-                self.db.log_debug("Polling...")
-                if self._poll():
-                    self._reset_cluster_pointers()
-                    self.stop()  # Stop if polling operation is successful
-                time.sleep(self.polling_interval)
-            except Exception as e:
-                self._handle_exception(e)
-
-    def _poll(self):
-        kinetica_running = self.db.is_kinetica_running(self.primary_url)
-        self.db.log_debug(f"'is_kinetica_running' called with {self.primary_url}")
-
-        if kinetica_running:
-            try:
-                # {"disable_auto_discovery": True, "disable_failover": True}
-                options = GPUdb.Options()
-                options.disable_failover = True
-                options.disable_auto_discovery = True
-                options.username = self.db.username
-                options.password = self.db.password
-
-                db = GPUdb(self.db.get_url(stringified=False), options)
-                self.db.log_debug(f"Failback to primary cluster [{self.primary_url}] succeeded")
-            except Exception as e:
-                self.db.log.warning(f"Failback to primary cluster at [{self.primary_url}] did not succeed; exception {e}")
-        else:
-            self.db.log_warn(f"Kinetica is not running at: {self.primary_url}")
-
-        return kinetica_running
-
-    def _reset_cluster_pointers(self):
-        host_addresses = self.db.all_cluster_info
-        index_of_primary_cluster = next(
-            (i for i, x in enumerate(host_addresses) if x.is_primary_cluster), -1
-        )
-
-        if index_of_primary_cluster != -1:
-            self.db.log.info(f"Failing back to cluster at index {index_of_primary_cluster} with URL {host_addresses[index_of_primary_cluster].head_rank_url}")
-            self.db._set_curr_cluster_index_pointer(index_of_primary_cluster)
-        else:
-            self.db.log.info(f"Primary cluster could not be located for URL: {self.primary_url}")
-
-    def _handle_exception(self, e):
-        self.db.log.warning(f"Warning: Exception during polling: {e}")
-
-    def stop(self):
-        with self.lock:
-            if not self.is_running:
-            # if not FailbackPollerService.is_running:
-                self.db.log_warn("Poller is already stopped.")
-                return
-
-            self.db.log_debug("Stopping the poller...")
-            self.is_running = False
-            # FailbackPollerService.is_running = False
-            if self.scheduler:
-                self.scheduler.shutdown(wait=False)
-                self.scheduler = None
-                FailbackPollerService._instance = None  # Allow another instance to be created
-
-    def restart(self):
-        self.db.log_debug("Restarting the poller...")
-        self.stop()
-        self.start()
-
-# end class FailbackPollerService
-
-
 class FailbackOptions:
     POLLING_INTERVAL = DEFAULT_FAILBACK_POLLING_INTERVAL
 
@@ -2870,6 +2758,127 @@ class FailbackOptions:
         return self.polling_interval
 
 # end class FailbackOptions
+
+class _FailbackPollerService:
+
+    DEFAULT_START_DELAY = 0
+    DEFAULT_TERMINATION_TIMEOUT = 5  # seconds
+
+    _instance_lock = threading.Lock()
+    _instance = None  # To enforce singleton behavior
+
+    def __new__(cls, *args, **kwargs):
+        with cls._instance_lock:
+            if cls._instance is None:
+                cls._instance = super(_FailbackPollerService, cls).__new__(cls)
+        return cls._instance
+
+    def __init__(self, 
+                 db,
+                 options=FailbackOptions.default_options(), 
+                 log_level=logging.INFO):
+        """Constructor
+
+        Args:
+            db (GPUdb): _description_
+            options (FailbackOptions, optional): _description_. Defaults to FailbackOptions.default_options().
+            log_level (str, optional): _description_. Defaults to logging.INFO.
+        """
+        
+        if not hasattr(self, "initialized"):
+            # Set up the logger for this class
+            self.logger = logging.getLogger(self.__class__.__name__)
+            self.logger.setLevel(log_level)
+
+            if not self.logger.handlers:
+                handler = logging.StreamHandler()
+                formatter = logging.Formatter("[%(filename)s:%(lineno)d - %(name)s.%(funcName)s() ] %(message)s")
+                handler.setFormatter(formatter)
+                self.logger.addHandler(handler)
+
+            self.db: GPUdb = db
+            self.primary_url = self.db.get_primary_host()
+            self.polling_interval = options.polling_interval
+            self.poller_thread = None
+            self.is_running = False
+            self.lock = threading.Lock()
+
+            self.initialized = True  # Ensure __init__ is only called once
+
+    def start(self):
+        self.db.log_debug(f"Primary URL is {self.primary_url}")
+        with self.lock:
+            if self.is_running:
+                self.logger.info("Poller is already running.")
+                return
+
+            self.logger.debug("Starting the poller...")
+            self.is_running = True
+
+            self.poller_thread = threading.Thread(target=self._run_polling, daemon=True)
+            self.poller_thread.start()
+
+    def _run_polling(self):
+        time.sleep(self.DEFAULT_START_DELAY)
+        while self.is_running:
+            try:
+                self.logger.debug("Polling...")
+                if self._poll():
+                    self._reset_cluster_pointers()
+                    self.stop()  # Stop if polling operation is successful
+                time.sleep(self.polling_interval)
+            except Exception as e:
+                self._handle_exception(e)
+
+    def _poll(self):
+        kinetica_running = False
+        kinetica_running = self.db.is_kinetica_running(self.primary_url)
+        self.logger.debug(f"'is_kinetica_running' called with {self.primary_url}")
+
+        if kinetica_running:
+            try:
+                options = GPUdb.Options()
+                options.disable_failover = True
+                options.disable_auto_discovery = True
+                options.username = self.db.username
+                options.password = self.db.password
+                options.skip_ssl_cert_verification = self.db.skip_ssl_cert_verification
+
+                with GPUdb(str(self.primary_url), options) as conn:
+                    self.logger.debug(f"Failback to primary cluster [{self.primary_url}] succeeded")
+            except Exception as e:
+                self.logger.warning(f"Failback to primary cluster at [{self.primary_url}] did not succeed; exception {e}")
+        else:
+            self.logger.warning(f"Kinetica is not running at: {self.primary_url}")
+
+        return kinetica_running
+
+    def _reset_cluster_pointers(self):
+        host_addresses = self.db.all_cluster_info
+        index_of_primary_cluster = next(
+            (i for i, x in enumerate(host_addresses) if x.is_primary_cluster), -1
+        )
+
+        if index_of_primary_cluster != -1:
+            self.logger.info(f"Failing back to cluster at index {index_of_primary_cluster} with URL {host_addresses[index_of_primary_cluster].head_rank_url}")
+            self.db._set_curr_cluster_index_pointer(index_of_primary_cluster)
+        else:
+            self.logger.info(f"Primary cluster could not be located for URL: {self.primary_url}")
+
+    def _handle_exception(self, e):
+        self.logger.warning(f"Warning: Exception during polling: {e}")
+
+    def stop(self):
+        with self.lock:
+            if not self.is_running:
+                self.logger.warning("Poller is already stopped.")
+                return
+
+            self.logger.debug("Stopping the poller...")
+            self.is_running = False
+            _FailbackPollerService._instance = None
+
+# end class FailbackPollerService
 
 
 # ---------------------------------------------------------------------------
@@ -5096,7 +5105,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.2.7"
+    api_version = "7.2.2.8"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5153,6 +5162,12 @@ class GPUdb(object):
         if self.poller_service is not None:
             self.poller_service.stop()
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, type, value, traceback):
+        if self.poller_service is not None:
+            self.poller_service.stop()
 
     def __construct( self, host = None, options = None, *args, **kwargs ):
         """
@@ -5252,7 +5267,7 @@ class GPUdb(object):
         # Set the synchronicity override mode to be default
         self._ha_sync_mode = GPUdb.HASynchronicityMode.DEFAULT
 
-        self.poller_service: FailbackPollerService = None
+        self.poller_service: _FailbackPollerService = None
 
         # Load all gpudb schemas
         self.load_gpudb_schemas()
@@ -6230,7 +6245,7 @@ class GPUdb(object):
 
 
 
-    def __get_system_properties( self, url ):
+    def __get_system_properties( self, url=None ):
         """Given a URL, return the system properties information.
 
         Parameters:
@@ -6288,7 +6303,8 @@ class GPUdb(object):
         if self.server_version is not None:
             return
         try:
-            sys_props = self.__get_system_properties(GPUdb.URL(self.gpudb_full_url))
+            # sys_props = self.__get_system_properties(GPUdb.URL(self.gpudb_full_url))
+            sys_props = self.__get_system_properties()
             if C._SYSTEM_PROPERTIES_RESPONSE_SERVER_VERSION in sys_props:
                 self.server_version = sys_props[C._SYSTEM_PROPERTIES_RESPONSE_SERVER_VERSION]
         except GPUdbException as ex:
@@ -7389,7 +7405,7 @@ class GPUdb(object):
 
         *  ``Accept``
         *  ``Authorization``
-        *  ``ha_sync_mode``
+        *  ``X-Kinetica-Group``
         *  ``Content-type``
         """
         # Validate input
@@ -7419,7 +7435,7 @@ class GPUdb(object):
 
         *  ``Accept``
         *  ``Authorization``
-        *  ``ha_sync_mode``
+        *  ``X-Kinetica-Group``
         *  ``Content-type``
         """
         # Ensure that the given header is not a protected header
@@ -9303,7 +9319,7 @@ class GPUdb(object):
         # Invoke the Failback poller here
         if self.__check_failback_conditions():
             failback_options: FailbackOptions = FailbackOptions.default_options()
-            self.poller_service = FailbackPollerService(self, failback_options)
+            self.poller_service = _FailbackPollerService(self)
             self.poller_service.start()
 
         # Haven't circled back to the old URL; so return the new one
@@ -9312,7 +9328,10 @@ class GPUdb(object):
     # end __switch_url
 
     def __check_failback_conditions(self):
-        return self.get_primary_host is not None and self.ha_ring_size > 1
+        primary_host = self.get_primary_host()
+        ring_size = self.ha_ring_size
+        self.__log_debug(f'FAILBACK conditions - primary_host :: {primary_host} and ha_ring_size :: {ring_size}')
+        return primary_host is not None and len(primary_host) > 0 and ring_size > 1
 
 
     def __switch_hm_url( self, old_url, old_num_cluster_switches ):
@@ -14032,6 +14051,17 @@ class GPUdb(object):
                   * **replay_wal** --
                     Manually invokes wal replay on the table
 
+                * **verify_all** --
+                  If *false* only table chunk data already known to be
+                  corrupted will be repaired. Otherwise the database will
+                  perform a full table scan to check for correctness.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 The default value is an empty dict ( {} ).
 
         Returns:
@@ -18373,6 +18403,12 @@ class GPUdb(object):
                   Sets the tps_per_tom value of the conf. The minimum allowed
                   value is '2'. The maximum allowed value is '8192'.
 
+                * **background_worker_threads** --
+                  Size of the worker rank background thread pool. This includes
+                  background operations such as watermark evictions catalog
+                  table updates. The minimum allowed value is '1'. The maximum
+                  allowed value is '8192'.
+
                 * **ai_enable_rag** --
                   Enable RAG. The default value is 'false'.
 
@@ -18738,6 +18774,24 @@ class GPUdb(object):
 
                 * **change_owner** --
                   Change the owner resource group of the table.
+
+                * **set_load_vectors_policy** --
+                  Set startup data loading scheme for the table; see
+                  description of 'load_vectors_policy' in
+                  :meth:`GPUdb.create_table` for possible values for input
+                  parameter *value*
+
+                * **set_build_pk_index_policy** --
+                  Set startup primary key generation scheme for the table; see
+                  description of 'build_pk_index_policy' in
+                  :meth:`GPUdb.create_table` for possible values for input
+                  parameter *value*
+
+                * **set_build_materialized_view_policy** --
+                  Set startup rebuilding scheme for the materialized view; see
+                  description of 'build_materialized_view_policy' in
+                  :meth:`GPUdb.create_materialized_view` for possible values
+                  for input parameter *value*
 
             value (str)
                 The value of the modification, depending on input parameter
@@ -20998,6 +21052,27 @@ class GPUdb(object):
                 * **execute_as** --
                   User name to use to run the refresh job
 
+                * **build_materialized_view_policy** --
+                  Sets startup materialized view rebuild scheme.
+                  Allowed values are:
+
+                  * **always** --
+                    Rebuild as many materialized views as possible before
+                    accepting requests.
+
+                  * **lazy** --
+                    Rebuild the necessary materialized views at start, and load
+                    the remainder lazily.
+
+                  * **on_demand** --
+                    Rebuild materialized views as requests use them.
+
+                  * **system** --
+                    Rebuild materialized views using the system-configured
+                    default.
+
+                  The default value is 'system'.
+
                 * **persist** --
                   If *true*, then the materialized view specified in input
                   parameter *table_name* will be persisted and will not expire
@@ -21915,6 +21990,48 @@ class GPUdb(object):
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
 
+                * **load_vectors_policy** --
+                  Set startup data loading scheme for the table.
+                  Allowed values are:
+
+                  * **always** --
+                    Load as much vector data as possible into memory before
+                    accepting requests.
+
+                  * **lazy** --
+                    Load the necessary vector data at start, and load the
+                    remainder lazily.
+
+                  * **on_demand** --
+                    Load vector data as requests use it.
+
+                  * **system** --
+                    Load vector data using the system-configured default.
+
+                  The default value is 'system'.
+
+                * **build_pk_index_policy** --
+                  Set startup primary-key index generation scheme for the
+                  table.
+                  Allowed values are:
+
+                  * **always** --
+                    Generate as much primary key index data as possible before
+                    accepting requests.
+
+                  * **lazy** --
+                    Generate the necessary primary key index data at start, and
+                    load the remainder lazily.
+
+                  * **on_demand** --
+                    Generate primary key index data as requests use it.
+
+                  * **system** --
+                    Generate primary key index data using the system-configured
+                    default.
+
+                  The default value is 'system'.
+
                 The default value is an empty dict ( {} ).
 
         Returns:
@@ -22679,6 +22796,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                * type_inference_max_records_read
 
                 * **type_inference_mode** --
                   Optimize type inferencing for either speed or accuracy.
@@ -31147,6 +31266,8 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * type_inference_max_records_read
+
                 * **type_inference_mode** --
                   Optimize type inferencing for either speed or accuracy.
                   Allowed values are:
@@ -31874,6 +31995,8 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                * type_inference_max_records_read
 
                 * **type_inference_mode** --
                   optimize type inference for:
@@ -43328,6 +43451,24 @@ class GPUdbTable( object ):
 
                 * **change_owner** --
                   Change the owner resource group of the table.
+
+                * **set_load_vectors_policy** --
+                  Set startup data loading scheme for the table; see
+                  description of 'load_vectors_policy' in
+                  :meth:`GPUdb.create_table` for possible values for input
+                  parameter *value*
+
+                * **set_build_pk_index_policy** --
+                  Set startup primary key generation scheme for the table; see
+                  description of 'build_pk_index_policy' in
+                  :meth:`GPUdb.create_table` for possible values for input
+                  parameter *value*
+
+                * **set_build_materialized_view_policy** --
+                  Set startup rebuilding scheme for the materialized view; see
+                  description of 'build_materialized_view_policy' in
+                  :meth:`GPUdb.create_materialized_view` for possible values
+                  for input parameter *value*
 
             value (str)
                 The value of the modification, depending on input parameter

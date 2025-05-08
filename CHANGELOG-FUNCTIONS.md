@@ -3,7 +3,34 @@
 
 ## Version 7.2
 
+### Version 7.2.2.14
+
+#### Changed Endpoints
+-   Added new options ``background_worker_threads`` to ``/alter/system/properties`` endpoint
+
+### Version 7.2.2.12
+
+#### Changed Endpoints
+
+##### Non-breaking changes
+
+-   Added ``verify_all`` option to ``/admin/repair/table``
+
+
+### Version 7.2.2.11 -- 2025-02-14
+
+#### Changed Endpoints
+
+##### Non-breaking changes
+
+-   Added ``load_vectors_policy`` and ``build_pk_index_policy`` options to ``/create/table``
+-   Added ``build_materialized_view_policy`` option to ``/create/materializedview``
+-   Added ``set_load_vectors_policy``, ``set_build_pk_index_policy`` and ``set_build_materialized_view_policy`` to ``action`` in ``/alter/table``
+
+
 ### Version 7.2.2.7 -- 2025-01-01
+
+#### Changed Endpoints
 
 ##### Non-breaking changes
 
@@ -11,6 +38,8 @@
 
 
 ### Version 7.2.2.5 -- 2024-12-10
+
+#### Changed Endpoints
 
 ##### Non-breaking changes
 
@@ -20,12 +49,16 @@
 
 ### Version 7.2.2.3 -- 2024-10-11
 
+#### Changed Endpoints
+
 ##### Non-breaking changes
 
 -   Added ``low_cardinality`` to ``index_type`` option in ``/alter/table``
 
 
 ### Version 7.2.1.0
+
+#### Changed Endpoints
 
 ##### Non-breaking changes
 
@@ -37,6 +70,8 @@
 #### Changed Endpoints
 -   Removed ``sm_omp_threads`` and ``kernel_omp_threads`` options from ``/alter/system/properties`` request
 -   Added option ``show_worker_info`` to ``/admin/show/jobs`` endpoint
+
+#### Changed Endpoints
 
 ##### Non-breaking changes
 

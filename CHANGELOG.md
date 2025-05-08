@@ -2,19 +2,25 @@
 
 ## Version 7.2
 
+### Version 7.2.2.8 - 2025-05-08
+
+#### Added
+-   Support for fail-back when primary cluster is initially down
+
+
 ### Version 7.2.2.7 - 2025-02-13
 
 #### Added
 -   Support for parallel HA modes
 
 #### Changed
--   Removed logging of failback poller shutdown in `GPUdb` destructor
+-   Removed logging of fail-back poller shutdown in `GPUdb` destructor
 
 
 ### Version 7.2.2.6 - 2025-02-06
 
 #### Added
--   Failback to a primary cluster after failing over to a secondary cluster
+-   Fail back to a primary cluster after failing over to a secondary cluster
 
 
 ### Version 7.2.2.5 - 2025-01-21
