@@ -57,7 +57,7 @@ class GPUdbSqlIterator():
         self.offset = 0
         self.total_count = None
         self.retrieved_count = 0
-        self.paging_tables = None
+        self.paging_tables = []
 
         paging_table_name = GPUdbTable.random_name()
         GPUdb._set_sql_params(sql_opts, sql_params)
@@ -68,9 +68,8 @@ class GPUdbSqlIterator():
         self._check_fetch()
 
     def close(self):
-        if self.paging_tables:
-            for table_name in self.paging_tables:
-                self.db.clear_table(table_name, options={'no_error_if_not_exists': 'true'})
+        for table_name in self.paging_tables:
+            self.db.clear_table(table_name, options={'no_error_if_not_exists': 'true'})
 
     def reset(self,
               sql: str,
@@ -88,7 +87,7 @@ class GPUdbSqlIterator():
         self.offset = 0
         self.total_count = None
         self.retrieved_count = 0
-        self.paging_tables = None
+        self.paging_tables = []
 
         paging_table_name = GPUdbTable.random_name()
         GPUdb._set_sql_params(sql_opts, sql_params)
@@ -157,18 +156,19 @@ class GPUdbSqlIterator():
         if (self.total_count is None):
             self.total_count = response['total_number_of_records'] if self.records else response['count_affected']
 
-        if self.records and len(self.records) > 0 and self.paging_tables is None:
+        if self.records and len(self.records) > 0 and not self.paging_tables:
             paging_table_name = response.get("paging_table")
             if (paging_table_name):
-                self.paging_tables = []
+                # Store paging table name, if found, to clear later, when done
                 self.paging_tables.append(paging_table_name)
 
-            supporting_paging_tables = response["info"].get("result_table_list")
-            if (supporting_paging_tables):
-                self.paging_tables.extend(supporting_paging_tables.split(','))
+                # Only clear result table list if a paging table was found
+                supporting_paging_tables = response["info"].get("result_table_list")
+                if (supporting_paging_tables):
+                    self.paging_tables.extend(supporting_paging_tables.split(','))
 
-            if (self.paging_tables is not None and len(self.paging_tables) > 0):
-                self._log.debug(f"Paging tables: {self.paging_tables}")
+                if (self.paging_tables):
+                    self._log.debug(f"Paging tables: {self.paging_tables}")
 
         if (self.total_count == 0):
             return

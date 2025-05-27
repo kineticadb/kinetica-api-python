@@ -5105,7 +5105,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.2.8"
+    api_version = "7.2.2.9"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5159,15 +5159,21 @@ class GPUdb(object):
 
     def __del__(self):
         """Destructor: Ensure the poller service is stopped when the object is deleted."""
-        if self.poller_service is not None:
-            self.poller_service.stop()
+        if hasattr(self, "poller_service") and self.poller_service is not None:
+            try:
+                self.poller_service.stop()
+            except:
+                pass
 
     def __enter__(self):
         return self
 
     def __exit__(self, type, value, traceback):
-        if self.poller_service is not None:
-            self.poller_service.stop()
+        if hasattr(self, "poller_service") and self.poller_service is not None:
+            try:
+                self.poller_service.stop()
+            except:
+                pass
 
     def __construct( self, host = None, options = None, *args, **kwargs ):
         """
@@ -9195,9 +9201,9 @@ class GPUdb(object):
             elif (url.protocol == 'HTTPS'):
                 if self.skip_ssl_cert_verification:
                     if IS_PYTHON_3:
-                        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS)
-                        ssl_context.verify_mode = ssl.CERT_NONE
+                        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
                         ssl_context.check_hostname = False
+                        ssl_context.verify_mode = ssl.CERT_NONE
                         conn = httplib.HTTPSConnection(host=url.host,
                                                        port=url.port,
                                                        timeout=timeout,
@@ -10409,7 +10415,7 @@ class GPUdb(object):
     # end ping( url )
 
 
-    @deprecated
+    # @deprecated
     def is_kinetica_running( self, url ):
         """Verifies that GPUdb is running at the given URL (does not do any HA
         failover).
@@ -10812,6 +10818,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("info", "map", [("string")])] )
         ENDPOINT = "/admin/backup/end"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/admin/ha/offline"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_ha_offline_request","fields":[{"name":"offline","type":"boolean"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_ha_offline_response","fields":[{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("offline", "boolean"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("info", "map", [("string")])] )
+        ENDPOINT = "/admin/ha/offline"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -13074,6 +13091,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["admin_alter_shards"] = "/admin/alter/shards"
         self.gpudb_func_to_endpoint_map["admin_backup_begin"] = "/admin/backup/begin"
         self.gpudb_func_to_endpoint_map["admin_backup_end"] = "/admin/backup/end"
+        self.gpudb_func_to_endpoint_map["admin_ha_offline"] = "/admin/ha/offline"
         self.gpudb_func_to_endpoint_map["admin_ha_refresh"] = "/admin/ha/refresh"
         self.gpudb_func_to_endpoint_map["admin_offline"] = "/admin/offline"
         self.gpudb_func_to_endpoint_map["admin_rebalance"] = "/admin/rebalance"
@@ -13649,6 +13667,42 @@ class GPUdb(object):
 
         return response
     # end admin_backup_end
+
+    # begin admin_ha_offline
+    def admin_ha_offline( self, offline = None, options = {} ):
+        """Pauses consumption of messages from other HA clusters to support
+        data repair/recovery scenarios. In-flight queries may fail to replicate
+        to other clusters in the ring when going offline.
+
+        Parameters:
+
+            offline (bool)
+                Set to true if desired state is offline.
+                Allowed values are:
+
+                * True
+                * False
+
+            options (dict of str to str)
+                Optional parameters. The default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( offline, (bool)), "admin_ha_offline(): Argument 'offline' must be (one) of type(s) '(bool)'; given %s" % type( offline ).__name__
+        assert isinstance( options, (dict)), "admin_ha_offline(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['offline'] = offline
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/admin/ha/offline', obj, convert_to_attr_dict = True )
+
+        return response
+    # end admin_ha_offline
 
     # begin admin_ha_refresh
     def admin_ha_refresh( self, options = {} ):

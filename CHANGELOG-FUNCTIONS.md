@@ -3,6 +3,11 @@
 
 ## Version 7.2
 
+### Version 7.2.2.18
+
+#### Changed Endpoints
+-   Added ``/admin/ha/offline``
+
 ### Version 7.2.2.14
 
 #### Changed Endpoints

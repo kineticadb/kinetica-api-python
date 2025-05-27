@@ -2,6 +2,21 @@
 
 ## Version 7.2
 
+### Version 7.2.2.9 - 2025-05-27
+
+#### Changed
+-   Improved support for DataFrame handling & type conversion
+-   Improved destruction of HA fail-back poller object
+-   Switched to non-deprecated SSL protocol constant
+
+#### Fixed
+-   Issue with using `GPUdbSqlIterator` on certain queries that return an
+    unexpected response schema
+
+#### Notes
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes
+
+
 ### Version 7.2.2.8 - 2025-05-08
 
 #### Added

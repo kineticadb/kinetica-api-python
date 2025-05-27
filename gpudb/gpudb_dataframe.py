@@ -313,6 +313,7 @@ class DataFrameUtils:
                 gpudb_table.insert_records(insert_rows)
                 progress_bar.update(len(insert_rows))
 
+        gpudb_table.flush_data_to_server()
         rows_inserted = gpudb_table.size() - rows_before
         cls._LOG.debug(f"Rows inserted: {rows_inserted}")
         return rows_inserted
@@ -331,13 +332,12 @@ class DataFrameUtils:
             ref_val = col_data.loc[col_data.first_valid_index()]
 
             if isinstance(ref_val, pd.Timestamp):
-                col_type = col_properties[col_name][0]
-                if (col_type == GPUdbColumnProperty.TIMESTAMP):
+                if (GPUdbColumnProperty.TIMESTAMP in col_properties[col_name]):
                     col_data = col_data.astype(np.int64) // int(1e6)
-                elif (col_type == GPUdbColumnProperty.DATETIME):
+                elif (GPUdbColumnProperty.DATETIME in col_properties[col_name]):
                     col_data = col_data.astype(np.str)
                 else:
-                    raise GPUdbException(f"Can't convert {col_name} to {col_type}")
+                    raise GPUdbException(f"Can't convert {col_name} timestamp field to the target column type")
             elif isinstance(ref_val, list) or isinstance(ref_val, np.ndarray):
                 col_data = col_data.map(cls.vec_to_bytes)
             data_list.append(col_data)
@@ -353,7 +353,9 @@ class DataFrameUtils:
         'float32':         [_COL_TYPE.FLOAT],
         'datetime64[ns]':  [_COL_TYPE.LONG, GPUdbColumnProperty.TIMESTAMP],
         'uint64':          [_COL_TYPE.STRING, GPUdbColumnProperty.ULONG],
-        'bool':            [_COL_TYPE.INT, GPUdbColumnProperty.BOOLEAN]
+        'bool':            [_COL_TYPE.INT, GPUdbColumnProperty.BOOLEAN],
+        'Int64':           [_COL_TYPE.LONG],
+        'Float32':         [_COL_TYPE.FLOAT]
     }
 
 
@@ -370,6 +372,7 @@ class DataFrameUtils:
         for col_name, col_data in df.items():
             np_type = col_data.dtype.name
             col_type = cls.TYPE_NUMPY_TO_GPUDB.get(np_type)
+            col_type_attr = None
 
             if col_type is not None:
                 col_type_base = col_type[0]
@@ -407,7 +410,11 @@ class DataFrameUtils:
                 else:
                     raise GPUdbException(f"{col_attr_override}: Type properties not supported: {type(col_attr_override)}")
 
-            type_def = [col_name, col_type_base] + col_type_attr
+            type_def = [col_name, col_type_base]
+            
+            if col_type_attr:
+                type_def += col_type_attr
+
             type_list.append(type_def)
 
         if(len(col_type_override) > 0):
