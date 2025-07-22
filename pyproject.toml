@@ -1,0 +1,70 @@
+[project]
+name = "gpudb"
+version = "7.2.2.9"
+dependencies = [
+    'future',
+    'pyzmq' ,
+    'sqlparse',
+]
+authors = [
+    {name = "Kinetica DB, Inc.", email = "support@kinetica.com"}
+]
+maintainers = [
+    {name = "Kyle Sutton", email = "ksutton@kinetica.com"},
+    {name = "Anindya Mukherjee", email = "amukherjee@kinetica.com"}
+]
+description = "Python client for Kinetica DB"
+readme = "README.md"
+license = { text = "MIT License" }
+requires-python = ">=3.8"
+classifiers = [
+     "Programming Language :: Python :: 3",
+     "Topic :: Database",
+]
+keywords = [ "kinetica", "gpudb" ]
+
+
+# add support for `pip install gpudb[dataframe]`
+[project.optional-dependencies]
+dataframe = [
+    "pandas",
+    "tqdm",
+    "typeguard",
+]
+
+
+[project.urls]
+Homepage = "https://www.kinetica.com"
+Documentation = "https://docs.kinetica.com/7.2/api/python/"
+# Repository = "https://github.com/me/spam.git"
+# Issues = "https://github.com/me/spam/issues"
+# Changelog = "https://github.com/me/spam/blob/master/CHANGELOG.md"
+
+
+[tool.setuptools.packages.find]
+# All the following settings are optional:
+where = ["."]  # ["."] by default
+include = ["gpudb*"]  # ["*"] by default
+#exclude = ["*"]  # empty by default
+namespaces = false  # true by default
+
+
+[tool.setuptools.package-data]
+"gpudb.packages.avro.avro_py3" = ["*.txt", "*.avsc"]
+
+
+[build-system]
+requires = ["setuptools>=61"] # minimum version of setuptools for toml support
+build-backend = "setuptools.build_meta"
+
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q"
+testpaths = [
+    "test/pytests",
+]
+log_cli = true
+log_cli_level = "INFO"
+#log_format ="%(levelname)s [%(name)s] %(message)s"
+log_cli_format = "%(levelname)s [%(name)s] %(message)s"
