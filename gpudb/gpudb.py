@@ -26,10 +26,6 @@ try:
     from io import BytesIO
 except:
     from cStringIO import StringIO as BytesIO
-try:
-    import httplib
-except:
-    import http.client as httplib
 
 try:
     #python2
@@ -40,6 +36,7 @@ except ImportError:
 
 import base64
 import copy
+import httpx
 import os
 import inspect
 import json
@@ -68,6 +65,13 @@ if IS_PYTHON_3:
 else:
     from collections import Iterator
 # end if
+
+try:                   # Local
+    from gpudb.packages.kinetica_retries.retry import Retry, HTTPMethod
+    from gpudb.packages.kinetica_retries.transport import RetryTransport
+except ImportError:    # Installed
+    from packages.kinetica_retries.retry import Retry, HTTPMethod
+    from packages.kinetica_retries.transport import RetryTransport
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +134,7 @@ except ImportError:    # Local
 # -----------------------------------------------------------------
 # Logging -- Add a trace method
 # -----------------------------
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.TRACE = 9
 logging.addLevelName( logging.TRACE, "TRACE" )
 
@@ -201,6 +206,8 @@ class C:
     _DB_CONNECTION_REFUSED            = "Connection refused"
     _DB_CONNECTION_RESET              = "Connection reset"
     _DB_EOF_FROM_SERVER_ERROR_MESSAGE = "Unexpected end of file from server"
+    _DB_SHUTTING_DOWN_ERROR_MESSAGE   = "System shutting down"
+    _DB_DRAINING_HAQ_ERROR_MESSAGE    = "Unavailable: Draining HA queue"
 
     # Some pre-fixes used in creating error messages
     _FAILED_CONNECTION_HAS_HA = "Connection failed; all clusters in the HA ring have been tried! Error encountered: "
@@ -2773,9 +2780,9 @@ class _FailbackPollerService:
                 cls._instance = super(_FailbackPollerService, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self, 
+    def __init__(self,
                  db,
-                 options=FailbackOptions.default_options(), 
+                 options=FailbackOptions.default_options(),
                  log_level=logging.INFO):
         """Constructor
 
@@ -2784,7 +2791,7 @@ class _FailbackPollerService:
             options (FailbackOptions, optional): _description_. Defaults to FailbackOptions.default_options().
             log_level (str, optional): _description_. Defaults to logging.INFO.
         """
-        
+
         if not hasattr(self, "initialized"):
             # Set up the logger for this class
             self.logger = logging.getLogger(self.__class__.__name__)
@@ -2826,6 +2833,7 @@ class _FailbackPollerService:
                 if self._poll():
                     self._reset_cluster_pointers()
                     self.stop()  # Stop if polling operation is successful
+                    break
                 time.sleep(self.polling_interval)
             except Exception as e:
                 self._handle_exception(e)
@@ -2845,28 +2853,32 @@ class _FailbackPollerService:
                 options.skip_ssl_cert_verification = self.db.skip_ssl_cert_verification
 
                 with GPUdb(str(self.primary_url), options) as conn:
-                    self.logger.debug(f"Failback to primary cluster [{self.primary_url}] succeeded")
-            except Exception as e:
-                self.logger.warning(f"Failback to primary cluster at [{self.primary_url}] did not succeed; exception {e}")
+                    #  This request will always fail, but will fail in the expected
+                    #  way if the database is fully reachable
+                    response = conn.insert_records_random(table_name="", count=1)
+                    resp_status = response['status_info']['status']
+                    resp_message = response['status_info']['message']
+                    if resp_status == "ERROR" and "table name may not be empty" in resp_message:
+                        raise GPUdbException(resp_message)
+
+                    self.logger.error(f"Failback check to primary cluster at [{self.primary_url}] unexpectedly failed to throw an exception")
+            except GPUdbException as e:
+                if "table name may not be empty" not in e.message:
+                    self.logger.debug(f"Kinetica running on primary cluster at [{self.primary_url}], but connection did not succeed; exception {e}")
+                    kinetica_running = False
+                else:
+                    self.logger.info(f"Failback to primary cluster at [{self.primary_url}] succeeded")
+
         else:
-            self.logger.warning(f"Kinetica is not running at: {self.primary_url}")
+            self.logger.debug(f"Kinetica is not running at: {self.primary_url}")
 
         return kinetica_running
 
     def _reset_cluster_pointers(self):
-        host_addresses = self.db.all_cluster_info
-        index_of_primary_cluster = next(
-            (i for i, x in enumerate(host_addresses) if x.is_primary_cluster), -1
-        )
-
-        if index_of_primary_cluster != -1:
-            self.logger.info(f"Failing back to cluster at index {index_of_primary_cluster} with URL {host_addresses[index_of_primary_cluster].head_rank_url}")
-            self.db._set_curr_cluster_index_pointer(index_of_primary_cluster)
-        else:
-            self.logger.info(f"Primary cluster could not be located for URL: {self.primary_url}")
+        self.db._set_curr_cluster_index_pointer(0)
 
     def _handle_exception(self, e):
-        self.logger.warning(f"Warning: Exception during polling: {e}")
+        self.logger.debug(f"Warning: Exception during polling: {e}")
 
     def stop(self):
         with self.lock:
@@ -5059,10 +5071,10 @@ class GPUdb(object):
 
     # -------------------------  GPUdb Members --------------------------------
     __http_response_triggering_failover = [
-        httplib.SERVICE_UNAVAILABLE,   # most likely
-        httplib.INTERNAL_SERVER_ERROR,
-        httplib.GATEWAY_TIMEOUT,
-        httplib.BAD_GATEWAY            # rank-0 killed with HTTPD gives this
+        httpx.codes.SERVICE_UNAVAILABLE,   # most likely
+        httpx.codes.INTERNAL_SERVER_ERROR,
+        httpx.codes.GATEWAY_TIMEOUT,
+        httpx.codes.BAD_GATEWAY            # rank-0 killed with HTTPD gives this
     ]
     __endpoint_server_error_magic_strings = [
         C._DB_EXITING_ERROR_MESSAGE,
@@ -5076,6 +5088,8 @@ class GPUdb(object):
     _DEFAULT_HOST_MANAGER_PORT       = 9300
     _DEFAULT_HTTPD_HOST_MANAGER_PORT = 8082
     _DEFAULT_FAILBACK_POLLING_INTERVAL = 5
+    _HTTP_REQUEST_MAX_RETRY_ATTEMPTS = 5
+    _HTTP_CONNECTION_POOL_SIZE = 20
 
     # The timeout (in seconds) used for checking the status of a node; we used
     # to use a small timeout so that it does not take a long time to figure out
@@ -5105,7 +5119,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.2.9"
+    api_version = "7.2.2.10"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5164,6 +5178,11 @@ class GPUdb(object):
                 self.poller_service.stop()
             except:
                 pass
+        if hasattr(self, "http_client") and self.http_client is not None:
+            try:
+                self.http_client.close()
+            except Exception as e:
+                pass
 
     def __enter__(self):
         return self
@@ -5173,6 +5192,11 @@ class GPUdb(object):
             try:
                 self.poller_service.stop()
             except:
+                pass
+        if hasattr(self, "http_client") and self.http_client is not None:
+            try:
+                self.http_client.close()
+            except Exception as e:
                 pass
 
     def __construct( self, host = None, options = None, *args, **kwargs ):
@@ -5370,6 +5394,28 @@ class GPUdb(object):
         self.__cluster_info: list[GPUdb.ClusterAddressInfo] = []
         self.__cluster_indices = []
         self.__curr_cluster_index_pointer = 0
+
+        # set up the HTTP client to be used later on
+        http_timeouts = httpx.Timeout(self.timeout, connect=self.__server_connection_timeout, pool=GPUdb._HTTP_CONNECTION_POOL_SIZE)
+
+        # The client will retry on the exceptions
+        #     RETRYABLE_EXCEPTIONS: Final[Tuple[Type[httpx.HTTPError], ...]] = (
+                  #         httpx.TimeoutException,
+                  #         httpx.NetworkError,
+                  #         httpx.RemoteProtocolError,
+                  #     )
+        # Ref - https://www.python-httpx.org/exceptions/
+        retry_config = Retry(
+                        total=GPUdb._HTTP_REQUEST_MAX_RETRY_ATTEMPTS,
+                        status_forcelist=[502, 503],
+                        allowed_methods=[HTTPMethod.POST, HTTPMethod.GET],
+                    )
+        self.http_client = httpx.Client(
+            timeout=http_timeouts,
+            headers=self.__custom_http_headers or {},
+            transport=RetryTransport(retry=retry_config),
+        )
+        logging.getLogger("httpx").setLevel(logging.WARN)
 
         # Parse the user given URLs (will throw an error if no connection
         # can be established)
@@ -7706,16 +7752,15 @@ class GPUdb(object):
             raise GPUdbException('[%s]: %s' % (status, message))
 
 
-    def __submit_request_raw( self, url = None, endpoint = None,
-                              request_body = None,
-                              # enable_compression = False,
-                              timeout = None,
-                              get_req_cext = False,
-                              get_rsp_cext = False,
-                              request_schema  = None,
-                              response_schema = None,
-                              convert_to_attr_dict    = False,
-                              return_raw_response_too = False ):
+    def __submit_request_raw(self, url=None, endpoint=None,
+                             request_body=None,
+                             timeout=None,
+                             get_req_cext=False,
+                             get_rsp_cext=False,
+                             request_schema=None,
+                             response_schema=None,
+                             convert_to_attr_dict=False,
+                             return_raw_response_too=False):
         """Submits an arbitrary request to GPUdb via the specified URL and
         decodes and returns response.  No failover is handled here.
 
@@ -7774,25 +7819,22 @@ class GPUdb(object):
             raw response returned by the server.
         """
         # Validate the input arguments
-        if not isinstance( url, GPUdb.URL ):
+        if not isinstance(url, GPUdb.URL):
             msg = ("Argument 'url' must be a GPUdb.URL object; given '{}'"
-                   "".format( str(type(url)) ) )
-            self.__log_debug( msg )
-            raise GPUdbException( msg )
-        # end if
+                   "".format(str(type(url))))
+            self.__log_debug(msg)
+            raise GPUdbException(msg)
 
-        if not isinstance( endpoint, (basestring, unicode) ):
+        if not isinstance(endpoint, str):
             msg = ("Argument 'endpoint' must be a string; given '{}'"
-                   "".format( str(type(endpoint)) ) )
-            self.__log_debug( msg )
-            raise GPUdbException( msg )
-        # end if
+                   "".format(str(type(endpoint))))
+            self.__log_debug(msg)
+            raise GPUdbException(msg)
 
         if request_body is None:
-            msg = ("Argument 'request_body' must be provided; given None" )
-            self.__log_debug( msg )
-            raise GPUdbException( msg )
-        # end if
+            msg = "Argument 'request_body' must be provided; given None"
+            self.__log_debug(msg)
+            raise GPUdbException(msg)
 
         # If no user given timeout given, just use the cached one
         if timeout is None:
@@ -7801,129 +7843,117 @@ class GPUdb(object):
         else:
             # The given timeout must be a non-negative integer
             try:
-                timeout = int( timeout )
+                timeout = int(timeout)
             except:
                 msg = ("Argument 'timeout' must be an integer value; "
-                       "given '{}'".format( str(type(timeout)) ) )
-                self.__log_debug( msg )
-                raise GPUdbException( msg )
-            # end inner if
+                       "given '{}'".format(str(type(timeout))))
+                self.__log_debug(msg)
+                raise GPUdbException(msg)
 
             if timeout < 0:
                 msg = ("Argument 'timeout' must be a non-negative integer value; "
-                       "given '{}'".format( timeout ) )
-                self.__log_debug( msg )
-                raise GPUdbException( msg )
-        # end if
+                       "given '{}'".format(timeout))
+                self.__log_debug(msg)
+                raise GPUdbException(msg)
 
-
-        # Get the requst and response schemas, if not given already
-        if ( (not request_schema) or (not response_schema) ):
+        # Get the request and response schemas, if not given already
+        if (not request_schema) or (not response_schema):
             try:
-                ( request_schema,
-                  response_schema
-                ) = self.__get_schemas( endpoint,
-                                        get_req_cext = get_req_cext,
-                                        get_rsp_cext = get_rsp_cext )
-                # (request_schema, response_schema) = self.__get_schemas( endpoint )
+                (request_schema,
+                 response_schema) = self.__get_schemas(endpoint,
+                                                       get_req_cext=get_req_cext,
+                                                       get_rsp_cext=get_rsp_cext)
             except Exception as ex:
                 msg = ("Unable to retrieve avro schemas for endpoint '{}': {}"
-                       "".format( endpoint,
-                                  GPUdbException.stringify_exception( ex ) ) )
-                self.__log_debug( msg )
-                raise GPUdbException( msg)
-            # end try
-        # end if
+                       "".format(endpoint,
+                                 GPUdbException.stringify_exception(ex)))
+                self.__log_debug(msg)
+                raise GPUdbException(msg)
 
-        # Log the request and the endpoint at the trace level.  Note that since
-        # string interpolation takes a demonstrably large time (proved via
-        # benchmarking), we need to first check if the log level is on.  That
-        # way, we only create the interpolated string when it will be used.
+        # Log the request and the endpoint at the trace level
         if self.__is_log_level_trace_enabled():
-            self.__log_trace( "Sending {} request {} to {}"
-                              "".format( endpoint, request_body, str(url) ) )
+            self.__log_trace("Sending {} request {} to {}"
+                             "".format(endpoint, request_body, str(url)))
 
         # Encode the request
-        encoded_request = self.encode_datum_cext( request_schema, request_body )
+        encoded_request = self.encode_datum_cext(request_schema, request_body)
 
         # Get the header and process the body data
-        ( headers, body_data ) = self.__create_header_and_process_body_data( encoded_request )
+        (headers, body_data) = self.__create_header_and_process_body_data(encoded_request)
 
-        http_conn = self.__initialize_http_connection( url, timeout )
+        # Construct the full URL for the request
+        full_url = f"{url.url}{endpoint}"
 
         try:
-            # Post the request
-            path = "{url_path}{endpoint}".format( url_path = url.path,
-                                                  endpoint = endpoint )
-            http_conn.request( C._REQUEST_POST, path, body_data, headers )
-        except ssl.SSLError as ex:
-            msg = ("Unable to execute SSL handshake with '{}' due to: {}"
-                   "".format( url.url,
-                              GPUdbException.stringify_exception( ex ) ))
-            final_msg = self.__SSL_ERROR_MESSAGE_TEMPLATE.format(msg)
-            self.__log_debug( final_msg )
-            http_conn.close()
-            raise GPUdbUnauthorizedAccessException( final_msg )
-        except Exception as ex:
-            msg = ("Error posting to '{}' due to: {}"
-                   "".format( url.url,
-                              GPUdbException.stringify_exception( ex ) ) )
-            self.__log_debug( msg )
-            # TODO: In the Java API, this is an GPUdbExitException; decide what this should be here
-            http_conn.close()
-            raise GPUdbConnectionException( msg )
-        # end try
+            # Create a client with the appropriate timeout
+            # with self.__initialize_http_connection(url, timeout) as client:
+            # Send the POST request
+            response = self.http_client.post(full_url, headers=headers, content=body_data)
 
-        # Get the response
-        try:
-            response = http_conn.getresponse()
-        except Exception as ex: # some error occurred; return a message
-            msg = ( "No response received from {} due to {}"
-                    "".format( url.url,
-                               GPUdbException.stringify_exception( ex ) ) )
-            self.__log_debug( msg )
-            http_conn.close()
-            raise GPUdbConnectionException( msg )
-        # end try
+            # Get the response time header if available
+            response_time = response.headers.get('x-request-time-secs')
 
-        # Read and decode the response, handling any error
-        try:
-            response_data = response.read()
-            response_time = response.getheader('x-request-time-secs', None)
+            # Check the HTTP status code and throw appropriate exceptions
+            status_code = response.status_code
 
-            # Check the HTTP status code and throw an exit exception as appropriate
-            status_code = response.status
-            response_msg = response.reason
-            if ( status_code == httplib.UNAUTHORIZED ):
-                # Unauthorized access gets a different exception
-                msg = ( "Unauthorized access: '{}'".format( response_msg ) )
-                self.__log_debug( msg )
-                raise GPUdbUnauthorizedAccessException( msg )
-            elif ( status_code in self.__http_response_triggering_failover ):
-                msg = ( "Could not connect to database at '{}' due to status "
-                        "code {}: {}".format( url.url, status_code, response_msg ) )
-                self.__log_debug( "Throwing EXIT exception; {}".format( msg ) )
-                raise GPUdbExitException( msg )
-            elif ( status_code == httplib.NOT_FOUND ):
-                msg = ( "Endpoint not found ({}) due to status "
-                        "code {}: {}".format( url.url, status_code,
-                                              response_msg ) )
-                self.__log_debug( "Throwing EXIT exception; {}".format( msg ) )
-                raise GPUdbExitException( msg )
-            # end if
+            if status_code == httpx.codes.UNAUTHORIZED:  # UNAUTHORIZED (httplib.UNAUTHORIZED)
+                msg = f"Unauthorized access: '{response.reason_phrase}'"
+                self.__log_debug(msg)
+                raise GPUdbUnauthorizedAccessException(msg)
+            elif status_code in self.__http_response_triggering_failover:
+                msg = (f"Could not connect to database at '{url.url}' due to status "
+                       f"code {status_code}: {response.reason_phrase}")
+                self.__log_debug(f"Throwing EXIT exception; {msg}")
+                raise GPUdbExitException(msg)
+            elif status_code == httpx.codes.NOT_FOUND:  # NOT_FOUND (httplib.NOT_FOUND)
+                msg = (f"Endpoint not found ({url.url}) due to status "
+                       f"code {status_code}: {response.reason_phrase}")
+                self.__log_debug(f"Throwing EXIT exception; {msg}")
+                raise GPUdbExitException(msg)
 
-            # Decode the http raw response and extract the endpoint response
-            # from within it
-            decoded_response = self.__read_datum_cext( response_schema,
-                                                       response_data,
-                                                       None, response_time )
-            # TODO: Do we need special handling for html/text responses here like the Java API?
+            # Read the response data
+            response_data = response.content
 
-            # Convert the response to a class that has attributes per
-            # key-value pair of the response dictionary
+            # Decode the response
+            decoded_response = self.__read_datum_cext(response_schema,
+                                                      response_data,
+                                                      None, response_time)
+
+            status: str = decoded_response['status_info']['status']
+            message: str = decoded_response['status_info']['message']
+
+            if self.__is_log_level_trace_enabled():
+                self.__log_trace("<Status|Message|Type>: <%d|%s|%s>".format(status_code, message, response.headers.get("Content-Type")))
+
+            if status_code == httpx.codes.BAD_REQUEST:
+                if message is not None and len(message) > 0:
+                    if C._DB_SHUTTING_DOWN_ERROR_MESSAGE in message:
+                        raise GPUdbExitException("Kinetica shutting down")
+                    elif C._DB_DRAINING_HAQ_ERROR_MESSAGE in message:
+                        raise GPUdbExitException("Draining HA message queue")
+
+            if status == "ERROR":
+                if (
+                        status_code == httpx.codes.INTERNAL_SERVER_ERROR or  # HTTP_INTERNAL_ERROR
+                        status_code == httpx.codes.GATEWAY_TIMEOUT or  # HTTP_GATEWAY_TIMEOUT
+                        C._DB_EXITING_ERROR_MESSAGE in message or
+                        C._DB_CONNECTION_REFUSED in message or
+                        C._DB_CONNECTION_RESET in message or
+                        C._DB_SYSTEM_LIMITED_ERROR_MESSAGE in message or
+                        C._DB_OFFLINE_ERROR_MESSAGE in message
+                ):
+                    self.__log_debug("Throwing EXIT exception from " + url.url + "; response_code: " + str(status_code) + "; message: " + message)
+                    raise GPUdbExitException(message)
+                elif (
+                        status_code == httpx.codes.BAD_GATEWAY or
+                        status_code == httpx.codes.SERVICE_UNAVAILABLE
+                ):
+                    self.__log_debug("Throwing EXIT exception from " + url.url + "; response_code: " + str(status_code) + "; message: " + message)
+                    raise GPUdbExitException(message)
+
+            # Convert to AttrDict if requested
             if convert_to_attr_dict:
-                decoded_response = AttrDict( decoded_response )
-            # end if
+                decoded_response = AttrDict(decoded_response)
 
             if return_raw_response_too:
                 # Return the decoded and the raw response per the user's wishes
@@ -7931,36 +7961,43 @@ class GPUdb(object):
             else:
                 # Simply return the decoded response
                 return decoded_response
-        except GPUdbUnauthorizedAccessException as ex:
-                # Any permission related problem should get propagated
+
+        except ssl.SSLError as ex:
+            msg = f"Unable to execute SSL handshake with '{url.url}' due to: {GPUdbException.stringify_exception(ex)}"
+            final_msg = self.__SSL_ERROR_MESSAGE_TEMPLATE.format(msg)
+            self.__log_debug(final_msg)
+            raise GPUdbUnauthorizedAccessException(final_msg)
+        except httpx.TimeoutException as ex:
+            msg = f"Request timed out connecting to {url.url}: {GPUdbException.stringify_exception(ex)}"
+            self.__log_debug(msg)
+            raise GPUdbConnectionException(msg)
+        except httpx.HTTPError as ex:
+            msg = f"HTTP error occurred connecting to {url.url}: {GPUdbException.stringify_exception(ex)}"
+            self.__log_debug(msg)
+            raise GPUdbConnectionException(msg)
+        except GPUdbUnauthorizedAccessException:
+            # Any permission related problem should get propagated
             raise
         except (GPUdbConnectionException, GPUdbExitException) as ex:
             # For special connection or exit errors, just pass them on
-            self.__log_debug("Caught conn/exit exception: {}".format( str(ex) ))
+            self.__log_debug(f"Caught conn/exit exception: {str(ex)}")
             raise
         except GPUdbException as ex:
             # An end-of-file problem from the server is also a failover trigger
             if C._DB_EOF_FROM_SERVER_ERROR_MESSAGE in str(ex):
-                msg = ( "Received failover triggering error when trying to "
-                        "connect to {}: {}"
-                        "".format( url.url, str(ex) ) )
-                self.__log_debug( "Throwing EXIT exception; {}".format( msg ) )
-                raise GPUdbExitException( msg )
+                msg = (f"Received failover triggering error when trying to "
+                       f"connect to {url.url}: {str(ex)}")
+                self.__log_debug(f"Throwing EXIT exception; {msg}")
+                raise GPUdbExitException(msg)
             else:
-                # All other errors are legitimate, and to be passed on to the
-                # user
-                self.__log_debug( "Throwing GPUdb exception; {}".format( str(ex) ) )
+                # All other errors are legitimate, and to be passed on to the user
+                self.__log_debug(f"Throwing GPUdb exception; {str(ex)}")
                 raise
-            # end if
-        except Exception as ex: # some error occurred; return a message
-            msg = ("Error reading response from {} for endpoint {}: {}"
-                   "".format( url.url, endpoint,
-                              GPUdbException.stringify_exception( ex ) ) )
-            # TODO: Or should this be an exit exception also??
-            self.__log_debug( "Throwing GPUdb exception; {}".format( msg ) )
-            raise GPUdbException( msg )
-        finally:
-            http_conn.close()
+        except Exception as ex:
+            msg = (f"Error reading response from {url.url} for endpoint {endpoint}: "
+                   f"{GPUdbException.stringify_exception(ex)}")
+            self.__log_debug(f"Throwing GPUdb exception; {msg}")
+            raise GPUdbException(msg)
         # end try
 
     # end __submit_request_raw
@@ -7993,19 +8030,17 @@ class GPUdb(object):
             about the output of the operation is the 'data' object.
         """
         # Validate the input arguments
-        if not isinstance( url, GPUdb.URL ):
+        if not isinstance(url, GPUdb.URL):
             msg = ("Argument 'url' must be a GPUdb.URL object; given '{}'"
-                   "".format( str(type(url)) ) )
-            self.__log_debug( msg )
-            raise GPUdbException( msg )
-        # end if
+                   "".format(str(type(url))))
+            self.__log_debug(msg)
+            raise GPUdbException(msg)
 
-        if not isinstance( endpoint, (basestring, unicode) ):
+        if not isinstance(endpoint, (basestring, unicode)):
             msg = ("Argument 'endpoint' must be a string; given '{}'"
-                   "".format( str(type(endpoint)) ) )
-            self.__log_debug( msg )
-            raise GPUdbException( msg )
-        # end if
+                   "".format(str(type(endpoint))))
+            self.__log_debug(msg)
+            raise GPUdbException(msg)
 
         # If no user given timeout given, just use the cached one
         if timeout is None:
@@ -8014,121 +8049,101 @@ class GPUdb(object):
         else:
             # The given timeout must be a non-negative integer
             try:
-                timeout = int( timeout )
+                timeout = int(timeout)
             except:
                 msg = ("Argument 'timeout' must be an integer value; "
-                       "given '{}'".format( str(type(timeout)) ) )
-                self.__log_debug( msg )
-                raise GPUdbException( msg )
-            # end inner if
+                       "given '{}'".format(str(type(timeout))))
+                self.__log_debug(msg)
+                raise GPUdbException(msg)
 
             if timeout < 0:
                 msg = ("Argument 'timeout' must be a non-negative integer value; "
-                       "given '{}'".format( timeout ) )
-                self.__log_debug( msg )
-                raise GPUdbException( msg )
-        # end if
+                       "given '{}'".format(timeout))
+                self.__log_debug(msg)
+                raise GPUdbException(msg)
 
-        http_conn = self.__initialize_http_connection( url, timeout )
-
-        headers = {}
-        headers[C._HEADER_CONTENT_TYPE] = "application/json"
-        headers[C._HEADER_ACCEPT] = "text/plain"
+        # Prepare headers
+        headers = {
+            C._HEADER_CONTENT_TYPE: "application/json",
+            C._HEADER_ACCEPT: "text/plain"
+        }
         if self.auth:
             headers[C._HEADER_AUTHORIZATION] = self.auth
 
+        # Create the full URL
+        path = "{url_path}{endpoint}".format(url_path=url.path, endpoint=endpoint)
+        # Construct the full URL for the request
+        full_url = f"{url.url}{endpoint}"
+
         try:
-            # Post the request
-            path = "{url_path}{endpoint}".format( url_path = url.path,
-                                                  endpoint = endpoint )
-            http_conn.request( C._REQUEST_POST, path, None, headers )
+            # Create client with appropriate timeout and verification settings
+            # with  self.__initialize_http_connection(url, timeout) as client:
+            # Execute the request
+            response = self.http_client.post(full_url, headers=headers)
+
+            # Get response time if available
+            response_time = response.headers.get('x-request-time-secs')
+
+            # Check status code and raise appropriate exceptions
+            status_code = response.status_code
+            response_msg = response.reason_phrase
+
+            if status_code == httpx.codes.UNAUTHORIZED:  # UNAUTHORIZED
+                msg = f"Unauthorized access: '{response_msg}'"
+                self.__log_debug(msg)
+                raise GPUdbUnauthorizedAccessException(msg)
+            elif status_code in self.__http_response_triggering_failover:
+                msg = f"Could not connect to database at '{url.url}' due to status code {status_code}: {response_msg}"
+                self.__log_debug(f"Throwing EXIT exception; {msg}")
+                raise GPUdbExitException(msg)
+            elif status_code == httpx.codes.NOT_FOUND:  # NOT_FOUND
+                msg = f"Endpoint not found ({url.url}) due to status code {status_code}: {response_msg}"
+                self.__log_debug(f"Throwing GPUdb exception; {msg}")
+                raise GPUdbException(msg)
+
+            # Return the response content
+            return response.text
+
         except ssl.SSLError as ex:
-            msg = ("Unable to execute SSL handshake with '{}' due to: {}"
-                   "".format( url.url,
-                              GPUdbException.stringify_exception( ex ) ))
+            msg = f"Unable to execute SSL handshake with '{url.url}' due to: {GPUdbException.stringify_exception(ex)}"
             final_msg = self.__SSL_ERROR_MESSAGE_TEMPLATE.format(msg)
-            self.__log_debug( final_msg )
-            http_conn.close()
-            raise GPUdbUnauthorizedAccessException( final_msg )
-        except Exception as ex:
-            msg = ("Error posting to '{}' due to: {}"
-                   "".format( url.url,
-                              GPUdbException.stringify_exception( ex ) ) )
-            self.__log_debug( msg )
-            # TODO: In the Java API, this is an GPUdbExitException; decide what this should be here
-            http_conn.close()
-            raise GPUdbConnectionException( msg )
-        # end try
+            self.__log_debug(final_msg)
+            raise GPUdbUnauthorizedAccessException(final_msg)
 
-        # Get the response
-        try:
-            response = http_conn.getresponse()
-        except Exception as ex: # some error occurred; return a message
-            msg = ( "No response received from {} due to {}"
-                    "".format( url.url,
-                               GPUdbException.stringify_exception( ex ) ) )
-            self.__log_debug( msg )
-            http_conn.close()
-            raise GPUdbConnectionException( msg )
-        # end try
+        except httpx.ConnectError as ex:
+            msg = f"Error connecting to '{url.url}' due to: {GPUdbException.stringify_exception(ex)}"
+            self.__log_debug(msg)
+            raise GPUdbConnectionException(msg)
 
-        # Read and decode the response, handling any error
-        try:
-            response_data = response.read()
-            response_time = response.getheader('x-request-time-secs', None)
+        except httpx.RequestError as ex:
+            msg = f"Error posting to '{url.url}' due to: {GPUdbException.stringify_exception(ex)}"
+            self.__log_debug(msg)
+            raise GPUdbConnectionException(msg)
 
-            # Check the HTTP status code and throw an exit exception as appropriate
-            status_code = response.status
-            response_msg = response.reason
-            if ( status_code == httplib.UNAUTHORIZED ):
-                # Unauthorized access gets a different exception
-                msg = ( "Unauthorized access: '{}'".format( response_msg ) )
-                self.__log_debug( msg )
-                raise GPUdbUnauthorizedAccessException( msg )
-            elif ( status_code in self.__http_response_triggering_failover ):
-                msg = ( "Could not connect to database at '{}' due to status "
-                        "code {}: {}".format( url.url, status_code, response_msg ) )
-                self.__log_debug( "Throwing EXIT exception; {}".format( msg ) )
-                raise GPUdbExitException( msg )
-            elif ( status_code == httplib.NOT_FOUND ):
-                msg = ( "Endpoint not found ({}) due to status "
-                        "code {}: {}".format( url.url, status_code,
-                                              response_msg ) )
-                self.__log_debug( "Throwing GPUdb exception; {}".format( msg ) )
-                raise GPUdbException( msg )
-            # end if
-
-            return str(response_data, "UTF-8")
-        except GPUdbUnauthorizedAccessException as ex:
-                # Any permission related problem should get propagated
+        except GPUdbUnauthorizedAccessException:
+            # Any permission related problem should get propagated
             raise
+
         except (GPUdbConnectionException, GPUdbExitException) as ex:
             # For special connection or exit errors, just pass them on
-            self.__log_debug("Caught conn/exit exception: {}".format( str(ex) ))
+            self.__log_debug(f"Caught conn/exit exception: {str(ex)}")
             raise
+
         except GPUdbException as ex:
             # An end-of-file problem from the server is also a failover trigger
             if C._DB_EOF_FROM_SERVER_ERROR_MESSAGE in str(ex):
-                msg = ( "Received failover triggering error when trying to "
-                        "connect to {}: {}"
-                        "".format( url.url, str(ex) ) )
-                self.__log_debug( "Throwing EXIT exception; {}".format( msg ) )
-                raise GPUdbExitException( msg )
+                msg = f"Received failover triggering error when trying to connect to {url.url}: {str(ex)}"
+                self.__log_debug(f"Throwing EXIT exception; {msg}")
+                raise GPUdbExitException(msg)
             else:
-                # All other errors are legitimate, and to be passed on to the
-                # user
-                self.__log_debug( "Throwing GPUdb exception; {}".format( str(ex) ) )
+                # All other errors are legitimate, and to be passed on to the user
+                self.__log_debug(f"Throwing GPUdb exception; {str(ex)}")
                 raise
-            # end if
-        except Exception as ex: # some error occurred; return a message
-            msg = ("Error reading response from {} for endpoint {}: {}"
-                   "".format( url.url, endpoint,
-                              GPUdbException.stringify_exception( ex ) ) )
-            # TODO: Or should this be an exit exception also??
-            self.__log_debug( "Throwing GPUdb exception; {}".format( msg ) )
-            raise GPUdbException( msg )
-        finally:
-            http_conn.close()
+
+        except Exception as ex:
+            msg = f"Error reading response from {url.url} for endpoint {endpoint}: {GPUdbException.stringify_exception(ex)}"
+            self.__log_debug(f"Throwing GPUdb exception; {msg}")
+            raise GPUdbException(msg)
         # end try
 
     # end __submit_request_raw_json_without_body
@@ -8166,28 +8181,26 @@ class GPUdb(object):
             about the output of the operation is the 'data' object.
         """
         # Validate the input arguments
-        if not isinstance( url, GPUdb.URL ):
+        if not isinstance(url, GPUdb.URL):
             msg = ("Argument 'url' must be a GPUdb.URL object; given '{}'"
-                   "".format( str(type(url)) ) )
-            self.__log_debug( msg )
-            raise GPUdbException( msg )
-        # end if
+                   "".format(str(type(url))))
+            self.__log_debug(msg)
+            raise GPUdbException(msg)
 
-        if not isinstance( endpoint, (basestring, unicode) ):
+        if not isinstance(endpoint, str):
             msg = ("Argument 'endpoint' must be a string; given '{}'"
-                   "".format( str(type(endpoint)) ) )
-            self.__log_debug( msg )
-            raise GPUdbException( msg )
-        # end if
+                   "".format(str(type(endpoint))))
+            self.__log_debug(msg)
+            raise GPUdbException(msg)
 
         if request_body is None:
-            msg = ("Argument 'request_body' must be provided; given None" )
-            self.__log_debug( msg )
-            raise GPUdbException( msg )
-        # end if
+            msg = "Argument 'request_body' must be provided; given None"
+            self.__log_debug(msg)
+            raise GPUdbException(msg)
 
         if type(request_body) != str:
-            raise GPUdbException("'request_body' has to be either a single JSON record or an array of JSON records (as string)")
+            raise GPUdbException(
+                "'request_body' has to be either a single JSON record or an array of JSON records (as string)")
 
         # If no user given timeout given, just use the cached one
         if timeout is None:
@@ -8196,130 +8209,99 @@ class GPUdb(object):
         else:
             # The given timeout must be a non-negative integer
             try:
-                timeout = int( timeout )
+                timeout = int(timeout)
             except:
                 msg = ("Argument 'timeout' must be an integer value; "
-                       "given '{}'".format( str(type(timeout)) ) )
-                self.__log_debug( msg )
-                raise GPUdbException( msg )
-            # end inner if
+                       "given '{}'".format(str(type(timeout))))
+                self.__log_debug(msg)
+                raise GPUdbException(msg)
 
             if timeout < 0:
                 msg = ("Argument 'timeout' must be a non-negative integer value; "
-                       "given '{}'".format( timeout ) )
-                self.__log_debug( msg )
-                raise GPUdbException( msg )
-        # end if
+                       "given '{}'".format(timeout))
+                self.__log_debug(msg)
+                raise GPUdbException(msg)
 
-
-        # Log the request and the endpoint at the trace level.  Note that since
-        # string interpolation takes a demonstrably large time (proved via
-        # benchmarking), we need to first check if the log level is on.  That
-        # way, we only create the interpolated string when it will be used.
+        # Log the request and the endpoint at the trace level
         if self.__is_log_level_trace_enabled():
-            self.__log_trace( "Sending {} request {} to {}"
-                              "".format( endpoint, request_body, str(url) ) )
+            self.__log_trace("Sending {} request {} to {}"
+                             "".format(endpoint, request_body, str(url)))
 
-        http_conn = self.__initialize_http_connection( url, timeout )
+        # Prepare headers
+        headers = {
+            C._HEADER_CONTENT_TYPE: "application/json",
+            C._HEADER_ACCEPT: "text/plain"
+        }
 
-        headers = {}
-        headers[C._HEADER_CONTENT_TYPE] = "application/json"
-        headers[C._HEADER_ACCEPT] = "text/plain"
         if self.auth:
             headers[C._HEADER_AUTHORIZATION] = self.auth
 
+        # Construct the full URL for the request
+        full_url = f"{url.url}{endpoint}"
+
         try:
-            # Post the request
-            path = "{url_path}{endpoint}".format( url_path = url.path,
-                                                  endpoint = endpoint )
-            http_conn.request( C._REQUEST_POST, path, request_body, headers )
+            # Create a client with the appropriate timeout
+            # with self.__initialize_http_connection(url, timeout) as client:
+            # Send the POST request with the request body
+            response = self.http_client.post(full_url, headers=headers, content=request_body)
+
+            # Check the HTTP status code and throw appropriate exceptions
+            status_code = response.status_code
+
+            if status_code == httpx.codes.UNAUTHORIZED:  # UNAUTHORIZED
+                msg = f"Unauthorized access: '{response.reason_phrase}'"
+                self.__log_debug(msg)
+                raise GPUdbUnauthorizedAccessException(msg)
+            elif status_code in self.__http_response_triggering_failover:
+                msg = (f"Could not connect to database at '{url.url}' due to status "
+                       f"code {status_code}: {response.reason_phrase}")
+                self.__log_debug(f"Throwing EXIT exception; {msg}")
+                raise GPUdbExitException(msg)
+            elif status_code == httpx.codes.NOT_FOUND:  # NOT_FOUND
+                msg = (f"Endpoint not found ({url.url}) due to status "
+                       f"code {status_code}: {response.reason_phrase}")
+                self.__log_debug(f"Throwing GPUdb exception; {msg}")
+                raise GPUdbException(msg)
+
+            # Return the response as a UTF-8 string
+            return response.content.decode("UTF-8")
+
+        except httpx.TimeoutException as ex:
+            msg = f"Request timed out connecting to {url.url}: {GPUdbException.stringify_exception(ex)}"
+            self.__log_debug(msg)
+            raise GPUdbConnectionException(msg)
+        except httpx.HTTPError as ex:
+            msg = f"HTTP error occurred connecting to {url.url}: {GPUdbException.stringify_exception(ex)}"
+            self.__log_debug(msg)
+            raise GPUdbConnectionException(msg)
         except ssl.SSLError as ex:
-            msg = ("Unable to execute SSL handshake with '{}' due to: {}"
-                   "".format( url.url,
-                              GPUdbException.stringify_exception( ex ) ))
+            msg = f"Unable to execute SSL handshake with '{url.url}' due to: {GPUdbException.stringify_exception(ex)}"
             final_msg = self.__SSL_ERROR_MESSAGE_TEMPLATE.format(msg)
-            self.__log_debug( final_msg )
-            http_conn.close()
-            raise GPUdbUnauthorizedAccessException( final_msg )
-        except Exception as ex:
-            msg = ("Error posting to '{}' due to: {}"
-                   "".format( url.url,
-                              GPUdbException.stringify_exception( ex ) ) )
-            self.__log_debug( msg )
-            # TODO: In the Java API, this is an GPUdbExitException; decide what this should be here
-            http_conn.close()
-            raise GPUdbConnectionException( msg )
-        # end try
-
-        # Get the response
-        try:
-            response = http_conn.getresponse()
-        except Exception as ex: # some error occurred; return a message
-            msg = ( "No response received from {} due to {}"
-                    "".format( url.url,
-                               GPUdbException.stringify_exception( ex ) ) )
-            self.__log_debug( msg )
-            http_conn.close()
-            raise GPUdbConnectionException( msg )
-        # end try
-
-        # Read and decode the response, handling any error
-        try:
-            response_data = response.read()
-            response_time = response.getheader('x-request-time-secs', None)
-
-            # Check the HTTP status code and throw an exit exception as appropriate
-            status_code = response.status
-            response_msg = response.reason
-            if ( status_code == httplib.UNAUTHORIZED ):
-                # Unauthorized access gets a different exception
-                msg = ( "Unauthorized access: '{}'".format( response_msg ) )
-                self.__log_debug( msg )
-                raise GPUdbUnauthorizedAccessException( msg )
-            elif ( status_code in self.__http_response_triggering_failover ):
-                msg = ( "Could not connect to database at '{}' due to status "
-                        "code {}: {}".format( url.url, status_code, response_msg ) )
-                self.__log_debug( "Throwing EXIT exception; {}".format( msg ) )
-                raise GPUdbExitException( msg )
-            elif ( status_code == httplib.NOT_FOUND ):
-                msg = ( "Endpoint not found ({}) due to status "
-                        "code {}: {}".format( url.url, status_code,
-                                              response_msg ) )
-                self.__log_debug( "Throwing GPUdb exception; {}".format( msg ) )
-                raise GPUdbException( msg )
-            # end if
-
-            return str(response_data, "UTF-8")
-        except GPUdbUnauthorizedAccessException as ex:
-                # Any permission related problem should get propagated
+            self.__log_debug(final_msg)
+            raise GPUdbUnauthorizedAccessException(final_msg)
+        except GPUdbUnauthorizedAccessException:
+            # Any permission related problem should get propagated
             raise
         except (GPUdbConnectionException, GPUdbExitException) as ex:
             # For special connection or exit errors, just pass them on
-            self.__log_debug("Caught conn/exit exception: {}".format( str(ex) ))
+            self.__log_debug(f"Caught conn/exit exception: {str(ex)}")
             raise
         except GPUdbException as ex:
             # An end-of-file problem from the server is also a failover trigger
             if C._DB_EOF_FROM_SERVER_ERROR_MESSAGE in str(ex):
-                msg = ( "Received failover triggering error when trying to "
-                        "connect to {}: {}"
-                        "".format( url.url, str(ex) ) )
-                self.__log_debug( "Throwing EXIT exception; {}".format( msg ) )
-                raise GPUdbExitException( msg )
+                msg = (f"Received failover triggering error when trying to "
+                       f"connect to {url.url}: {str(ex)}")
+                self.__log_debug(f"Throwing EXIT exception; {msg}")
+                raise GPUdbExitException(msg)
             else:
-                # All other errors are legitimate, and to be passed on to the
-                # user
-                self.__log_debug( "Throwing GPUdb exception; {}".format( str(ex) ) )
+                # All other errors are legitimate, and to be passed on to the user
+                self.__log_debug(f"Throwing GPUdb exception; {str(ex)}")
                 raise
-            # end if
-        except Exception as ex: # some error occurred; return a message
-            msg = ("Error reading response from {} for endpoint {}: {}"
-                   "".format( url.url, endpoint,
-                              GPUdbException.stringify_exception( ex ) ) )
-            # TODO: Or should this be an exit exception also??
-            self.__log_debug( "Throwing GPUdb exception; {}".format( msg ) )
-            raise GPUdbException( msg )
-        finally:
-            http_conn.close()
+        except Exception as ex:
+            msg = (f"Error reading response from {url.url} for endpoint {endpoint}: "
+                   f"{GPUdbException.stringify_exception(ex)}")
+            self.__log_debug(f"Throwing GPUdb exception; {msg}")
+            raise GPUdbException(msg)
         # end try
 
     # end __submit_request_raw_json
@@ -9166,67 +9148,63 @@ class GPUdb(object):
     # end __create_header_and_process_body_data
 
 
+    @deprecated
     def __initialize_http_connection( self, url, timeout ):
         """Create an HTTP or HTTPS connection object given the URL and timeout
         (in seconds).  Throws GPUdbException and GPUdbConnectionException as
         needed.
+
+        This method replaces the old __initialize_http_connection method and returns an
+        httpx.Client that can be used in a context manager.
+
+            Parameters:
+                url (GPUdb.URL):
+                    The URL object containing protocol, host, port information
+
+                timeout (int):
+                    The timeout in seconds for the connection
+
+            Returns:
+                httpx.Client: A configured httpx client
         """
         # Validate the input arguments
-        if not isinstance( url, GPUdb.URL ):
-            msg = ("Argument 'url' must be a GPUdb.URL object; given '{}'"
-                   "".format( str(type(url)) ) )
-            self.__log_debug( msg )
-            raise GPUdbException( msg )
-        # end if
+        if not isinstance(url, GPUdb.URL):
+            msg = (f"Argument 'url' must be a GPUdb.URL object; given "
+                   f"'{str(type(url))}'")
+            self.__log_debug(msg)
+            raise GPUdbException(msg)
 
-        if ( (timeout is not None)
-             and (not isinstance( timeout, int ))
-        ):
-            msg = ("Argument 'timeout' must be an integer value, if given; "
-                   "given '{}'".format( str(type(timeout)) ) )
-            self.__log_debug( msg )
-            raise GPUdbException( msg )
-        # end if
+        if ((timeout is not None) and (not isinstance(timeout, int))):
+            msg = (f"Argument 'timeout' must be an integer value, if given; "
+                   f"given '{str(type(timeout))}'")
+            self.__log_debug(msg)
+            raise GPUdbException(msg)
 
-        # NOTE: Creating a new httplib.HTTPConnection is suprisingly just as
-        #       fast as reusing a persistent one and has the advantage of
-        #       fully retrying from scratch if the connection fails.
+        # import httpx
 
-        # Try to create the connection object
+        # Configure the client based on the protocol
         try:
-            if (url.protocol == 'HTTP'):
-                conn = httplib.HTTPConnection( host    = url.host,
-                                               port    = url.port,
-                                               timeout = timeout)
-            elif (url.protocol == 'HTTPS'):
-                if self.skip_ssl_cert_verification:
-                    if IS_PYTHON_3:
-                        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-                        ssl_context.check_hostname = False
-                        ssl_context.verify_mode = ssl.CERT_NONE
-                        conn = httplib.HTTPSConnection(host=url.host,
-                                                       port=url.port,
-                                                       timeout=timeout,
-                                                       context=ssl_context)
-                    else:
-                        conn = httplib.HTTPSConnection( host    = url.host,
-                                                        port    = url.port,
-                                                        timeout = timeout,
-                                                        context = ssl._create_unverified_context() )
-                else:
-                    conn = httplib.HTTPSConnection( host    = url.host,
-                                                    port    = url.port,
-                                                    timeout = timeout)
-        except Exception as ex:
-            msg = ( "Error connecting to '{}' on port "
-                    "'{}' due to (full url '{}'): {}"
-                    "".format( url.host, url.port,
-                               url.url,
-                               GPUdbException.stringify_exception( ex ) ) )
-            self.__log_debug( msg )
-            raise GPUdbConnectionException( msg )
+            # Base configuration
+            client_kwargs = {
+                "base_url": f"{url.protocol.lower()}://{url.host}:{url.port}",
+                "timeout": timeout
+            }
 
-        return conn
+            # Configure SSL verification if needed
+            # Reference - https://www.python-httpx.org/advanced/ssl/
+            if url.protocol == 'HTTPS' and self.skip_ssl_cert_verification:
+                client_kwargs["verify"] = False
+
+            # Create the client
+            client = httpx.Client(**client_kwargs)
+            return client
+
+        except Exception as ex:
+            msg = (f"Error creating client for '{url.host}' on port "
+                   f"'{url.port}' due to (full url '{url.url}'): "
+                   f"{GPUdbException.stringify_exception(ex)}")
+            self.__log_debug(msg)
+            raise GPUdbConnectionException(msg)
     # end __initialize_http_connection
 
 
@@ -10291,68 +10269,66 @@ class GPUdb(object):
         """
         # Validate the input arguments
         if not url:
-            url = self.get_url( stringified = False )
-        elif isinstance( url, (basestring, unicode) ):
+            url = self.get_url(stringified=False)
+        elif isinstance(url, (basestring, unicode)):
             try:
-                url = GPUdb.URL( url )
+                url = GPUdb.URL(url)
             except Exception as ex:
-                ex_str = GPUdbException.stringify_exception( ex )
-                raise GPUdbException( "Error parsing given URL '{}': {}"
-                                      "".format( url, ex_str) )
-        elif not isinstance( url, GPUdb.URL ):
+                ex_str = GPUdbException.stringify_exception(ex)
+                raise GPUdbException("Error parsing given URL '{}': {}"
+                                     "".format(url, ex_str))
+        elif not isinstance(url, GPUdb.URL):
             msg = ("Argument 'url' must be a GPUdb.URL object, a string, or None;"
-                   " given '{}'".format( str(type(url)) ) )
-            self.__log_debug( msg )
-            raise GPUdbException( msg )
-        # end if
+                   " given '{}'".format(str(type(url))))
+            self.__log_debug(msg)
+            raise GPUdbException(msg)
 
         if not wms_params:
             msg = ("Argument 'wms_params' must be a string; "
-                   "given '{}'".format( str(wms_params) ) )
-            self.__log_debug( msg )
-            raise GPUdbException( msg )
-        # end if
+                   "given '{}'".format(str(wms_params)))
+            self.__log_debug(msg)
+            raise GPUdbException(msg)
 
         # Make sure that it starts with ?
-        if not wms_params.startswith( "?" ):
+        if not wms_params.startswith("?"):
             wms_params = "?" + wms_params
-        # end if
 
-        http_conn = self.__initialize_http_connection( url, self.timeout )
-
-        # WMS is a get, unlike all endpoints which are post
+        # Prepare headers
         headers = {
             C._HEADER_ACCEPT: C._REQUEST_ENCODING_JSON
         }
-        wms_path = "{url_path}/wms{params}".format( url_path = url.path,
-                                                    params   = wms_params )
+
+        # Construct the WMS path and full URL
+        wms_path = f"{url.path}/wms{wms_params}"
+        full_url = f"{url.protocol}://{url.host}:{url.port}{wms_path}"
 
         # Start shaping up the response
         result = {}
-        status_info = {}
-        status_info['message'] = ''
+        status_info = {'message': '', 'response_time': None}
 
         # Actually submit the /wms request
         try:
-            # Send the get request
-            http_conn.request( C._REQUEST_GET, wms_path, "", headers )
-            # Process the response
-            raw_response = http_conn.getresponse()
+            # with self.__initialize_http_connection(url, self.timeout) as client:
+            # Send the GET request
+            response = self.http_client.get(full_url, headers=headers)
+
             # Save the response
-            result["data"] = raw_response.read()
+            result["data"] = response.content
+
             # Save ancillary information
             status_info["status"] = "OK"
-            status_info["response_time"] = raw_response.getheader( "x-request-time-secs" )
+            status_info["response_time"] = response.headers.get("x-request-time-secs")
         except Exception as ex:
             # Save the error status and message
             status_info["status"] = "ERROR"
-            status_info["message"] = GPUdbException.stringify_exception( ex )
-            status_info["response_time"] = raw_response.getheader( "x-request-time-secs" )
-        # end try
+            status_info["message"] = GPUdbException.stringify_exception(ex)
+            # Note: We can't access response.headers here because the response may not exist
 
-        result[ "status_info" ] = status_info
+        # Add the status info to the result
+        result["status_info"] = status_info
 
-        return AttrDict( result )
+        return AttrDict(result)
+
     # end wms( url )
 
 
@@ -10369,49 +10345,50 @@ class GPUdb(object):
             The ping response, or an empty string if it fails.
         """
         # Validate the input arguments
-        if isinstance( url, (basestring, unicode) ):
+        if isinstance(url, (basestring, unicode)):
             try:
-                url = GPUdb.URL( url )
+                url = GPUdb.URL(url)
             except Exception as ex:
-                ex_str = GPUdbException.stringify_exception( ex )
-                raise GPUdbException( "Error parsing given URL '{}': {}"
-                                      "".format( url, ex_str ) )
-        elif not isinstance( url, GPUdb.URL ):
+                ex_str = GPUdbException.stringify_exception(ex)
+                raise GPUdbException("Error parsing given URL '{}': {}"
+                                     "".format(url, ex_str))
+        elif not isinstance(url, GPUdb.URL):
             msg = ("Argument 'url' must be a GPUdb.URL object or a string; "
-                   "given '{}'".format( str(type(url)) ) )
-            self.__log_debug( msg )
-            raise GPUdbException( msg )
-        # end if
+                   "given '{}'".format(str(type(url))))
+            self.__log_debug(msg)
+            raise GPUdbException(msg)
 
         try:
-            http_conn = self.__initialize_http_connection( url, self.__server_connection_timeout )
-
-            # Ping is a get, unlike all endpoints which are post
+            # Prepare headers
             headers = {
                 C._HEADER_ACCEPT: C._REQUEST_ENCODING_JSON
             }
-            http_conn.request( C._REQUEST_GET, url.path, "", headers )
+            # Construct the full URL
+            full_url = f"{url.protocol}://{url.host}:{url.port}{url.path}"
 
-            # Get the ping response
-            response = http_conn.getresponse()
-            raw_data = response.read()
+            # Use httpx client with context manager
+            # with self.__initialize_http_connection(url, self.__server_connection_timeout) as client:
+            # Execute GET request
+            response = self.http_client.get(full_url, headers=headers)
 
-            # Decode the response, possibly bytes, into string
-            if isinstance( raw_data, (basestring, unicode) ):
-                # Got a string, no need to decoded
+            # Get the response content
+            raw_data = response.content
+
+            # Decode the response if needed
+            if isinstance(raw_data, (basestring, unicode)):
+                # Got a string, no need to decode
                 return raw_data
-            elif isinstance( raw_data, bytes ):
+            elif isinstance(raw_data, bytes):
                 return raw_data.decode("utf-8")
             else:
-                raise GPUdbException( "Unhandled response {} with type {}"
-                                      "".format( raw_data,
-                                                 str(type(raw_data)) ) )
-            # end if
+                raise GPUdbException("Unhandled response {} with type {}"
+                                     "".format(raw_data,
+                                               str(type(raw_data))))
         except Exception as ex:
-            ex_str = GPUdbException.stringify_exception( ex )
-            self.__log_debug( "Got error while pinging: {}".format( ex_str ) )
+            ex_str = GPUdbException.stringify_exception(ex)
+            self.__log_debug("Got error while pinging: {}".format(ex_str))
             return ""
-       # end try
+    # end try
     # end ping( url )
 
 
@@ -10451,10 +10428,9 @@ class GPUdb(object):
         Returns:
             The debug response.
         """
-        # Validate the input arguments
         if url is None:
             url = self.get_url( stringified = False )
-        elif isinstance( url, (basestring, unicode) ):
+        elif isinstance( url, str ):
             try:
                 url = GPUdb.URL( url )
             except Exception as ex:
@@ -10469,17 +10445,29 @@ class GPUdb(object):
         # end if
 
         debug_timeout = 1 # 1 second
-        http_conn = self.__initialize_http_connection( url, debug_timeout )
 
-        # Debug is a get, unlike all endpoints which are post
+        # Prepare headers
         headers = {
             C._HEADER_ACCEPT: C._REQUEST_ENCODING_JSON
         }
-        debug_endpoint = "{}/debug".format( url.path )
-        http_conn.request( C._REQUEST_GET, debug_endpoint, "", headers )
 
-        response = http_conn.getresponse()
-        return response.read()
+        # Construct the debug endpoint URL
+        debug_endpoint = "{}/debug".format(url.path)
+        full_url = f"{url.protocol}://{url.host}:{url.port}{debug_endpoint}"
+
+        try:
+            # with self.__initialize_http_connection(url, debug_timeout) as client:
+            # Execute GET request
+            response = self.http_client.get(full_url, headers=headers)
+
+            # Return the response content as bytes
+            return response.content
+
+        except Exception as ex:
+            msg = f"Error getting debug information from {url.url}: {GPUdbException.stringify_exception(ex)}"
+            self.__log_debug(msg)
+            raise GPUdbException(msg)
+
     # end get_server_debug_information
 
 
@@ -10895,6 +10883,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("repair_status", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/repair/table"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/admin/send/alert"
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_send_alert_request","fields":[{"name":"message","type":"string"},{"name":"label","type":"string"},{"name":"log_level","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"admin_send_alert_response","fields":[{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("message", "string"), ("label", "string"), ("log_level", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("info", "map", [("string")])] )
+        ENDPOINT = "/admin/send/alert"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -13098,6 +13097,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["admin_remove_host"] = "/admin/remove/host"
         self.gpudb_func_to_endpoint_map["admin_remove_ranks"] = "/admin/remove/ranks"
         self.gpudb_func_to_endpoint_map["admin_repair_table"] = "/admin/repair/table"
+        self.gpudb_func_to_endpoint_map["admin_send_alert"] = "/admin/send/alert"
         self.gpudb_func_to_endpoint_map["admin_show_alerts"] = "/admin/show/alerts"
         self.gpudb_func_to_endpoint_map["admin_show_cluster_operations"] = "/admin/show/cluster/operations"
         self.gpudb_func_to_endpoint_map["admin_show_configuration"] = "/admin/show/configuration"
@@ -14141,6 +14141,54 @@ class GPUdb(object):
 
         return response
     # end admin_repair_table
+
+    # begin admin_send_alert
+    def admin_send_alert( self, message = '', label = '', log_level = None,
+                          options = {} ):
+        """Sends a user generated alert to the monitoring system.
+
+        Parameters:
+
+            message (str)
+                Alert message body. The default value is ''.
+
+            label (str)
+                Label to add to alert message. The default value is ''.
+
+            log_level (str)
+                Alert message logging criteria.
+                Allowed values are:
+
+                * fatal
+                * error
+                * warn
+                * info
+                * debug
+
+            options (dict of str to str)
+                Optional parameters. The default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( message, (basestring)), "admin_send_alert(): Argument 'message' must be (one) of type(s) '(basestring)'; given %s" % type( message ).__name__
+        assert isinstance( label, (basestring)), "admin_send_alert(): Argument 'label' must be (one) of type(s) '(basestring)'; given %s" % type( label ).__name__
+        assert isinstance( log_level, (basestring)), "admin_send_alert(): Argument 'log_level' must be (one) of type(s) '(basestring)'; given %s" % type( log_level ).__name__
+        assert isinstance( options, (dict)), "admin_send_alert(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['message'] = message
+        obj['label'] = label
+        obj['log_level'] = log_level
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/admin/send/alert', obj, convert_to_attr_dict = True )
+
+        return response
+    # end admin_send_alert
 
     # begin admin_show_alerts
     def admin_show_alerts( self, num_alerts = None, options = {} ):
@@ -17818,13 +17866,19 @@ class GPUdb(object):
                   error will be thrown. If *schema_name* is empty, then the
                   user's default schema will be used.
 
-                * **schema_registry_location** --
-                  Location of Confluent Schema Registry in
-                  '[storage_path[:storage_port]]' format.
+                * **schema_registry_connection_retries** --
+                  Confluent Schema registry connection timeout (in Secs)
+
+                * **schema_registry_connection_timeout** --
+                  Confluent Schema registry connection timeout (in Secs)
 
                 * **schema_registry_credential** --
                   Confluent Schema Registry `credential
                   <../../../../concepts/credentials>`__ object name.
+
+                * **schema_registry_location** --
+                  Location of Confluent Schema Registry in
+                  '[storage_path[:storage_port]]' format.
 
                 * **schema_registry_port** --
                   Confluent Schema Registry port (optional).
@@ -18462,6 +18516,10 @@ class GPUdb(object):
                   background operations such as watermark evictions catalog
                   table updates. The minimum allowed value is '1'. The maximum
                   allowed value is '8192'.
+
+                * **log_debug_job_info** --
+                  Outputs various job-related information to the rank logs.
+                  Used for troubleshooting.
 
                 * **ai_enable_rag** --
                   Enable RAG. The default value is 'false'.
@@ -19634,6 +19692,14 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **pk_conflict_predicate_higher** --
+                  The record with higher value for the column resolves the
+                  primary-key insert conflict. The default value is ''.
+
+                * **pk_conflict_predicate_lower** --
+                  The record with lower value for the column resolves the
+                  primary-key insert conflict. The default value is ''.
+
                 * **truncate_strings** --
                   If set to *true*, it allows inserting longer strings into
                   smaller charN string columns by truncating the longer strings
@@ -20425,6 +20491,12 @@ class GPUdb(object):
 
                 * **schema_registry_port** --
                   Confluent Schema Registry port (optional).
+
+                * **schema_registry_connection_retries** --
+                  Confluent Schema registry connection timeout (in Secs)
+
+                * **schema_registry_connection_timeout** --
+                  Confluent Schema registry connection timeout (in Secs)
 
                 The default value is an empty dict ( {} ).
 
@@ -22707,6 +22779,20 @@ class GPUdb(object):
                     :meth:`GPUdb.alter_table` on this table.
 
                   The default value is 'manual'.
+
+                * **schema_registry_connection_retries** --
+                  Confluent Schema registry connection timeout (in Secs)
+
+                * **schema_registry_connection_timeout** --
+                  Confluent Schema registry connection timeout (in Secs)
+
+                * **schema_registry_max_consecutive_connection_failures** --
+                  Max records to skip due to SR connection failures, before
+                  failing
+
+                * **max_consecutive_invalid_schema_failure** --
+                  Max records to skip due to schema related errors, before
+                  failing
 
                 * **schema_registry_schema_name** --
                   Name of the Avro schema in the schema registry to use when
@@ -28032,6 +28118,7 @@ class GPUdb(object):
                 * binary
                 * json
                 * geojson
+                * arrow
 
                 The default value is 'binary'.
 
@@ -28197,6 +28284,7 @@ class GPUdb(object):
                 * binary
                 * json
                 * geojson
+                * arrow
 
                 The default value is 'binary'.
 
@@ -29435,6 +29523,9 @@ class GPUdb(object):
                 * **read** --
                   Ability to read, list and use the object.
 
+                * **send_alert** --
+                  Ability to send system alerts.
+
                 * **update** --
                   Update access to the table.
 
@@ -29781,6 +29872,9 @@ class GPUdb(object):
                 * **system_read** --
                   Read-only access to all tables.
 
+                * **system_send_alert** --
+                  Send system alerts.
+
             options (dict of str to str)
                 Optional parameters. The default value is an empty dict ( {} ).
 
@@ -30023,6 +30117,9 @@ class GPUdb(object):
 
                 * **read** --
                   Ability to read, list and use the object.
+
+                * **send_alert** --
+                  Ability to send system alerts.
 
                 * **update** --
                   Update access to the table.
@@ -30483,6 +30580,14 @@ class GPUdb(object):
                     collide with those of existing records
 
                   The default value is 'false'.
+
+                * **pk_conflict_predicate_higher** --
+                  The record with higher value for the column resolves the
+                  primary-key insert conflict. The default value is ''.
+
+                * **pk_conflict_predicate_lower** --
+                  The record with lower value for the column resolves the
+                  primary-key insert conflict. The default value is ''.
 
                 * **return_record_ids** --
                   If *true* then return the internal record id along for each
@@ -31176,6 +31281,20 @@ class GPUdb(object):
                 * **primary_keys** --
                   Comma separated list of column names to set as primary keys,
                   when not specified in the type.
+
+                * **schema_registry_connection_retries** --
+                  Confluent Schema registry connection timeout (in Secs)
+
+                * **schema_registry_connection_timeout** --
+                  Confluent Schema registry connection timeout (in Secs)
+
+                * **schema_registry_max_consecutive_connection_failures** --
+                  Max records to skip due to SR connection failures, before
+                  failing
+
+                * **max_consecutive_invalid_schema_failure** --
+                  Max records to skip due to schema related errors, before
+                  failing
 
                 * **schema_registry_schema_name** --
                   Name of the Avro schema in the schema registry to use when
@@ -31913,6 +32032,20 @@ class GPUdb(object):
                   Optional: comma separated list of column names, to set as
                   primary keys, when not specified in the type. The default
                   value is ''.
+
+                * **schema_registry_connection_retries** --
+                  Confluent Schema registry connection timeout (in Secs)
+
+                * **schema_registry_connection_timeout** --
+                  Confluent Schema registry connection timeout (in Secs)
+
+                * **schema_registry_max_consecutive_connection_failures** --
+                  Max records to skip due to SR connection failures, before
+                  failing
+
+                * **max_consecutive_invalid_schema_failure** --
+                  Max records to skip due to schema related errors, before
+                  failing
 
                 * schema_registry_schema_id
                 * schema_registry_schema_name
@@ -34409,6 +34542,9 @@ class GPUdb(object):
                 * **read** --
                   Ability to read, list and use the object.
 
+                * **send_alert** --
+                  Ability to send system alerts.
+
                 * **update** --
                   Update access to the table.
 
@@ -34738,6 +34874,9 @@ class GPUdb(object):
 
                 * **system_read** --
                   Read-only access to all tables.
+
+                * **system_send_alert** --
+                  Send system alerts.
 
             options (dict of str to str)
                 Optional parameters. The default value is an empty dict ( {} ).
@@ -35159,6 +35298,16 @@ class GPUdb(object):
                   *environment_name* does not exist, no error is returned. If
                   *false* and if the environment specified in input parameter
                   *environment_name* does not exist, then an error is returned.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **show_names_only** --
+                  If *true* only return the names of the installed environments
+                  and omit package listing.
                   Allowed values are:
 
                   * true
@@ -43905,6 +44054,14 @@ class GPUdbTable( object ):
                     key values collide with those of a target table record
 
                   The default value is 'false'.
+
+                * **pk_conflict_predicate_higher** --
+                  The record with higher value for the column resolves the
+                  primary-key insert conflict. The default value is ''.
+
+                * **pk_conflict_predicate_lower** --
+                  The record with lower value for the column resolves the
+                  primary-key insert conflict. The default value is ''.
 
                 * **truncate_strings** --
                   If set to *true*, it allows inserting longer strings into

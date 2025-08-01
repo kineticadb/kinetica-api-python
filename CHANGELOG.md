@@ -2,6 +2,17 @@
 
 ## Version 7.2
 
+
+### Version 7.2.2.10 - 2025-08-01
+
+#### Added
+-   Better request retry handling
+
+#### Changed
+-   Switched HTTP library from httplib to httpx
+-   Updated installation instructions
+
+
 ### Version 7.2.2.9 - 2025-05-27
 
 #### Changed

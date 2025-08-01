@@ -28,16 +28,16 @@ This is the 7.2.x.y version of the client-side Python API for Kinetica.  The
 first two components of the client version must match that of the Kinetica
 server.  When the versions do not match, the API will print a warning.  Often,
 there are breaking changes between versions, so it is critical that they match.
-For example, Kinetica 6.2 and 7.0 have incompatible changes, so the 6.2.x.y
-versions of the Python API would NOT be compatible with 7.0.a.b versions.
 
 
 ## Installation Instructions
 
-To install this package, run `python setup.py install` in the root directory of
-the repo.  Note that due to the in-house compiled C-module dependency, this
-package must be installed, and simply copying `gpudb.py` or having a link to it
-will not work.
+To install this package, in the root directory of the repo, run:
+
+    pip3 install .
+
+Note that due to the in-house compiled C-module dependency, this package must be
+installed, and simply copying `gpudb.py` or having a link to it will not work.
 
 There is also an example file in the example directory.
 
@@ -56,28 +56,17 @@ changes to Kinetica functions, please refer to
 
 ### Troubleshooting Installation
 
-* If you get an error when running pip like
+If you get an error when running `pip3` like:
 
-```
-  "Traceback ... File "/bin/pip", line 5, in <module> from pkg_resources import load_entry_point"
-```
+    "error: externally-managed-environment"
 
-please try upgrading pip with command:
+Install a Python virtual environment; in Unix:
 
-```
-    python -m pip install --upgrade --force pip
-```
+    python3 -m venv .venv
+    source .venv/bin/activate
 
-* If you get an error when running pip like
-```
-    "Exception: Traceback ... File "/usr/lib/python2.7/site-packages/pip/basecommand.py", line 215, in main status = self.run(options, args)"
-```
+Then, retry the installation.
 
-please try downgrading your version of pip setuptools with command:
-
-```
-    pip install setuptools==33.1.1
-```
 
 ## GPUdb Table Monitor Client API
 
@@ -131,9 +120,8 @@ This class allows the user to configure the behavior of the
 ```python
 from gpudb import GPUdbTableMonitor
 options = GPUdbTableMonitor.Options(
-                                    _dict=dict(
-                                    inactivity_timeout = 0.1,
-                                ))
+    _dict=dict(inactivity_timeout = 0.1)
+)
 ```
 
 ### GPUdbTableMonitor.Callback
