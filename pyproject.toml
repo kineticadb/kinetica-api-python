@@ -1,6 +1,6 @@
 [project]
 name = "gpudb"
-version = "7.2.2.10"
+version = "7.2.2.11"
 dependencies = [
     'future',
     'pyzmq' ,
@@ -8,7 +8,7 @@ dependencies = [
     'httpx'
 ]
 authors = [
-    {name = "Kinetica DB, Inc.", email = "support@kinetica.com"},
+    {name = "Kinetica DB, Inc.", email = "support@kinetica.com"}
 ]
 maintainers = [
     {name = "Kyle Sutton", email = "ksutton@kinetica.com"},

@@ -5119,7 +5119,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.2.10"
+    api_version = "7.2.2.11"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5410,10 +5410,13 @@ class GPUdb(object):
                         status_forcelist=[502, 503],
                         allowed_methods=[HTTPMethod.POST, HTTPMethod.GET],
                     )
+        # Needs to be done here, as httpx only initializes this once,
+        # and it will turn verify on if we don't override it now
+        transport_config = httpx.HTTPTransport(verify=(not self.skip_ssl_cert_verification))
         self.http_client = httpx.Client(
             timeout=http_timeouts,
             headers=self.__custom_http_headers or {},
-            transport=RetryTransport(retry=retry_config),
+            transport=RetryTransport(retry=retry_config, transport=transport_config),
         )
         logging.getLogger("httpx").setLevel(logging.WARN)
 
@@ -10293,11 +10296,6 @@ class GPUdb(object):
         if not wms_params.startswith("?"):
             wms_params = "?" + wms_params
 
-        # Prepare headers
-        headers = {
-            C._HEADER_ACCEPT: C._REQUEST_ENCODING_JSON
-        }
-
         # Construct the WMS path and full URL
         wms_path = f"{url.path}/wms{wms_params}"
         full_url = f"{url.protocol}://{url.host}:{url.port}{wms_path}"
@@ -10310,6 +10308,8 @@ class GPUdb(object):
         try:
             # with self.__initialize_http_connection(url, self.timeout) as client:
             # Send the GET request
+            (headers, body_data) = self.__create_header_and_process_body_data(None)
+            headers[C._HEADER_ACCEPT] = C._REQUEST_ENCODING_JSON
             response = self.http_client.get(full_url, headers=headers)
 
             # Save the response
@@ -10359,16 +10359,14 @@ class GPUdb(object):
             raise GPUdbException(msg)
 
         try:
-            # Prepare headers
-            headers = {
-                C._HEADER_ACCEPT: C._REQUEST_ENCODING_JSON
-            }
             # Construct the full URL
             full_url = f"{url.protocol}://{url.host}:{url.port}{url.path}"
 
             # Use httpx client with context manager
             # with self.__initialize_http_connection(url, self.__server_connection_timeout) as client:
             # Execute GET request
+            (headers, body_data) = self.__create_header_and_process_body_data(None)
+            headers[C._HEADER_ACCEPT] = C._REQUEST_ENCODING_JSON
             response = self.http_client.get(full_url, headers=headers)
 
             # Get the response content
@@ -10446,11 +10444,6 @@ class GPUdb(object):
 
         debug_timeout = 1 # 1 second
 
-        # Prepare headers
-        headers = {
-            C._HEADER_ACCEPT: C._REQUEST_ENCODING_JSON
-        }
-
         # Construct the debug endpoint URL
         debug_endpoint = "{}/debug".format(url.path)
         full_url = f"{url.protocol}://{url.host}:{url.port}{debug_endpoint}"
@@ -10458,6 +10451,8 @@ class GPUdb(object):
         try:
             # with self.__initialize_http_connection(url, debug_timeout) as client:
             # Execute GET request
+            (headers, body_data) = self.__create_header_and_process_body_data(None)
+            headers[C._HEADER_ACCEPT] = C._REQUEST_ENCODING_JSON
             response = self.http_client.get(full_url, headers=headers)
 
             # Return the response content as bytes

@@ -3,6 +3,14 @@
 ## Version 7.2
 
 
+### Version 7.2.2.11 - 2025-08-03
+
+#### Fixed
+-   Issue with `skip_ssl_cert_verification` parameter being ignored
+-   Connectivity in environments where anonymous pass-through in httpd is
+    blocked
+
+
 ### Version 7.2.2.10 - 2025-08-01
 
 #### Added
