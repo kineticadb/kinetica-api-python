@@ -3,6 +3,9 @@
 
 ## Version 7.2
 
+### Version 7.2.2.24
+-   Added new options ``enable_thread_hang_logging`` to ``/alter/system/properties`` endpoint
+
 ### Version 7.2.2.21
 -   Added new options ``log_debug_job_info`` to ``/alter/system/properties`` endpoint
 

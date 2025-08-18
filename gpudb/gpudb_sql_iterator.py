@@ -133,7 +133,8 @@ class GPUdbSqlIterator():
             return
 
         self._execute_sql()
-        self.offset += self.batch_size
+        # Account for max_get_records_size limiting server result set
+        self.offset += len(self.records)
 
     def _execute_sql(self):
         limit = self.batch_size

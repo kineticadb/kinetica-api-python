@@ -5119,7 +5119,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.2.11"
+    api_version = "7.2.2.12"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -18515,6 +18515,11 @@ class GPUdb(object):
                 * **log_debug_job_info** --
                   Outputs various job-related information to the rank logs.
                   Used for troubleshooting.
+
+                * **enable_thread_hang_logging** --
+                  Log a stack trace for any thread that runs longer than a
+                  defined threshold. Used for troubleshooting. The default
+                  value is 'true'.
 
                 * **ai_enable_rag** --
                   Enable RAG. The default value is 'false'.
