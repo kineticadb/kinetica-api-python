@@ -10,30 +10,17 @@ import socket
 import sys
 import tempfile
 
-if sys.version_info < (3,):
-    def _decode_char(b):
-        return b[::-1].rstrip(b"\x00").decode("utf-8", errors="replace")
+def _decode_char(b):
+    return b[::-1].rstrip(b"\x00").decode(errors="replace")
 
-    def _decode_string(b):
-        return b.decode("utf-8", errors="replace")
+def _decode_string(b):
+    return b.decode(errors="replace")
 
-    def _encode_char(s, size):
-        return s.encode("utf-8", errors="replace").ljust(size, b"\x00")[size - 1::-1]
+def _encode_char(s, size):
+    return s.encode(errors="replace").ljust(size, b"\x00")[size - 1::-1]
 
-    def _encode_string(s):
-        return s.encode("utf-8", errors="replace")
-else:
-    def _decode_char(b):
-        return b[::-1].rstrip(b"\x00").decode(errors="replace")
-
-    def _decode_string(b):
-        return b.decode(errors="replace")
-
-    def _encode_char(s, size):
-        return s.encode(errors="replace").ljust(size, b"\x00")[size - 1::-1]
-
-    def _encode_string(s):
-        return s.encode(errors="replace")
+def _encode_string(s):
+    return s.encode(errors="replace")
 
 
 def _decode_date(value):

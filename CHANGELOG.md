@@ -3,6 +3,20 @@
 ## Version 7.2
 
 
+### Version 7.2.3.0 - 2025-09-15
+
+#### Added
+-   Logging to the DBAPI library
+
+#### Changed
+-   Switched fail-back poller to use status call to determine HA queue draining
+    state
+-   Removed additional Python2 handling
+
+#### Notes
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes
+
+
 ### Version 7.2.2.13 - 2025-09-12
 
 #### Added

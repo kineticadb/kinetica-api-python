@@ -60,10 +60,10 @@ class GPUdbFileHandler(object):
 
     Methods
     -------
-    1. upload_files - Upload a list of files - :py:meth:`gpudb.GPUdbFileHandler.upload_files(file_names: list, kifs_path: str)`
-    2. upload_file - Upload a single file - :py:meth:`upload_file(file_name: str, kifs_path: str)`
-    3. download_files - Download a list of files - :py:meth:`download_files(file_names: list, local_dir: str)`
-    4. download_file - Download a single file - :py:meth:`download_file(file_name: str, local_dir: str)`
+    1. upload_files - Upload a list of files - :meth:`upload_files`
+    2. upload_file - Upload a single file - :meth:`upload_file`
+    3. download_files - Download a list of files - :meth:`download_files`
+    4. download_file - Download a single file - :meth:`download_file`
 
     Example
     ::
@@ -76,9 +76,10 @@ class GPUdbFileHandler(object):
     """
     
     def __init__(self, db: GPUdb) -> None:
-        """
+        """ Initialize a :class:`GPUdbFileHandler`.
+
         Args:
-            db (GPUdb): A GPUdb instance
+            db (GPUdb): A :class:`GPUdb` instance
             
         """
 
@@ -87,20 +88,20 @@ class GPUdbFileHandler(object):
 
     @classmethod
     def __from(cls, db: GPUdb):
-        """Create an instance of GPUdbFileHandler
+        """ Create an instance of :class:`GPUdbFileHandler` from a :class:`GPUdb` instance.
 
         Args:
-            db (GPUdb): A GPUdb instance
+            db (GPUdb): A :class:`GPUdb` instance
 
         Returns:
-            GPUdbFileHandler: a GPUdbFileHandler instance
+            GPUdbFileHandler: a :class:`GPUdbFileHandler` instance
         """
         return cls(db)
     
 
     @classmethod
     def from_url_info(cls, host: str = "http://127.0.0.1:9191", username: str = None, password: str = None):
-        """Method to create a GPUdbFileHandler instance given a host string, user name and password
+        """ Create a :class:`GPUdbFileHandler` instance from a host URL, user name, and password.
 
         Args:
             host (str, optional): A Kinetica host URL. Defaults to "http://127.0.0.1:9191".
@@ -108,7 +109,7 @@ class GPUdbFileHandler(object):
             password (str, optional): Password for the user. Defaults to None.
 
         Returns:
-            GPUdbFileHandler: a GPUdbFileHandler instance
+            GPUdbFileHandler: a :class:`GPUdbFileHandler` instance
         """
         options = GPUdb.Options()
         options.username = username
@@ -120,13 +121,13 @@ class GPUdbFileHandler(object):
     
     @classmethod
     def from_db_instance(cls, db: GPUdb):
-        """Method to create a GPUdbFileHandler instance given a GPUdb instance
+        """ Create a :class:`GPUdbFileHandler` from a :class:`GPUdb` instance.
 
         Args:
-            db (GPUdb): a GPUdb instance
+            db (GPUdb): a :class:`GPUdb` instance
 
         Returns:
-            GPUdbFileHandler: a GPUdbFileHandler instance
+            GPUdbFileHandler: a :class:`GPUdbFileHandler` instance
         """
         return cls.__from(db)
 
@@ -226,7 +227,7 @@ class GPUdbFileHandler(object):
 
     
     def upload_file(self, file_name: str, kifs_path: str) -> None:
-        """API to upload a single file to a KIFS directory
+        """ Upload a single file to a KIFS directory.
 
         Args:
             file_name (str): Full path to the local file to upload
@@ -244,7 +245,7 @@ class GPUdbFileHandler(object):
 
     
     def upload_files(self, file_names: list, kifs_path: str) -> None:
-        """API to upload a list of files to a KIFS directory
+        """ Upload a list of files to a KIFS directory.
 
         Args:
             file_names (list): List of full local file paths
@@ -278,7 +279,7 @@ class GPUdbFileHandler(object):
     
     
     def download_file(self, file_name: str, local_dir: str) -> None:
-        """API to download a single file to a local directory
+        """ Download a single file to a local directory.
             A large file greater than 60MB in size will be downloaded in parts.
 
         Args:
@@ -300,14 +301,15 @@ class GPUdbFileHandler(object):
 
     
     def download_files(self, file_names: list, local_dir: str) -> None:
-        """API to download a list of file from KIFS
+        """ Download a list of files from KIFS.
 
         Args:
             file_names (list): A list of file names (full KIFS paths)
             local_dir (str): Name of the local directory to save the files in
 
         Raises:
-            gpudb.GPUdbException: _description_
+            gpudb.GPUdbException: In case of an exception thrown by the server or in case the 
+                                    local directory doesn't exist
         """
         if not self.__check_local_dir(local_dir):
             raise gpudb.GPUdbException("Local directory does not exist; cannot download ...")
@@ -317,13 +319,14 @@ class GPUdbFileHandler(object):
 
     
     def __check_local_dir(self, local_dir: str) -> bool:
-        """used for downloading files
+        """ Determine whether the given path is an existing local directory.
 
         Args:
-            local_dir (str): _description_
+            local_dir (str): Local directory path, whose existence on the file system will be
+                             determined
 
         Returns:
-            bool: _description_
+            bool: Whether or not the given directory exists on the local file system
         """
         return os.path.isdir(local_dir)
     

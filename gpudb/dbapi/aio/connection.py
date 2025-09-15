@@ -44,7 +44,9 @@ class AsyncKineticaConnection(aiopep249.AsyncCursorExecuteMixin, aiopep249.Async
             username (Optional[str], optional): the Kinetica username; has to be keyword only. Defaults to None.
             password (Optional[str], optional): the Kinetica password; has to be keyword only. Defaults to None.
             oauth_token (Optional[str], optional): the oauth2 token; has to be keyword only. Defaults to None.
-            connection_options (Optional[dict], optional): Defaults to None.
+            connection_options (Optional[dict], optional): Defaults to None.  Possible keys are:
+                bypass_ssl_cert_check [True|False] to turn on/off SSL certificate checking and logging_level
+                [ERROR|WARNING|INFO|DEBUG|TRACE] to set the Kinetica Python API log level.
 
         Raises:
             ProgrammingError: Raised in case of incorrect parameters passed in
@@ -63,10 +65,12 @@ class AsyncKineticaConnection(aiopep249.AsyncCursorExecuteMixin, aiopep249.Async
         if oauth_token and len(oauth_token) > 0:
             options.oauth_token = oauth_token
 
-        if connection_options and "bypass_ssl_cert_check" in connection_options:
-            options.skip_ssl_cert_verification = connection_options[
-                "bypass_ssl_cert_check"
-            ]
+        if connection_options:
+            if "bypass_ssl_cert_check" in connection_options:
+                options.skip_ssl_cert_verification = connection_options["bypass_ssl_cert_check"]
+
+            if "logging_level" in connection_options:
+                options.logging_level = connection_options["logging_level"]
 
         self._connection = GPUdb(host=url, options=options)
 

@@ -7,9 +7,9 @@ import pandas as pd
 from datetime import datetime
 
 # Configuration
-KINETICA_URL = os.getenv("KINETICA_URL", "http://192.168.16.2:9191")  # Replace with your Kinetica instance URL
-USERNAME = os.getenv("USERNAME", "admin")  # Replace with your username
-PASSWORD = os.getenv("PASSWORD", "Kinetica1.")  # Replace with your password
+KINETICA_URL = os.getenv("KINETICA_URL", "http://localhost:9191")  # Replace with your Kinetica instance URL
+USERNAME = os.getenv("USERNAME", "")  # Replace with your username
+PASSWORD = os.getenv("PASSWORD", "")  # Replace with your password
 TABLE_NAME = "employees"
 
 def connect_to_kinetica() -> Optional[GPUdb]:

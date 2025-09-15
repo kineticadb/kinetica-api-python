@@ -11,7 +11,7 @@ from typing import Optional, List, Tuple, Dict
 
 
 class GPUdbBaseClause:
-    """ Base class for SQL context clauses. """
+    """ Base class for SQL-GPT context clauses. """
 
     def __str__(self) -> str:
         return self.format_sql()
@@ -22,19 +22,34 @@ class GPUdbBaseClause:
 
 
 class GPUdbSamplesClause(GPUdbBaseClause):
-    """ This class is used to format the samples clause of a SQL Context.
+    """ A :class:`GPUdbSamplesClause` represents the samples clause of a SQL-GPT context and can
+    convert its contents to the SQL form expected by a ``CREATE CONTEXT`` statement.
 
-    Example
-    ::
-        table_ctx = GPUdbBaseClause(
-            table = "sa_quickstart.nyct2020",
-            comment = "This table contains spatial boundaries and attributes of the New York City.",
-            col_comments = dict(
-                gid="This is the unique identifer for each record in the table.",
-                geom="The spatial boundary in WKT format of each NTA neighborhood.",
-                BoroCode="The code of the borough to which the neighborhood belongs to."),
-            rules = ["Join this table using KI_FN.STXY_WITHIN() = 1",
-                    "Another rule here"])
+    Example::
+
+        samples_ctx = GPUdbSamplesClause(samples = [
+            ("What are the shortest, average, and longest trip lengths for each taxi vendor?",
+            \"\"\"
+            SELECT
+                th.vendor_id,
+                MIN(th.trip_distance) AS shortest_trip_length,
+                AVG(th.h.trip_distance) AS average_trip_length,
+                MAX(th.trip_distance) AS longest_trip_length
+            FROM sa_quickstart.taxi_data_historical AS th
+            GROUP BY th.vendor_id;
+            \"\"\"),
+
+            ("How many trips did each taxi vendor make to JFK International Airport?",
+            \"\"\"
+            SELECT
+                th.vendor_id,
+                COUNT(*) AS trip_count
+            FROM sa_quickstart.taxi_data_historical AS th
+            JOIN sa_quickstart.nyct2020 AS n_dropoff ON KI_FN.STXY_WITHIN(th.dropoff_longitude, th.dropoff_latitude, n_dropoff.geom)
+            AND n_dropoff.NTAName = 'John F. Kennedy International Airport'
+            GROUP BY th.vendor_id;
+            \"\"\"),
+            ])
     """
 
     def __init__(self, samples: Optional[List[Tuple[str, str]]] = None) -> None:
@@ -55,31 +70,20 @@ class GPUdbSamplesClause(GPUdbBaseClause):
 
 
 class GPUdbTableClause(GPUdbBaseClause):
-    """ This class is used to format the table clause section of a SQL context.
+    """ A :class:`GPUdbTableClause` represents the table clause of a SQL-GPT context and can convert
+    its contents to the SQL form expected by a ``CREATE CONTEXT`` statement.
 
-    Example
-    ::
-        samples_ctx = GPUdbBaseClause(samples = [
-            ("What are the shortest, average, and longest trip lengths for each taxi vendor?",
-            ""
-            SELECT th.vendor_id,
-                MIN(th.trip_distance) AS shortest_trip_length,
-                AVG(th.h.trip_distance) AS average_trip_length,
-                MAX(th.trip_distance) AS longest_trip_length
-            FROM sa_quickstart.taxi_data_historical AS th
-            GROUP BY th.vendor_id;
-            ""),
+    Example::
 
-            ("How many trips did each taxi vendor make to JFK International Airport?",
-            ""
-            SELECT th.vendor_id,
-                COUNT(*) AS trip_count
-            FROM sa_quickstart.taxi_data_historical AS th
-            JOIN sa_quickstart.nyct2020 AS n_dropoff ON KI_FN.STXY_WITHIN(th.dropoff_longitude, th.dropoff_latitude, n_dropoff.geom)
-            AND n_dropoff.NTAName = 'John F. Kennedy International Airport'
-            GROUP BY th.vendor_id;
-            ""),
-            ])
+        table_ctx = GPUdbTableClause(
+            table = "sa_quickstart.nyct2020",
+            comment = "This table contains spatial boundaries and attributes of the New York City.",
+            col_comments = dict(
+                gid = "This is the unique identifier for each record in the table.",
+                geom = "The spatial boundary in WKT format of each NTA neighborhood.",
+                BoroCode = "The code of the borough to which the neighborhood belongs to."),
+            rules = ["Join this table using STXY_WITHIN() = 1",
+                    "Another rule here"])
     """
 
     def __init__(self,
@@ -99,7 +103,7 @@ class GPUdbTableClause(GPUdbBaseClause):
                 A list of rules that apply to the table.
 
             col_comments (dict[str,str])
-                A dictionary with mapping of column names to colums comments.
+                A dictionary with mapping of column names to column comments.
         """
         if (comment is None):
             comment = ""
@@ -124,22 +128,22 @@ class GPUdbTableClause(GPUdbBaseClause):
 
 
 class _GPUdbSqlContextFormatter:
-    """ Formatter to generate a SQL context from clauses.  """
+    """ Formatter to generate a SQL-GPT context from clauses.  """
 
     @classmethod
     def format_sql(cls, name: str, ctx_list: List[GPUdbBaseClause]) -> str:
-        """ Format a list of SQL clauses as a CREATE CONTEXT statement. 
-        The result can be passed to GPUDB.execute() to create the context.
+        """ Format a list of SQL clauses as a ``CREATE CONTEXT`` statement. 
+        The result can be passed to :meth:`GPUDB.execute` to create the context.
 
         Args:
             name (str):
                 Fully qualified name of the context. (e.g. "schema.context")
 
-            ctx_list (list[BaseClause]):
+            ctx_list (list[GPUdbBaseClause]):
                 List of SQL clauses to include in the context.
 
         Returns (str):
-            The formatted CREATE CONTEXT statement.
+            The formatted ``CREATE CONTEXT`` statement.
         """
 
         str_list = [ctx.format_sql() for ctx in ctx_list]
@@ -197,14 +201,16 @@ class _GPUdbSqlContextFormatter:
 
 
 class GPUdbSqlContext:
-    """ Represents a collection of clauses that make a SQL Context. 
+    """ Represents a collection of clauses that comprise a SQL-GPT context.
     
-    Example:
-    ::
-        context_sql = GPUdbSqlContext(
-            name="sa_quickstart.nyc_ctx", 
-            tables=[table_ctx],
-            samples=samples_ctx).format_sql()
+    Example::
+
+        sql_context = GPUdbSqlContext(
+            name = "sa_quickstart.nyc_ctx", 
+            tables = [table_ctx],
+            samples = samples_ctx)
+        create_context_sql = sql_context.build_sql()
+        db.execute(create_context_sql)
     """
 
     def __init__(self,
@@ -216,11 +222,13 @@ class GPUdbSqlContext:
             name (str):
                 Fully qualified name of the context. (e.g. "schema.context")
 
-            tables (list[TableClause]):
-                A list of table clauses.
+            tables (list[GPUdbTableClause]):
+                A list of :class:`GPUdbTableClause` objects representing the Kinetica tables
+                (and metadata) referenced in this context.
 
-            samples (SamplesClause):
-                The samples clause that provides question/answer pairs.
+            samples (GPUdbSamplesClause):
+                A :class:`GPUdbSamplesClause` object representing query/answer pairs
+                referenced in this context.
         """
         self.name = name
         self.samples = samples
@@ -230,11 +238,11 @@ class GPUdbSqlContext:
         return f"SqlContext(name={self.name})"
 
     def build_sql(self) -> str:
-        """ Format a list of SQL clauses as a CREATE CONTEXT statement. 
-        The result can be passed to GPUDB.execute() to create the context.
+        """ Format this :class:`GPUdbSqlContext` as a SQL ``CREATE CONTEXT`` statement. 
+        The result can be passed to :meth:`GPUDB.execute` to create the context.
 
         Returns (str):
-            The formatted CREATE CONTEXT statement.
+            The SQL-formatted ``CREATE CONTEXT`` statement.
         """
         ctx_list: List[GPUdbBaseClause] = []
 

@@ -17,10 +17,6 @@ import sys
 import traceback
 from typing import Union, Optional
 
-# We'll need to do python 2 vs. 3 things in many places
-IS_PYTHON_3 = (sys.version_info[0] >= 3) # checking the major component
-IS_PYTHON_27_OR_ABOVE = sys.version_info >= (2, 7)
-
 
 try:                   # Installed
     from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, RecordType, _Util, AttrDict
@@ -58,7 +54,7 @@ except:
     # The absolute path of this gpudb.py module for importing local packages
     gpudb_module_path = os.path.dirname(os.path.abspath(__file__))
 
-    # Search for our modules first, probably don't need imp or virt envs.
+    # Search for our modules first.
     if not gpudb_module_path + "/packages" in sys.path :
         sys.path.append(gpudb_module_path + "/packages")
 

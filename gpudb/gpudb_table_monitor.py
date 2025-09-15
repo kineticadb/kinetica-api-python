@@ -861,17 +861,15 @@ class GPUdbTableMonitor(object):
         @property
         def event_callback(self):
             """
-            Getter for the `__event_callback` field
-            Used to call the method pointed to once an event is received
+            Get the method pointed to when an event is received
             """
             return self.__event_callback
 
         @property
         def error_callback(self):
             """
-            Getter for the `__error_callback` field
-            Used to call the method pointed to in case of an error related to
-            the callback_type of this class.
+            Get the method pointed to when an error related to
+            the :attr:`callback_type` of this class occurs.
             """
             return self.__error_callback
 
@@ -944,9 +942,7 @@ class GPUdbTableMonitor(object):
 
             @property
             def decode_failure_mode(self):
-                """Getter method
-
-                Return the __decode_failure_mode value.
+                """Get the decode failure mode value.
                 """
                 return self.__decode_failure_mode
 
@@ -1012,7 +1008,7 @@ class GPUdbTableMonitor(object):
             decoding according to the table schema. This is used to create an
             insert monitor internally. The user will get the notification
             through the callback method pointed to by the `event_callback`
-            property of :class:`.Callback. The inserted records will be returned
+            property of :class:`.Callback`. The inserted records will be returned
             as a dict as an argument to the `event_callback`.
 
             .. seealso:: :class:`.Client`
@@ -1245,7 +1241,7 @@ class _BaseTask(threading.Thread):
         so that decoding of the messages received could be done.
 
         Returns:
-            True or False
+            Whether the table monitor creation succeeded
 
         """
         try:

@@ -93,7 +93,7 @@ def connect(
         raise ProgrammingError("'connection_string' has to be 'kinetica://'")
 
     connection_args = kwargs.pop("connect_args", None)
-
+    
     if connection_args:
         kwargs.update(connection_args)
 

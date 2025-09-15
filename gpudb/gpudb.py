@@ -14,31 +14,23 @@
 from __future__ import print_function
 import struct
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from typing import Any, List, Union
 import typing
 import functools
 import warnings
 
+from io import BytesIO
 
-
-try:
-    from io import BytesIO
-except:
-    from cStringIO import StringIO as BytesIO
-
-try:
-    #python2
-    from urllib import urlencode
-except ImportError:
-    #python3
-    from urllib.parse import urlencode
-
-import base64
-import copy
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+from urllib.parse import urlencode
+from urllib.parse import urlparse
+
+import base64
+import copy
 import os
 import inspect
 import json
@@ -50,23 +42,13 @@ import sys
 import time
 import traceback
 import uuid
-
 from decimal import Decimal
 
-# We'll need to do python 2 vs. 3 things in many places
-IS_PYTHON_3 = (sys.version_info[0] >= 3) # checking the major component
-IS_PYTHON_27_OR_ABOVE = sys.version_info >= (2, 7)
+import collections
+from collections.abc import Iterator
 
-if IS_PYTHON_3:
-    long = int
-    basestring = str
-    class unicode:
-        """Ensure Python 3 doesn't complain about use of Unicode."""
-        pass
-    from collections.abc import Iterator
-else:
-    from collections import Iterator
-# end if
+long = int
+basestring = str
 
 
 # ---------------------------------------------------------------------------
@@ -95,16 +77,11 @@ except ImportError:
     import packages.enum34 as enum
 
 
-if IS_PYTHON_27_OR_ABOVE:
-    import collections
-else:
-    import ordereddict as collections # a separate package
 
 
 # Override some python3 avro things
-if IS_PYTHON_3:
-    schema.parse = schema.Parse
-    schema.RecordSchema.fields_dict = schema.RecordSchema.field_map
+schema.parse = schema.Parse
+schema.RecordSchema.fields_dict = schema.RecordSchema.field_map
 
 
 # Python 3.6 & below have re._pattern_type; 3.7 & above have re.Pattern
@@ -129,7 +106,6 @@ except ImportError:    # Local
 # -----------------------------------------------------------------
 # Logging -- Add a trace method
 # -----------------------------
-logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.TRACE = 9
 logging.addLevelName( logging.TRACE, "TRACE" )
 
@@ -253,38 +229,20 @@ class C:
 # ---------------------------------------------------------------------------
 class GPUdbException( Exception ):
 
-    # We need to handle the given exception differenlty for different pythons
-    if IS_PYTHON_3:
-        def __init__( self, value, had_connection_failure = False ):
-            self.value = value
-            self.__had_connection_failure = had_connection_failure
-            if isinstance(value, (basestring, unicode)):
-                # We got a message only
-                self.message = value
-                self.traceback_msg = ""
-            elif isinstance(value, Exception):
-                # Preserve the message and also the stack trace
-                self.message = value.args[0]
-                self.traceback_msg = "".join( traceback.format_exception( sys.exc_info()[0],
-                                                                          sys.exc_info()[1],
-                                                                          sys.exc_info()[2] ) )
-        # end __init__
-    else:
-        def __init__( self, value, had_connection_failure = False ):
-            self.value = value
-            self.__had_connection_failure = had_connection_failure
-            if isinstance(value, (basestring, unicode)):
-                # We got a message only
-                self.message = value
-                self.traceback_msg = ""
-            elif isinstance(value, Exception):
-                # Preserve the message and also the stack trace
-                self.message = value.message
-                self.traceback_msg = "".join( traceback.format_exception( sys.exc_info()[0],
-                                                                          sys.exc_info()[1],
-                                                                          sys.exc_info()[2] ) )
-        # end __init__
-    # end if
+    def __init__( self, value, had_connection_failure = False ):
+        self.value = value
+        self.__had_connection_failure = had_connection_failure
+        if isinstance(value, str):
+            # We got a message only
+            self.message = value
+            self.traceback_msg = ""
+        elif isinstance(value, Exception):
+            # Preserve the message and also the stack trace
+            self.message = value.args[0]
+            self.traceback_msg = "".join( traceback.format_exception( sys.exc_info()[0],
+                                                                      sys.exc_info()[1],
+                                                                      sys.exc_info()[2] ) )
+    # end __init__
 
     def __str__( self ):
         return repr( self.value )
@@ -480,7 +438,7 @@ class GPUdbUnauthorizedAccessException( GPUdbException ):
 class _ConnectionToken(object):
     """Internal wrapper class to handle multiple server logic."""
     def __init__(self, host, port = 9191, host_manager_port = 9300, connection = "http"):
-        if not isinstance(host, (basestring, unicode)):
+        if not isinstance(host, str):
             raise GPUdbException( "Expected a string host address, got: '"+str(host)+"'" )
 
         # host may take the form of :
@@ -519,7 +477,7 @@ class _ConnectionToken(object):
                 password = user_pass_list[1]
 
         url_path = ""
-        # Find the URL /path/ and remove it to get the ip address.
+        # Find the URL /path/ and remove it to get the IP address.
         host_path_pos = host.find('/')
         if host_path_pos != -1:
             url_path = host[host_path_pos:]
@@ -527,7 +485,7 @@ class _ConnectionToken(object):
                 url_path = url_path[:-1]
             host = host[:host_path_pos]
 
-        # Override default port if specified in ip address
+        # Override default port if specified in IP address
         host_port_pos = host.find(':')
         if host_port_pos != -1 :
             port = host[host_port_pos+1:]
@@ -610,6 +568,44 @@ GPUdbRecordColumn = typing.NewType("GPUdbRecordColumn", object)
 GPUdbRecordType = typing.NewType("GPUdbRecordType", object)
 
 # ---------------------------------------------------------------------------
+# Utility Classes
+# ---------------------------------------------------------------------------
+class AttrDict(dict):
+    """Converts a dictionary into a class object such that the entries in the
+    dict can be accessed using dot '.' notation.
+    """
+    def __init__(self, *args, **kwargs):
+        super(AttrDict, self).__init__(*args, **kwargs)
+        self.__dict__ = self
+    # end init
+
+    def is_ok( self ):
+        """Returns True if the response object's status is OK."""
+        try:
+            return self.__dict__['status_info']['status'] == 'OK'
+        except KeyError as ex:
+            raise GPUdbException( "Unknown wrapped object; could not find "
+                                  " the following key: {}"
+                                  "".format( GPUdbException.stringify_exception( ex ) ) )
+    # end is_ok
+
+
+    def get_error_msg( self ):
+        """Returns the error message for the query, if any.  None otherwise."""
+        try:
+            if self.__dict__['status_info']['status'] != 'ERROR':
+                return None
+            return self.__dict__['status_info']['message']
+        except KeyError as ex:
+            raise GPUdbException( "Unknown wrapped object; could not find "
+                                  " the following key: {}"
+                                  "".format( GPUdbException.stringify_exception( ex ) ) )
+    # end get_error_msg
+
+
+# end class AttrDict
+
+# ---------------------------------------------------------------------------
 # Utility Functions
 # ---------------------------------------------------------------------------
 class _Util(object):
@@ -637,7 +633,7 @@ class _Util(object):
 
         Returns:
             object: the converted value
-        """        
+        """
         converted_column_value: Any = None
         if column.is_json() and not isinstance(column_value, str):
             # convert to JSON string only if not already a string
@@ -669,11 +665,14 @@ class _Util(object):
                 dims = column.get_vector_dimensions()
                 # pack as bytes
                 converted_column_value = struct.pack("%sf" % dims, *column_value)
+        else:
+            if isinstance(column_value, float) and column.column_type == "string" and GPUdbColumnProperty.TIME in column.column_properties:
+                converted_column_value = datetime.fromtimestamp(column_value).strftime('%H:%M:%S')
 
         if converted_column_value:
             column_value = converted_column_value
         return column_value
-    
+
     @staticmethod
     def _convert_value_on_retrieval(column_value: Any, column: GPUdbRecordColumn) -> object:
         """Convert column value after reading from table for array, json and vector types
@@ -687,7 +686,7 @@ class _Util(object):
 
         Returns:
             object: the converted value
-        """        
+        """
         converted_column_value: Any = None
         if column.is_json():
             if isinstance(column_value, str):
@@ -737,33 +736,17 @@ class _Util(object):
         return isinstance( arg, ( list, dict, collections.OrderedDict ) )
     # end is_list_or_dict
 
-    if IS_PYTHON_3:
-        # Declaring the python 3 version of this static method
-        @staticmethod
-        def str_to_bytes(value):
-            return bytes( ord(b) for b in value )
-        # end str_to_bytes
-    else:
-        # Declaring the python 2 version of this static method
-        @staticmethod
-        def str_to_bytes(value):
-            if isinstance(value, unicode):
-                data = bytes()
-                for c in value:
-                    data += chr(ord(c))
-                return data
-            else:
-                # The python 2 output
-                return value
-        # end str_to_bytes
-    # end py 2 vs. 3
+    @staticmethod
+    def str_to_bytes(value):
+        return bytes( ord(b) for b in value )
+    # end str_to_bytes
 
 
     @staticmethod
     def ensure_bytes(value):
         if isinstance(value, bytes) and not isinstance(value, str):
             return value
-        elif isinstance(value, basestring):
+        elif isinstance(value, str):
             return _Util.str_to_bytes(value)
         else:
             raise Exception("Unhandled data type: " + str(type(value)))
@@ -778,11 +761,7 @@ class _Util(object):
 
     @staticmethod
     def ensure_str(value):
-        if isinstance(value, basestring):
-            if ( ( not isinstance(value, unicode) )
-                 and (not IS_PYTHON_3) ): # Python 2
-                return unicode( value, 'utf-8' )
-            # Python 3
+        if isinstance(value, str):
             return value
         elif isinstance(value, bytes):
             return _Util.bytes_to_str(value)
@@ -921,7 +900,7 @@ class _Util(object):
                     # A GPUdbRecord ; get the (column name, column value) pairs
                     obj = obj.data
                 elif isinstance( obj, list ):
-                    # A list is given; create (col name, col value) pairs; using the dict constructor
+                    # A list is given; create (column name, column value) pairs; using the dict constructor
                     # to support python 2.6)
                     obj = dict( [ (record_type[ i ].name, col_val) for (i, col_val) in enumerate( obj ) ] )
                     # obj = { record_type[ i ].name: col_val for (i, col_val) in enumerate( obj ) }
@@ -935,27 +914,17 @@ class _Util(object):
                 record = Record( record_type )
                 for column in record_type:
                     col_name = column.name
-                    col_value = obj[ col_name ]
 
                     # Handle nulls
-                    if col_value is None:
-                        record[ col_name ] = col_value
-                        continue
-                    # end if
+                    if col_name not in obj:
+                        col_value = None
+                    else:
+                        col_value = obj[ col_name ]
+                        if col_value is not None:
+                            col_data_type = column.data_type
 
-                    # Get column data type
-                    col_data_type = column.data_type
-
-                    # Handle unicode
-                    if (col_data_type.lower() == "string"):
-                        if (not IS_PYTHON_3):
-                            col_value = _Util.ensure_str( col_value )
-                    elif (col_data_type.lower() == "decimal"): # Handle decimal
-                        raise GPUdbException("TODO: *********type 'decimal' not supported yet*********")
-                    elif (col_data_type.lower() == "ipv4"): # Handle IPv4
-                        raise GPUdbException("TODO: *********type 'ipv4' not supported yet*********")
-                    elif (col_data_type.lower() == "bytes"):
-                        col_value = _Util.ensure_bytes( col_value )
+                            if (col_data_type.lower() == "bytes"):
+                                col_value = _Util.ensure_bytes( col_value )
 
                     record[ col_name ] = col_value
                 # end inner loop
@@ -979,7 +948,7 @@ class _Util(object):
     # Override datetime's strftime which in python does not accept
     # years before 1900--how annoying!
 
-    # remove the unsupposed "%s" command.  But don't
+    # remove the unsupported "%s" command.  But don't
     # do it if there's an even number of %s before the s
     # because those are all escaped.  Can't simply
     # remove the s because the result of
@@ -1149,46 +1118,55 @@ class _Util(object):
         return converted_records
     # end convert_cext_records_to_ordered_dicts
 
+    @staticmethod
+    def _convert_to_attrdict(obj: Any) -> Any:
+        """
+        Recursively convert dictionaries to AttrDict objects.
+
+        Args:
+            obj: Any Python object
+
+        Returns:
+            Object with dictionaries converted to AttrDict
+        """
+        if isinstance(obj, dict):
+            # Convert dictionary to AttrDict and recursively process values
+            return AttrDict({key: _Util._convert_to_attrdict(value) for key, value in obj.items()})
+        elif isinstance(obj, list):
+            # Recursively process list items
+            return [_Util._convert_to_attrdict(item) for item in obj]
+        else:
+            # Return primitive types as-is
+            return obj
+
+    @staticmethod
+    def json_to_attrdict(json_string: str) -> AttrDict:
+        """
+        Convert a JSON string to an AttrDict.
+
+        Args:
+            json_string: JSON formatted string
+
+        Returns:
+            AttrDict object with nested dictionaries also converted to AttrDict
+
+        Raises:
+            json.JSONDecodeError: If the JSON string is invalid
+            TypeError: If the JSON doesn't decode to a dictionary
+        """
+        try:
+            # Parse JSON string to Python object
+            data = json.loads(json_string)
+
+            # Convert to AttrDict recursively
+            return _Util._convert_to_attrdict(data)
+
+        except json.JSONDecodeError as e:
+            raise json.JSONDecodeError(f"Invalid JSON string: {e}", e.doc, e.pos)
+
+
 
 # end class _Util
-
-# ---------------------------------------------------------------------------
-# Utility Classes
-# ---------------------------------------------------------------------------
-class AttrDict(dict):
-    """Converts a dictionary into a class object such that the entries in the
-    dict can be accessed using dot '.' notation.
-    """
-    def __init__(self, *args, **kwargs):
-        super(AttrDict, self).__init__(*args, **kwargs)
-        self.__dict__ = self
-    # end init
-
-    def is_ok( self ):
-        """Returns True if the response object's status is OK."""
-        try:
-            return (self.__dict__['status_info']['status'] == 'OK')
-        except KeyError as ex:
-            raise GPUdbException( "Unknown wrapped object; could not find "
-                                  " the following key: {}"
-                                  "".format( GPUdbException.stringify_exception( ex ) ) )
-    # end is_ok
-
-
-    def get_error_msg( self ):
-        """Returns the error message for the query, if any.  None otherwise."""
-        try:
-            if (self.__dict__['status_info']['status'] != 'ERROR'):
-                return None
-            return self.__dict__['status_info']['message']
-        except KeyError as ex:
-            raise GPUdbException( "Unknown wrapped object; could not find "
-                                  " the following key: {}"
-                                  "".format( GPUdbException.stringify_exception( ex ) ) )
-    # end get_error_msg
-
-
-# end class AttrDict
 
 
 # ---------------------------------------------------------------------------
@@ -1210,15 +1188,13 @@ class GPUdbColumnProperty(object):
     TEXT_SEARCH = "text_search"
     """str: Valid only for select 'string' columns. Enables full text
     search--see `Full Text Search <../../../../concepts/full_text_search/>`__
-    for details and applicable string column types. Can be set independently of
-    *data* and *store_only*.
+    for details and applicable string column types.
     """
 
     STORE_ONLY = "store_only"
     """str: Persist the column value but do not make it available to queries
-    (e.g. :meth:`GPUdb.filter`)-i.e. it is mutually exclusive to the *data*
-    property. Any 'bytes' type column must have a *store_only* property. This
-    property reduces system memory usage.
+    (e.g. :meth:`GPUdb.filter`)-i.e. it is mutually exclusive with the *data*
+    property. This property reduces system memory usage.
     """
 
     DISK_OPTIMIZED = "disk_optimized"
@@ -1403,15 +1379,23 @@ class GPUdbColumnProperty(object):
     """str: This property indicates that this column is nullable.  However,
     setting this property is insufficient for making the column nullable.  The
     user must declare the type of the column as a union between its regular
-    type and 'null' in the avro schema for the record type in input parameter
+    type and 'null' in the Avro schema for the record type in input parameter
     *type_definition*.  For example, if a column is of type integer and is
-    nullable, then the entry for the column in the avro schema must be: ['int',
+    nullable, then the entry for the column in the Avro schema must be: ['int',
     'null'].
 
     The C++, C#, Java, and Python APIs have built-in convenience for bypassing
-    setting the avro schema by hand.  For those languages, one can use this
-    property as usual and not have to worry about the avro schema for the
+    setting the Avro schema by hand.  For those languages, one can use this
+    property as usual and not have to worry about the Avro schema for the
     record.
+    """
+
+    COMPRESS = "compress"
+    """str: This property indicates that this column should be `compressed
+    <../../../../concepts/column_compression/>`__ with the given codec and
+    optional level; e.g., 'compress(snappy)' for Snappy compression and
+    'compress(zstd(7))' for zstd level 7 compression.  This property is
+    primarily used in order to save disk space.
     """
 
     DICT = "dict"
@@ -1461,7 +1445,7 @@ class GPUdbRecordColumn(object):
     # end class _ColumnType
 
 
-    # The allowe data types
+    # The allowed data types
     _allowed_data_types = [ _ColumnType.INT,
                             _ColumnType.LONG,
                             _ColumnType.FLOAT,
@@ -1515,7 +1499,7 @@ class GPUdbRecordColumn(object):
         self._name = name
 
         # Validate and save the data type
-        if not isinstance( column_type, (basestring, unicode) ):
+        if not isinstance( column_type, str ):
             raise GPUdbException( "Data type must be a string, given {}"
                                   "".format( str(type( column_type )) ) )
 
@@ -1529,12 +1513,12 @@ class GPUdbRecordColumn(object):
         self._column_type = column_type
 
         # Validate and save the column properties
-        if not column_properties: # it's ok to not have any
+        if not column_properties: # it's OK to not have any
             column_properties = []
         if not isinstance( column_properties, list ):
             raise GPUdbException( "'column_properties' must be a list; given "
                                   + str(type(column_properties)) )
-        if not all( isinstance( prop, (basestring, unicode) )
+        if not all( isinstance( prop, str )
                     for prop in column_properties ):
             raise GPUdbException( "'column_properties' must contain strings only; "
                                   "given {}"
@@ -1558,7 +1542,7 @@ class GPUdbRecordColumn(object):
             raise GPUdbException( "'is_nullable' must be a boolean value; given " + repr(type(is_nullable)) )
         if (is_nullable == True):
             self._is_nullable = True
-            # Enter the 'nullable' property into the list of propertie, even though
+            # Enter the 'nullable' property into the list of properties, even though
             # GPUdb doesn't actually use it (make sure not to make duplicates)
             if (GPUdbColumnProperty.NULLABLE not in self._column_properties):
                 self._column_properties.append( GPUdbColumnProperty.NULLABLE )
@@ -1605,11 +1589,11 @@ class GPUdbRecordColumn(object):
         return False
 
     def all_numeric_array_types(self):
-        return [GPUdbRecordColumn._ColumnType.INT, 
-                GPUdbRecordColumn._ColumnType.LONG, 
-                GPUdbRecordColumn._ColumnType.FLOAT, 
+        return [GPUdbRecordColumn._ColumnType.INT,
+                GPUdbRecordColumn._ColumnType.LONG,
+                GPUdbRecordColumn._ColumnType.FLOAT,
                 GPUdbRecordColumn._ColumnType.DOUBLE]
-    
+
     def get_array_type(self):
         for prop in self._column_properties:
             if prop.startswith(GPUdbColumnProperty.ARRAY):
@@ -1721,14 +1705,14 @@ class GPUdbRecordType(object):
                 columns is given.
         """
         # Validate and save the label
-        if not isinstance( label, basestring ):
+        if not isinstance( label, str ):
             raise GPUdbException( "Column label must be a string; given " + str(type( label )) )
         self._label = label
         self._vector_type_names: dict[int, str] = {}
         self._array_type_names: dict[int, str] = {}
         self._json_type_names: dict[int, str] = {}
 
-        # The server always uses this hardcoded name and trumps any label
+        # The server always uses this hard-coded name and trumps any label
         self.name = "type_name"
 
         # Either columns or schema_string must be given, but not both!
@@ -1990,15 +1974,15 @@ class GPUdbRecordType(object):
     @property
     def array_type_names(self) -> dict:
         return self._array_type_names
-    
+
     @property
     def array_type_names_indices(self) -> set:
         return self._array_type_names.keys()
-    
+
     @property
     def array_type_names_values(self) -> list:
         return list(self._array_type_names.values())
-    
+
     @property
     def json_type_names(self) -> dict:
         return self._json_type_names
@@ -2006,7 +1990,7 @@ class GPUdbRecordType(object):
     @property
     def json_type_names_indices(self) -> set:
         return self._json_type_names.keys()
-    
+
     @property
     def json_type_names_values(self) -> list:
         return list(self._json_type_names.values())
@@ -2018,7 +2002,7 @@ class GPUdbRecordType(object):
     @property
     def vector_type_names_indices(self) -> set:
         return self._vector_type_names.keys()
-    
+
     @property
     def vector_type_names_values(self) -> list:
         return list(self._vector_type_names.values())
@@ -2104,13 +2088,13 @@ class GPUdbRecordType(object):
         Returns:
             The GPUdbRecordColumn object pertaining to the desired column.
         """
-        if not isinstance( column_id, (basestring, unicode, int) ):
+        if not isinstance( column_id, (str, int) ):
             raise GPUdbException( "Parameter 'column_id' must be a string "
                                   "or an integer; given '{}'"
                                   "".format( str( type( column_id ) ) ) )
 
         # Handle strings--column name
-        if isinstance( column_id, (basestring, unicode) ):
+        if isinstance( column_id, str ):
             try:
                 return self._columns[ self._column_names.index( column_id ) ]
             except ValueError as ex:
@@ -2288,7 +2272,7 @@ class GPUdbRecord( object ):
             column_index_name = "column_{}".format( i+1 )
 
             # Double/float conversion here
-            #get the datatype of the underlying data
+            #get the data type of the underlying data
             column_type = dynamic_schema.fields_dict[ column_index_name ].type.items.type
 
             if ( (column_type.lower() == 'double') or (column_type.lower() == 'float') ):
@@ -2383,7 +2367,7 @@ class GPUdbRecord( object ):
         columns = []
         for col_name, field in zip(col_major_data.keys(), schema_json[ C._fields ]):
             field_type = field[ "type" ][ "items" ]
-            if isinstance( field_type, (str, unicode) ):
+            if isinstance( field_type, str ):
                 columns.append( [ col_name, field_type ] )
             elif (isinstance( field_type, list ) and ("null" in field_type )):
                 # The column is nullable
@@ -2436,7 +2420,7 @@ class GPUdbRecord( object ):
             column_names = row_major_data[ 0 ].keys()
             # column_values = zip([ record.values() for record in row_major_data ])
 
-            # Trasnpose the data
+            # Transpose the data
             transposed_data = collections.OrderedDict()
             for col_name in column_names:
                 column_values = [ record[ col_name ] for record in row_major_data ]
@@ -2465,36 +2449,34 @@ class GPUdbRecord( object ):
         """
         # Validate and save the record type
         if not isinstance( record_type, GPUdbRecordType ):
-            raise GPUdbException( "'record_type' must be a GPUdbRecordType; given " + str(type( record_type )) )
+            raise GPUdbException(f"Parameter record_type must be a GPUdbRecordType; given {type(record_type)}")
         self._record_type = record_type
-
-        if isinstance( column_values, GPUdbRecord ):
-            return column_values
-
-        # Validate the column values
-        if not _Util.is_list_or_dict( column_values ):
-            # Must be a list or a dict
-            raise GPUdbException( "Columns must be one of the following: list, dict, OrderedDict.  "
-                                  "Given " + str(type( column_values )) )
-        if not column_values: # Must NOT be empty
-            raise GPUdbException( "Column values must be given.  Given none." )
-
-        # The column values must be saved in the order they're declared in the type
-        self._column_values = collections.OrderedDict()
 
         # Get the expected number of columns based on the data type provided
         num_columns = len( self._record_type.columns )
 
-        # Check that there are correct number of values
-        if (len( column_values ) != num_columns ):
-            raise GPUdbException( "Given list of column values does not have the correct (%d) "
-                              "number of values; it has %d" % (num_columns, len( column_values )) )
+        if not column_values: # Must NOT be empty
+            raise GPUdbException("No column values given" )
+
+        # Validate the column values
+        if isinstance( column_values, GPUdbRecord ):
+            self._column_values = column_values.column_values
+        elif _Util.is_list_or_dict( column_values ):
+            # The column values must be saved in the order they're declared in the type
+            self._column_values = collections.OrderedDict()
+
+            # Check that there are correct number of values
+            if (len( column_values ) != num_columns ):
+                raise GPUdbException(f"Given list of column values has {len(column_values)} values; the record type has {num_columns} columns")
+        else:
+            # Must be a list, dict, or GPUdbRecord
+            raise GPUdbException(f"Columns must be one of the following: list, dict, OrderedDict, GPUdbRecord; given {type(column_values)}")
 
         # Check and save the column values
         # --------------------------------
         # Case 1: The values are given in a list
         if isinstance( column_values, list ):
-            # Check that the order of the columns is ok
+            # Check that the order of the columns is OK
             # (we can only check string vs. numeric types, really;
             # we can also check for nulls)
             for i in range(num_columns):
@@ -2509,17 +2491,17 @@ class GPUdbRecord( object ):
                 if is_valid:
                     self._column_values[ column_name ] = column_value
             # end for loop
-        else: # the values are given either in a dict or an OrderedDict
+        # Case 2: The values are given in a dict or OrderedDict
+        elif not isinstance( column_values, GPUdbRecord ):
             # Check that the column names given match those of the record's type
             given_column_names = set( column_values.keys() )
             record_type_column_names = set( [c.name for c in self._record_type.columns] )
             if ( given_column_names != record_type_column_names ):
-                if (given_column_names - record_type_column_names):
-                    raise GPUdbException( "Given column names do not match that of the record type.  "
-                                      "Extra column names are: " + str( (given_column_names - record_type_column_names) ))
-                else:
-                    raise GPUdbException( "Given column names do not match that of the record type.  "
-                                      "Missing column names are: " + str( (record_type_column_names - given_column_names) ))
+                raise GPUdbException(
+                    "Given column names do not match that of the record type; "
+                    f"extra column name(s): {list(given_column_names - record_type_column_names)}; "
+                    f"missing column name(s): {list(record_type_column_names - given_column_names)}"
+                )
             # end if
 
             # We will disregard the order in which the column values were listed
@@ -2693,7 +2675,7 @@ class GPUdbRecord( object ):
         elif column_type == GPUdbRecordColumn._ColumnType.LONG:
             # Long
             try:
-                column_value = long( column_value )
+                column_value = int( column_value )
             except:
                 if do_throw:
                     raise GPUdbException( ("Column '%s' must be a long; "
@@ -2702,7 +2684,7 @@ class GPUdbRecord( object ):
                 else:
                     is_valid = False
         else: # string/bytes type
-            if not isinstance( column_value, (str, Decimal, unicode, bytes) ):
+            if not isinstance( column_value, (str, Decimal, bytes) ):
                 if do_throw:
                     raise GPUdbException( ("Column '%s' must be string or bytes; given " % column.name)
                                       + str(type( column_value )) )
@@ -2848,21 +2830,26 @@ class _FailbackPollerService:
                 options.skip_ssl_cert_verification = self.db.skip_ssl_cert_verification
 
                 with GPUdb(str(self.primary_url), options) as conn:
-                    #  This request will always fail, but will fail in the expected
-                    #  way if the database is fully reachable
-                    response = conn.insert_records_random(table_name="", count=1)
-                    resp_status = response['status_info']['status']
-                    resp_message = response['status_info']['message']
-                    if resp_status == "ERROR" and "table name may not be empty" in resp_message:
-                        raise GPUdbException(resp_message)
+                    response = conn.show_system_status()
+                    if _Util.is_ok(response):
+                        status_map = response['status_map']
+                        # Check for the existence of the 'ha_status' key in the dictionary
+                        if 'ha_status' in status_map:
+                            ha_status = status_map['ha_status']
 
-                    self.logger.error(f"Failback check to primary cluster at [{self.primary_url}] unexpectedly failed to throw an exception")
+                            if ha_status == "drained":
+                                self.logger.debug(f"Failback to primary cluster at [{self.primary_url}] succeeded")
+                            else:
+                                self.logger.debug(
+                                    f"Kinetica running on primary cluster at [{self.primary_url}], "
+                                    f"but connection did not succeed"
+                                )
+                                kinetica_running = False
+                    else:
+                        self.logger.error(f"Could not connect to Kinetica at {self.primary_url}")
+
             except GPUdbException as e:
-                if "table name may not be empty" not in e.message:
-                    self.logger.debug(f"Kinetica running on primary cluster at [{self.primary_url}], but connection did not succeed; exception {e}")
-                    kinetica_running = False
-                else:
-                    self.logger.info(f"Failback to primary cluster at [{self.primary_url}] succeeded")
+                self.logger.info(f"Could not connect to Kinetica at {self.primary_url} - error: {e.message}")
 
         else:
             self.logger.debug(f"Kinetica is not running at: {self.primary_url}")
@@ -3007,7 +2994,7 @@ class GPUdb(object):
         # clusters.  This is the default mode.
         RANDOM     = "RANDOM"
         # Choose the cluster sequentially from the list of
-        # clusters (the union of the user given clsuters and
+        # clusters (the union of the user given clusters and
         # auto-discovered clusters).
         SEQUENTIAL = "SEQUENTIAL"
     # end inner class HAFailoverOrder
@@ -3143,7 +3130,7 @@ class GPUdb(object):
 
             if "_Options__cluster_reconnect_count" in options:
                 del options["_Options__cluster_reconnect_count"]
-                
+
             if "_Options__intra_cluster_failover_timeout" in options:
                 del options["_Options__intra_cluster_failover_timeout"]
 
@@ -3270,7 +3257,7 @@ class GPUdb(object):
             before actually failing over to any available backup
             cluster.  Does not apply when only a single cluster is
             available.
-            
+
             This method is now deprecated.
             """
             return 1
@@ -3283,7 +3270,7 @@ class GPUdb(object):
             cluster.  Does not apply when only a single cluster is
             available.  Must be an integer value greater than or equal to zero.
             The default is 1.
-            
+
             This method is now deprecated.
             """
             try:
@@ -3368,7 +3355,7 @@ class GPUdb(object):
 
             The default is *binary*.
             """
-            if not isinstance( value, (basestring, unicode) ):
+            if not isinstance( value, str ):
                 raise GPUdbException( "Option 'encoding' must be a string; given "
                                       "'{}' type {}"
                                       "".format( value, str(type(value)) ) )
@@ -3399,7 +3386,7 @@ class GPUdb(object):
             in which order--sequential or random--the backup clusters would be
             used when an inter-cluster failover event happens.  Default is RANDOM.
             """
-            if isinstance( value, (basestring, unicode) ):
+            if isinstance( value, str ):
                 # Need to convert to all upper case for normalization
                 value = value.upper()
 
@@ -3472,7 +3459,7 @@ class GPUdb(object):
 
             Note that the regex MUST NOT have the protocol or the port; it
             should be a regular expression ONLY for the hostname/IP address.
-            
+
             Note also that the regex must match all servers in all clusters of
             the ring, as there is only one in use per connection.
 
@@ -3487,7 +3474,7 @@ class GPUdb(object):
 
             # Otherwise, must be a valid regex string or an already compiled
             # regex object
-            if isinstance( value, (basestring, unicode) ):
+            if isinstance( value, str ):
                 # Save the compiled regex
                 try:
                     self.__hostname_regex = re.compile( value )
@@ -3496,7 +3483,7 @@ class GPUdb(object):
                                           "valid regex; given '{}'; error: {}"
                                           "".format( value, str( ex ) ) )
             elif isinstance( value, Pattern ):
-                # No extra processing is needed since we're givne a compiled regex
+                # No extra processing is needed since we're given a compiled regex
                 self.__hostname_regex = value
             else:
                 raise GPUdbException( "Property 'hostname_regex' must be a regex"
@@ -3545,9 +3532,9 @@ class GPUdb(object):
             # end if
 
             # Validate that each of the keys and values are actually strings
-            are_keys_strings = [ isinstance(key, (basestring, unicode))
+            are_keys_strings = [ isinstance(key, str)
                                  for key in list(value.keys()) ]
-            are_vals_strings = [ isinstance(val, (basestring, unicode))
+            are_vals_strings = [ isinstance(val, str)
                                  for val in list(value.values()) ]
             if ( (not all( are_keys_strings ))
                  or
@@ -3558,7 +3545,7 @@ class GPUdb(object):
                                       "".format( value ) )
             # end if
 
-            # Ensure that none of the protected headers are being overriddent
+            # Ensure that none of the protected headers are being overridden
             for header in list( value.keys() ):
                 if header in GPUdb._protected_headers:
                     raise GPUdbException( "Header '{}' is protected and cannot "
@@ -3587,8 +3574,8 @@ class GPUdb(object):
                 value (str)
                     Value of the single header value to add.
             """
-            if ( (not isinstance(header, (basestring, unicode)))
-                 or (not isinstance(value, (basestring, unicode))) ):
+            if ( (not isinstance(header, str))
+                 or (not isinstance(value, str)) ):
                 raise GPUdbException( "Custom header and its value must be "
                                       "strings; given '{}' for the header and "
                                       "'{}' for the value"
@@ -3720,7 +3707,7 @@ class GPUdb(object):
             """Gets the timeout used when trying to recover from an intra-cluster
             failover event.  The value is given in seconds.  The default is
             equivalent to 5 minutes.
-            
+
             This method is now deprecated.
             """
             return 0
@@ -3731,7 +3718,7 @@ class GPUdb(object):
             """Sets the timeout used when trying to recover from an intra-cluster
             failover event.  The value is given in seconds.  The default is
             equivalent to 5 minutes.
-            
+
             This method is now deprecated.
             """
             try:
@@ -3781,7 +3768,7 @@ class GPUdb(object):
             if value is not None:
                 # Validate the value by actually trying to set it to a dummy
                 # logger object
-                if isinstance(value, (basestring, unicode)):
+                if isinstance(value, str):
                     value = value.upper()
                 else:
                     value = int(value)
@@ -3807,7 +3794,7 @@ class GPUdb(object):
         @password.setter
         def password(self, value):
             """Sets the password to be used for authentication to GPUdb."""
-            if not isinstance( value, (basestring, unicode, type(None)) ):
+            if not isinstance( value, (str, type(None)) ):
                 raise GPUdbException( "Property 'password' must be a string or "
                                       "None; given '{}' type {}"
                                       "".format( value, str(type(value)) ) )
@@ -3835,8 +3822,8 @@ class GPUdb(object):
                 return
             # end if
 
-            if isinstance( value, (basestring, unicode) ):
-                # Convert the string to a URL obejct and keep the hostname only
+            if isinstance( value, str ):
+                # Convert the string to a URL object and keep the hostname only
                 try:
                     value = GPUdb.URL( value ).host
                 except GPUdbException as ex:
@@ -3880,7 +3867,7 @@ class GPUdb(object):
                 return
             # end if
 
-            if not isinstance( value, (basestring, unicode) ):
+            if not isinstance( value, str ):
                 raise GPUdbException( "Option 'protocol' must be a string; "
                                       "given '{}' type {}"
                                       "".format( value, str(type(value)) ) )
@@ -3965,7 +3952,7 @@ class GPUdb(object):
         @username.setter
         def username(self, value):
             """Sets the username to be used for authentication to GPUdb."""
-            if not isinstance( value, (basestring, unicode, type(None) ) ):
+            if not isinstance( value, (str, type(None) ) ):
                 raise GPUdbException( "Property 'username' must be a string or "
                                       "None; given '{}' type {}"
                                       "".format( value, str(type(value)) ) )
@@ -3980,7 +3967,7 @@ class GPUdb(object):
         @oauth_token.setter
         def oauth_token(self, value):
             """Sets the OAuth2 token to be used for authentication to GPUdb."""
-            if not isinstance(value, (basestring, unicode, type(None))):
+            if not isinstance(value, (str, type(None))):
                 raise GPUdbException("Property 'oauth_token' must be a string or "
                                      "None; given '{}' type {}"
                                      "".format(value, str(type(value))))
@@ -4028,7 +4015,7 @@ class GPUdb(object):
             # Parse the string into four components of the version
 
             # If not a Version object, must be a string
-            if not isinstance( version_str, (basestring, unicode) ):
+            if not isinstance( version_str, str ):
                 raise GPUdbException( "Expected a string version; got: '{}', "
                                       "type {}".format( version_str,
                                                         str(type(version_str)) ) )
@@ -4247,7 +4234,7 @@ class GPUdb(object):
                 A two-part tuple, the first is whether or not the URL was able
                 to be parsed, and the second is a 7-part tuple containing the
                 parsed URL and its components:
-                
+
                 * Full URL
                 * Protocol (HTTP,HTTPS)
                 * Hostname
@@ -4256,11 +4243,6 @@ class GPUdb(object):
                 * Username (if specified in the URL)
                 * Password (if specified in the URL)
             """
-
-            if IS_PYTHON_3:
-                from urllib.parse import urlparse
-            else:
-                from urlparse import urlparse
 
             parsed_url = '' if url is None else url
 
@@ -4364,7 +4346,7 @@ class GPUdb(object):
             # end if
 
             # If not a URL object, must be a string or None
-            if url is not None and not isinstance(url, (basestring, unicode)):
+            if url is not None and not isinstance(url, str):
                 raise GPUdbException("Expected a string URL; got: '{}', "
                                 "type {}".format(url,
                                                  str(type(url))))
@@ -4399,7 +4381,7 @@ class GPUdb(object):
                 ))
                 self.__init__(full_url)
                 return
-    
+
             self.__using_default_protocol = protocol_.lower() == 'http'
             self.__using_default_port = str(port_) == '9191'
 
@@ -4549,10 +4531,10 @@ class GPUdb(object):
                    Optional string containing the server version.  If given,
                    will be parsed as a :class:`GPUdb.Version` object. Default
                    is None.
-            
+
                 logging_level (int)
                    Optional level at which logs should be output.  Default is
-                   None. 
+                   None.
             """
             self.__construct( head_rank_url,
                               worker_rank_urls,
@@ -4607,10 +4589,10 @@ class GPUdb(object):
                    Optional string containing the server version.  If given,
                    will be parsed as a :class:`GPUdb.Version` object. Default
                    is None.
-            
+
                 logging_level (int)
                    Optional level at which logs should be output.  Default is
-                   None. 
+                   None.
             """
             # Class level logger so that setting it for one instance doesn't
             # set it for ALL instances after that change (even if it is
@@ -4626,7 +4608,7 @@ class GPUdb(object):
                                            datefmt = GPUdb._LOG_DATETIME_FORMAT )
             handler.setFormatter( formatter )
             self.log.addHandler( handler )
-            
+
             if logging_level:
                 self.log.setLevel(logging_level)
 
@@ -4766,7 +4748,7 @@ class GPUdb(object):
             "http://1.3.4.5:9191".  Or a valid :class:`GPUdb.URL` object must
             be given.
             """
-            if not isinstance( value, (basestring, unicode, GPUdb.URL) ):
+            if not isinstance( value, (str, GPUdb.URL) ):
                 raise GPUdbException( "Property 'head_rank_url' must be "
                                       "a string or a GPUdb.URL object; given "
                                       "'{}' type {}"
@@ -4810,7 +4792,7 @@ class GPUdb(object):
                                       "given '{}' type {}"
                                       "".format( value, str(type(value)) ) )
             # Each element must be a string or a URL object
-            if not all( [ isinstance( x, (basestring, unicode, GPUdb.URL) )
+            if not all( [ isinstance( x, (str, GPUdb.URL) )
                           for x in value ] ):
                 raise GPUdbException( "Property 'worker_rank_urls' must be "
                                       "a list of strings or GPUdb.URL objects; "
@@ -4848,7 +4830,7 @@ class GPUdb(object):
                                       "a list of strings; given '{}' type {}"
                                       "".format( value, str(type(value)) ) )
             # Each element must be a string
-            if not all( [ isinstance( x, (basestring, unicode) )
+            if not all( [ isinstance( x, str )
                           for x in value ] ):
                 raise GPUdbException( "Property 'host_names' must be "
                                       "a list of strings; given some non-string"
@@ -4872,7 +4854,7 @@ class GPUdb(object):
             """Sets the URL for the active host manager of this cluster.  Must
             be a fully qualified URL.
             """
-            if not isinstance( value, (basestring, unicode, GPUdb.URL) ):
+            if not isinstance( value, (str, GPUdb.URL) ):
                 raise GPUdbException( "Property 'host_manager_url' must be "
                                       "a string or a GPUdb.URL object; given "
                                       "'{}' type {}"
@@ -4912,7 +4894,7 @@ class GPUdb(object):
         def is_intra_cluster_failover_enabled( self ):
             """Returns whether this cluster has intra-cluster failover
             enabled.
-            
+
             This method is now deprecated.
             """
             return False
@@ -4922,7 +4904,7 @@ class GPUdb(object):
         def is_intra_cluster_failover_enabled( self, value ):
             """Sets whether this cluster has intra-cluster failover enabled.
             Must be a boolean value.  The default is False.
-            
+
             This method is now deprecated.
             """
             if not isinstance( value, bool ):
@@ -5040,7 +5022,7 @@ class GPUdb(object):
                 hostname or IP address, False otherwise.
             """
             self.__log_debug( "Check for hostname {} in hostname list".format( host_name ) )
-            if not isinstance( host_name, (basestring, unicode)):
+            if not isinstance( host_name, str):
                 msg = ("Need a string for the host name, given '{}'"
                        "".format( str(type(host_name)) ) )
                 self.__log_debug( msg )
@@ -5071,6 +5053,7 @@ class GPUdb(object):
         requests.codes.gateway_timeout,        # 504
         requests.codes.bad_gateway             # 502 - rank-0 killed with HTTPD gives this
     ]
+
     __endpoint_server_error_magic_strings = [
         C._DB_EXITING_ERROR_MESSAGE,
         C._DB_OFFLINE_ERROR_MESSAGE,
@@ -5085,6 +5068,7 @@ class GPUdb(object):
     _DEFAULT_FAILBACK_POLLING_INTERVAL = 5
     _HTTP_REQUEST_MAX_RETRY_ATTEMPTS = 5
     _HTTP_CONNECTION_POOL_SIZE = 20
+    _HTTP_CONNECTION_POOL_TIMEOUT = 20
 
     # The timeout (in seconds) used for checking the status of a node; we used
     # to use a small timeout so that it does not take a long time to figure out
@@ -5114,7 +5098,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.2.13"
+    api_version = "7.2.3.0"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5173,11 +5157,6 @@ class GPUdb(object):
                 self.poller_service.stop()
             except:
                 pass
-        if hasattr(self, "http_client") and self.http_client is not None:
-            try:
-                self.http_client.close()
-            except Exception as e:
-                pass
 
     def __enter__(self):
         return self
@@ -5187,11 +5166,6 @@ class GPUdb(object):
             try:
                 self.poller_service.stop()
             except:
-                pass
-        if hasattr(self, "http_client") and self.http_client is not None:
-            try:
-                self.http_client.close()
-            except Exception as e:
                 pass
 
     def __construct( self, host = None, options = None, *args, **kwargs ):
@@ -5220,7 +5194,7 @@ class GPUdb(object):
         # Identification for this instance (useful in logging)
         self._id = str( uuid.uuid4() )
 
-        # Class level logger so that setting it for ond GPUdb instance doesn't
+        # Class level logger so that setting it for one GPUdb instance doesn't
         # set it for ALL GPUdb instances after that change (even if it is
         # outside of the scope of the first instance whose log level was
         # changed
@@ -5319,7 +5293,7 @@ class GPUdb(object):
             # Host is not a list; if a comma separated list is given, then
             # split it
             comma = ','
-            if ( isinstance( host, (basestring, unicode) )
+            if ( isinstance( host, str )
                  and (comma in host) ):
                 # Multiple hosts given
                 host = host.strip( comma ).split( comma )
@@ -5386,7 +5360,7 @@ class GPUdb(object):
         self.__num_cluster_switches = 0 # For the new submit_request route
 
         # Some defaults
-        self.__cluster_info: list[GPUdb.ClusterAddressInfo] = []
+        self.__cluster_info: List[GPUdb.ClusterAddressInfo] = []
         self.__cluster_indices = []
         self.__curr_cluster_index_pointer = 0
 
@@ -5436,7 +5410,7 @@ class GPUdb(object):
     def __create_authorization_header(self):
         """Set the authentication header for the connection with the following
         scheme:
-        
+
         * If an OAuth2 token is given, use OAuth2 authentication
         * Otherwise, if a username is given, use user/pass authentication
         * Otherwise, do not set an authentication header (no auth setups)
@@ -5539,7 +5513,7 @@ class GPUdb(object):
             # Validate type and parse the argument
             if not isinstance( options, (GPUdb.Options, dict) ):
                 # Not real options; could this be a positional 'port' argument?
-                if isinstance( options, (basestring, unicode, list, int) ):
+                if isinstance( options, (str, list, int) ):
                     # This could be the port; treat it as such, but first
                     # check if it was given as a keyword argument
                     if port:
@@ -5558,8 +5532,8 @@ class GPUdb(object):
                                       " because of its type {}"
                                       "".format( str(type(options)) ) )
 
-                    # Save the optios as the port and ensure we parse the
-                    # rest of ths args and kwargs later
+                    # Save the options as the port and ensure we parse the
+                    # rest of the args and kwargs later
                     port = options
                     parse_args_and_kwargs = True
                 else:
@@ -5590,7 +5564,7 @@ class GPUdb(object):
                 options = GPUdb.Options( options )
             # end inner if
         else:
-            # Ensure we parse the rest of ths args and kwargs later since no
+            # Ensure we parse the rest of the args and kwargs later since no
             # option was given
             parse_args_and_kwargs = True
         # end if
@@ -5701,7 +5675,7 @@ class GPUdb(object):
                     self.__log_debug( "Keep trying to parse URLs?: {}"
                                       "".format( keep_trying ) )
                     if ( keep_trying ):
-                        self.__log.warn( "Attempt at parsing user given URLs {}"
+                        self.__log_warn( "Attempt at parsing user given URLs {}"
                                           " failed; waiting for {}"
                                           " minute(s) before retrying"
                                           "".format( urls_str, parse_urls_reattempt_wait_interval_min) )
@@ -5758,7 +5732,7 @@ class GPUdb(object):
         # Validate the input
         if not isinstance( urls, list ):
             # Not a list; must be a single URL or a fully valid URL in a string
-            if not isinstance( urls, (basestring, unicode, GPUdb.URL) ):
+            if not isinstance( urls, (str, GPUdb.URL) ):
                 raise GPUdbException( "Argument 'urls' must be a list of "
                                       "strings or GPUdb.URL objects, or a "
                                       "single string or a GPUdb.URL object; "
@@ -5776,7 +5750,7 @@ class GPUdb(object):
             # Got a list, verify that all elements are either URL objects
             # or a valid URL in a string
             # Each element must be a string
-            if not all( [ isinstance( x, (basestring, unicode, GPUdb.URL) )
+            if not all( [ isinstance( x, (str, GPUdb.URL) )
                           for x in urls ] ):
                 raise GPUdbException( "Argument 'urls' must be "
                                       "a list of strings or GPUdb.URL objects; "
@@ -5999,7 +5973,7 @@ class GPUdb(object):
             for ha_url in ha_ring_head_node_urls:
                 if ( self.__get_index_of_cluster_containing_node( ha_url.host ) == -1 ):
                     # We have not encountered this cluster yet; add it to the
-                    # deque of URLs to process
+                    # queue of URLs to process
                     self.__log_debug( "HA ring head node URL {} not found in known clusters; "
                                       "adding to queue to process".format(str(ha_url)))
                     url_deque.append( ha_url )
@@ -6379,7 +6353,7 @@ class GPUdb(object):
         Returns
             The string containing the server version.
         """
-        # Get the conf param for the server version
+        # Get the config param for the server version
         if C._SYSTEM_PROPERTIES_RESPONSE_SERVER_VERSION not in sys_properties:
             return None
 
@@ -6599,7 +6573,7 @@ class GPUdb(object):
                 # No eligible hostname found!
                 if (hostname_regex is not None):
                     # The reason we don't have a URL is because it didn't
-                    # match the given reges
+                    # match the given regex
                     msg = ("No matching hostname found for host #{} (given hostname regex {})"
                            "".format( i, hostname_regex.pattern ) )
                     raise GPUdbHostnameRegexFailureException( msg )
@@ -6863,7 +6837,7 @@ class GPUdb(object):
                 # No eligible hostname found!
                 if (hostname_regex is not None):
                     # The reason we don't have a URL is because it didn't
-                    # match the given reges
+                    # match the given regex
                     msg = ("No matching IP/hostname found for cluster with head "
                            "node URLs {} (given hostname regex {})"
                            "".format( ha_ring_head_nodes_url_list,
@@ -7381,11 +7355,6 @@ class GPUdb(object):
         """
         return self._known_types
     # end get_known_types
-
-    @property
-    def host_addresses(self):
-        return self.__host_addresses
-
 
     def get_known_type(self, type_id, lookup_type = True ):
         """Given an type ID, return any associated known type; if
@@ -8073,6 +8042,8 @@ class GPUdb(object):
         if self.auth:
             headers[C._HEADER_AUTHORIZATION] = self.auth
 
+        # Create the full URL
+        path = "{url_path}{endpoint}".format(url_path=url.path, endpoint=endpoint)
         # Construct the full URL for the request
         full_url = f"{url.url}{endpoint}"
 
@@ -8381,7 +8352,7 @@ class GPUdb(object):
             raw response returned by the server.
         """
         # Validate input arguments
-        if not isinstance( endpoint, (basestring, unicode) ):
+        if not isinstance( endpoint, str ):
             msg = ("Argument 'endpoint' must be a string; given '{}'"
                    "".format( str(type(endpoint)) ) )
             self.__log_debug( msg )
@@ -8551,7 +8522,7 @@ class GPUdb(object):
             about the output of the operation is the 'data' object.
         """
         # Validate input arguments
-        if not isinstance( endpoint, (basestring, unicode) ):
+        if not isinstance( endpoint, str ):
             msg = ("Argument 'endpoint' must be a string; given '{}'"
                    "".format( str(type(endpoint)) ) )
             self.__log_debug( msg )
@@ -8708,7 +8679,7 @@ class GPUdb(object):
             about the output of the operation is the 'data' object.
         """
         # Validate input arguments
-        if not isinstance( endpoint, (basestring, unicode) ):
+        if not isinstance( endpoint, str ):
             msg = ("Argument 'endpoint' must be a string; given '{}'"
                    "".format( str(type(endpoint)) ) )
             self.__log_debug( msg )
@@ -8901,7 +8872,7 @@ class GPUdb(object):
             raw response returned by the server.
         """
         # Validate input arguments
-        if not isinstance( endpoint, (basestring, unicode) ):
+        if not isinstance( endpoint, str ):
             msg = ("Argument 'endpoint' must be a string; given '{}'"
                    "".format( str(type(endpoint)) ) )
             self.__log_debug( msg )
@@ -9299,7 +9270,7 @@ class GPUdb(object):
                                                   "".format( all_head_rank_urls ) )
             # end if
 
-        # Invoke the Failback poller here
+        # Invoke the fail-back poller here
         if self.__check_failback_conditions():
             failback_options: FailbackOptions = FailbackOptions.default_options()
             self.poller_service = _FailbackPollerService(self)
@@ -9438,7 +9409,7 @@ class GPUdb(object):
     # end __select_next_cluster
 
 
-
+    @deprecated
     def __post_and_get( self,
                         host, port, url_path, connection_type,
                         headers, body_data, endpoint ):
@@ -9461,7 +9432,7 @@ class GPUdb(object):
             endpoint (str)
                 Server path to POST to, e.g. "/insert/records".
         """
-        # NOTE: Creating a new httplib.HTTPConnection is suprisingly just as
+        # NOTE: Creating a new httplib.HTTPConnection is surprisingly just as
         #       fast as reusing a persistent one and has the advantage of
         #       fully retrying from scratch if the connection fails.
 
@@ -9469,6 +9440,7 @@ class GPUdb(object):
         url_path = (url_path + endpoint)
 
         # Try to establish a connection
+        conn = None
         try:
             if (connection_type == 'HTTP'):
                 conn = httplib.HTTPConnection( host = host,
@@ -9583,6 +9555,7 @@ class GPUdb(object):
 
         #now parse the actual response if there is no error
         #NOTE: DATA_SCHEMA should be equivalent to SCHEMA but is NOT for get_set_sorted
+        out = None
         stype = resp['data_type']
         if stype == 'none':
             out = collections.OrderedDict()
@@ -9660,6 +9633,7 @@ class GPUdb(object):
 
         # Now parse the actual response if there is no error
         # NOTE: DATA_SCHEMA should be equivalent to SCHEMA but is NOT for get_set_sorted
+        out = None
         stype = resp['data_type']
         if stype == 'none':
             out = collections.OrderedDict()
@@ -9807,7 +9781,7 @@ class GPUdb(object):
                 entries must match the schema).
         """
         # Convert the string to a parsed schema object (if needed)
-        if isinstance( SCHEMA, basestring ):
+        if isinstance( SCHEMA, str ):
             SCHEMA = schema.parse( SCHEMA )
 
         if encoding is None:
@@ -9867,18 +9841,18 @@ class GPUdb(object):
 
 
     @staticmethod
-    def valid_json(self, json_string):
+    def valid_json(json_string):
         """
         Validates a JSON string by trying to parse it into a Python object
         """
         try:
             json.loads(json_string)
-        except ValueError as err:
+        except ValueError:
             return False
         return True
 
     @staticmethod
-    def merge_dicts(self, *dict_args):
+    def merge_dicts(*dict_args):
         """
         Given any number of dictionaries, shallow copy and merge into a new dict,
         precedence goes to key-value pairs in latter dictionaries.
@@ -9992,7 +9966,7 @@ class GPUdb(object):
         """Set the log level for the client GPUdb class.
 
         Parameters:
-            log_level (int, long, or str)
+            log_level (int or str)
                 A valid log level for the logging module
         """
         try:
@@ -10010,6 +9984,7 @@ class GPUdb(object):
             return self.insert_records(set_id, [object_data], None, params)
         else:
             return self.insert_records(set_id, [object_data], None, {"return_record_ids":"true"})
+
 
     def insert( self, *, table_name: str=None, records: Union[
         List[Any],                          # Single record as list
@@ -10130,7 +10105,6 @@ class GPUdb(object):
 
         """
         response = AttrDict(self.delete_records( table_name, expression, {} ))
-        del response.__dict__
         if _Util.is_ok(response):
             del response.info, response.status_info, response.counts_deleted
             return response
@@ -10180,7 +10154,6 @@ class GPUdb(object):
             In case of error it returns a dict - {'status': 'ERROR', 'message': 'Some error message'}
         """
         response = self.update_records(table_name, expression, new_values_map, options={'use_expressions_in_new_values_maps': 'true'})
-        del response.__dict__
         if _Util.is_ok(response):
             del response.info, response.status_info, response.counts_updated, response.count_inserted, response.counts_inserted
             return response
@@ -10188,7 +10161,6 @@ class GPUdb(object):
             return {response['status_info']['status']: response['status_info']['message']}
 
     # end update
-
 
     def insert_records_from_json(self, json_records, table_name, json_options = None, create_table_options = None, options = None ):
         """Method to insert a single JSON record or an array of JSON records passed in as a string.
@@ -10221,7 +10193,7 @@ class GPUdb(object):
             raise GPUdbException("'table_name' must be a valid non-empty string")
 
         if json_options and 'validate' in json_options and json_options['validate']:
-            if not GPUdb.valid_json( json_records):
+            if not GPUdb.valid_json(json_records):
                 raise GPUdbException("'json_records' passed in is not a valid JSON")
 
         if create_table_options is None :
@@ -10351,45 +10323,10 @@ class GPUdb(object):
                 translated[column_name] = col
             # end loop
 
-            # # TODO: For 7.0, use the following block of code instead of
-            # #       the above block (which will now go inside the if block.
-            # if "record_type" not in retobj:
-            #     # Use the python avro package to decode the data
-            #     decoded = _Util.decode_binary_data( my_schema, data )
-
-            #     # Translate the column names
-            #     column_lookup = decoded['column_headers']
-
-            #     translated = collections.OrderedDict()
-            #     for i,(n,column_name) in enumerate(zip(nullable,column_lookup)):
-
-            #         if (n and convert_nulls): # nullable - replace None with '<NULL>'
-            #             col = [x if x is not None else '<NULL>' for x in decoded['column_%d'%(i+1)]]
-            #         else:
-            #             col = decoded['column_%d'%(i+1)]
-            #         # end if
-
-            #         translated[column_name] = col
-            #     # end loop
-
-            # else: # use the c-extension for avro decoding
-            #     record_type = retobj["record_type"]
-            #     if not isinstance( record_type, RecordType ):
-            #         raise GPUdbException( "'record_type' must be a RecordType object; given {}"
-            #                               "".format( str(type( record_type )) ) )
-            #     records = record_type.decode_dynamic_records( data )
-
-            #     # For 6.2, return column-major data
-            #     # TODO: For 7.0, just return records, maybe
-            #     translated = GPUdbRecord.transpose_data_to_col_major( records )
-            # # end if
-
             retobj['response'] = translated
         else: # JSON encoding
             retobj['response'] = collections.OrderedDict()
 
-            #note running eval here returns a standard (unordered) dict
-            #d_resp = eval(retobj['json_encoded_response'])
             d_resp = json.loads(retobj['json_encoded_response'])
 
             column_lookup = d_resp['column_headers']
@@ -10397,10 +10334,10 @@ class GPUdb(object):
             for i,(n,column_name) in enumerate(zip(nullable,column_lookup)):
                 column_index_name = 'column_%d'%(i+1)
 
-                #double/float conversion here
-                #get the datatype of the underlying data
+                #get the data type of the underlying data
                 data_type = my_schema.fields_dict[column_index_name].type.items.type
 
+                #double/float conversion here
                 if (data_type == 'double' or data_type == 'float'):
                     retobj['response'][column_name] = [float(x) for x in d_resp[column_index_name]]
 
@@ -10664,7 +10601,7 @@ class GPUdb(object):
                 Whether to display progress on the console or not. Defaults to False.
 
         Raises:
-            GPUdbException: 
+            GPUdbException:
 
         Returns:
             pd.DataFrame: A Pandas Data Frame containing the result set of the SQL query or None if
@@ -10693,17 +10630,17 @@ class GPUdb(object):
                 The options for SQL execution, matching the options passed to
                 :meth:`GPUdb.execute_sql`. Defaults to None.
 
-        Returns: 
+        Returns:
             An instance of GPUdbSqlIterator.
         """
         from . import gpudb_sql_iterator
 
-        sql_iterator = gpudb_sql_iterator.GPUdbSqlIterator(db=self, 
-                sql=sql, 
-                batch_size=batch_size, 
+        sql_iterator = gpudb_sql_iterator.GPUdbSqlIterator(db=self,
+                sql=sql,
+                batch_size=batch_size,
                 sql_params=sql_params,
                 sql_opts=sql_opts)
-        
+
         return sql_iterator
     # end query
 
@@ -10722,17 +10659,17 @@ class GPUdb(object):
                 The options for SQL execution, matching the options passed to
                 :meth:`GPUdb.execute_sql`. Defaults to None.
 
-        Returns: 
+        Returns:
             The returned row or None.
         """
         from . import gpudb_sql_iterator
 
-        with gpudb_sql_iterator.GPUdbSqlIterator(db=self, 
-                sql=sql, 
+        with gpudb_sql_iterator.GPUdbSqlIterator(db=self,
+                sql=sql,
                 sql_params=sql_params,
                 batch_size=2,
                 sql_opts=sql_opts) as sql_iterator:
-            
+
             if(sql_iterator.total_count == 0):
                 return None
             elif(sql_iterator.total_count > 1):
@@ -10782,7 +10719,7 @@ class GPUdb(object):
         """
         if (len(sql_params) == 0):
             return
-        
+
         for idx, item in enumerate(sql_params):
             if (isinstance(item, list)):
                 # assume that list type is vector
@@ -10793,7 +10730,7 @@ class GPUdb(object):
 
     @staticmethod
     def get_connection(
-            enable_ssl_cert_verification = False, 
+            enable_ssl_cert_verification = False,
             enable_auto_discovery = False,
             enable_failover = False,
             logging_level = 'INFO') -> "GPUdb":
@@ -10815,18 +10752,18 @@ class GPUdb(object):
         Parameters:
             enable_ssl_cert_verification (bool):
                 Enable SSL certificate verification.
-    
+
             enable_auto_discovery (bool):
                 Enable auto-discovery of the initial cluster nodes, as well as
                 any attached failover clusters.  This allows for both multi-head
                 ingestion & key lookup, as well as cluster failover.
-    
+
             enable_failover (bool):
                 Enable failover to another cluster.
-    
+
             logging_level (str):
                 Logging level for the connection. (INFO by default)
-    
+
         Returns (GPUdb):
             An active connection to Kinetica.
         """
@@ -11270,6 +11207,17 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "RSP_SCHEMA_CEXT" : RSP_SCHEMA_CEXT,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/alter/backup"
+        REQ_SCHEMA_STR = """{"type":"record","name":"alter_backup_request","fields":[{"name":"backup_name","type":"string"},{"name":"action","type":"string"},{"name":"value","type":"string"},{"name":"datasink_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_backup_response","fields":[{"name":"backup_name","type":"string"},{"name":"backup_id","type":"long"},{"name":"total_bytes","type":"long"},{"name":"total_number_of_records","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("backup_name", "string"), ("action", "string"), ("value", "string"), ("datasink_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("backup_name", "string"), ("backup_id", "long"), ("total_bytes", "long"), ("total_number_of_records", "long"), ("info", "map", [("string")])] )
+        ENDPOINT = "/alter/backup"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/alter/credential"
         REQ_SCHEMA_STR = """{"type":"record","name":"alter_credential_request","fields":[{"name":"credential_name","type":"string"},{"name":"credential_updates_map","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"alter_credential_response","fields":[{"name":"credential_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -11534,6 +11482,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/clear/tables"
+        REQ_SCHEMA_STR = """{"type":"record","name":"clear_tables_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"clear_tables_response","fields":[{"name":"tables","type":{"type":"map","values":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("tables", "map", [("string")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/clear/tables"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/clear/trigger"
         REQ_SCHEMA_STR = """{"type":"record","name":"clear_trigger_request","fields":[{"name":"trigger_id","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"clear_trigger_response","fields":[{"name":"trigger_id","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -11551,6 +11510,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("column_names", "array", [("string")]), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("column_names", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/collect/statistics"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/create/backup"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_backup_request","fields":[{"name":"backup_name","type":"string"},{"name":"backup_type","type":"string"},{"name":"backup_objects_map","type":{"type":"map","values":"string"}},{"name":"datasink_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_backup_response","fields":[{"name":"backup_name","type":"string"},{"name":"backup_id","type":"long"},{"name":"copied_bytes","type":"long"},{"name":"copied_files","type":"long"},{"name":"copied_records","type":"long"},{"name":"total_number_of_records","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("backup_name", "string"), ("backup_type", "string"), ("backup_objects_map", "map", [("string")]), ("datasink_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("backup_name", "string"), ("backup_id", "long"), ("copied_bytes", "long"), ("copied_files", "long"), ("copied_records", "long"), ("total_number_of_records", "long"), ("info", "map", [("string")])] )
+        ENDPOINT = "/create/backup"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -12613,17 +12583,6 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
-        name = "/merge/records"
-        REQ_SCHEMA_STR = """{"type":"record","name":"merge_records_request","fields":[{"name":"table_name","type":"string"},{"name":"source_table_names","type":{"type":"array","items":"string"}},{"name":"field_maps","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"merge_records_response","fields":[{"name":"table_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("source_table_names", "array", [("string")]), ("field_maps", "array", [("map", [("string")])]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("table_name", "string"), ("info", "map", [("string")])] )
-        ENDPOINT = "/merge/records"
-        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
-                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
-                                       "REQ_SCHEMA" : REQ_SCHEMA,
-                                       "RSP_SCHEMA" : RSP_SCHEMA,
-                                       "ENDPOINT" : ENDPOINT }
         name = "/modify/graph"
         REQ_SCHEMA_STR = """{"type":"record","name":"modify_graph_request","fields":[{"name":"graph_name","type":"string"},{"name":"nodes","type":{"type":"array","items":"string"}},{"name":"edges","type":{"type":"array","items":"string"}},{"name":"weights","type":{"type":"array","items":"string"}},{"name":"restrictions","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"modify_graph_response","fields":[{"name":"result","type":"boolean"},{"name":"num_nodes","type":"long"},{"name":"num_edges","type":"long"},{"name":"edges_ids","type":{"type":"array","items":"long"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -12663,6 +12622,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("component", "string"), ("name", "string"), ("action", "string"), ("bytes_requested", "long"), ("owner_id", "long"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("component", "string"), ("name", "string"), ("reservation", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/reserve/resource"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/restore/backup"
+        REQ_SCHEMA_STR = """{"type":"record","name":"restore_backup_request","fields":[{"name":"backup_name","type":"string"},{"name":"restore_objects_map","type":{"type":"map","values":"string"}},{"name":"datasource_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"restore_backup_response","fields":[{"name":"backup_name","type":"string"},{"name":"backup_id","type":"long"},{"name":"restored_bytes","type":"long"},{"name":"restored_files","type":"long"},{"name":"restored_records","type":"long"},{"name":"restored_objects","type":{"type":"map","values":"string"}},{"name":"renamed_objects","type":{"type":"map","values":"string"}},{"name":"failed_objects","type":{"type":"map","values":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("backup_name", "string"), ("restore_objects_map", "map", [("string")]), ("datasource_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("backup_name", "string"), ("backup_id", "long"), ("restored_bytes", "long"), ("restored_files", "long"), ("restored_records", "long"), ("restored_objects", "map", [("string")]), ("renamed_objects", "map", [("string")]), ("failed_objects", "map", [("string")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/restore/backup"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -12751,6 +12721,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("role", "string"), ("member", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("role", "string"), ("member", "string"), ("info", "map", [("string")])] )
         ENDPOINT = "/revoke/role"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/show/backup"
+        REQ_SCHEMA_STR = """{"type":"record","name":"show_backup_request","fields":[{"name":"backup_name","type":"string"},{"name":"datasource_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_backup_response","fields":[{"name":"backup_name","type":"string"},{"name":"backup_description","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"backup_ids","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"backup_contents","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"deleted_backup_ids","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("backup_name", "string"), ("datasource_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("backup_name", "string"), ("backup_description", "array", [("map", [("string")])]), ("backup_ids", "array", [("map", [("string")])]), ("backup_contents", "array", [("map", [("string")])]), ("deleted_backup_ids", "array", [("map", [("string")])]), ("info", "map", [("string")])] )
+        ENDPOINT = "/show/backup"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -13033,9 +13014,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/tablemonitors"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_table_monitors_request","fields":[{"name":"monitor_ids","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_table_monitors_response","fields":[{"name":"monitor_ids","type":{"type":"array","items":"string"}},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"events","type":{"type":"array","items":"string"}},{"name":"increasing_columns","type":{"type":"array","items":"string"}},{"name":"filter_expressions","type":{"type":"array","items":"string"}},{"name":"refresh_method","type":{"type":"array","items":"string"}},{"name":"refresh_period","type":{"type":"array","items":"string"}},{"name":"refresh_start_time","type":{"type":"array","items":"string"}},{"name":"datasink_names","type":{"type":"array","items":"string"}},{"name":"additional_info","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_table_monitors_response","fields":[{"name":"monitor_ids","type":{"type":"array","items":"string"}},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"events","type":{"type":"array","items":"string"}},{"name":"increasing_columns","type":{"type":"array","items":"string"}},{"name":"filter_expressions","type":{"type":"array","items":"string"}},{"name":"join_table_names","type":{"type":"array","items":"string"}},{"name":"join_column_names","type":{"type":"array","items":"string"}},{"name":"join_expressions","type":{"type":"array","items":"string"}},{"name":"refresh_method","type":{"type":"array","items":"string"}},{"name":"refresh_period","type":{"type":"array","items":"string"}},{"name":"refresh_start_time","type":{"type":"array","items":"string"}},{"name":"datasink_names","type":{"type":"array","items":"string"}},{"name":"additional_info","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("monitor_ids", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("monitor_ids", "array", [("string")]), ("table_names", "array", [("string")]), ("events", "array", [("string")]), ("increasing_columns", "array", [("string")]), ("filter_expressions", "array", [("string")]), ("refresh_method", "array", [("string")]), ("refresh_period", "array", [("string")]), ("refresh_start_time", "array", [("string")]), ("datasink_names", "array", [("string")]), ("additional_info", "array", [("map", [("string")])]), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("monitor_ids", "array", [("string")]), ("table_names", "array", [("string")]), ("events", "array", [("string")]), ("increasing_columns", "array", [("string")]), ("filter_expressions", "array", [("string")]), ("join_table_names", "array", [("string")]), ("join_column_names", "array", [("string")]), ("join_expressions", "array", [("string")]), ("refresh_method", "array", [("string")]), ("refresh_period", "array", [("string")]), ("refresh_start_time", "array", [("string")]), ("datasink_names", "array", [("string")]), ("additional_info", "array", [("map", [("string")])]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/tablemonitors"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -13283,6 +13264,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["aggregate_statistics_by_range"] = "/aggregate/statistics/byrange"
         self.gpudb_func_to_endpoint_map["aggregate_unique"] = "/aggregate/unique"
         self.gpudb_func_to_endpoint_map["aggregate_unpivot"] = "/aggregate/unpivot"
+        self.gpudb_func_to_endpoint_map["alter_backup"] = "/alter/backup"
         self.gpudb_func_to_endpoint_map["alter_credential"] = "/alter/credential"
         self.gpudb_func_to_endpoint_map["alter_datasink"] = "/alter/datasink"
         self.gpudb_func_to_endpoint_map["alter_datasource"] = "/alter/datasource"
@@ -13307,8 +13289,10 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["clear_statistics"] = "/clear/statistics"
         self.gpudb_func_to_endpoint_map["clear_table"] = "/clear/table"
         self.gpudb_func_to_endpoint_map["clear_table_monitor"] = "/clear/tablemonitor"
+        self.gpudb_func_to_endpoint_map["clear_tables"] = "/clear/tables"
         self.gpudb_func_to_endpoint_map["clear_trigger"] = "/clear/trigger"
         self.gpudb_func_to_endpoint_map["collect_statistics"] = "/collect/statistics"
+        self.gpudb_func_to_endpoint_map["create_backup"] = "/create/backup"
         self.gpudb_func_to_endpoint_map["create_container_registry"] = "/create/container/registry"
         self.gpudb_func_to_endpoint_map["create_credential"] = "/create/credential"
         self.gpudb_func_to_endpoint_map["create_datasink"] = "/create/datasink"
@@ -13404,11 +13388,11 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["list_graph"] = "/list/graph"
         self.gpudb_func_to_endpoint_map["lock_table"] = "/lock/table"
         self.gpudb_func_to_endpoint_map["match_graph"] = "/match/graph"
-        self.gpudb_func_to_endpoint_map["merge_records"] = "/merge/records"
         self.gpudb_func_to_endpoint_map["modify_graph"] = "/modify/graph"
         self.gpudb_func_to_endpoint_map["query_graph"] = "/query/graph"
         self.gpudb_func_to_endpoint_map["repartition_graph"] = "/repartition/graph"
         self.gpudb_func_to_endpoint_map["reserve_resource"] = "/reserve/resource"
+        self.gpudb_func_to_endpoint_map["restore_backup"] = "/restore/backup"
         self.gpudb_func_to_endpoint_map["revoke_permission"] = "/revoke/permission"
         self.gpudb_func_to_endpoint_map["revoke_permission_credential"] = "/revoke/permission/credential"
         self.gpudb_func_to_endpoint_map["revoke_permission_datasource"] = "/revoke/permission/datasource"
@@ -13417,6 +13401,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["revoke_permission_system"] = "/revoke/permission/system"
         self.gpudb_func_to_endpoint_map["revoke_permission_table"] = "/revoke/permission/table"
         self.gpudb_func_to_endpoint_map["revoke_role"] = "/revoke/role"
+        self.gpudb_func_to_endpoint_map["show_backup"] = "/show/backup"
         self.gpudb_func_to_endpoint_map["show_container_registry"] = "/show/container/registry"
         self.gpudb_func_to_endpoint_map["show_credential"] = "/show/credential"
         self.gpudb_func_to_endpoint_map["show_datasink"] = "/show/datasink"
@@ -14270,7 +14255,7 @@ class GPUdb(object):
                     Shrinks corrupted chunks to the shortest column
 
                   * **replay_wal** --
-                    Manually invokes wal replay on the table
+                    Manually invokes write-ahead log (WAL) replay on the table
 
                 * **verify_all** --
                   If *false* only table chunk data already known to be
@@ -14909,11 +14894,9 @@ class GPUdb(object):
 
                 * **delete_orphaned_tables** --
                   If *true*, orphaned table directories found on workers for
-                  which there is no corresponding metadata will be deleted.
-                  Must set *verify_persist* in input parameter *options* to
-                  *true*. It is recommended to run this while the database is
-                  offline OR set *concurrent_safe* in input parameter *options*
-                  to *true*.
+                  which there is no corresponding metadata will be deleted. It
+                  is recommended to run this while the database is offline OR
+                  set *concurrent_safe* in input parameter *options* to *true*.
                   Allowed values are:
 
                   * true
@@ -14923,13 +14906,24 @@ class GPUdb(object):
 
                 * **verify_orphaned_tables_only** --
                   If *true*, only the presence of orphaned table directories
-                  will be checked, all persistence checks will be skipped.
+                  will be checked, all persistence and table consistency checks
+                  will be skipped.
                   Allowed values are:
 
                   * true
                   * false
 
                   The default value is 'false'.
+
+                * **table_includes** --
+                  Comma-separated list of table names to include when verifying
+                  table consistency on wokers. Cannot be used simultaneously
+                  with *table_excludes*.
+
+                * **table_excludes** --
+                  Comma-separated list of table names to exclude when verifying
+                  table consistency on wokers. Cannot be used simultaneously
+                  with *table_includes*.
 
                 The default value is an empty dict ( {} ).
 
@@ -15161,9 +15155,8 @@ class GPUdb(object):
                   Filter expression to apply to the table prior to computing
                   the aggregate group by.
 
-                * **chunked_expression_evaluation** --
-                  evaluate the filter expression during group-by chunk
-                  processing.
+                * **pipelined_expression_evaluation** --
+                  evaluate the group-by during last JoinedSet filter plan step.
                   Allowed values are:
 
                   * true
@@ -15220,6 +15213,11 @@ class GPUdb(object):
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
 
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for the result
+                  table's columns.
+
                 * **result_table** --
                   The name of a table used to store the results, in
                   [schema_name.]table_name format, using standard `name
@@ -15267,6 +15265,16 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **result_table_generate_soft_pk** --
+                  If *true* then set a soft primary key for the result table.
+                  Must be used in combination with the *result_table* option.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **ttl** --
                   Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in *result_table*.
@@ -15304,10 +15312,10 @@ class GPUdb(object):
 
                 * **grouping_sets** --
                   Customize the grouping attribute sets to compute the
-                  aggregates. These sets can include ROLLUP or CUBE operartors.
-                  The attribute sets should be enclosed in paranthesis and can
+                  aggregates. These sets can include ROLLUP or CUBE operators.
+                  The attribute sets should be enclosed in parentheses and can
                   include composite attributes. All attributes specified in the
-                  grouping sets must present in the groupby attributes.
+                  grouping sets must present in the group-by attributes.
 
                 * **rollup** --
                   This option is used to specify the multilevel aggregates.
@@ -15540,9 +15548,8 @@ class GPUdb(object):
                   Filter expression to apply to the table prior to computing
                   the aggregate group by.
 
-                * **chunked_expression_evaluation** --
-                  evaluate the filter expression during group-by chunk
-                  processing.
+                * **pipelined_expression_evaluation** --
+                  evaluate the group-by during last JoinedSet filter plan step.
                   Allowed values are:
 
                   * true
@@ -15599,6 +15606,11 @@ class GPUdb(object):
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
 
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for the result
+                  table's columns.
+
                 * **result_table** --
                   The name of a table used to store the results, in
                   [schema_name.]table_name format, using standard `name
@@ -15646,6 +15658,16 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **result_table_generate_soft_pk** --
+                  If *true* then set a soft primary key for the result table.
+                  Must be used in combination with the *result_table* option.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **ttl** --
                   Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in *result_table*.
@@ -15683,10 +15705,10 @@ class GPUdb(object):
 
                 * **grouping_sets** --
                   Customize the grouping attribute sets to compute the
-                  aggregates. These sets can include ROLLUP or CUBE operartors.
-                  The attribute sets should be enclosed in paranthesis and can
+                  aggregates. These sets can include ROLLUP or CUBE operators.
+                  The attribute sets should be enclosed in parentheses and can
                   include composite attributes. All attributes specified in the
-                  grouping sets must present in the groupby attributes.
+                  grouping sets must present in the group-by attributes.
 
                 * **rollup** --
                   This option is used to specify the multilevel aggregates.
@@ -16631,6 +16653,11 @@ class GPUdb(object):
                   chunk to be used for the result table. Must be used in
                   combination with the *result_table* option.
 
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for the result
+                  table's columns.
+
                 * **view_id** --
                   ID of view of which the result table will be a member. The
                   default value is ''.
@@ -16896,6 +16923,11 @@ class GPUdb(object):
                   chunk to be used for the result table. Must be used in
                   combination with the *result_table* option.
 
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for the result
+                  table's columns.
+
                 * **view_id** --
                   ID of view of which the result table will be a member. The
                   default value is ''.
@@ -17147,6 +17179,11 @@ class GPUdb(object):
                   chunk to be used for the result table. Must be used in
                   combination with the *result_table* option.
 
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for the result
+                  table's columns.
+
                 * **limit** --
                   The number of records to keep. The default value is ''.
 
@@ -17389,6 +17426,11 @@ class GPUdb(object):
                   chunk to be used for the result table. Must be used in
                   combination with the *result_table* option.
 
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for the result
+                  table's columns.
+
                 * **limit** --
                   The number of records to keep. The default value is ''.
 
@@ -17536,6 +17578,96 @@ class GPUdb(object):
 
         return response
     # end aggregate_unpivot_and_decode
+
+    # begin alter_backup
+    def alter_backup( self, backup_name = None, action = None, value = None,
+                      datasink_name = None, options = {} ):
+        """Alters an existing database backup containing a current snapshot of
+        existing objects.
+
+        Parameters:
+
+            backup_name (str)
+                Name of the backup object to be altered
+
+            action (str)
+                Operation to be applied.
+                Allowed values are:
+
+                * **checksum** --
+                  Calculate checksum for backup files
+
+                * **ddl_only** --
+                  Only save the DDL, do not backup table data
+
+                * **max_incremental_backups_to_keep** --
+                  Maximum number of incremental backups to keep
+
+                * **merge** --
+                  Merges all backup instances and creates a single full backup
+
+                * **purge** --
+                  Purges backup instances
+
+            value (str)
+                Action specific argument.
+
+            datasink_name (str)
+                Datasink where backup will be stored.
+
+            options (dict of str to str)
+                Optional parameters.
+                Allowed keys are:
+
+                * **comment** --
+                  Comments to store with the new backup instance
+
+                * **dry_run** --
+                  Dry run of backup changes.
+                  Allowed values are:
+
+                  * false
+                  * true
+
+                  The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            backup_name (str)
+                Value of input parameter *backup_name*.
+
+            backup_id (long)
+                Backup ID.
+
+            total_bytes (long)
+                Total size of files affected by alter operation
+
+            total_number_of_records (long)
+                Total number of records affected alter operation
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( backup_name, (basestring)), "alter_backup(): Argument 'backup_name' must be (one) of type(s) '(basestring)'; given %s" % type( backup_name ).__name__
+        assert isinstance( action, (basestring)), "alter_backup(): Argument 'action' must be (one) of type(s) '(basestring)'; given %s" % type( action ).__name__
+        assert isinstance( value, (basestring)), "alter_backup(): Argument 'value' must be (one) of type(s) '(basestring)'; given %s" % type( value ).__name__
+        assert isinstance( datasink_name, (basestring)), "alter_backup(): Argument 'datasink_name' must be (one) of type(s) '(basestring)'; given %s" % type( datasink_name ).__name__
+        assert isinstance( options, (dict)), "alter_backup(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['backup_name'] = backup_name
+        obj['action'] = action
+        obj['value'] = value
+        obj['datasink_name'] = datasink_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/alter/backup', obj, convert_to_attr_dict = True )
+
+        return response
+    # end alter_backup
 
     # begin alter_credential
     def alter_credential( self, credential_name = None, credential_updates_map =
@@ -18248,46 +18380,56 @@ class GPUdb(object):
     # begin alter_resource_group
     def alter_resource_group( self, name = None, tier_attributes = {}, ranking =
                               '', adjoining_resource_group = '', options = {} ):
-        """Alters the properties of an exisiting resource group to facilitate
+        """Alters the properties of an existing resource group to facilitate
         resource management.
 
         Parameters:
 
             name (str)
                 Name of the group to be altered. Must be an existing resource
-                group name or an empty string when used inconjunction with the
-                is_default_group option.
+                group name or an empty string when used in conjunction with
+                *is_default_group*.
 
             tier_attributes (dict of str to dicts of str to str)
                 Optional map containing tier names and their respective
                 attribute group limits.  The only valid attribute limit that
                 can be set is max_memory (in bytes) for the VRAM & RAM tiers.
 
-                For instance, to set max VRAM capacity to 1GB and max RAM
-                capacity to 10GB, use:  {'VRAM':{'max_memory':'1000000000'},
+                For instance, to set max VRAM capacity to 1GB per rank per GPU
+                and max RAM capacity to 10GB per rank, use:
+                {'VRAM':{'max_memory':'1000000000'},
                 'RAM':{'max_memory':'10000000000'}}.
                 Allowed keys are:
 
                 * **max_memory** --
-                  Maximum amount of memory usable in the given tier at one time
-                  for this group.
+                  Maximum amount of memory usable at one time, per rank, per
+                  GPU, for the VRAM tier; or maximum amount of memory usable at
+                  one time, per rank, for the RAM tier.
 
                 The default value is an empty dict ( {} ).
 
             ranking (str)
                 If the resource group ranking is to be updated, this indicates
                 the relative ranking among existing resource groups where this
-                resource group will be moved; leave blank if not changing the
-                ranking.  When using *before* or *after*, specify which
-                resource group this one will be inserted before or after in
-                input parameter *adjoining_resource_group*.
+                resource group will be placed.
                 Allowed values are:
 
-                *
-                * first
-                * last
-                * before
-                * after
+                * *<blank>* --
+                  Don't change the ranking
+
+                * **first** --
+                  Make this resource group the new first one in the ordering
+
+                * **last** --
+                  Make this resource group the new last one in the ordering
+
+                * **before** --
+                  Place this resource group before the one specified by input
+                  parameter *adjoining_resource_group* in the ordering
+
+                * **after** --
+                  Place this resource group after the one specified by input
+                  parameter *adjoining_resource_group* in the ordering
 
                 The default value is ''.
 
@@ -18303,12 +18445,13 @@ class GPUdb(object):
 
                 * **max_cpu_concurrency** --
                   Maximum number of simultaneous threads that will be used to
-                  execute a request for this group. The minimum allowed value
-                  is '4'.
+                  execute a request, per rank, for this group. The minimum
+                  allowed value is '4'.
 
                 * **max_data** --
-                  Maximum amount of cumulative ram usage regardless of tier
-                  status for this group. The minimum allowed value is '-1'.
+                  Maximum amount of data, per rank, in bytes, that can be used
+                  by all database objects within this group.  Set to -1 to
+                  indicate no upper limit. The minimum allowed value is '-1'.
 
                 * **max_scheduling_priority** --
                   Maximum priority of a scheduled task for this group. The
@@ -18510,7 +18653,7 @@ class GPUdb(object):
                 * **subtask_concurrency_limit** --
                   Sets the maximum number of simultaneous threads allocated to
                   a given request, on each rank. Note that thread allocation
-                  may also be limted by resource group limits and/or system
+                  may also be limited by resource group limits and/or system
                   load.
 
                 * **chunk_size** --
@@ -18525,14 +18668,6 @@ class GPUdb(object):
                   Indicates the target maximum data size for all columns in a
                   chunk to be used for all new tables.
 
-                * **evict_columns** --
-                  Attempts to evict columns from memory to the persistent
-                  store.  Value string is a semicolon separated list of
-                  entries, each entry being a table name optionally followed by
-                  a comma and a comma separated list of column names to attempt
-                  to evict.  An empty value string will attempt to evict all
-                  tables and columns.
-
                 * **execution_mode** --
                   Sets the execution_mode for kernel executions to the
                   specified string value. Possible values are host, device,
@@ -18542,40 +18677,6 @@ class GPUdb(object):
                 * **external_files_directory** --
                   Sets the root directory path where external table data files
                   are accessed from.  Path must exist on the head node
-
-                * **flush_to_disk** --
-                  Flushes any changes to any tables to the persistent store.
-                  These changes include updates to the vector store, object
-                  store, and text search store.  Value string can be 'true',
-                  'false' or 'text_search' to flush the text search store only.
-
-                * **clear_cache** --
-                  Clears cached results.  Useful to allow repeated timing of
-                  endpoints.  Value string is the name of the table for which
-                  to clear the cached results, or an empty string to clear the
-                  cached results for all tables.
-
-                * **communicator_test** --
-                  Invoke the communicator test and report timing results. Value
-                  string is a semicolon separated list of [key]=[value]
-                  expressions.  Expressions are: num_transactions=[num] where
-                  num is the number of request reply transactions to invoke per
-                  test; message_size=[bytes] where bytes is the size in bytes
-                  of the messages to send; check_values=[enabled] where if
-                  enabled is true the value of the messages received are
-                  verified.
-
-                * **network_speed** --
-                  Invoke the network speed test and report timing results.
-                  Value string is a semicolon-separated list of [key]=[value]
-                  expressions.  Valid expressions are: seconds=[time] where
-                  time is the time in seconds to run the test;
-                  data_size=[bytes] where bytes is the size in bytes of the
-                  block to be transferred; threads=[number of threads];
-                  to_ranks=[space-separated list of ranks] where the list of
-                  ranks is the ranks that rank 0 will send data to and get data
-                  from. If to_ranks is unspecified then all worker ranks are
-                  used.
 
                 * **request_timeout** --
                   Number of minutes after which filtering (e.g.,
@@ -18589,9 +18690,6 @@ class GPUdb(object):
                   given data retrieval call. The default value is '20000'. The
                   minimum allowed value is '0'. The maximum allowed value is
                   '1000000'.
-
-                * **max_grbc_batch_size** --
-                  <DEVELOPER>
 
                 * **enable_audit** --
                   Enable or disable auditing.
@@ -18617,10 +18715,6 @@ class GPUdb(object):
                   Size of the shadow filter chunk cache in bytes. The default
                   value is '10000000'. The minimum allowed value is '0'. The
                   maximum allowed value is '2147483647'.
-
-                * **synchronous_compression** --
-                  compress vector on set_compression (instead of waiting for
-                  background thread). The default value is 'false'.
 
                 * **enable_overlapped_equi_join** --
                   Enable overlapped-equi-join filter. The default value is
@@ -18671,12 +18765,17 @@ class GPUdb(object):
                   The minimum allowed value is '1'.
 
                 * **tcs_per_tom** --
-                  Sets the tcs_per_tom value of the conf. The minimum allowed
-                  value is '2'. The maximum allowed value is '8192'.
+                  Size of the worker rank data calculation thread pool.  This
+                  is primarily used for computation-based operations such as
+                  aggregates and record retrieval. The minimum allowed value is
+                  '2'. The maximum allowed value is '8192'.
 
                 * **tps_per_tom** --
-                  Sets the tps_per_tom value of the conf. The minimum allowed
-                  value is '2'. The maximum allowed value is '8192'.
+                  Size of the worker rank data processing thread pool.  This
+                  includes operations such as inserts, updates, & deletes on
+                  table data.  Multi-head inserts are not affected by this
+                  limit. The minimum allowed value is '2'. The maximum allowed
+                  value is '8192'.
 
                 * **background_worker_threads** --
                   Size of the worker rank background thread pool. This includes
@@ -18724,6 +18823,22 @@ class GPUdb(object):
                 * **kifs_directory_data_limit** --
                   The default maximum capacity to apply when creating a KiFS
                   directory (bytes). The minimum allowed value is '-1'.
+
+                * **compression_codec** --
+                  The default `compression algorithm
+                  <../../../../concepts/column_compression/>`__ applied to any
+                  column without a column-level or table-level default
+                  compression specified at the time it was created
+
+                * **disk_auto_optimize_timeout** --
+                  Time interval in seconds after which the database will apply
+                  optimizations/transformations to persisted data, such as
+                  compression. The minimum allowed value is '0'.
+
+                * **ha_consumer_replay_offset** --
+                  Initializes HA replay from the given timestamp (as
+                  milliseconds since unix epoch). The minimum allowed value is
+                  '-1'.
 
             options (dict of str to str)
                 Optional parameters.
@@ -18834,9 +18949,6 @@ class GPUdb(object):
                 Modification operation to be applied.
                 Allowed values are:
 
-                * **allow_homogeneous_tables** --
-                  No longer supported; action will be ignored.
-
                 * **create_index** --
                   Creates a `column (attribute) index
                   <../../../../concepts/indexes/#column-index>`__,
@@ -18922,9 +19034,6 @@ class GPUdb(object):
                   to add dictionary encoding to an existing 'char4' column,
                   both 'char4' and 'dict' must be specified in the input
                   parameter *options* map.
-
-                * **set_column_compression** --
-                  No longer supported; action will be ignored.
 
                 * **delete_column** --
                   Deletes the column specified in input parameter *value* from
@@ -19103,24 +19212,13 @@ class GPUdb(object):
 
                 * **column_properties** --
                   When adding or changing a column, set the column properties
-                  (strings, separated by a comma: data, store_only,
-                  text_search, char8, int8 etc).
+                  (strings, separated by a comma: data, text_search, char8,
+                  int8 etc).
 
                 * **column_type** --
                   When adding or changing a column, set the column type
                   (strings, separated by a comma: int, double, string, null
                   etc).
-
-                * **compression_type** --
-                  No longer supported; option will be ignored.
-                  Allowed values are:
-
-                  * none
-                  * snappy
-                  * lz4
-                  * lz4hc
-
-                  The default value is 'snappy'.
 
                 * **copy_values_from_column** --
                   [DEPRECATED--please use *add_column_expression* instead.]
@@ -19453,7 +19551,7 @@ class GPUdb(object):
 
     # begin alter_tier
     def alter_tier( self, name = None, options = {} ):
-        """Alters properties of an exisiting `tier
+        """Alters properties of an existing `tier
         <../../../../rm/concepts/#storage-tiers>`__ to facilitate `resource
         management <../../../../rm/concepts/>`__.
 
@@ -19465,14 +19563,14 @@ class GPUdb(object):
 
             name (str)
                 Name of the tier to be altered. Must be an existing tier group
-                name.
+                name:  vram, ram, disk[n], persist, cold[n].
 
             options (dict of str to str)
                 Optional parameters.
                 Allowed keys are:
 
                 * **capacity** --
-                  Maximum size in bytes this tier may hold at once.
+                  Maximum size in bytes this tier may hold at once, per rank.
 
                 * **high_watermark** --
                   Threshold of usage of this tier's resource that once
@@ -19642,8 +19740,8 @@ class GPUdb(object):
 
     # begin alter_wal
     def alter_wal( self, table_names = None, options = {} ):
-        """Alters table wal settings. Returns information about the requested
-        table wal modifications.
+        """Alters table write-ahead log (WAL) settings. Returns information
+        about the requested table WAL modifications.
 
         Parameters:
 
@@ -19660,7 +19758,7 @@ class GPUdb(object):
                   Maximum size of an individual segment file
 
                 * **segment_count** --
-                  Approximate number of segment files to split the wal across.
+                  Approximate number of segment files to split the WAL across.
                   Must be at least two.
 
                 * **sync_policy** --
@@ -19668,10 +19766,10 @@ class GPUdb(object):
                   Allowed values are:
 
                   * **none** --
-                    Disables the wal
+                    Disables the WAL
 
                   * **background** --
-                    Wal entries are periodically written instead of immediately
+                    WAL entries are periodically written instead of immediately
                     after each operation
 
                   * **flush** --
@@ -19681,7 +19779,7 @@ class GPUdb(object):
                     Protects entries in the event of an OS crash
 
                 * **flush_frequency** --
-                  Specifies how frequently wal entries are written with
+                  Specifies how frequently WAL entries are written with
                   background sync. This is a global setting and can only be
                   used with the system {options.table_names} specifier '*'.
 
@@ -19696,7 +19794,7 @@ class GPUdb(object):
                   The default value is 'true'.
 
                 * **override_non_default** --
-                  If *true* tables with unique wal settings will be overridden
+                  If *true* tables with unique WAL settings will be overridden
                   when applying a system level change.
                   Allowed values are:
 
@@ -19706,7 +19804,7 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **restore_system_settings** --
-                  If *true* tables with unique wal settings will be reverted to
+                  If *true* tables with unique WAL settings will be reverted to
                   the current global settings. Cannot be used in conjunction
                   with any other option.
                   Allowed values are:
@@ -20081,6 +20179,65 @@ class GPUdb(object):
         return response
     # end clear_table_monitor
 
+    # begin clear_tables
+    def clear_tables( self, table_names = [], options = {} ):
+        """Clears (drops) tables in the database cluster. The operation is
+        synchronous meaning that the tables will be cleared before the function
+        returns. The response payload returns the status of the operation for
+        each table requested.
+
+        Parameters:
+
+            table_names (list of str)
+                Names of the tables to be cleared, in [schema_name.]table_name
+                format, using standard `name resolution rules
+                <../../../../concepts/tables/#table-name-resolution>`__. Must
+                be existing tables. Empty list clears all available tables,
+                though this behavior is be prevented by default via gpudb.conf
+                parameter 'disable_clear_all'. The default value is an empty
+                list ( [] ). The user can provide a single element (which will
+                be automatically promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.
+                Allowed keys are:
+
+                * **no_error_if_not_exists** --
+                  If *true* and if a table specified in input parameter
+                  *table_names* does not exist no error is returned. If *false*
+                  and if a table specified in input parameter *table_names*
+                  does not exist then an error is returned.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            tables (dict of str to str)
+                For each table in input parameter *table_names*, any error from
+                the clear operation, or an empty string if successful.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        assert isinstance( options, (dict)), "clear_tables(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['table_names'] = table_names
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/clear/tables', obj, convert_to_attr_dict = True )
+
+        return response
+    # end clear_tables
+
     # begin clear_trigger
     def clear_trigger( self, trigger_id = None, options = {} ):
         """Clears or cancels the trigger identified by the specified handle.
@@ -20163,6 +20320,182 @@ class GPUdb(object):
 
         return response
     # end collect_statistics
+
+    # begin create_backup
+    def create_backup( self, backup_name = None, backup_type = None,
+                       backup_objects_map = None, datasink_name = None, options
+                       = {} ):
+        """Creates a database backup containing a current snapshot of existing
+        objects.
+
+        Parameters:
+
+            backup_name (str)
+                Name for this backup object. If the backup object already
+                exists, only an incremental or differential backup can be made,
+                unless recreate is specified
+
+            backup_type (str)
+                Type of backup to create.
+                Allowed values are:
+
+                * incremental
+                * differential
+                * full
+
+            backup_objects_map (dict of str to str)
+                Map of objects to be captured in the backup. Error if empty and
+                creating full backup. Error if non-empty when creating an
+                incremental or differential backup.
+                Allowed keys are:
+
+                * **all** --
+                  All object types in a schema (excludes permissions, system
+                  configuration, host secret key, KiFS directories and user
+                  defined functions)
+
+                * **table** --
+                  Database Table
+
+                * **credential** --
+                  Credential
+
+                * **context** --
+                  Context
+
+                * **datasink** --
+                  Data Sink
+
+                * **datasource** --
+                  Data Source
+
+                * **stored_procedure** --
+                  SQL Procedure
+
+                * **monitor** --
+                  Table Monitor (Stream)
+
+                * **user** --
+                  User (internal and external) and associated permissions
+
+                * **role** --
+                  Role, role members (roles or users, recursively) and
+                  associated permissions
+
+                * **configuration** --
+                  If *true*, backup the database configuration file.
+                  Allowed values are:
+
+                  * false
+                  * true
+
+                  The default value is 'false'.
+
+            datasink_name (str)
+                Datasink where backup will be stored.
+
+            options (dict of str to str)
+                Optional parameters.
+                Allowed keys are:
+
+                * **comment** --
+                  Comments to store with this backup
+
+                * **checksum** --
+                  Calculate checksum for backup files.
+                  Allowed values are:
+
+                  * false
+                  * true
+
+                  The default value is 'true'.
+
+                * **ddl_only** --
+                  Only save the DDL, do not backup table data.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **max_incremental_backups_to_keep** --
+                  Maximum number of incremental backups to keep. The default
+                  value is '-1'.
+
+                * **delete_intermediate_backups** --
+                  When the backup type is differential, delete any intermediate
+                  incremental or differential backups. This overrides
+                  *max_incremental_backups_to_keep*.
+                  Allowed values are:
+
+                  * false
+                  * true
+
+                  The default value is 'false'.
+
+                * **recreate** --
+                  Replace the existing backup object with a new full backup if
+                  it already exists.
+                  Allowed values are:
+
+                  * false
+                  * true
+
+                  The default value is 'false'.
+
+                * **dry_run** --
+                  Dry run of backup.
+                  Allowed values are:
+
+                  * false
+                  * true
+
+                  The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            backup_name (str)
+                Value of input parameter *backup_name*.
+
+            backup_id (long)
+                Backup ID.
+
+            copied_bytes (long)
+                Total size of all files copied for this snapshot
+
+            copied_files (long)
+                Total number of files copied for this snapshot
+
+            copied_records (long)
+                Total number of records in all files copied for this snapshot
+
+            total_number_of_records (long)
+                Total number of records that can be restored from this snapshot
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( backup_name, (basestring)), "create_backup(): Argument 'backup_name' must be (one) of type(s) '(basestring)'; given %s" % type( backup_name ).__name__
+        assert isinstance( backup_type, (basestring)), "create_backup(): Argument 'backup_type' must be (one) of type(s) '(basestring)'; given %s" % type( backup_type ).__name__
+        assert isinstance( backup_objects_map, (dict)), "create_backup(): Argument 'backup_objects_map' must be (one) of type(s) '(dict)'; given %s" % type( backup_objects_map ).__name__
+        assert isinstance( datasink_name, (basestring)), "create_backup(): Argument 'datasink_name' must be (one) of type(s) '(basestring)'; given %s" % type( datasink_name ).__name__
+        assert isinstance( options, (dict)), "create_backup(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['backup_name'] = backup_name
+        obj['backup_type'] = backup_type
+        obj['backup_objects_map'] = self.__sanitize_dicts( backup_objects_map )
+        obj['datasink_name'] = datasink_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/create/backup', obj, convert_to_attr_dict = True )
+
+        return response
+    # end create_backup
 
     # begin create_container_registry
     def create_container_registry( self, registry_name = None, uri = None,
@@ -21108,12 +21441,6 @@ class GPUdb(object):
                 Optional parameters.
                 Allowed keys are:
 
-                * **remove_job_on_complete** --
-                  Allowed values are:
-
-                  * true
-                  * false
-
                 * **job_tag** --
                   Tag to use for submitted job. The same tag could be used on
                   backup cluster to retrieve response for the job. Tags can use
@@ -21133,8 +21460,11 @@ class GPUdb(object):
 
                 * **job_tag** --
                   The job tag specified by the user or if unspecified by user,
-                  a unique identifier generated internally for the job across
-                  clusters.
+                  a unique identifier generated internally.
+
+                * **query_id** --
+                  A unique identifier for this job generated for use in tracing
+                  telemetry data
 
                 The default value is an empty dict ( {} ).
         """
@@ -21267,6 +21597,32 @@ class GPUdb(object):
                 * **enable_virtual_chunking** --
                   Collect chunks with accumulated size less than chunk_size
                   into a single chunk. The default value is 'false'.
+
+                * **max_virtual_chunk_size** --
+                  Maximum number of records per virtual-chunk. When set,
+                  enables virtual chunking. Defaults to chunk_size if virtual
+                  chunking otherwise enabled.
+
+                * **min_virtual_chunk_size** --
+                  Minimum number of records per virtual-chunk. When set,
+                  enables virtual chunking. Defaults to chunk_size if virtual
+                  chunking otherwise enabled.
+
+                * **enable_sparse_virtual_chunking** --
+                  materialize virtual chunks with only non-deleted values. The
+                  default value is 'false'.
+
+                * **enable_equi_join_lazy_result_store** --
+                  Allow using the lazy result store to cache computation of one
+                  side of a multichunk equi-join.  Reduces computation but also
+                  reduces parallelism to the number of chunks on the other side
+                  of the equi-join
+
+                * **enable_predicate_equi_join_lazy_result_store** --
+                  Allow using the lazy result store to cache computation of one
+                  side of a multichunk predicate-equi-join. Reduces computation
+                  but also reduces parallelism to the number of chunks on the
+                  other side of the equi-join
 
                 * **enable_pk_equi_join** --
                   Use equi-join to do primary key joins rather than using
@@ -21816,6 +22172,11 @@ class GPUdb(object):
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
 
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for the
+                  projection's columns.
+
                 * **join_window_functions** --
                   If set, window functions which require a reshard will be
                   computed separately and joined back together, if the width of
@@ -21882,29 +22243,37 @@ class GPUdb(object):
                 attribute group limits.  The only valid attribute limit that
                 can be set is max_memory (in bytes) for the VRAM & RAM tiers.
 
-                For instance, to set max VRAM capacity to 1GB and max RAM
-                capacity to 10GB, use:  {'VRAM':{'max_memory':'1000000000'},
+                For instance, to set max VRAM capacity to 1GB per rank per GPU
+                and max RAM capacity to 10GB per rank, use:
+                {'VRAM':{'max_memory':'1000000000'},
                 'RAM':{'max_memory':'10000000000'}}.
                 Allowed keys are:
 
                 * **max_memory** --
-                  Maximum amount of memory usable in the given tier at one time
-                  for this group.
+                  Maximum amount of memory usable at one time, per rank, per
+                  GPU, for the VRAM tier; or maximum amount of memory usable at
+                  one time, per rank, for the RAM tier.
 
                 The default value is an empty dict ( {} ).
 
             ranking (str)
                 Indicates the relative ranking among existing resource groups
-                where this new resource group will be placed.  When using
-                *before* or *after*, specify which resource group this one will
-                be inserted before or after in input parameter
-                *adjoining_resource_group*.
+                where this new resource group will be placed.
                 Allowed values are:
 
-                * first
-                * last
-                * before
-                * after
+                * **first** --
+                  Make this resource group the new first one in the ordering
+
+                * **last** --
+                  Make this resource group the new last one in the ordering
+
+                * **before** --
+                  Place this resource group before the one specified by input
+                  parameter *adjoining_resource_group* in the ordering
+
+                * **after** --
+                  Place this resource group after the one specified by input
+                  parameter *adjoining_resource_group* in the ordering
 
             adjoining_resource_group (str)
                 If input parameter *ranking* is *before* or *after*, this field
@@ -21918,12 +22287,13 @@ class GPUdb(object):
 
                 * **max_cpu_concurrency** --
                   Maximum number of simultaneous threads that will be used to
-                  execute a request for this group. The minimum allowed value
-                  is '4'.
+                  execute a request, per rank, for this group. The minimum
+                  allowed value is '4'.
 
                 * **max_data** --
-                  Maximum amount of cumulative ram usage regardless of tier
-                  status for this group. The minimum allowed value is '-1'.
+                  Maximum amount of data, per rank, in bytes, that can be used
+                  by all database objects within this group.  Set to -1 to
+                  indicate no upper limit. The minimum allowed value is '-1'.
 
                 * **max_scheduling_priority** --
                   Maximum priority of a scheduled task for this group. The
@@ -22079,10 +22449,33 @@ class GPUdb(object):
 
     # begin create_table
     def create_table( self, table_name = None, type_id = None, options = {} ):
-        """Creates a new table. If a new table is being created, the type of
-        the table is given by input parameter *type_id*, which must be the ID
-        of a currently registered type (i.e. one created via
-        :meth:`GPUdb.create_type`).
+        """Creates a new table with the given type (definition of columns).
+        The type is specified in input parameter *type_id* as either a
+        numerical type ID (as returned by :meth:`GPUdb.create_type`) or as a
+        list of columns, each specified as a list of the column name, data
+        type, and any column attributes.
+
+        Example of a type definition with some parameters::
+
+            [
+                ["id", "int8", "primary_key"],
+                ["dept_id", "int8", "primary_key", "shard_key"],
+                ["manager_id", "int8", "nullable"],
+                ["first_name", "char32"],
+                ["last_name", "char64"],
+                ["salary", "decimal"],
+                ["hire_date", "date"]
+            ]
+
+        Each column definition consists of the column name (which should meet
+        the standard `column naming criteria
+        <../../../../concepts/tables/#table-naming-criteria>`__), the column's
+        `specific type <../../../../concepts/types/#types-chart>`__ (int, long,
+        float, double, string, bytes, or any of the properties map values from
+        :meth:`GPUdb.create_type`), and any `data handling
+        <../../../../concepts/types/#types-data-handling>`__, `data key
+        <../../../../concepts/types/#types-data-keys>`__, or `data replacement
+        <../../../../concepts/types/#types-data-replace>`__ properties.
 
         A table may optionally be designated to use a `replicated
         <../../../../concepts/tables/#replication>`__ distribution scheme, or
@@ -22103,8 +22496,9 @@ class GPUdb(object):
                 may be suppressed by using the *no_error_if_exists* option.
 
             type_id (str)
-                ID of a currently registered type. All objects added to the
-                newly created table will be of this type.
+                The type for the table, specified as either an existing table's
+                numerical type ID (as returned by :meth:`GPUdb.create_type`) or
+                a type definition (as described above).
 
             options (dict of str to str)
                 Optional parameters.
@@ -22147,15 +22541,6 @@ class GPUdb(object):
                   [DEPRECATED--please use :meth:`GPUdb.create_schema` to create
                   a schema instead]  Indicates whether to create a schema
                   instead of a table.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
-                * **disallow_homogeneous_tables** --
-                  No longer supported; value will be ignored.
                   Allowed values are:
 
                   * true
@@ -22271,10 +22656,8 @@ class GPUdb(object):
                 * **is_result_table** --
                   Indicates whether the table is a `memory-only table
                   <../../../../concepts/tables_memory_only/>`__. A result table
-                  cannot contain columns with store_only or text_search
-                  `data-handling <../../../../concepts/types/#data-handling>`__
-                  or that are `non-charN strings
-                  <../../../../concepts/types/#primitive-types>`__, and it will
+                  cannot contain columns with text_search `data-handling
+                  <../../../../concepts/types/#data-handling>`__, and it will
                   not be retained if the server is restarted.
                   Allowed values are:
 
@@ -22287,6 +22670,11 @@ class GPUdb(object):
                   The `tier strategy
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
+
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for this
+                  table's columns.
 
                 * **load_vectors_policy** --
                   Set startup data loading scheme for the table.
@@ -22398,7 +22786,7 @@ class GPUdb(object):
             filepaths (list of str)
                 A list of file paths from which data will be sourced;
 
-                For paths in `KiFS <../../../../tools/kifs/>`__, use the uri
+                For paths in `KiFS <../../../../tools/kifs/>`__, use the URI
                 prefix of kifs:// followed by the path to a file or directory.
                 File matching by prefix is supported, e.g. kifs://dir/file
                 would match dir/file_1 and dir/file_2. When prefix matching is
@@ -22570,6 +22958,11 @@ class GPUdb(object):
                   The `tier strategy
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
+
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for this
+                  table's columns.
 
                 The default value is an empty dict ( {} ).
 
@@ -22771,7 +23164,7 @@ class GPUdb(object):
 
                 * **gdal_configuration_options** --
                   Comma separated list of gdal conf options, for the specific
-                  requets: key=value
+                  requests: key=value
 
                 * **ignore_existing_pk** --
                   Specifies the record collision error-suppression policy for
@@ -22975,7 +23368,7 @@ class GPUdb(object):
                   when not specified in the type.
 
                 * **skip_lines** --
-                  Skip number of lines from begining of file.
+                  Skip a number of lines from the beginning of the file.
 
                 * **start_offsets** --
                   Starting offsets by partition to fetch from kafka. A comma
@@ -23079,7 +23472,7 @@ class GPUdb(object):
 
                 * **text_search_columns** --
                   Add 'text_search' property to internally inferenced string
-                  columns. Comma seperated list of column names or '*' for all
+                  columns. Comma separated list of column names or '*' for all
                   columns. To add 'text_search' property only to string columns
                   greater than or equal to a minimum size, also set the
                   *text_search_min_column_length*
@@ -23293,6 +23686,29 @@ class GPUdb(object):
 
                 * **expression** --
                   Filter expression to limit records for notification
+
+                * **join_table_names** --
+                  A comma-separated list of tables (optionally with aliases) to
+                  include in the join. The monitored table input parameter
+                  *table_name* must be included, representing only the newly
+                  inserted rows (deltas) since the last notification. Other
+                  tables can be any existing tables or views. Aliases can be
+                  used with the 'table_name as alias' syntax.
+
+                * **join_column_names** --
+                  A comma-separated list of columns or expressions to include
+                  from the joined tables. Column references can use table names
+                  or aliases defined in 'join_table_names'. Each column can
+                  optionally be aliased using 'as'. The selected columns will
+                  also appear in the notification output.
+
+                * **join_expressions** --
+                  Optional filter or join expressions to apply when combining
+                  the tables. Expressions are standard SQL-style conditions and
+                  can reference any table or alias listed in
+                  'join_table_names'. This corresponds to the WHERE clause of
+                  the underlying join, and can include conditions to filter the
+                  delta rows.
 
                 * **refresh_method** --
                   Method controlling when the table monitor reports changes to
@@ -23542,15 +23958,35 @@ class GPUdb(object):
     # begin create_type
     def create_type( self, type_definition = None, label = None, properties =
                      {}, options = {} ):
-        """Creates a new type describing the layout of a table. The type
-        definition is a JSON string describing the fields (i.e. columns) of the
-        type. Each field consists of a name and a data type. Supported data
-        types are: double, float, int, long, string, and bytes. In addition,
-        one or more properties can be specified for each column which customize
-        the memory usage and query availability of that column.  Note that some
-        properties are mutually exclusive--i.e. they cannot be specified for
-        any given column simultaneously.  One example of mutually exclusive
-        properties are *data* and *store_only*.
+        """Creates a new type describing the columns of a table. The type
+        definition is specified as a list of columns, each specified as a list
+        of the column name, data type, and any column attributes.
+
+        Example of a type definition with some parameters::
+
+            [
+                ["id", "int8", "primary_key"],
+                ["dept_id", "int8", "primary_key", "shard_key"],
+                ["manager_id", "int8", "nullable"],
+                ["first_name", "char32"],
+                ["last_name", "char64"],
+                ["salary", "decimal"],
+                ["hire_date", "date"]
+            ]
+
+        Each column definition consists of the column name (which should meet
+        the standard `column naming criteria
+        <../../../../concepts/tables/#table-naming-criteria>`__), the column's
+        `specific type <../../../../concepts/types/#types-chart>`__ (int, long,
+        float, double, string, bytes, or any of the possible values for input
+        parameter *properties*), and any `data handling
+        <../../../../concepts/types/#types-data-handling>`__, `data key
+        <../../../../concepts/types/#types-data-keys>`__, or `data replacement
+        <../../../../concepts/types/#types-data-replace>`__ properties.
+
+        Note that some properties are mutually exclusive--i.e. they cannot be
+        specified for any given column simultaneously.  One example of mutually
+        exclusive properties are *primary_key* and *nullable*.
 
         A single `primary key <../../../../concepts/tables/#primary-keys>`__
         and/or single `shard key <../../../../concepts/tables/#shard-keys>`__
@@ -23564,30 +24000,11 @@ class GPUdb(object):
         overwrite (i.e. update) the existing object or will be skipped and not
         added into the set.
 
-        Example of a type definition with some of the parameters::
-
-            {"type":"record",
-            "name":"point",
-            "fields":[{"name":"msg_id","type":"string"},
-                    {"name":"x","type":"double"},
-                    {"name":"y","type":"double"},
-                    {"name":"TIMESTAMP","type":"double"},
-                    {"name":"source","type":"string"},
-                    {"name":"group_id","type":"string"},
-                    {"name":"OBJECT_ID","type":"string"}]
-            }
-
-        Properties::
-
-            {"group_id":["store_only"],
-            "msg_id":["store_only","text_search"]
-            }
-
         Parameters:
 
             type_definition (str)
                 a JSON string describing the columns of the type to be
-                registered.
+                registered, as described above.
 
             label (str)
                 A user-defined description string which can be used to
@@ -23595,11 +24012,13 @@ class GPUdb(object):
                 schemas.
 
             properties (dict of str to lists of str)
-                Each key-value pair specifies the properties to use for a given
-                column where the key is the column name.  All keys used must be
-                relevant column names for the given table.  Specifying any
-                property overrides the default properties for that column
-                (which is based on the column's data type).
+                [DEPRECATED--please use these property values in the input
+                parameter *type_definition* directly, as described at the top,
+                instead]  Each key-value pair specifies the properties to use
+                for a given column where the key is the column name.  All keys
+                used must be relevant column names for the given table.
+                Specifying any property overrides the default properties for
+                that column (which is based on the column's data type).
                 Allowed values are:
 
                 * **data** --
@@ -23610,25 +24029,7 @@ class GPUdb(object):
                   Valid only for select 'string' columns. Enables full text
                   search--see `Full Text Search
                   <../../../../concepts/full_text_search/>`__ for details and
-                  applicable string column types. Can be set independently of
-                  *data* and *store_only*.
-
-                * **store_only** --
-                  Persist the column value but do not make it available to
-                  queries (e.g. :meth:`GPUdb.filter`)-i.e. it is mutually
-                  exclusive to the *data* property. Any 'bytes' type column
-                  must have a *store_only* property. This property reduces
-                  system memory usage.
-
-                * **disk_optimized** --
-                  Works in conjunction with the *data* property for string
-                  columns. This property reduces system disk usage by disabling
-                  reverse string lookups. Queries like :meth:`GPUdb.filter`,
-                  :meth:`GPUdb.filter_by_list`, and
-                  :meth:`GPUdb.filter_by_value` work as usual but
-                  :meth:`GPUdb.aggregate_unique` and
-                  :meth:`GPUdb.aggregate_group_by` are not allowed on columns
-                  with this property.
+                  applicable string column types.
 
                 * **timestamp** --
                   Valid only for 'long' columns. Indicates that this field
@@ -23785,15 +24186,23 @@ class GPUdb(object):
                   However, setting this property is insufficient for making the
                   column nullable.  The user must declare the type of the
                   column as a union between its regular type and 'null' in the
-                  avro schema for the record type in input parameter
+                  Avro schema for the record type in input parameter
                   *type_definition*.  For example, if a column is of type
                   integer and is nullable, then the entry for the column in the
-                  avro schema must be: ['int', 'null'].
+                  Avro schema must be: ['int', 'null'].
 
                   The C++, C#, Java, and Python APIs have built-in convenience
-                  for bypassing setting the avro schema by hand.  For those
+                  for bypassing setting the Avro schema by hand.  For those
                   languages, one can use this property as usual and not have to
-                  worry about the avro schema for the record.
+                  worry about the Avro schema for the record.
+
+                * **compress** --
+                  This property indicates that this column should be
+                  `compressed <../../../../concepts/column_compression/>`__
+                  with the given codec and optional level; e.g.,
+                  'compress(snappy)' for Snappy compression and
+                  'compress(zstd(7))' for zstd level 7 compression.  This
+                  property is primarily used in order to save disk space.
 
                 * **dict** --
                   This property indicates that this column should be
@@ -23821,7 +24230,15 @@ class GPUdb(object):
                 The default value is an empty dict ( {} ).
 
             options (dict of str to str)
-                Optional parameters. The default value is an empty dict ( {} ).
+                Optional parameters.
+                Allowed keys are:
+
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for this type's
+                  columns.
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -23951,9 +24368,8 @@ class GPUdb(object):
                   created. The default value is ''.
 
                 * **mode** --
-                  If *merge_views*, then this operation will merge the provided
-                  views. All input parameter *table_names* must be views from
-                  the same underlying base table.
+                  The mode describes what rows of the tables being unioned will
+                  be retained.
                   Allowed values are:
 
                   * **union_all** --
@@ -23983,18 +24399,12 @@ class GPUdb(object):
                     Retains all rows(including duplicates) that appear in both
                     of the specified tables (only works on 2 tables).
 
-                  * **merge_views** --
-                    Merge two or more views (or views of views) of the same
-                    base data set into a new view. If this mode is selected
-                    input parameter *input_column_names* AND input parameter
-                    *output_column_names* must be empty. The resulting view
-                    would match the results of a SQL OR operation, e.g., if
-                    filter 1 creates a view using the expression 'x = 20' and
-                    filter 2 creates a view using the expression 'x <= 10',
-                    then the merge views operation creates a new view using the
-                    expression 'x = 20 OR x <= 10'.
-
                   The default value is 'union_all'.
+
+                * **long_hash** --
+                  When true use 128 bit hash for union-distinct, except,
+                  except_all, intersect and intersect_all modes. Otherwise use
+                  64 bit hash.
 
                 * **chunk_size** --
                   Indicates the number of records per chunk to be used for this
@@ -24049,6 +24459,16 @@ class GPUdb(object):
                   The `tier strategy
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
+
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for this
+                  table's columns.
+
+                * **no_count** --
+                  Return a count of 0 for the union table response to avoid the
+                  cost of counting; optimization needed for many chunk
+                  virtual_union's. The default value is 'false'.
 
                 The default value is an empty dict ( {} ).
 
@@ -24439,7 +24859,7 @@ class GPUdb(object):
 
             file_names (list of str)
                 An array of names of files to be deleted. File paths may
-                contain wildcard characters after the KiFS directory delimeter.
+                contain wildcard characters after the KiFS directory delimiter.
 
                 Accepted wildcard characters are asterisk (*) to represent any
                 string of zero or more characters, and question mark (?) to
@@ -24785,7 +25205,7 @@ class GPUdb(object):
             file_names (list of str)
                 An array of the file names to download from KiFS. File paths
                 may contain wildcard characters after the KiFS directory
-                delimeter.
+                delimiter.
 
                 Accepted wildcard characters are asterisk (*) to represent any
                 string of zero or more characters, and question mark (?) to
@@ -25221,26 +25641,12 @@ class GPUdb(object):
                 Allowed keys are:
 
                 * **cache_input** --
-                  A comma-delimited list of table names from input parameter
-                  *input_table_names* from which input data will be cached for
-                  use in subsequent calls to :meth:`GPUdb.execute_proc` with
-                  the *use_cached_input* option. Cached input data will be
-                  retained until the proc status is cleared with the
-                  :meth:`clear_complete <GPUdb.show_proc_status>` option of
-                  :meth:`GPUdb.show_proc_status` and all proc instances using
-                  the cached data have completed. The default value is ''.
+                  No longer supported; option will be ignored. The default
+                  value is ''.
 
                 * **use_cached_input** --
-                  A comma-delimited list of run IDs (as returned from prior
-                  calls to :meth:`GPUdb.execute_proc`) of running or completed
-                  proc instances from which input data cached using the
-                  *cache_input* option will be used. Cached input data will not
-                  be used for any tables specified in input parameter
-                  *input_table_names*, but data from all other tables cached
-                  for the specified run IDs will be passed to the proc. If the
-                  same table was cached for multiple specified run IDs, the
-                  cached data from the first run ID specified in the list that
-                  includes that table will be used. The default value is ''.
+                  No longer supported; option will be ignored. The default
+                  value is ''.
 
                 * **run_tag** --
                   A string that, if not empty, can be used in subsequent calls
@@ -25313,6 +25719,21 @@ class GPUdb(object):
 
         See `SQL Support <../../../../sql/>`__ for the complete set of
         supported SQL commands.
+
+        When a caller wants all the results from a large query (e.g., more than
+        `max_get_records_size <../../../../config/#config-main-general>`__
+        records), they can make multiple calls to this endpoint using the input
+        parameter *offset* and input parameter *limit* parameters to page
+        through the results.  Normally, this will execute the input parameter
+        *statement* query each time. To avoid re-executing the query each time
+        and to keep the results in the same order, the caller should specify a
+        *paging_table* name to hold the results of the query between calls and
+        specify the *paging_table* on subsequent calls. When this is done, the
+        caller should clear the paging table and any other tables in the
+        *result_table_list* (both returned in the response) when they are done
+        paging through the results.  Output parameter *paging_table* (and
+        *result_table_list*) will be empty if no paging table was created
+        (e.g., when all the query results were returned in the first call).
 
         Parameters:
 
@@ -25433,15 +25854,26 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **paging_table** --
-                  When empty or the specified paging table not exists, the
-                  system will create a paging table and return when query
-                  output has more records than the user asked. If the paging
-                  table exists in the system, the records from the paging table
-                  are returned without evaluating the query.
+                  When specified (or *paging_table_ttl* is set), the system
+                  will create a paging table to hold the results of the query,
+                  when the output has more records than are in the response
+                  (i.e., when output parameter *has_more_records* is *true*).
+                  If the specified paging table exists, the records from the
+                  paging table are returned without re-evaluating the query.
+                  It is the caller's responsibility to clear the output
+                  parameter *paging_table* and other tables in the
+                  *result_table_list* (both returned in the response) when they
+                  are done with this query.
 
                 * **paging_table_ttl** --
                   Sets the `TTL <../../../../concepts/ttl/>`__ of the paging
-                  table.
+                  table.  -1 indicates no timeout.  Setting this option will
+                  cause a paging table to be generated when needed. The output
+                  parameter *paging_table* and other tables in the
+                  *result_table_list* (both returned in the response) will be
+                  automatically cleared after the TTL expires, if set to a
+                  positive number. However, it is still recommended that the
+                  caller clear these tables when they are done with this query.
 
                 * **parallel_execution** --
                   If *false*, disables the parallel step execution of the given
@@ -25593,14 +26025,22 @@ class GPUdb(object):
 
             paging_table (str)
                 Name of the table that has the result records of the query.
-                Valid, when output parameter *has_more_records* is *true*
+                Valid, when output parameter *has_more_records* is *true*.  The
+                caller should clear this and all tables in *result_table_list*
+                when they are done querying.
 
             info (dict of str to str)
                 Additional information.
                 Allowed keys are:
 
                 * **count** --
-                  Number of records in the final table
+                  Number of records without final limits applied
+
+                * **result_table_list** --
+                  List of tables, comma-separated, in addition to the output
+                  parameter *paging_table*, created as result of the query.
+                  These should be cleared by the caller when they are done
+                  querying.
 
                 The default value is an empty dict ( {} ).
 
@@ -25657,6 +26097,21 @@ class GPUdb(object):
 
         See `SQL Support <../../../../sql/>`__ for the complete set of
         supported SQL commands.
+
+        When a caller wants all the results from a large query (e.g., more than
+        `max_get_records_size <../../../../config/#config-main-general>`__
+        records), they can make multiple calls to this endpoint using the input
+        parameter *offset* and input parameter *limit* parameters to page
+        through the results.  Normally, this will execute the input parameter
+        *statement* query each time. To avoid re-executing the query each time
+        and to keep the results in the same order, the caller should specify a
+        *paging_table* name to hold the results of the query between calls and
+        specify the *paging_table* on subsequent calls. When this is done, the
+        caller should clear the paging table and any other tables in the
+        *result_table_list* (both returned in the response) when they are done
+        paging through the results.  Output parameter *paging_table* (and
+        *result_table_list*) will be empty if no paging table was created
+        (e.g., when all the query results were returned in the first call).
 
         Parameters:
 
@@ -25777,15 +26232,26 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **paging_table** --
-                  When empty or the specified paging table not exists, the
-                  system will create a paging table and return when query
-                  output has more records than the user asked. If the paging
-                  table exists in the system, the records from the paging table
-                  are returned without evaluating the query.
+                  When specified (or *paging_table_ttl* is set), the system
+                  will create a paging table to hold the results of the query,
+                  when the output has more records than are in the response
+                  (i.e., when output parameter *has_more_records* is *true*).
+                  If the specified paging table exists, the records from the
+                  paging table are returned without re-evaluating the query.
+                  It is the caller's responsibility to clear the output
+                  parameter *paging_table* and other tables in the
+                  *result_table_list* (both returned in the response) when they
+                  are done with this query.
 
                 * **paging_table_ttl** --
                   Sets the `TTL <../../../../concepts/ttl/>`__ of the paging
-                  table.
+                  table.  -1 indicates no timeout.  Setting this option will
+                  cause a paging table to be generated when needed. The output
+                  parameter *paging_table* and other tables in the
+                  *result_table_list* (both returned in the response) will be
+                  automatically cleared after the TTL expires, if set to a
+                  positive number. However, it is still recommended that the
+                  caller clear these tables when they are done with this query.
 
                 * **parallel_execution** --
                   If *false*, disables the parallel step execution of the given
@@ -25957,14 +26423,22 @@ class GPUdb(object):
 
             paging_table (str)
                 Name of the table that has the result records of the query.
-                Valid, when output parameter *has_more_records* is *true*
+                Valid, when output parameter *has_more_records* is *true*.  The
+                caller should clear this and all tables in *result_table_list*
+                when they are done querying.
 
             info (dict of str to str)
                 Additional information.
                 Allowed keys are:
 
                 * **count** --
-                  Number of records in the final table
+                  Number of records without final limits applied
+
+                * **result_table_list** --
+                  List of tables, comma-separated, in addition to the output
+                  parameter *paging_table*, created as result of the query.
+                  These should be cleared by the caller when they are done
+                  querying.
 
                 The default value is an empty dict ( {} ).
 
@@ -26360,7 +26834,7 @@ class GPUdb(object):
                   specified in input parameter *table_name* will be exported
 
                 * **jdbc_session_init_statement** --
-                  Executes the statement per each jdbc session before doing
+                  Executes the statement per each JDBC session before doing
                   actual load. The default value is ''.
 
                 * **jdbc_connection_init_statement** --
@@ -26373,7 +26847,7 @@ class GPUdb(object):
                   specified. The default value is ''.
 
                 * **use_st_geomfrom_casts** --
-                  Wraps parametrized variables with st_geomfromtext or
+                  Wraps parameterized variables with st_geomfromtext or
                   st_geomfromwkb based on source column type.
                   Allowed values are:
 
@@ -30417,7 +30891,7 @@ class GPUdb(object):
         Parameters:
 
             principal (str)
-                Name of the user for which role membersih is being checked.
+                Name of the user for which role membership is being checked.
                 Must be an existing user. If blank, will use the current user.
                 The default value is ''.
 
@@ -30935,7 +31409,7 @@ class GPUdb(object):
             filepaths (list of str)
                 A list of file paths from which data will be sourced;
 
-                For paths in `KiFS <../../../../tools/kifs/>`__, use the uri
+                For paths in `KiFS <../../../../tools/kifs/>`__, use the URI
                 prefix of kifs:// followed by the path to a file or directory.
                 File matching by prefix is supported, e.g. kifs://dir/file
                 would match dir/file_1 and dir/file_2. When prefix matching is
@@ -31108,6 +31582,11 @@ class GPUdb(object):
                   The `tier strategy
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
+
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for this
+                  table's columns.
 
                 The default value is an empty dict ( {} ).
 
@@ -31293,7 +31772,7 @@ class GPUdb(object):
 
                 * **gdal_configuration_options** --
                   Comma separated list of gdal conf options, for the specific
-                  requets: key=value
+                  requests: key=value
 
                 * **ignore_existing_pk** --
                   Specifies the record collision error-suppression policy for
@@ -31477,7 +31956,7 @@ class GPUdb(object):
                   when not specified in the type.
 
                 * **skip_lines** --
-                  Skip number of lines from begining of file.
+                  Skip a number of lines from the beginning of the file.
 
                 * **start_offsets** --
                   Starting offsets by partition to fetch from kafka. A comma
@@ -31581,7 +32060,7 @@ class GPUdb(object):
 
                 * **text_search_columns** --
                   Add 'text_search' property to internally inferenced string
-                  columns. Comma seperated list of column names or '*' for all
+                  columns. Comma separated list of column names or '*' for all
                   columns. To add 'text_search' property only to string columns
                   greater than or equal to a minimum size, also set the
                   *text_search_min_column_length*
@@ -31882,31 +32361,16 @@ class GPUdb(object):
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
 
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for this
+                  table's columns.
+
                 The default value is an empty dict ( {} ).
 
             options (dict of str to str)
                 Optional parameters.
                 Allowed keys are:
-
-                * **avro_header_bytes** --
-                  Optional number of bytes to skip when reading an avro record.
-
-                * **avro_num_records** --
-                  Optional number of avro records, if data includes only
-                  records.
-
-                * **avro_schema** --
-                  Optional string representing avro schema, for insert records
-                  in avro format, that does not include is schema.
-
-                * **avro_schemaless** --
-                  When user provides 'avro_schema', avro data is assumed to be
-                  schemaless, unless specified. Default is 'true' when given
-                  avro_schema. Igonred when avro_schema is not given.
-                  Allowed values are:
-
-                  * true
-                  * false
 
                 * **bad_record_table_name** --
                   Optional name of a table to which records that were rejected
@@ -32080,7 +32544,7 @@ class GPUdb(object):
 
                 * **gdal_configuration_options** --
                   Comma separated list of gdal conf options, for the specific
-                  requets: key=value. The default value is ''.
+                  requests: key=value. The default value is ''.
 
                 * **ignore_existing_pk** --
                   Specifies the record collision error-suppression policy for
@@ -32219,9 +32683,9 @@ class GPUdb(object):
                   Max records to skip due to schema related errors, before
                   failing
 
-                * schema_registry_schema_id
-                * schema_registry_schema_name
-                * schema_registry_schema_version
+                * **schema_registry_schema_name** --
+                  Name of the Avro schema in the schema registry to use when
+                  reading Avro records.
 
                 * **shard_keys** --
                   Optional: comma separated list of column names, to set as
@@ -32229,7 +32693,7 @@ class GPUdb(object):
                   value is ''.
 
                 * **skip_lines** --
-                  Skip number of lines from begining of file.
+                  Skip a number of lines from the beginning of the file.
 
                 * **subscribe** --
                   Continuously poll the data source to check for new data and
@@ -32326,7 +32790,7 @@ class GPUdb(object):
 
                 * **text_search_columns** --
                   Add 'text_search' property to internally inferenced string
-                  columns. Comma seperated list of column names or '*' for all
+                  columns. Comma separated list of column names or '*' for all
                   columns. To add text_search property only to string columns
                   of minimum size, set also the option
                   'text_search_min_column_length'
@@ -32609,6 +33073,11 @@ class GPUdb(object):
                   The `tier strategy
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
+
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for this
+                  table's columns.
 
                 The default value is an empty dict ( {} ).
 
@@ -32959,13 +33428,13 @@ class GPUdb(object):
                     with the given interval value. If a max value is specified
                     for a given column the data is randomly generated between
                     min and max and decimated down to the interval. If no max
-                    is provided the data is linerally generated starting at the
+                    is provided the data is linearly generated starting at the
                     minimum value (instead of generating random data). For
                     non-decimated string-type columns the interval value is
                     ignored. Instead the values are generated following the
                     pattern: 'attrname_creationIndex#', i.e. the column name
                     suffixed with an underscore and a running counter (starting
-                    at 0). For string types with limited size (eg char4) the
+                    at 0). For string types with limited size (e.g. char4) the
                     prefix is dropped. No nulls will be generated for nullable
                     columns.
 
@@ -33032,13 +33501,13 @@ class GPUdb(object):
                     with the given interval value. If a max value is specified
                     for a given column the data is randomly generated between
                     min and max and decimated down to the interval. If no max
-                    is provided the data is linerally generated starting at the
+                    is provided the data is linearly generated starting at the
                     minimum value (instead of generating random data). For
                     non-decimated string-type columns the interval value is
                     ignored. Instead the values are generated following the
                     pattern: 'attrname_creationIndex#', i.e. the column name
                     suffixed with an underscore and a running counter (starting
-                    at 0). For string types with limited size (eg char4) the
+                    at 0). For string types with limited size (e.g. char4) the
                     prefix is dropped. No nulls will be generated for nullable
                     columns.
 
@@ -33500,25 +33969,25 @@ class GPUdb(object):
                   default value is '10000'.
 
                 * **left_turn_penalty** --
-                  This will add an additonal weight over the edges labelled as
+                  This will add an additional weight over the edges labeled as
                   'left turn' if the 'add_turn' option parameter of the
                   :meth:`GPUdb.create_graph` was invoked at graph creation. The
                   default value is '0.0'.
 
                 * **right_turn_penalty** --
-                  This will add an additonal weight over the edges labelled as'
+                  This will add an additional weight over the edges labeled as'
                   right turn' if the 'add_turn' option parameter of the
                   :meth:`GPUdb.create_graph` was invoked at graph creation. The
                   default value is '0.0'.
 
                 * **intersection_penalty** --
-                  This will add an additonal weight over the edges labelled as
+                  This will add an additional weight over the edges labeled as
                   'intersection' if the 'add_turn' option parameter of the
                   :meth:`GPUdb.create_graph` was invoked at graph creation. The
                   default value is '0.0'.
 
                 * **sharp_turn_penalty** --
-                  This will add an additonal weight over the edges labelled as
+                  This will add an additional weight over the edges labeled as
                   'sharp turn' or 'u-turn' if the 'add_turn' option parameter
                   of the :meth:`GPUdb.create_graph` was invoked at graph
                   creation. The default value is '0.0'.
@@ -33542,7 +34011,7 @@ class GPUdb(object):
                 * **max_trip_cost** --
                   For the *match_supply_demand* and *match_pickup_dropoff*
                   solvers only. If this constraint is greater than zero
-                  (default) then the trucks/rides will skip travelling from one
+                  (default) then the trucks/rides will skip traveling from one
                   demand/pick location to another if the cost between them is
                   greater than this number (distance or time). Zero (default)
                   value means no check is performed. The default value is
@@ -33552,7 +34021,7 @@ class GPUdb(object):
                   For the *markov_chain* solver only. When true (non-default),
                   the paths per sequence combination is checked for folding
                   over patterns and can significantly increase the execution
-                  time depending on the chain width and the number of gps
+                  time depending on the chain width and the number of GPS
                   samples.
                   Allowed values are:
 
@@ -33620,7 +34089,7 @@ class GPUdb(object):
                 * **permute_supplies** --
                   For the *match_supply_demand* solver only. If specified
                   (true), supply side actors are permuted for the demand
-                  combinations during msdo optimization - note that this option
+                  combinations during MSDO optimization - note that this option
                   increases optimization time significantly - use of
                   'max_combinations' option is recommended to prevent
                   prohibitively long runs.
@@ -33644,11 +34113,11 @@ class GPUdb(object):
                   Allowed values are:
 
                   * **true** --
-                    Sets only one visit per demand location by a salesman (tsm
+                    Sets only one visit per demand location by a salesman (TSM
                     mode)
 
                   * **false** --
-                    No preset limit (usual msdo mode)
+                    No preset limit (usual MSDO mode)
 
                   The default value is 'false'.
 
@@ -33820,7 +34289,7 @@ class GPUdb(object):
 
                 * **optimize_embedding_weights** --
                   For the *match_embedding* solvers only. Solves to find the
-                  optimal weights per sub feature in vector emdeddings.
+                  optimal weights per sub feature in vector embeddings.
                   Allowed values are:
 
                   * true
@@ -33860,12 +34329,12 @@ class GPUdb(object):
                 * **optimization_iteration_rate** --
                   For the *match_embedding* solver only. It is otherwise known
                   as the learning rate, which is the proportionality constant
-                  in fornt of the gradient term in successive iterations. The
+                  in front of the gradient term in successive iterations. The
                   default value is '0.3'.
 
                 * **max_radius** --
                   For the *match_isochrone* solver only. Sets the maximal
-                  reachability limmit for computing isochrones. Zero means no
+                  reachability limit for computing isochrones. Zero means no
                   limit. The default value is '0.0'.
 
                 The default value is an empty dict ( {} ).
@@ -33900,167 +34369,6 @@ class GPUdb(object):
 
         return response
     # end match_graph
-
-    # begin merge_records
-    def merge_records( self, table_name = None, source_table_names = None,
-                       field_maps = None, options = {} ):
-        """Create a new empty result table (specified by input parameter
-        *table_name*), and insert all records from source tables (specified by
-        input parameter *source_table_names*) based on the field mapping
-        information (specified by input parameter *field_maps*).
-
-        For merge records details and examples, see `Merge Records
-        <../../../../concepts/merge_records/>`__.  For limitations, see `Merge
-        Records Limitations and Cautions
-        <../../../../concepts/merge_records/#limitations-and-cautions>`__.
-
-        The field map (specified by input parameter *field_maps*) holds the
-        user-specified maps of target table column names to source table
-        columns. The array of input parameter *field_maps* must match
-        one-to-one with the input parameter *source_table_names*, e.g., there's
-        a map present in input parameter *field_maps* for each table listed in
-        input parameter *source_table_names*.
-
-        Parameters:
-
-            table_name (str)
-                The name of the new result table for the records to be merged
-                into, in [schema_name.]table_name format, using standard `name
-                resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__ and
-                meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                NOT be an existing table.
-
-            source_table_names (list of str)
-                The list of names of source tables to get the records from,
-                each in [schema_name.]table_name format, using standard `name
-                resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__.  Must
-                be existing table names. The user can provide a single element
-                (which will be automatically promoted to a list internally) or
-                a list.
-
-            field_maps (list of dicts of str to str)
-                Contains a list of source/target column mappings, one mapping
-                for each source table listed in input parameter
-                *source_table_names* being merged into the target table
-                specified by input parameter *table_name*.  Each mapping
-                contains the target column names (as keys) that the data in the
-                mapped source columns or column `expressions
-                <../../../../concepts/expressions/>`__ (as values) will be
-                merged into.  All of the source columns being merged into a
-                given target column must match in type, as that type will
-                determine the type of the new target column. The user can
-                provide a single element (which will be automatically promoted
-                to a list internally) or a list.
-
-            options (dict of str to str)
-                Optional parameters.
-                Allowed keys are:
-
-                * **create_temp_table** --
-                  If *true*, a unique temporary table name will be generated in
-                  the sys_temp schema and used in place of input parameter
-                  *table_name*. If *persist* is *false*, then this is always
-                  allowed even if the caller does not have permission to create
-                  tables. The generated name is returned in
-                  *qualified_table_name*.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
-                * **collection_name** --
-                  [DEPRECATED--please specify the containing schema for the
-                  merged table as part of input parameter *table_name* and use
-                  :meth:`GPUdb.create_schema` to create the schema if
-                  non-existent]  Name of a schema for the newly created merged
-                  table specified by input parameter *table_name*.
-
-                * **is_replicated** --
-                  Indicates the `distribution scheme
-                  <../../../../concepts/tables/#distribution>`__ for the data
-                  of the merged table specified in input parameter
-                  *table_name*.  If true, the table will be `replicated
-                  <../../../../concepts/tables/#replication>`__.  If false, the
-                  table will be `randomly sharded
-                  <../../../../concepts/tables/#random-sharding>`__.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
-                * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`__ of the merged
-                  table specified in input parameter *table_name*.
-
-                * **persist** --
-                  If *true*, then the table specified in input parameter
-                  *table_name* will be persisted and will not expire unless a
-                  *ttl* is specified.   If *false*, then the table will be an
-                  in-memory table and will expire unless a *ttl* is specified
-                  otherwise.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
-                * **chunk_size** --
-                  Indicates the number of records per chunk to be used for the
-                  merged table specified in input parameter *table_name*.
-
-                * **chunk_column_max_memory** --
-                  Indicates the target maximum data size for each column in a
-                  chunk to be used for the merged table specified in input
-                  parameter *table_name*.
-
-                * **chunk_max_memory** --
-                  Indicates the target maximum data size for all columns in a
-                  chunk to be used for the merged table specified in input
-                  parameter *table_name*.
-
-                * **view_id** --
-                  view this result table is part of. The default value is ''.
-
-                The default value is an empty dict ( {} ).
-
-        Returns:
-            A dict with the following entries--
-
-            table_name (str)
-
-            info (dict of str to str)
-                Additional information.
-                Allowed keys are:
-
-                * **qualified_table_name** --
-                  The fully qualified name of the result table (i.e. including
-                  the schema)
-
-                The default value is an empty dict ( {} ).
-        """
-        assert isinstance( table_name, (basestring)), "merge_records(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
-        source_table_names = source_table_names if isinstance( source_table_names, list ) else ( [] if (source_table_names is None) else [ source_table_names ] )
-        field_maps = field_maps if isinstance( field_maps, list ) else ( [] if (field_maps is None) else [ field_maps ] )
-        assert isinstance( options, (dict)), "merge_records(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        obj = {}
-        obj['table_name'] = table_name
-        obj['source_table_names'] = source_table_names
-        obj['field_maps'] = field_maps
-        obj['options'] = self.__sanitize_dicts( options )
-
-        response = self.__submit_request( '/merge/records', obj, convert_to_attr_dict = True )
-
-        return response
-    # end merge_records
 
     # begin modify_graph
     def modify_graph( self, graph_name = None, nodes = None, edges = None,
@@ -34569,7 +34877,7 @@ class GPUdb(object):
 
                 * **new_graph_name** --
                   If a non-empty value is specified, the original graph will be
-                  kept (non-default behaviour) and a new balanced graph will be
+                  kept (non-default behavior) and a new balanced graph will be
                   created under this given name.  When the value is empty
                   (default), the generated 'balanced' graph will replace the
                   original 'unbalanced' graph under the same graph name. The
@@ -34577,14 +34885,12 @@ class GPUdb(object):
 
                 * **source_node** --
                   The distributed shortest path solve is run from this source
-                  node to all the nodes in the graph to create balaced
+                  node to all the nodes in the graph to create balanced
                   partitions using the iso-distance levels of the solution.
                   The source node is selected by the rebalance algorithm
                   automatically (default case when the value is an empty
                   string). Otherwise, the user specified node is used as the
                   source. The default value is ''.
-
-                * sql_request_avro_json
 
                 The default value is an empty dict ( {} ).
 
@@ -34631,6 +34937,186 @@ class GPUdb(object):
 
         return response
     # end reserve_resource
+
+    # begin restore_backup
+    def restore_backup( self, backup_name = '', restore_objects_map = None,
+                        datasource_name = None, options = {} ):
+        """Restores objects from a backup instance. Response from a backup
+        restoration operation.
+
+        Parameters:
+
+            backup_name (str)
+                Name of the backup object, which must refer to a currently
+                existing backup. The default value is ''.
+
+            restore_objects_map (dict of str to str)
+                Map of objects to be restored from the backup. Error if empty.
+                Allowed keys are:
+
+                * **all** --
+                  All object types in a schema (excludes permissions, system
+                  configuration, host secret key, KiFS directories and user
+                  defined functions)
+
+                * **table** --
+                  Database Table
+
+                * **credential** --
+                  Credential
+
+                * **context** --
+                  Context
+
+                * **datasink** --
+                  Data Sink
+
+                * **datasource** --
+                  Data Source
+
+                * **stored_procedure** --
+                  SQL Procedure
+
+                * **monitor** --
+                  Table Monitor (Stream)
+
+                * **user** --
+                  User (internal and external) and associated permissions
+
+                * **role** --
+                  Role, role members (roles or users, recursively) and
+                  associated permissions
+
+                * **configuration** --
+                  If *true*, restore the database configuration file.
+                  Allowed values are:
+
+                  * false
+                  * true
+
+                  The default value is 'false'.
+
+            datasource_name (str)
+                Datasource where backup is located.
+
+            options (dict of str to str)
+                Optional parameters.
+                Allowed keys are:
+
+                * **backup_id** --
+                  Backup instance ID to restore. Leave empty to restore the
+                  most recent backup instance. The default value is ''.
+
+                * **restore_policy** --
+                  Behavior to apply when restoring objects that already exist.
+                  Allowed values are:
+
+                  * **none** --
+                    If an object to be restored currently exists with the same
+                    name, abort and return error
+
+                  * **replace** --
+                    If an object to be restored currently exists with the same
+                    name, replace it with the backup version
+
+                  * **rename** --
+                    If an object to be restored currently exists with the same
+                    name, rename the original version
+
+                  The default value is 'none'.
+
+                * **renamed_objects_schema** --
+                  If the restore policy is rename, optionally use this schema
+                  for renamed objects instead of a default generated one. The
+                  default value is ''.
+
+                * **create_schema_if_not_exist** --
+                  Create the schema for an object to be restored if it does not
+                  currently exist. Error otherwise.
+                  Allowed values are:
+
+                  * false
+                  * true
+
+                  The default value is 'true'.
+
+                * **ddl_only** --
+                  Only recreates the objects from their DDL, do not restore
+                  table data.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **checksum** --
+                  Verify checksum for backup files.
+                  Allowed values are:
+
+                  * false
+                  * true
+
+                  The default value is 'true'.
+
+                * **dry_run** --
+                  Does a dry-run restoration operation.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            backup_name (str)
+                The backup name
+
+            backup_id (long)
+                The backup ID that was restored
+
+            restored_bytes (long)
+                Total size of data restored from backup
+
+            restored_files (long)
+                Total number of files restored from backup
+
+            restored_records (long)
+                Total number of records restored from backup
+
+            restored_objects (dict of str to str)
+                Objects that were successfully restored and their associated
+                types.
+
+            renamed_objects (dict of str to str)
+                Original and new names of objects that were successfully
+                restored and their associated types.
+
+            failed_objects (dict of str to str)
+                Objects that failed to be restored and their associated types.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( backup_name, (basestring)), "restore_backup(): Argument 'backup_name' must be (one) of type(s) '(basestring)'; given %s" % type( backup_name ).__name__
+        assert isinstance( restore_objects_map, (dict)), "restore_backup(): Argument 'restore_objects_map' must be (one) of type(s) '(dict)'; given %s" % type( restore_objects_map ).__name__
+        assert isinstance( datasource_name, (basestring)), "restore_backup(): Argument 'datasource_name' must be (one) of type(s) '(basestring)'; given %s" % type( datasource_name ).__name__
+        assert isinstance( options, (dict)), "restore_backup(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['backup_name'] = backup_name
+        obj['restore_objects_map'] = self.__sanitize_dicts( restore_objects_map )
+        obj['datasource_name'] = datasource_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/restore/backup', obj, convert_to_attr_dict = True )
+
+        return response
+    # end restore_backup
 
     # begin revoke_permission
     def revoke_permission( self, principal = '', object = None, object_type =
@@ -34914,12 +35400,12 @@ class GPUdb(object):
 
                 * **directory_read** --
                   For files in the directory, access to list files, download
-                  files, or use files in server side functions
+                  files, or use files in server side functions.
 
                 * **directory_write** --
                   Access to upload files to, or delete files from, the
                   directory. A user or role with write access automatically has
-                  read acceess
+                  read access.
 
             directory_name (str)
                 Name of the KiFS directory to which the permission revokes
@@ -35199,6 +35685,93 @@ class GPUdb(object):
 
         return response
     # end revoke_role
+
+    # begin show_backup
+    def show_backup( self, backup_name = '', datasource_name = None, options =
+                     {} ):
+        """Shows information about a backup Returns detailed information about
+        one or more backup instances.
+
+        Parameters:
+
+            backup_name (str)
+                Name of the backup object. An empty string or '*' will return
+                all existing backups. The default value is ''.
+
+            datasource_name (str)
+                Datasource where backup is located.
+
+            options (dict of str to str)
+                Optional parameters.
+                Allowed keys are:
+
+                * **backup_id** --
+                  Backup instance ID to show. Leave empty to show information
+                  from the most recent backup instance in the container. The
+                  default value is ''.
+
+                * **show_contents** --
+                  Shows the contents of the specified backup_id.
+                  Allowed values are:
+
+                  * **none** --
+                    No backup contents
+
+                  * **object_names** --
+                    Object names only
+
+                  * **object_files** --
+                    Object names and files
+
+                  The default value is 'none'.
+
+                * **no_error_if_not_exists** --
+                  If *false* will return an error if the provided input
+                  parameter *backup_name* does not exist. If *true* then it
+                  will return an empty result.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            backup_name (str)
+                Value of input parameter *backup_name*.
+
+            backup_description (list of dicts of str to str)
+                Backup description
+
+            backup_ids (list of dicts of str to str)
+                Backup instances in this backup
+
+            backup_contents (list of dicts of str to str)
+                Backup contents
+
+            deleted_backup_ids (list of dicts of str to str)
+                Backup instances that have been deleted from this backup object
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( backup_name, (basestring)), "show_backup(): Argument 'backup_name' must be (one) of type(s) '(basestring)'; given %s" % type( backup_name ).__name__
+        assert isinstance( datasource_name, (basestring)), "show_backup(): Argument 'datasource_name' must be (one) of type(s) '(basestring)'; given %s" % type( datasource_name ).__name__
+        assert isinstance( options, (dict)), "show_backup(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['backup_name'] = backup_name
+        obj['datasource_name'] = datasource_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/show/backup', obj, convert_to_attr_dict = True )
+
+        return response
+    # end show_backup
 
     # begin show_container_registry
     def show_container_registry( self, registry_name = None, options = {} ):
@@ -35493,7 +36066,7 @@ class GPUdb(object):
             A dict with the following entries--
 
             environment_names (list of str)
-                A list of all credential names.
+                A list of all environment names.
 
             packages (list of lists of str)
                 Information about the installed packages in the respective
@@ -35525,7 +36098,7 @@ class GPUdb(object):
             paths (list of str)
                 File paths to show. Each path can be a KiFS directory name, or
                 a full path to a KiFS file. File paths may contain wildcard
-                characters after the KiFS directory delimeter.
+                characters after the KiFS directory delimiter.
 
                 Accepted wildcard characters are asterisk (*) to represent any
                 string of zero or more characters, and question mark (?) to
@@ -36509,7 +37082,7 @@ class GPUdb(object):
     # begin show_system_timing
     def show_system_timing( self, options = {} ):
         """Returns the last 100 database requests along with the request timing
-        and internal job id. The admin tool uses it to present request timing
+        and internal job ID. The admin tool uses it to present request timing
         information to the user.
 
         Parameters:
@@ -36528,7 +37101,7 @@ class GPUdb(object):
                 List of time (in ms) of the recent requests.
 
             jobIds (list of str)
-                List of the internal job ids for the recent requests.
+                List of the internal job IDs for the recent requests.
 
             info (dict of str to str)
                 Additional information.
@@ -36601,11 +37174,21 @@ class GPUdb(object):
 
                   The default value is 'true'.
 
+                * **get_access_data** --
+                  If *true* then data about the last read, write, alter and
+                  create will be returned.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **get_cached_sizes** --
                   If *true* then the number of records in each table, along
                   with a cumulative count, will be returned; blank, otherwise.
                   This version will return the sizes cached at rank 0, which
-                  may be stale if there is a multihead insert occuring.
+                  may be stale if there is a multihead insert occurring.
                   Allowed values are:
 
                   * true
@@ -36623,10 +37206,31 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **skip_additional_info** --
+                  If *true* then the response will not populate the
+                  additional_info field.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **no_error_if_not_exists** --
                   If *false* will return an error if the provided input
                   parameter *table_name* does not exist. If *true* then it will
                   return an empty result.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **skip_temp_schemas** --
+                  If *true* then the table list will not include tables from
+                  SYS_TEMP and other system temporary schemas.  This is the
+                  default behavior for non-admin users.
                   Allowed values are:
 
                   * true
@@ -36696,7 +37300,7 @@ class GPUdb(object):
                 * VIEW
 
             type_ids (list of str)
-                Type ids of the respective tables in output parameter
+                Type IDs of the respective tables in output parameter
                 *table_names*.
 
             type_schemas (list of str)
@@ -36836,9 +37440,6 @@ class GPUdb(object):
                   using the form:  <index_type>@<column_list>@<column_options>.
                   Not present for schemas. The default value is ''.
 
-                * **compressed_columns** --
-                  No longer supported. The default value is ''.
-
                 * **column_info** --
                   JSON-encoded string representing a map of column name to
                   information including memory usage if the *get_column_info*
@@ -36883,8 +37484,8 @@ class GPUdb(object):
 
                 * **refresh_start_time** --
                   For materialized view with periodic refresh_method the
-                  current intial datetime string that periodic refreshes began.
-                  The default value is ''.
+                  initial datetime string that periodic refreshes began. The
+                  default value is ''.
 
                 * **refresh_stop_time** --
                   Time at which the periodic view refresh stops. The default
@@ -36895,8 +37496,8 @@ class GPUdb(object):
                   current refresh period in seconds. The default value is ''.
 
                 * **last_refresh_time** --
-                  For materialized view the a datatime string indicating the
-                  last time the view was refreshed. The default value is ''.
+                  For materialized view the datetime string indicating the last
+                  time the view was refreshed. The default value is ''.
 
                 * **next_refresh_time** --
                   For materialized view with periodic refresh_method a datetime
@@ -36929,6 +37530,54 @@ class GPUdb(object):
                 * **null_modifying_columns** --
                   Comma-separated list of null modifying column names. The
                   default value is ''.
+
+                * **compression_codec** --
+                  Default `compression codec
+                  <../../../../concepts/column_compression/>`__ for the table.
+                  The default value is ''.
+
+                * **created_by** --
+                  User that created this table or view. The default value is
+                  ''.
+
+                * **created_time** --
+                  Time (UTC) when this table or view was created. The default
+                  value is ''.
+
+                * **last_read_by** --
+                  User that last read this table or view. The default value is
+                  ''.
+
+                * **last_read_time** --
+                  Time (UTC) when this table or view was last read. The default
+                  value is ''.
+
+                * **read_count** --
+                  Count of times this table or view was read. The default value
+                  is ''.
+
+                * **last_write_by** --
+                  User that last wrote to this table. The default value is ''.
+
+                * **last_write_time** --
+                  Time (UTC) when this table was last written. The default
+                  value is ''.
+
+                * **write_count** --
+                  Count of times this table was written. The default value is
+                  ''.
+
+                * **last_alter_by** --
+                  User that last altered this table or view. The default value
+                  is ''.
+
+                * **last_alter_time** --
+                  Time (UTC) when this table or view was last altered. The
+                  default value is ''.
+
+                * **alter_count** --
+                  Count of times this table or view was altered. The default
+                  value is ''.
 
             sizes (list of longs)
                 If *get_sizes* is *true*, an array containing the number of
@@ -37070,6 +37719,15 @@ class GPUdb(object):
                 List of filter expressions used on the respective tables in
                 output parameter *table_names* to limit records for
                 notifications.
+
+            join_table_names (list of str)
+                List of join_table_names.
+
+            join_column_names (list of str)
+                List of join_column_names
+
+            join_expressions (list of str)
+                List of join expressions.
 
             refresh_method (list of str)
                 List of refresh methods used on the respective tables in output
@@ -37364,8 +38022,8 @@ class GPUdb(object):
 
     # begin show_wal
     def show_wal( self, table_names = None, options = {} ):
-        """Requests table wal properties. Returns information about the
-        requested table wal entries.
+        """Requests table write-ahead log (WAL) properties. Returns information
+        about the requested table WAL entries.
 
         Parameters:
 
@@ -37379,7 +38037,7 @@ class GPUdb(object):
                 Allowed keys are:
 
                 * **show_settings** --
-                  If *true* include a map of the wal settings for the requested
+                  If *true* include a map of the WAL settings for the requested
                   tables.
                   Allowed values are:
 
@@ -37397,16 +38055,16 @@ class GPUdb(object):
                 List of returned tables.
 
             sizes (list of lists of longs)
-                List of current wal usage.
+                List of current WAL usage.
 
             capacities (list of longs)
-                List of wal capacities.
+                List of WAL capacities.
 
             uncommitted (list of lists of longs)
                 List of number of uncommitted entries.
 
             settings (list of dicts of str to str)
-                List of table wal settings.
+                List of table WAL settings.
 
             info (dict of str to str)
                 Additional information.
@@ -37429,7 +38087,7 @@ class GPUdb(object):
                      source_nodes = [], destination_nodes = [], solution_table =
                      'graph_solutions', options = {} ):
         """Solves an existing graph for a type of problem (e.g., shortest path,
-        page rank, travelling salesman, etc.) using source nodes, destination
+        page rank, traveling salesman, etc.) using source nodes, destination
         nodes, and additional, optional weights and restrictions.
 
         IMPORTANT: It's highly recommended that you review the `Graphs &
@@ -37513,7 +38171,7 @@ class GPUdb(object):
                   Solves for finding the minimum cost cumulative path for a
                   round-trip starting from the given source and visiting each
                   given destination node once then returning to the source.
-                  Also known as the travelling salesman problem.
+                  Also known as the traveling salesman problem.
 
                 * **INVERSE_SHORTEST_PATH** --
                   Solves for finding the optimal path cost for each destination
@@ -37527,7 +38185,7 @@ class GPUdb(object):
                 * **ALLPATHS** --
                   Solves for paths that would give costs between max and min
                   solution radia - Make sure to limit by the
-                  'max_solution_targets' option. Min cost shoudl be >=
+                  'max_solution_targets' option. Min cost should be >=
                   shortest_path cost.
 
                 * **STATS_ALL** --
@@ -37596,25 +38254,25 @@ class GPUdb(object):
                   *weights_on_edges* will override this value.
 
                 * **left_turn_penalty** --
-                  This will add an additonal weight over the edges labelled as
+                  This will add an additional weight over the edges labeled as
                   'left turn' if the 'add_turn' option parameter of the
                   :meth:`GPUdb.create_graph` was invoked at graph creation. The
                   default value is '0.0'.
 
                 * **right_turn_penalty** --
-                  This will add an additonal weight over the edges labelled as'
+                  This will add an additional weight over the edges labeled as'
                   right turn' if the 'add_turn' option parameter of the
                   :meth:`GPUdb.create_graph` was invoked at graph creation. The
                   default value is '0.0'.
 
                 * **intersection_penalty** --
-                  This will add an additonal weight over the edges labelled as
+                  This will add an additional weight over the edges labeled as
                   'intersection' if the 'add_turn' option parameter of the
                   :meth:`GPUdb.create_graph` was invoked at graph creation. The
                   default value is '0.0'.
 
                 * **sharp_turn_penalty** --
-                  This will add an additonal weight over the edges labelled as
+                  This will add an additional weight over the edges labeled as
                   'sharp turn' or 'u-turn' if the 'add_turn' option parameter
                   of the :meth:`GPUdb.create_graph` was invoked at graph
                   creation. The default value is '0.0'.
@@ -37635,7 +38293,7 @@ class GPUdb(object):
                   '2000000'.
 
                 * **output_edge_path** --
-                  If true then concatenated edge ids will be added as the EDGE
+                  If true then concatenated edge IDs will be added as the EDGE
                   path column of the solution table for each source and target
                   pair in shortest path solves.
                   Allowed values are:
@@ -37665,12 +38323,12 @@ class GPUdb(object):
 
                 * **convergence_limit** --
                   For *PAGE_RANK* solvers only; Maximum percent relative
-                  threshold on the pagerank scores of each node between
+                  threshold on the page rank scores of each node between
                   consecutive iterations to satisfy convergence. Default value
                   is 1 (one) percent. The default value is '1.0'.
 
                 * **max_iterations** --
-                  For *PAGE_RANK* solvers only; Maximum number of pagerank
+                  For *PAGE_RANK* solvers only; Maximum number of page rank
                   iterations for satisfying convergence. Default value is 100.
                   The default value is '100'.
 
@@ -37723,7 +38381,7 @@ class GPUdb(object):
                 Indicates a successful solution on all servers.
 
             result_per_destination_node (list of floats)
-                Cost or Pagerank (based on solver type) for each destination
+                Cost or page rank (based on solver type) for each destination
                 node requested. Only populated if 'export_solve_results' option
                 is set to true.
 
@@ -37884,7 +38542,7 @@ class GPUdb(object):
                   input parameter *new_values_maps* taking its place; "insert
                   collisions" will result in the collided-into record being
                   updated with the values in input parameter
-                  *records_to_insert*/input parameter *records_to_insert_str*
+                  *records_to_insert* / input parameter *records_to_insert_str*
                   (if given).
 
                   If set to *false*, the existing collided-into record will
@@ -38112,8 +38770,8 @@ class GPUdb(object):
     def upload_files( self, file_names = None, file_data = None, options = {} ):
         """Uploads one or more files to `KiFS <../../../../tools/kifs/>`__.
         There are two methods for uploading files: load files in their
-        entirety, or load files in parts. The latter is recommeded for files of
-        approximately 60 MB or larger.
+        entirety, or load files in parts. The latter is recommended for files
+        of approximately 60 MB or larger.
 
         To upload files in their entirety, populate input parameter
         *file_names* with the file names to upload into on KiFS, and their
@@ -38152,7 +38810,7 @@ class GPUdb(object):
         Each file path must reside in a top-level KiFS directory, i.e. one of
         the directories listed in :meth:`GPUdb.show_directories`. The user must
         have write permission on the directory. Nested directories are
-        permitted in file name paths. Directories are deliniated with the
+        permitted in file name paths. Directories are delineated with the
         directory separator of '/'.  For example, given the file path
         '/a/b/c/d.txt', 'a' must be a KiFS directory.
 
@@ -38270,7 +38928,7 @@ class GPUdb(object):
         Each file path must reside in a top-level KiFS directory, i.e. one of
         the directories listed in :meth:`GPUdb.show_directories`. The user must
         have write permission on the directory. Nested directories are
-        permitted in file name paths. Directories are deliniated with the
+        permitted in file name paths. Directories are delineated with the
         directory separator of '/'.  For example, given the file path
         '/a/b/c/d.txt', 'a' must be a KiFS directory.
 
@@ -39422,19 +40080,10 @@ class GPUdb(object):
 
 # ---------------------------------------------------------------------------
 # Import GPUdbIngestor; try from an installed package first, if not, try local
-if IS_PYTHON_3:
-    try:                   # Installed
-        from gpudb.gpudb_multihead_io import GPUdbIngestor, RecordRetriever
-    except ImportError:    # Local
-        from gpudb_multihead_io import GPUdbIngestor, RecordRetriever
-else:
-    try:                   # Installed
-        from gpudb import GPUdbIngestor, RecordRetriever, GPUdbColumnProperty
-    except ImportError:    # Local
-        try:
-            from gpudb.gpudb_multihead_io import GPUdbIngestor, RecordRetriever
-        except ImportError:  # Failsafe
-            from gpudb_multihead_io import GPUdbIngestor, RecordRetriever
+try:                   # Installed
+    from gpudb.gpudb_multihead_io import GPUdbIngestor, RecordRetriever
+except ImportError:    # Local
+    from gpudb_multihead_io import GPUdbIngestor, RecordRetriever
 # done importing GPUdbIngestor
 
 
@@ -39581,7 +40230,7 @@ class GPUdbTable( object ):
         Returns:
             A GPUdbTable object.
         """
-        # Class level logger so that setting it for ond GPUdbTabl instance
+        # Class level logger so that setting it for one GPUdbTabl instance
         # doesn't set it for ALL GPUdbTable instances after that change (even
         # if it is outside of the scope of the first instance whose log level
         # was changed
@@ -39691,7 +40340,7 @@ class GPUdbTable( object ):
             if not name: # name must be given!
                 raise GPUdbException( "Table name must be provided with 'read_only_table_count'." )
 
-            if not isinstance( read_only_table_count, (int, long) ):
+            if not isinstance( read_only_table_count, int ):
                 raise GPUdbException( "Argument 'read_only_table_count' must be an integer." )
 
             if (read_only_table_count < 0):
@@ -39787,7 +40436,10 @@ class GPUdbTable( object ):
                                                     self.options.as_dict() )
                     self._is_collection = True
                 elif self.record_type: # create a regular table
-                    type_id = self.gpudbrecord_type.create_type( self.db )
+                    if self.options._compression_codec:
+                        type_id = self.gpudbrecord_type.create_type( self.db, options={'compression_codec': options['compression_codec']})
+                    else:
+                        type_id = self.gpudbrecord_type.create_type( self.db )
                     rsp_obj = self.db.create_table( self.qualified_name, type_id,
                                                     self.options.as_dict() )
                     self._type_id = type_id
@@ -39802,12 +40454,8 @@ class GPUdbTable( object ):
                     self.qualified_name = rsp_obj["info"]["qualified_table_name"]
             # end if-else
         except GPUdbException as e:
-            if IS_PYTHON_3:
-                raise GPUdbException( "Error creating GPUdbTable: '{}'"
-                                      "".format( e ) )
-            else:
-                raise GPUdbException( "Error creating GPUdbTable: '{}'"
-                                      "".format( e.message ) )
+            raise GPUdbException( "Error creating GPUdbTable: '{}'"
+                                  "".format( e ) )
         except Exception as e: # all other exceptions
             ex_str = GPUdbException.stringify_exception( e )
             raise GPUdbException( "Error creating GPUdbTable; {}: '{}'"
@@ -39828,7 +40476,7 @@ class GPUdbTable( object ):
         self._multihead_ingestor = None
         if use_multihead_ingest or use_multihead_io:
             # Check multihead_ingest_batch_size
-            if ( not isinstance( multihead_ingest_batch_size, (int, long) )
+            if ( not isinstance( multihead_ingest_batch_size, int )
                  or (multihead_ingest_batch_size < 1) ):
                 raise GPUdbException( "Argument 'multihead_ingest_batch_size' "
                                       "must be an integer greater than zero; "
@@ -39932,7 +40580,7 @@ class GPUdbTable( object ):
         """Implement indexing and slicing for the table.
         """
         # A single integer--get a single record
-        if isinstance( key, (int, long) ):
+        if isinstance( key, int ):
             if (key < 0):
                 raise TypeError( "GPUdbTable does not support negative indexing" )
             return self.get_records( key, 1 )
@@ -39942,7 +40590,7 @@ class GPUdbTable( object ):
         if isinstance( key, slice ):
             if key.step and (key.step != 1):
                 raise TypeError( "GPUdbTable does not support slicing with steps" )
-            if not isinstance(key.start, (int, long)) or not isinstance(key.stop, (int, long)):
+            if not isinstance(key.start, int) or not isinstance(key.stop, int):
                 raise TypeError( "GPUdbTable slicing requires integers" )
             if (key.start < 0):
                 raise TypeError( "GPUdbTable does not support negative indexing" )
@@ -40073,7 +40721,7 @@ class GPUdbTable( object ):
         related classes it uses.
 
         Parameters:
-            log_level (int, long, or str)
+            log_level (int or str)
                 A valid log level for the logging module
         """
         try:
@@ -40195,7 +40843,7 @@ class GPUdbTable( object ):
         Returns:
             A string with the format "this-table-name as alias".
         """
-        if not isinstance( alias, (str, unicode) ):
+        if not isinstance( alias, str ):
            raise GPUdbException( "'alias' must be a string; given {0}"
                                  "".format( str( type( alias ) ) ) )
 
@@ -40479,7 +41127,7 @@ class GPUdbTable( object ):
 
         Returns:
             object: the converted value
-        """        
+        """
         if not (isinstance(records, list) and all(isinstance(e, Record) for e in records)) and \
             not (isinstance(records, list) and all(isinstance(e, collections.OrderedDict) for e in records)) and \
             not isinstance(records, collections.OrderedDict):
@@ -40755,7 +41403,7 @@ class GPUdbTable( object ):
                     ignored. Instead the values are generated following the
                     pattern: 'attrname_creationIndex#', i.e. the column name
                     suffixed with an underscore and a running counter (starting
-                    at 0). For string types with limited size (eg char4) the
+                    at 0). For string types with limited size (e.g., char4) the
                     prefix is dropped. No nulls will be generated for nullable
                     columns.
 
@@ -40827,7 +41475,7 @@ class GPUdbTable( object ):
                     ignored. Instead the values are generated following the
                     pattern: 'attrname_creationIndex#', i.e. the column name
                     suffixed with an underscore and a running counter (starting
-                    at 0). For string types with limited size (eg char4) the
+                    at 0). For string types with limited size (e.g., char4) the
                     prefix is dropped. No nulls will be generated for nullable
                     columns.
 
@@ -41497,7 +42145,7 @@ class GPUdbTable( object ):
                 Optional Kinetica column properties to apply to the column type definitions inferred
                 from the Data Frame; map of column name to a list of column properties for that
                 column, excluding the inferred base type. For example::
-                
+
                     { "middle_name": [ 'char64', 'nullable' ], "state": [ 'char2', 'dict' ] }
 
             clear_table (bool)
@@ -41516,10 +42164,10 @@ class GPUdbTable( object ):
                 The number of records at a time to load into the target table.
 
         Raises:
-            GPUdbException: 
+            GPUdbException:
 
         Returns:
-            GPUdbTable: a GPUdbTable instance created from the Data Frame passed in 
+            GPUdbTable: a GPUdbTable instance created from the Data Frame passed in
         """
 
         from . import gpudb_dataframe
@@ -41663,6 +42311,32 @@ class GPUdbTable( object ):
                   Collect chunks with accumulated size less than chunk_size
                   into a single chunk. The default value is 'false'.
 
+                * **max_virtual_chunk_size** --
+                  Maximum number of records per virtual-chunk. When set,
+                  enables virtual chunking. Defaults to chunk_size if virtual
+                  chunking otherwise enabled.
+
+                * **min_virtual_chunk_size** --
+                  Minimum number of records per virtual-chunk. When set,
+                  enables virtual chunking. Defaults to chunk_size if virtual
+                  chunking otherwise enabled.
+
+                * **enable_sparse_virtual_chunking** --
+                  materialize virtual chunks with only non-deleted values. The
+                  default value is 'false'.
+
+                * **enable_equi_join_lazy_result_store** --
+                  Allow using the lazy result store to cache computation of one
+                  side of a multichunk equi-join.  Reduces computation but also
+                  reduces parallelism to the number of chunks on the other side
+                  of the equi-join
+
+                * **enable_predicate_equi_join_lazy_result_store** --
+                  Allow using the lazy result store to cache computation of one
+                  side of a multichunk predicate-equi-join. Reduces computation
+                  but also reduces parallelism to the number of chunks on the
+                  other side of the equi-join
+
                 * **enable_pk_equi_join** --
                   Use equi-join to do primary key joins rather than using
                   primary-key-index
@@ -41787,9 +42461,8 @@ class GPUdbTable( object ):
                   created. The default value is ''.
 
                 * **mode** --
-                  If *merge_views*, then this operation will merge the provided
-                  views. All input parameter *table_names* must be views from
-                  the same underlying base table.
+                  The mode describes what rows of the tables being unioned will
+                  be retained.
                   Allowed values are:
 
                   * **union_all** --
@@ -41819,18 +42492,12 @@ class GPUdbTable( object ):
                     Retains all rows(including duplicates) that appear in both
                     of the specified tables (only works on 2 tables).
 
-                  * **merge_views** --
-                    Merge two or more views (or views of views) of the same
-                    base data set into a new view. If this mode is selected
-                    input parameter *input_column_names* AND input parameter
-                    *output_column_names* must be empty. The resulting view
-                    would match the results of a SQL OR operation, e.g., if
-                    filter 1 creates a view using the expression 'x = 20' and
-                    filter 2 creates a view using the expression 'x <= 10',
-                    then the merge views operation creates a new view using the
-                    expression 'x = 20 OR x <= 10'.
-
                   The default value is 'union_all'.
+
+                * **long_hash** --
+                  When true use 128 bit hash for union-distinct, except,
+                  except_all, intersect and intersect_all modes. Otherwise use
+                  64 bit hash.
 
                 * **chunk_size** --
                   Indicates the number of records per chunk to be used for this
@@ -41886,6 +42553,16 @@ class GPUdbTable( object ):
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
 
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for this
+                  table's columns.
+
+                * **no_count** --
+                  Return a count of 0 for the union table response to avoid the
+                  cost of counting; optimization needed for many chunk
+                  virtual_union's. The default value is 'false'.
+
                 The default value is an empty dict ( {} ).
 
         Returns:
@@ -41919,168 +42596,6 @@ class GPUdbTable( object ):
 
         return GPUdbTable( None, table_name, db = db )
     # end create_union
-
-    @staticmethod
-    def merge_records( db, table_name = None, source_table_names = None,
-                       field_maps = None, options = {} ):
-        """Create a new empty result table (specified by input parameter
-        *table_name*), and insert all records from source tables (specified by
-        input parameter *source_table_names*) based on the field mapping
-        information (specified by input parameter *field_maps*).
-
-        For merge records details and examples, see `Merge Records
-        <../../../../concepts/merge_records/>`__.  For limitations, see `Merge
-        Records Limitations and Cautions
-        <../../../../concepts/merge_records/#limitations-and-cautions>`__.
-
-        The field map (specified by input parameter *field_maps*) holds the
-        user-specified maps of target table column names to source table
-        columns. The array of input parameter *field_maps* must match
-        one-to-one with the input parameter *source_table_names*, e.g., there's
-        a map present in input parameter *field_maps* for each table listed in
-        input parameter *source_table_names*.
-
-        Parameters:
-
-            table_name (str)
-                The name of the new result table for the records to be merged
-                into, in [schema_name.]table_name format, using standard `name
-                resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__ and
-                meeting `table naming criteria
-                <../../../../concepts/tables/#table-naming-criteria>`__.  Must
-                NOT be an existing table.
-
-            source_table_names (list of str)
-                The list of names of source tables to get the records from,
-                each in [schema_name.]table_name format, using standard `name
-                resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__.  Must
-                be existing table names. The user can provide a single element
-                (which will be automatically promoted to a list internally) or
-                a list.
-
-            field_maps (list of dicts of str to str)
-                Contains a list of source/target column mappings, one mapping
-                for each source table listed in input parameter
-                *source_table_names* being merged into the target table
-                specified by input parameter *table_name*.  Each mapping
-                contains the target column names (as keys) that the data in the
-                mapped source columns or column `expressions
-                <../../../../concepts/expressions/>`__ (as values) will be
-                merged into.  All of the source columns being merged into a
-                given target column must match in type, as that type will
-                determine the type of the new target column. The user can
-                provide a single element (which will be automatically promoted
-                to a list internally) or a list.
-
-            options (dict of str to str)
-                Optional parameters.
-                Allowed keys are:
-
-                * **create_temp_table** --
-                  If *true*, a unique temporary table name will be generated in
-                  the sys_temp schema and used in place of input parameter
-                  *table_name*. If *persist* is *false*, then this is always
-                  allowed even if the caller does not have permission to create
-                  tables. The generated name is returned in
-                  *qualified_table_name*.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
-                * **collection_name** --
-                  [DEPRECATED--please specify the containing schema for the
-                  merged table as part of input parameter *table_name* and use
-                  :meth:`GPUdb.create_schema` to create the schema if
-                  non-existent]  Name of a schema for the newly created merged
-                  table specified by input parameter *table_name*.
-
-                * **is_replicated** --
-                  Indicates the `distribution scheme
-                  <../../../../concepts/tables/#distribution>`__ for the data
-                  of the merged table specified in input parameter
-                  *table_name*.  If true, the table will be `replicated
-                  <../../../../concepts/tables/#replication>`__.  If false, the
-                  table will be `randomly sharded
-                  <../../../../concepts/tables/#random-sharding>`__.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
-                * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`__ of the merged
-                  table specified in input parameter *table_name*.
-
-                * **persist** --
-                  If *true*, then the table specified in input parameter
-                  *table_name* will be persisted and will not expire unless a
-                  *ttl* is specified.   If *false*, then the table will be an
-                  in-memory table and will expire unless a *ttl* is specified
-                  otherwise.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
-                * **chunk_size** --
-                  Indicates the number of records per chunk to be used for the
-                  merged table specified in input parameter *table_name*.
-
-                * **chunk_column_max_memory** --
-                  Indicates the target maximum data size for each column in a
-                  chunk to be used for the merged table specified in input
-                  parameter *table_name*.
-
-                * **chunk_max_memory** --
-                  Indicates the target maximum data size for all columns in a
-                  chunk to be used for the merged table specified in input
-                  parameter *table_name*.
-
-                * **view_id** --
-                  view this result table is part of. The default value is ''.
-
-                The default value is an empty dict ( {} ).
-
-        Returns:
-            A read-only GPUdbTable object.
-
-        Raises:
-
-            GPUdbException --
-                Upon an error from the server.
-        """
-        # Create a random table name if none is given
-        table_name = table_name if table_name else GPUdbTable.random_name()
-
-        # Normalize the input table names
-        source_table_names = source_table_names if isinstance( source_table_names, list ) else [ source_table_names ]
-        source_table_names = [ t.qualified_name if isinstance(t, GPUdbTable) else t for t in source_table_names ]
-
-        # The given DB handle must be a GPUdb instance
-        if not isinstance( db, GPUdb ):
-            raise GPUdbException( "Argument 'db' must be a GPUdb object; "
-                                  "given %s" % str( type( db ) ) )
-
-        response = db.merge_records( table_name, source_table_names, field_maps,
-                                     options )
-        if not response.is_ok():
-            raise GPUdbException( response.get_error_msg() )
-
-        # Use the qualified version of the output table name from the response, if any
-        if "qualified_table_name" in response.info:
-            table_name = response.info[ "qualified_table_name" ]
-
-        return GPUdbTable( None, table_name, db = db )
-    # end merge_records
 
 
 
@@ -42270,9 +42785,8 @@ class GPUdbTable( object ):
                   Filter expression to apply to the table prior to computing
                   the aggregate group by.
 
-                * **chunked_expression_evaluation** --
-                  evaluate the filter expression during group-by chunk
-                  processing.
+                * **pipelined_expression_evaluation** --
+                  evaluate the group-by during last JoinedSet filter plan step.
                   Allowed values are:
 
                   * true
@@ -42329,6 +42843,11 @@ class GPUdbTable( object ):
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
 
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for the result
+                  table's columns.
+
                 * **result_table** --
                   The name of a table used to store the results, in
                   [schema_name.]table_name format, using standard `name
@@ -42376,6 +42895,16 @@ class GPUdbTable( object ):
 
                   The default value is 'false'.
 
+                * **result_table_generate_soft_pk** --
+                  If *true* then set a soft primary key for the result table.
+                  Must be used in combination with the *result_table* option.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **ttl** --
                   Sets the `TTL <../../../../concepts/ttl/>`__ of the table
                   specified in *result_table*.
@@ -42413,10 +42942,10 @@ class GPUdbTable( object ):
 
                 * **grouping_sets** --
                   Customize the grouping attribute sets to compute the
-                  aggregates. These sets can include ROLLUP or CUBE operartors.
-                  The attribute sets should be enclosed in paranthesis and can
+                  aggregates. These sets can include ROLLUP or CUBE operators.
+                  The attribute sets should be enclosed in parentheses and can
                   include composite attributes. All attributes specified in the
-                  grouping sets must present in the groupby attributes.
+                  grouping sets must present in the group-by attributes.
 
                 * **rollup** --
                   This option is used to specify the multilevel aggregates.
@@ -43274,6 +43803,11 @@ class GPUdbTable( object ):
                   chunk to be used for the result table. Must be used in
                   combination with the *result_table* option.
 
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for the result
+                  table's columns.
+
                 * **view_id** --
                   ID of view of which the result table will be a member. The
                   default value is ''.
@@ -43491,6 +44025,11 @@ class GPUdbTable( object ):
                   chunk to be used for the result table. Must be used in
                   combination with the *result_table* option.
 
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for the result
+                  table's columns.
+
                 * **limit** --
                   The number of records to keep. The default value is ''.
 
@@ -43663,9 +44202,6 @@ class GPUdbTable( object ):
                 Modification operation to be applied.
                 Allowed values are:
 
-                * **allow_homogeneous_tables** --
-                  No longer supported; action will be ignored.
-
                 * **create_index** --
                   Creates a `column (attribute) index
                   <../../../../concepts/indexes/#column-index>`__,
@@ -43751,9 +44287,6 @@ class GPUdbTable( object ):
                   to add dictionary encoding to an existing 'char4' column,
                   both 'char4' and 'dict' must be specified in the input
                   parameter *options* map.
-
-                * **set_column_compression** --
-                  No longer supported; action will be ignored.
 
                 * **delete_column** --
                   Deletes the column specified in input parameter *value* from
@@ -43932,24 +44465,13 @@ class GPUdbTable( object ):
 
                 * **column_properties** --
                   When adding or changing a column, set the column properties
-                  (strings, separated by a comma: data, store_only,
-                  text_search, char8, int8 etc).
+                  (strings, separated by a comma: data, text_search, char8,
+                  int8 etc).
 
                 * **column_type** --
                   When adding or changing a column, set the column type
                   (strings, separated by a comma: int, double, string, null
                   etc).
-
-                * **compression_type** --
-                  No longer supported; option will be ignored.
-                  Allowed values are:
-
-                  * none
-                  * snappy
-                  * lz4
-                  * lz4hc
-
-                  The default value is 'snappy'.
 
                 * **copy_values_from_column** --
                   [DEPRECATED--please use *add_column_expression* instead.]
@@ -44703,6 +45225,11 @@ class GPUdbTable( object ):
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
 
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for the
+                  projection's columns.
+
                 * **join_window_functions** --
                   If set, window functions which require a reshard will be
                   computed separately and joined back together, if the width of
@@ -44813,6 +45340,29 @@ class GPUdbTable( object ):
 
                 * **expression** --
                   Filter expression to limit records for notification
+
+                * **join_table_names** --
+                  A comma-separated list of tables (optionally with aliases) to
+                  include in the join. The monitored table input parameter
+                  *table_name* must be included, representing only the newly
+                  inserted rows (deltas) since the last notification. Other
+                  tables can be any existing tables or views. Aliases can be
+                  used with the 'table_name as alias' syntax.
+
+                * **join_column_names** --
+                  A comma-separated list of columns or expressions to include
+                  from the joined tables. Column references can use table names
+                  or aliases defined in 'join_table_names'. Each column can
+                  optionally be aliased using 'as'. The selected columns will
+                  also appear in the notification output.
+
+                * **join_expressions** --
+                  Optional filter or join expressions to apply when combining
+                  the tables. Expressions are standard SQL-style conditions and
+                  can reference any table or alias listed in
+                  'join_table_names'. This corresponds to the WHERE clause of
+                  the underlying join, and can include conditions to filter the
+                  delta rows.
 
                 * **refresh_method** --
                   Method controlling when the table monitor reports changes to
@@ -46480,11 +47030,21 @@ class GPUdbTable( object ):
 
                   The default value is 'true'.
 
+                * **get_access_data** --
+                  If *true* then data about the last read, write, alter and
+                  create will be returned.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **get_cached_sizes** --
                   If *true* then the number of records in each table, along
                   with a cumulative count, will be returned; blank, otherwise.
                   This version will return the sizes cached at rank 0, which
-                  may be stale if there is a multihead insert occuring.
+                  may be stale if there is a multihead insert occurring.
                   Allowed values are:
 
                   * true
@@ -46502,10 +47062,31 @@ class GPUdbTable( object ):
 
                   The default value is 'false'.
 
+                * **skip_additional_info** --
+                  If *true* then the response will not populate the
+                  additional_info field.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **no_error_if_not_exists** --
                   If *false* will return an error if the provided input
                   parameter *table_name* does not exist. If *true* then it will
                   return an empty result.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **skip_temp_schemas** --
+                  If *true* then the table list will not include tables from
+                  SYS_TEMP and other system temporary schemas.  This is the
+                  default behavior for non-admin users.
                   Allowed values are:
 
                   * true
@@ -46576,7 +47157,7 @@ class GPUdbTable( object ):
                 * VIEW
 
             type_ids (list of str)
-                Type ids of the respective tables in output parameter
+                Type IDs of the respective tables in output parameter
                 *table_names*.
 
             type_schemas (list of str)
@@ -46716,9 +47297,6 @@ class GPUdbTable( object ):
                   using the form:  <index_type>@<column_list>@<column_options>.
                   Not present for schemas. The default value is ''.
 
-                * **compressed_columns** --
-                  No longer supported. The default value is ''.
-
                 * **column_info** --
                   JSON-encoded string representing a map of column name to
                   information including memory usage if the *get_column_info*
@@ -46763,8 +47341,8 @@ class GPUdbTable( object ):
 
                 * **refresh_start_time** --
                   For materialized view with periodic refresh_method the
-                  current intial datetime string that periodic refreshes began.
-                  The default value is ''.
+                  initial datetime string that periodic refreshes began. The
+                  default value is ''.
 
                 * **refresh_stop_time** --
                   Time at which the periodic view refresh stops. The default
@@ -46775,8 +47353,8 @@ class GPUdbTable( object ):
                   current refresh period in seconds. The default value is ''.
 
                 * **last_refresh_time** --
-                  For materialized view the a datatime string indicating the
-                  last time the view was refreshed. The default value is ''.
+                  For materialized view the datetime string indicating the last
+                  time the view was refreshed. The default value is ''.
 
                 * **next_refresh_time** --
                   For materialized view with periodic refresh_method a datetime
@@ -46809,6 +47387,54 @@ class GPUdbTable( object ):
                 * **null_modifying_columns** --
                   Comma-separated list of null modifying column names. The
                   default value is ''.
+
+                * **compression_codec** --
+                  Default `compression codec
+                  <../../../../concepts/column_compression/>`__ for the table.
+                  The default value is ''.
+
+                * **created_by** --
+                  User that created this table or view. The default value is
+                  ''.
+
+                * **created_time** --
+                  Time (UTC) when this table or view was created. The default
+                  value is ''.
+
+                * **last_read_by** --
+                  User that last read this table or view. The default value is
+                  ''.
+
+                * **last_read_time** --
+                  Time (UTC) when this table or view was last read. The default
+                  value is ''.
+
+                * **read_count** --
+                  Count of times this table or view was read. The default value
+                  is ''.
+
+                * **last_write_by** --
+                  User that last wrote to this table. The default value is ''.
+
+                * **last_write_time** --
+                  Time (UTC) when this table was last written. The default
+                  value is ''.
+
+                * **write_count** --
+                  Count of times this table was written. The default value is
+                  ''.
+
+                * **last_alter_by** --
+                  User that last altered this table or view. The default value
+                  is ''.
+
+                * **last_alter_time** --
+                  Time (UTC) when this table or view was last altered. The
+                  default value is ''.
+
+                * **alter_count** --
+                  Count of times this table or view was altered. The default
+                  value is ''.
 
             sizes (list of longs)
                 If *get_sizes* is *true*, an array containing the number of
@@ -46977,7 +47603,7 @@ class GPUdbTable( object ):
                   input parameter *new_values_maps* taking its place; "insert
                   collisions" will result in the collided-into record being
                   updated with the values in input parameter
-                  *records_to_insert*/input parameter *records_to_insert_str*
+                  *records_to_insert* / input parameter *records_to_insert_str*
                   (if given).
 
                   If set to *false*, the existing collided-into record will
@@ -47219,12 +47845,12 @@ class GPUdbTableIterator( Iterator ):
                 Optional GPUdb object
         """
         # Validate and set the offset
-        if not isinstance( offset, (int, long) ) or (offset < 0):
+        if not isinstance( offset, int ) or (offset < 0):
             raise GPUdbException( "Offset must be >= 0; given {0}"
                                   "".format( offset ) )
         self.offset = offset
 
-        if not isinstance( limit, (int, long) ) or (limit < 1):
+        if not isinstance( limit, int ) or (limit < 1):
             raise GPUdbException( "Limit must be >= 1; given {0}"
                                   "".format( limit ) )
         self.limit = limit
@@ -47232,7 +47858,7 @@ class GPUdbTableIterator( Iterator ):
         # Save the table name and the GPUdb object
         if isinstance( table, GPUdbTable ):
             self.table = table
-        elif isinstance( table, (str, unicode) ):
+        elif isinstance( table, str ):
             if not isinstance( db, GPUdb ):
                 raise GPUdbException( "Argument 'db' must be a GPUdb object "
                                       "if 'table' is the table name; given "
@@ -47310,6 +47936,7 @@ class GPUdbTableOptions(object):
     __is_result_table             = "is_result_table"
     __create_temp_table           = "create_temp_table"
     __wal_sync_policy             = "wal_sync_policy"
+    __compression_codec           = "compression_codec"
 
     _supported_options = [ __no_error_if_exists,
                            __collection_name,
@@ -47330,7 +47957,8 @@ class GPUdbTableOptions(object):
                            __strategy_definition,
                            __is_result_table,
                            __create_temp_table,
-                           __wal_sync_policy
+                           __wal_sync_policy,
+                           __compression_codec
     ]
 
 
@@ -47370,6 +47998,7 @@ class GPUdbTableOptions(object):
         self._is_result_table             = None
         self._create_temp_table           = False
         self._wal_sync_policy             = None
+        self._compression_codec           = None
 
         if (_dict is None):
             return # nothing to do
@@ -47453,6 +48082,9 @@ class GPUdbTableOptions(object):
         if self._wal_sync_policy is not None:
             result[ self.__wal_sync_policy ] = str( self._wal_sync_policy )
 
+        if self._compression_codec is not None:
+            result[ self.__compression_codec ] = str( self._compression_codec )
+
         return result
     # end as_json
 
@@ -47481,7 +48113,7 @@ class GPUdbTableOptions(object):
         collection will be automatically created.  If not specified, the newly
         created table will be a top-level table.
         """
-        if (val and not isinstance( val, basestring )):
+        if (val and not isinstance( val, str )):
             raise GPUdbException( "'collection_name' must be a string value; given '%s'" % val )
         self._collection_name = val
         return self
@@ -47651,5 +48283,10 @@ class GPUdbTableOptions(object):
         self._wal_sync_policy = val
         return self
     # end wal_sync_policy
+
+    def compression_codec(self, val):
+        self._compression_codec = val
+        return self
+    # end compression_codec
 
 # end class GPUdbTableOptions

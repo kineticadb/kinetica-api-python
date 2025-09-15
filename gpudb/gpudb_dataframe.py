@@ -48,21 +48,22 @@ class DataFrameUtils:
                   batch_size: int = BATCH_SIZE,
                   sql_opts: dict = {},
                   show_progress: bool = False) -> Optional[pd.DataFrame]:
-        """Create a dataframe from the results of a SQL query.
+        """Create a :class:`pd.Dataframe` from the results of a SQL query.
 
         Args:
-            db (GPUdb): a GPUdb instance
+            db (GPUdb): a :class:`GPUdb` instance
             sql (str): the SQL query
             sql_params (list): the query parameters. Defaults to None.
-            batch_size (int): the batch size for the SQL execution results. Defaults to BATCH_SIZE.
+            batch_size (int): the batch size for the SQL execution results. Defaults to :attr:`BATCH_SIZE`.
             sql_opts (dict): the SQL options as a dict. Defaults to None.
             show_progress (bool): whether to display progress or not. Defaults to False.
 
         Raises:
-            GPUdbException: 
+            GPUdbException
+                If the SQL query failed
 
         Returns:
-            pd.DataFrame: a Pandas dataframe or None if the SQL has returned no results
+            pd.DataFrame: a Pandas :class:`pd.Dataframe` or None if the SQL query has returned no results
         """
 
         cls._LOG.debug('Getting records from <{}>'.format(sql))
@@ -107,14 +108,18 @@ class DataFrameUtils:
     @classmethod
     @typechecked
     def _convert_records_to_df(cls, records: list, type_map: dict) -> pd.DataFrame:
-        """Create a Pandas dataframe from a list of records
+        """Create a Pandas :class:`pd.Dataframe` from a list of records
 
         Args:
             records (list): the list of records
             type_map (dict): the column type mapping
 
+        Raises:
+            GPUdbException
+                If the SQL query or datatype conversion failed
+
         Returns:
-            pd.Dataframe: a Pandas dataframe
+            pd.Dataframe: a Pandas :class:`pd.Dataframe`
         """        
         col_major_recs = zip(*records)
         data_list = []
@@ -151,17 +156,17 @@ class DataFrameUtils:
     def table_to_df(cls, db: GPUdb,
                     table_name: str,
                     batch_size: int = BATCH_SIZE,
-                    show_progress: bool = False) -> pd.DataFrame:
-        """Convert a Kinetica table into a dataframe and load data into it. 
+                    show_progress: bool = False) -> Optional[pd.DataFrame]:
+        """Convert a Kinetica table into a :class:`pd.Dataframe` and load data into it. 
 
         Args:
-            db (GPUdb): a GPUdb instance
+            db (GPUdb): a :class:`GPUdb` instance
             table_name (str): name of the Kinetica table
-            batch_size (int): the batch size for the SQL execution results. Defaults to BATCH_SIZE.
+            batch_size (int): the batch size for the SQL execution results. Defaults to :attr:`BATCH_SIZE`.
             show_progress (bool): whether to display progress or not. Defaults to False.
 
         Returns:
-            pd.Dataframe: Returns a Pandas dataframe created from the Kinetica table
+            pd.Dataframe: Returns a Pandas :class:`pd.Dataframe` created from the Kinetica table
         """
 
         sql = "SELECT * FROM {}".format(table_name)
@@ -174,14 +179,15 @@ class DataFrameUtils:
     @classmethod
     @typechecked
     def table_type_as_df(cls, gpudb_table: GPUdbTable) -> pd.DataFrame:
-        """Convert a GPUdbTable's type schema (column list) into a dataframe. 
+        """Convert the type schema (column list) of a :class:`GPUdbTable` into a
+        :class:`pd.Dataframe`.
 
         Args:
-            gpudb_table (GPUdbTable): a GPUdbTable instance
+            gpudb_table (GPUdbTable): a :class:`GPUdbTable` instance
 
         Returns:
-            pd.DataFrame: a Pandas dataframe created by analyzing the table column types
-        """        
+            pd.DataFrame: a Pandas :class:`pd.Dataframe` created by analyzing the table column types
+        """
 
         table_type = gpudb_table.get_table_type()
         col_list = []
@@ -203,25 +209,26 @@ class DataFrameUtils:
                     show_progress: bool = False,
                     batch_size: int = BATCH_SIZE,
                     **kwargs) -> GPUdbTable:
-        """ Load a Data Frame into a table; optionally dropping any existing table,
+        """ Load a :class:`pd.Dataframe` into a table; optionally dropping any existing table,
         creating it if it doesn't exist, and loading data into it; and then returning a
-        GPUdbTable reference to the table.
+        :class:`GPUdbTable` reference to the table.
 
 
         Args:
             df (pd.DataFrame)
-                The Pandas Data Frame to load into a table
+                The Pandas :class:`pd.Dataframe` to load into a table
 
             db (GPUdb)
-                GPUdb instance
+                :class:`GPUdb` instance
 
             table_name (str)
-                Name of the target Kinetica table for the Data Frame loading
+                Name of the target Kinetica table for the :class:`pd.Dataframe` loading
 
             column_types (dict)
                 Optional Kinetica column properties to apply to the column type definitions inferred
-                from the Data Frame; map of column name to a list of column properties for that
-                column, excluding the inferred base type. Defaults to empty map. For example::
+                from the :class:`pd.Dataframe`; map of column name to a list of column properties
+                for that column, excluding the inferred base type. Defaults to empty map. For
+                example::
                 
                     { "middle_name": [ 'char64', 'nullable' ], "state": [ 'char2', 'dict' ] }
 
@@ -239,13 +246,17 @@ class DataFrameUtils:
                 Whether to show progress of the operation on the console. Defaults to False.
 
             batch_size (int)
-                The number of records at a time to load into the target table. Defaults to BATCH_SIZE.
+                The number of records at a time to load into the target table. Defaults to
+                :attr:`BATCH_SIZE`.
 
         Raises:
-            GPUdbException: 
+            GPUdbException
+                If the :class:`pd.Dataframe` is empty, the table doesn't exist and
+                :attr:`create_table` is False, or the data ingest fails
 
         Returns:
-            GPUdbTable: a GPUdbTable instance created from the Data Frame passed in 
+            GPUdbTable: a :class:`GPUdbTable` instance created from the :class:`pd.Dataframe` passed
+                in
         """
         
         if(df.empty):
@@ -279,17 +290,21 @@ class DataFrameUtils:
                          gpudb_table: GPUdbTable,
                          batch_size: int = BATCH_SIZE,
                          show_progress: bool = False) -> int:
-        """Load a dataframe into a GPUdbTable. 
+        """Load a Pandas :class:`pd.Dataframe` into a :class:`GPUdbTable`.
 
         Args:
-            df (pd.Dataframe): a Pandas dataframe
-            gpudb_table (GPUdbTable): a GPUdbTable instance
-            batch_size (int): a batch size to use for loading data into the table. Defaults to BATCH_SIZE.
+            df (pd.Dataframe): a Pandas :class:`pd.Dataframe`
+            gpudb_table (GPUdbTable): a :class:`GPUdbTable` instance
+            batch_size (int): a batch size to use for loading data into the table. Defaults to :attr:`BATCH_SIZE`.
             show_progress (bool): whether to show progress of the operation. Defaults to False.
 
+        Raises:
+            GPUdbException
+                If the data ingest fails
+
         Returns:
-            int: the number of rows of the dataframe actually inserted into the Kinetica table
-        """        
+            int: the number of rows of the :class:`pd.Dataframe` actually inserted into the Kinetica table
+        """
 
         total_rows = df.shape[0]
         rows_before = gpudb_table.size()
@@ -322,7 +337,7 @@ class DataFrameUtils:
     @classmethod
     @typechecked
     def _table_convert_df_for_insert(cls, df: pd.DataFrame, gpudb_table: GPUdbTable) -> pd.DataFrame:
-        """ Convert dataframe for insert into Kinetica table. """
+        """ Convert :class:`pd.Dataframe` for insert into Kinetica table. """
         data_list = []
 
         col_properties = gpudb_table.get_table_type().column_properties
@@ -335,7 +350,7 @@ class DataFrameUtils:
                 if (GPUdbColumnProperty.TIMESTAMP in col_properties[col_name]):
                     col_data = col_data.astype(np.int64) // int(1e6)
                 elif (GPUdbColumnProperty.DATETIME in col_properties[col_name]):
-                    col_data = col_data.astype(np.str)
+                    col_data = col_data.astype(str)
                 else:
                     raise GPUdbException(f"Can't convert {col_name} timestamp field to the target column type")
             elif isinstance(ref_val, list) or isinstance(ref_val, np.ndarray):
@@ -363,7 +378,7 @@ class DataFrameUtils:
     @typechecked
     def _table_types_from_df(cls, df: pd.DataFrame,
                              col_type_override: dict) -> List:
-        """ Create GPUdb column types from a DataFrame. """
+        """ Create GPUdb column types from a :class:`pd.Dataframe`. """
         type_list = []
 
         # create a copy because we will be modifying this.

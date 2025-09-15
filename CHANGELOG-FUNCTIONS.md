@@ -1,7 +1,28 @@
 # Kinetica REST API Changelog
 
+## Version 7.2.3.1
+#### Changed Endpoints
+-   Added new option ``ha_consumer_replay_offset`` to ``/alter/system/properties`` request
 
-## Version 7.2
+## Version 7.2.3
+
+#### Added
+-   Added new endpoints to support incremental database backups
+    -   ``/alter/backup``
+    -   ``/create/backup``
+    -   ``/restore/backup``
+    -   ``/show/backup``
+-   Added ``/clear/tables`` endpoint to clear multiple tables in one request
+-   /show/table now returns information about when a table was last read or written in `additional_info`, when `get_access_data` option is specified in the request
+
+#### Changed Endpoints
+-   Added new options ``skip_additional_info`` and ``skip_temp_schemas`` to ``/show/table`` request
+-   Added new options ``background_worker_threads`` to ``/alter/system/properties`` endpoint
+-   Added new options ``compression_codec`` and ``disk_auto_optimize_timeout`` to ``/alter/system/properties`` request
+-   Added new option ``compression_codec`` to ``/create/table`` request
+-   Added new option ``compression_codec`` to ``/create/type`` request
+-   Added optional field ``compression_codec`` to ``/show/table`` response
+-   Removed ``synchronous_compression`` option from ``/alter/system/properties`` request
 
 ### Version 7.2.2.24
 -   Added new options ``enable_thread_hang_logging`` to ``/alter/system/properties`` endpoint
@@ -19,11 +40,6 @@
 
 #### Changed Endpoints
 -   Added ``/admin/ha/offline``
-
-### Version 7.2.2.14
-
-#### Changed Endpoints
--   Added new options ``background_worker_threads`` to ``/alter/system/properties`` endpoint
 
 ### Version 7.2.2.12
 

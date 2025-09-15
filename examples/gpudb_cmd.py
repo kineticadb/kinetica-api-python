@@ -18,9 +18,6 @@ import sys
 import argparse
 import json
 
-if sys.version_info.major > 2:
-    long = int
-
 from avro import schema
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -108,7 +105,7 @@ def gpudb_cmd( argv ):
     if (args.list_queries == True) or (len(args.query) == 0):
         for q in sorted( query_names ):
             print(q)
-        sys.exit( 0 ) # Succesful termination after printing the desired help message
+        sys.exit( 0 ) # Successful termination after printing the desired help message
 
     # --------------------------------------
     # Get the query JSON string from GPUdb
@@ -147,7 +144,7 @@ def gpudb_cmd( argv ):
         elif ptype == "double" or ptype == "float":
             query_parser.add_argument( "--" + pname, type = float, required = True, help = "Required parameter, type %s" % ptype )
         elif ptype == "long":
-            query_parser.add_argument( "--" + pname, type = long, required = True, help = "Required parameter, type %s" % ptype )
+            query_parser.add_argument( "--" + pname, type = int, required = True, help = "Required parameter, type %s" % ptype )
         elif ptype == "int":
             query_parser.add_argument( "--" + pname, type = int, required = True, help = "Required parameter, type %s" % ptype )
         elif ptype == "bytes":
