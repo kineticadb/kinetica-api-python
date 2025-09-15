@@ -36,7 +36,9 @@ except ImportError:
 
 import base64
 import copy
-import httpx
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import os
 import inspect
 import json
@@ -65,13 +67,6 @@ if IS_PYTHON_3:
 else:
     from collections import Iterator
 # end if
-
-try:                   # Local
-    from gpudb.packages.kinetica_retries.retry import Retry, HTTPMethod
-    from gpudb.packages.kinetica_retries.transport import RetryTransport
-except ImportError:    # Installed
-    from packages.kinetica_retries.retry import Retry, HTTPMethod
-    from packages.kinetica_retries.transport import RetryTransport
 
 
 # ---------------------------------------------------------------------------
@@ -5071,10 +5066,10 @@ class GPUdb(object):
 
     # -------------------------  GPUdb Members --------------------------------
     __http_response_triggering_failover = [
-        httpx.codes.SERVICE_UNAVAILABLE,   # most likely
-        httpx.codes.INTERNAL_SERVER_ERROR,
-        httpx.codes.GATEWAY_TIMEOUT,
-        httpx.codes.BAD_GATEWAY            # rank-0 killed with HTTPD gives this
+        requests.codes.service_unavailable,    # 503 - most likely
+        requests.codes.internal_server_error,  # 500
+        requests.codes.gateway_timeout,        # 504
+        requests.codes.bad_gateway             # 502 - rank-0 killed with HTTPD gives this
     ]
     __endpoint_server_error_magic_strings = [
         C._DB_EXITING_ERROR_MESSAGE,
@@ -5119,7 +5114,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.2.12"
+    api_version = "7.2.2.13"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5396,29 +5391,33 @@ class GPUdb(object):
         self.__curr_cluster_index_pointer = 0
 
         # set up the HTTP client to be used later on
-        http_timeouts = httpx.Timeout(self.timeout, connect=self.__server_connection_timeout, pool=GPUdb._HTTP_CONNECTION_POOL_SIZE)
-
-        # The client will retry on the exceptions
-        #     RETRYABLE_EXCEPTIONS: Final[Tuple[Type[httpx.HTTPError], ...]] = (
-                  #         httpx.TimeoutException,
-                  #         httpx.NetworkError,
-                  #         httpx.RemoteProtocolError,
-                  #     )
-        # Ref - https://www.python-httpx.org/exceptions/
-        retry_config = Retry(
-                        total=GPUdb._HTTP_REQUEST_MAX_RETRY_ATTEMPTS,
-                        status_forcelist=[502, 503],
-                        allowed_methods=[HTTPMethod.POST, HTTPMethod.GET],
-                    )
-        # Needs to be done here, as httpx only initializes this once,
-        # and it will turn verify on if we don't override it now
-        transport_config = httpx.HTTPTransport(verify=(not self.skip_ssl_cert_verification))
-        self.http_client = httpx.Client(
-            timeout=http_timeouts,
-            headers=self.__custom_http_headers or {},
-            transport=RetryTransport(retry=retry_config, transport=transport_config),
+        self.__session = requests.Session()
+        self.__retry_strategy = Retry(
+            total=5,
+            read=5,
+            status_forcelist=[502, 503],
+            allowed_methods=["GET", "POST", "PUT"],
         )
-        logging.getLogger("httpx").setLevel(logging.WARN)
+
+        # High-throughput HTTP adapter configuration
+        self.__adapter = HTTPAdapter(
+            pool_connections=100,    # Total connection pools to cache
+            pool_maxsize=50,  # Max connections per pool
+            max_retries=self.__retry_strategy,
+            pool_block=False,  # Don't block when pool is full, create new connection
+        )
+
+        # Set headers
+        self.__session.headers.update(self.__custom_http_headers)
+
+        # Mount adapter for both HTTP and HTTPS
+        self.__session.mount("http://", self.__adapter)
+        self.__session.mount("https://", self.__adapter)
+
+        self.__session.verify = not self.skip_ssl_cert_verification
+
+        logging.getLogger("requests").setLevel(logging.WARNING)
+        logging.getLogger("urllib3").setLevel(logging.WARNING)
 
         # Parse the user given URLs (will throw an error if no connection
         # can be established)
@@ -5427,10 +5426,12 @@ class GPUdb(object):
         # Check version compatibility with the server
         # -------------------------------------------
         self.__update_server_version()
-        if( not self.__perform_version_check() ):
+        if not self.__perform_version_check():
             self.__log_warn("API and server versions don't match")
     # end __construct
 
+    def __get_current_http_connection(self):
+        return self.__session
 
     def __create_authorization_header(self):
         """Set the authentication header for the connection with the following
@@ -7889,9 +7890,8 @@ class GPUdb(object):
 
         try:
             # Create a client with the appropriate timeout
-            # with self.__initialize_http_connection(url, timeout) as client:
             # Send the POST request
-            response = self.http_client.post(full_url, headers=headers, content=body_data)
+            response = self.__get_current_http_connection().post(full_url, headers=headers, data=body_data, timeout=self.timeout)
 
             # Get the response time header if available
             response_time = response.headers.get('x-request-time-secs')
@@ -7899,18 +7899,18 @@ class GPUdb(object):
             # Check the HTTP status code and throw appropriate exceptions
             status_code = response.status_code
 
-            if status_code == httpx.codes.UNAUTHORIZED:  # UNAUTHORIZED (httplib.UNAUTHORIZED)
-                msg = f"Unauthorized access: '{response.reason_phrase}'"
+            if status_code == requests.codes.UNAUTHORIZED:
+                msg = f"Unauthorized access: '{response.reason}'"
                 self.__log_debug(msg)
                 raise GPUdbUnauthorizedAccessException(msg)
             elif status_code in self.__http_response_triggering_failover:
                 msg = (f"Could not connect to database at '{url.url}' due to status "
-                       f"code {status_code}: {response.reason_phrase}")
+                       f"code {status_code}: {response.reason}")
                 self.__log_debug(f"Throwing EXIT exception; {msg}")
                 raise GPUdbExitException(msg)
-            elif status_code == httpx.codes.NOT_FOUND:  # NOT_FOUND (httplib.NOT_FOUND)
+            elif status_code == requests.codes.NOT_FOUND:
                 msg = (f"Endpoint not found ({url.url}) due to status "
-                       f"code {status_code}: {response.reason_phrase}")
+                       f"code {status_code}: {response.reason}")
                 self.__log_debug(f"Throwing EXIT exception; {msg}")
                 raise GPUdbExitException(msg)
 
@@ -7928,7 +7928,7 @@ class GPUdb(object):
             if self.__is_log_level_trace_enabled():
                 self.__log_trace("<Status|Message|Type>: <%d|%s|%s>".format(status_code, message, response.headers.get("Content-Type")))
 
-            if status_code == httpx.codes.BAD_REQUEST:
+            if status_code == requests.codes.BAD_REQUEST:
                 if message is not None and len(message) > 0:
                     if C._DB_SHUTTING_DOWN_ERROR_MESSAGE in message:
                         raise GPUdbExitException("Kinetica shutting down")
@@ -7937,8 +7937,8 @@ class GPUdb(object):
 
             if status == "ERROR":
                 if (
-                        status_code == httpx.codes.INTERNAL_SERVER_ERROR or  # HTTP_INTERNAL_ERROR
-                        status_code == httpx.codes.GATEWAY_TIMEOUT or  # HTTP_GATEWAY_TIMEOUT
+                        status_code == requests.codes.INTERNAL_SERVER_ERROR or  # HTTP_INTERNAL_ERROR
+                        status_code == requests.codes.GATEWAY_TIMEOUT or  # HTTP_GATEWAY_TIMEOUT
                         C._DB_EXITING_ERROR_MESSAGE in message or
                         C._DB_CONNECTION_REFUSED in message or
                         C._DB_CONNECTION_RESET in message or
@@ -7948,8 +7948,8 @@ class GPUdb(object):
                     self.__log_debug("Throwing EXIT exception from " + url.url + "; response_code: " + str(status_code) + "; message: " + message)
                     raise GPUdbExitException(message)
                 elif (
-                        status_code == httpx.codes.BAD_GATEWAY or
-                        status_code == httpx.codes.SERVICE_UNAVAILABLE
+                        status_code == requests.codes.BAD_GATEWAY or
+                        status_code == requests.codes.SERVICE_UNAVAILABLE
                 ):
                     self.__log_debug("Throwing EXIT exception from " + url.url + "; response_code: " + str(status_code) + "; message: " + message)
                     raise GPUdbExitException(message)
@@ -7970,11 +7970,11 @@ class GPUdb(object):
             final_msg = self.__SSL_ERROR_MESSAGE_TEMPLATE.format(msg)
             self.__log_debug(final_msg)
             raise GPUdbUnauthorizedAccessException(final_msg)
-        except httpx.TimeoutException as ex:
+        except requests.Timeout as ex:
             msg = f"Request timed out connecting to {url.url}: {GPUdbException.stringify_exception(ex)}"
             self.__log_debug(msg)
             raise GPUdbConnectionException(msg)
-        except httpx.HTTPError as ex:
+        except requests.HTTPError as ex:
             msg = f"HTTP error occurred connecting to {url.url}: {GPUdbException.stringify_exception(ex)}"
             self.__log_debug(msg)
             raise GPUdbConnectionException(msg)
@@ -8039,7 +8039,7 @@ class GPUdb(object):
             self.__log_debug(msg)
             raise GPUdbException(msg)
 
-        if not isinstance(endpoint, (basestring, unicode)):
+        if not isinstance(endpoint, str):
             msg = ("Argument 'endpoint' must be a string; given '{}'"
                    "".format(str(type(endpoint))))
             self.__log_debug(msg)
@@ -8073,25 +8073,22 @@ class GPUdb(object):
         if self.auth:
             headers[C._HEADER_AUTHORIZATION] = self.auth
 
-        # Create the full URL
-        path = "{url_path}{endpoint}".format(url_path=url.path, endpoint=endpoint)
         # Construct the full URL for the request
         full_url = f"{url.url}{endpoint}"
 
         try:
             # Create client with appropriate timeout and verification settings
-            # with  self.__initialize_http_connection(url, timeout) as client:
             # Execute the request
-            response = self.http_client.post(full_url, headers=headers)
+            response = self.__get_current_http_connection().post(full_url, headers=headers)
 
             # Get response time if available
             response_time = response.headers.get('x-request-time-secs')
 
             # Check status code and raise appropriate exceptions
             status_code = response.status_code
-            response_msg = response.reason_phrase
+            response_msg = response.reason
 
-            if status_code == httpx.codes.UNAUTHORIZED:  # UNAUTHORIZED
+            if status_code == requests.codes.UNAUTHORIZED:  # UNAUTHORIZED
                 msg = f"Unauthorized access: '{response_msg}'"
                 self.__log_debug(msg)
                 raise GPUdbUnauthorizedAccessException(msg)
@@ -8099,7 +8096,7 @@ class GPUdb(object):
                 msg = f"Could not connect to database at '{url.url}' due to status code {status_code}: {response_msg}"
                 self.__log_debug(f"Throwing EXIT exception; {msg}")
                 raise GPUdbExitException(msg)
-            elif status_code == httpx.codes.NOT_FOUND:  # NOT_FOUND
+            elif status_code == requests.codes.NOT_FOUND:  # NOT_FOUND
                 msg = f"Endpoint not found ({url.url}) due to status code {status_code}: {response_msg}"
                 self.__log_debug(f"Throwing GPUdb exception; {msg}")
                 raise GPUdbException(msg)
@@ -8113,12 +8110,12 @@ class GPUdb(object):
             self.__log_debug(final_msg)
             raise GPUdbUnauthorizedAccessException(final_msg)
 
-        except httpx.ConnectError as ex:
+        except requests.ConnectionError as ex:
             msg = f"Error connecting to '{url.url}' due to: {GPUdbException.stringify_exception(ex)}"
             self.__log_debug(msg)
             raise GPUdbConnectionException(msg)
 
-        except httpx.RequestError as ex:
+        except requests.RequestException as ex:
             msg = f"Error posting to '{url.url}' due to: {GPUdbException.stringify_exception(ex)}"
             self.__log_debug(msg)
             raise GPUdbConnectionException(msg)
@@ -8244,36 +8241,35 @@ class GPUdb(object):
 
         try:
             # Create a client with the appropriate timeout
-            # with self.__initialize_http_connection(url, timeout) as client:
             # Send the POST request with the request body
-            response = self.http_client.post(full_url, headers=headers, content=request_body)
+            response = self.__get_current_http_connection().post(full_url, headers=headers, data=request_body, timeout=timeout)
 
             # Check the HTTP status code and throw appropriate exceptions
             status_code = response.status_code
 
-            if status_code == httpx.codes.UNAUTHORIZED:  # UNAUTHORIZED
-                msg = f"Unauthorized access: '{response.reason_phrase}'"
+            if status_code == requests.codes.UNAUTHORIZED:  # UNAUTHORIZED
+                msg = f"Unauthorized access: '{response.reason}'"
                 self.__log_debug(msg)
                 raise GPUdbUnauthorizedAccessException(msg)
             elif status_code in self.__http_response_triggering_failover:
                 msg = (f"Could not connect to database at '{url.url}' due to status "
-                       f"code {status_code}: {response.reason_phrase}")
+                       f"code {status_code}: {response.reason}")
                 self.__log_debug(f"Throwing EXIT exception; {msg}")
                 raise GPUdbExitException(msg)
-            elif status_code == httpx.codes.NOT_FOUND:  # NOT_FOUND
+            elif status_code == requests.codes.NOT_FOUND:  # NOT_FOUND
                 msg = (f"Endpoint not found ({url.url}) due to status "
-                       f"code {status_code}: {response.reason_phrase}")
+                       f"code {status_code}: {response.reason}")
                 self.__log_debug(f"Throwing GPUdb exception; {msg}")
                 raise GPUdbException(msg)
 
             # Return the response as a UTF-8 string
             return response.content.decode("UTF-8")
 
-        except httpx.TimeoutException as ex:
+        except requests.Timeout as ex:
             msg = f"Request timed out connecting to {url.url}: {GPUdbException.stringify_exception(ex)}"
             self.__log_debug(msg)
             raise GPUdbConnectionException(msg)
-        except httpx.HTTPError as ex:
+        except requests.HTTPError as ex:
             msg = f"HTTP error occurred connecting to {url.url}: {GPUdbException.stringify_exception(ex)}"
             self.__log_debug(msg)
             raise GPUdbConnectionException(msg)
@@ -10015,6 +10011,183 @@ class GPUdb(object):
         else:
             return self.insert_records(set_id, [object_data], None, {"return_record_ids":"true"})
 
+    def insert( self, *, table_name: str=None, records: Union[
+        List[Any],                          # Single record as list
+        typing.Dict[str, Any],              # Single record as dict
+        List[List[Any]],                    # Multiple records as list of lists
+        List[typing.Dict[str, Any]]         # Multiple records as list of dicts
+        ]=None, options=None ):
+        """Insert one or more records.
+
+        Parameters:
+            table_name
+                keyword only
+                The name of the Kinetica table to insert data into
+
+            records
+                keyword only
+                Values for all columns of a single record or multiple records.
+                For a single record, use either of the following syntaxes:
+
+                ::
+
+                    insert_records( [1, 2, 3] )
+
+                For multiple records, use either of the following syntaxes:
+
+                ::
+
+                    insert_records( [ [1, 2, 3], [4, 5, 6] ] )
+                    insert_records(   [1, 2, 3], [4, 5, 6]   )
+
+                Also, the user can use keyword arguments to pass in values:
+
+                ::
+
+                    # For a record type with two integers named 'a' and 'b':
+                    insert_records( {"a":  1, "b":  1},
+                                    {"a": 42, "b": 32} )
+
+                    # Also can use a list to pass the dicts
+                    insert_records( [ {"a":  1, "b":  1},
+                                      {"a": 42, "b": 32} ] )
+
+
+                Additionally, the user may provide options for the insertion
+                operation.  For example:
+
+                ::
+
+                    insert_records( [1, 2, 3], [4, 5, 6],
+                                    options = {"return_record_ids": "true"} )
+
+            options
+                keyword only
+                Values for all columns for a single record.  Mutually
+                exclusive with args (i.e. cannot provide both) when it
+                only contains data.
+
+                May contain an 'options' keyword arg which will be passed
+                to the database for the insertion operation.
+
+        Returns:
+            A :class:`.GPUdbTable` object with the insert_records()
+            response fields converted to attributes and stored within.
+        """
+        # Extract the table_name given
+        if options is None:
+            options = {}
+
+        if table_name is None or not isinstance(table_name, str) or not len(table_name) > 0:
+            raise GPUdbException("'table_name' must be given to insert records")
+
+        if records is None or len(records)==0 :
+            raise GPUdbException("'records' must be given")
+
+        try:
+            table = GPUdbTable(name=table_name, db=self)
+            encoded_data = table._GPUdbTable__encode_data_for_insertion(records)
+            return AttrDict(self.insert_records(table_name, encoded_data, options=options, record_type=table.record_type))
+        except GPUdbException as e:
+            self.__log_error("Error in inserting records {}".format(e.message))
+            raise e
+
+    # begin delete
+    def delete( self, *, table_name = None, expression = None):
+        """Deletes the record matching the provided criterion from the given
+        table. The record selection criteria can be a single  input
+        parameter *expression* (matching multiple records) The
+        operation is synchronous meaning that a response will not be available
+        until the request is completely processed and all the matching records
+        are deleted.
+
+        Parameters:
+
+            table_name (str)
+                Name of the table from which to delete records, in
+                [schema_name.]table_name format, using standard `name
+                resolution rules
+                <../../../../concepts/tables/#table-name-resolution>`__. Must
+                contain the name of an existing table; not applicable to views.
+
+            expression (str)
+                The actual predicate, to be used by the delete operation; format
+                should follow the guidelines provided `here
+                <../../../../concepts/expressions/>`__. Specifying an
+                input parameter *expression* is mutually exclusive to
+                specifying *record_id* in the input parameter *options*. The
+                user can provide a single element (which will be automatically
+                promoted to a list internally) or a list having a single element.
+
+
+        Returns:
+            A dict with the following entries if successful--
+
+            count_deleted (long)
+                Total number of records deleted across all expressions.
+
+            In case of error it returns a dict - {'status': 'ERROR', 'message': 'Some error message'}
+
+        """
+        response = AttrDict(self.delete_records( table_name, expression, {} ))
+        del response.__dict__
+        if _Util.is_ok(response):
+            del response.info, response.status_info, response.counts_deleted
+            return response
+        else:
+            return {response['status_info']['status']: response['status_info']['message']}
+
+    # end delete
+
+    # begin update
+    def update( self, *, table_name = None, expression = None,
+                        new_values_map = None ):
+        """Runs predicate-based updates in a single call.  With the
+        given expression, any matching record's column values will be
+        updated as provided in input parameter *new_values_map*.
+
+        Note that this operation can only be run on an original table and not
+        on a result view.
+
+        Parameters:
+
+            table_name (str)
+                Name of table to be updated, in [schema_name.]table_name
+                format, using standard `name resolution rules
+                <../../../../concepts/tables/#table-name-resolution>`__.  Must
+                be a currently existing table and not a view.
+
+            expression (str)
+                An actual predicate for the update; format
+                should follow the guidelines :meth:`here <GPUdb.filter>`. The
+                user should provide a single element (which will be automatically
+                promoted to a list internally).
+
+            new_values_map (a dict of str to optional str)
+                List of new values for the matching records.  Each element is a
+                (key, value) pair where the keys are the names of the
+                columns whose values are to be updated; the values are the new
+                values.  The user can provide a
+                single element (which will be automatically promoted to a list
+                internally).
+
+        Returns:
+            A dict with the following entries if successful--
+
+            count_updated (long)
+                Total number of records updated.
+
+            In case of error it returns a dict - {'status': 'ERROR', 'message': 'Some error message'}
+        """
+        response = self.update_records(table_name, expression, new_values_map, options={'use_expressions_in_new_values_maps': 'true'})
+        del response.__dict__
+        if _Util.is_ok(response):
+            del response.info, response.status_info, response.counts_updated, response.count_inserted, response.counts_inserted
+            return response
+        else:
+            return {response['status_info']['status']: response['status_info']['message']}
+
+    # end update
 
 
     def insert_records_from_json(self, json_records, table_name, json_options = None, create_table_options = None, options = None ):
@@ -10273,7 +10446,7 @@ class GPUdb(object):
         # Validate the input arguments
         if not url:
             url = self.get_url(stringified=False)
-        elif isinstance(url, (basestring, unicode)):
+        elif isinstance(url, str):
             try:
                 url = GPUdb.URL(url)
             except Exception as ex:
@@ -10310,7 +10483,7 @@ class GPUdb(object):
             # Send the GET request
             (headers, body_data) = self.__create_header_and_process_body_data(None)
             headers[C._HEADER_ACCEPT] = C._REQUEST_ENCODING_JSON
-            response = self.http_client.get(full_url, headers=headers)
+            response = self.__get_current_http_connection().get(full_url, headers=headers)
 
             # Save the response
             result["data"] = response.content
@@ -10345,7 +10518,7 @@ class GPUdb(object):
             The ping response, or an empty string if it fails.
         """
         # Validate the input arguments
-        if isinstance(url, (basestring, unicode)):
+        if isinstance(url, str):
             try:
                 url = GPUdb.URL(url)
             except Exception as ex:
@@ -10363,17 +10536,16 @@ class GPUdb(object):
             full_url = f"{url.protocol}://{url.host}:{url.port}{url.path}"
 
             # Use httpx client with context manager
-            # with self.__initialize_http_connection(url, self.__server_connection_timeout) as client:
             # Execute GET request
             (headers, body_data) = self.__create_header_and_process_body_data(None)
             headers[C._HEADER_ACCEPT] = C._REQUEST_ENCODING_JSON
-            response = self.http_client.get(full_url, headers=headers)
+            response = self.__get_current_http_connection().get(full_url, headers=headers)
 
             # Get the response content
             raw_data = response.content
 
             # Decode the response if needed
-            if isinstance(raw_data, (basestring, unicode)):
+            if isinstance(raw_data, str):
                 # Got a string, no need to decode
                 return raw_data
             elif isinstance(raw_data, bytes):
@@ -10453,7 +10625,7 @@ class GPUdb(object):
             # Execute GET request
             (headers, body_data) = self.__create_header_and_process_body_data(None)
             headers[C._HEADER_ACCEPT] = C._REQUEST_ENCODING_JSON
-            response = self.http_client.get(full_url, headers=headers)
+            response = self.__get_current_http_connection().get(full_url, headers=headers)
 
             # Return the response content as bytes
             return response.content
@@ -39476,6 +39648,12 @@ class GPUdbTable( object ):
 
         # Some default values (assuming it is not a read-only table)
         self._count           = None
+        self.__latest_insert_records_count = 0
+        self.__total_insert_records_count  = 0
+        self.__latest_update_records_count = 0
+        self.__total_update_records_count  = 0
+        self.__latest_duration = 0.0
+        self.__total_duration  = 0.0
         self._is_read_only    = False
         self._is_collection   = False
         self._collection_name = self.options._collection_name
@@ -39917,6 +40095,29 @@ class GPUdbTable( object ):
             raise GPUdbException("Invalid log level: '{}'".format( ex_str ))
     # end set_logger_level
 
+    @property
+    def total_insert_records_count(self):
+        return self.__total_insert_records_count
+
+    @property
+    def total_update_records_count(self):
+        return self.__total_update_records_count
+
+    @property
+    def total_duration(self):
+        return self.__total_duration
+
+    @property
+    def latest_insert_records_count(self):
+        return self.__latest_insert_records_count
+
+    @property
+    def latest_update_records_count(self):
+        return self.__latest_update_records_count
+
+    @property
+    def latest_duration(self):
+        return self.__latest_duration
 
     @property
     def table_name( self ):
@@ -40216,41 +40417,55 @@ class GPUdbTable( object ):
 
     @staticmethod
     def convert_special_type_values_in_insert_records(record_type : GPUdbRecordType,
-                                                      records: Union[Union[ list, dict], List[Record]]
+                                                      record: Union[ list, dict]
                                                       ):
-        """Convert any special value type (array, json, vector etc.) suitably
+        """Convert any special value types (array, json, vector etc.) of a single record suitably
 
         Parameters:
-            record_type (GPUdbRecordType): the record type for these 'records'
-            records (Union[Union[ list, dict], List[Record]]): A single record value (list or dict)
+            record_type (GPUdbRecordType): the record type for the record
+            record (Union[ list, dict]): A single record (list or dict)
 
         Returns:
-            object: the converted value
+            object: the record with converted values
         """
-        if isinstance(records, list):
-            for index, column_value in enumerate(records):
+        if isinstance(record, list):
+            if len(record) > len(record_type.columns):
+                raise GPUdbException(f"Too many column values <{len(record)}> given for the target table columns <{len(record_type.columns)}>")
+
+            for index, column_value in enumerate(record):
+                column: GPUdbRecordColumn = record_type.columns[index]
+                column_properties: List[str] = column.column_properties
+                column_type: str = column.column_type
                 if column_value:
                     if index in record_type.array_type_names_indices or \
                         index in record_type.json_type_names_indices or \
-                        index in record_type.vector_type_names_indices:
+                        index in record_type.vector_type_names_indices or \
+                        column_type == 'string' and GPUdbColumnProperty.TIME in column_properties:
                             # convert the value
                             converted_value = _Util._convert_value_on_insertion(
                                 column_value, record_type.columns[index]
                             )
-                            records[index] = converted_value
-        elif isinstance(records, dict):
-            for column_name, column_value in records.items():
+                            record[index] = converted_value
+        elif isinstance(record, dict):
+            for column_name, column_value in record.items():
+                if column_name not in record_type.column_names:
+                    raise GPUdbException(f"Column name <{column_name}> not found in target table")
+
+                index: int = record_type.column_names.index(column_name)
+                column_properties: List[str] = record_type.column_properties[column_name] \
+                                                if column_name in record_type.column_properties else []
+                column_type: str = record_type.columns[index].column_type
                 if column_value:
                     if column_name in record_type.array_type_names_values or \
                         column_name in record_type.json_type_names_values or \
-                        column_name in record_type.vector_type_names_values:
+                        column_name in record_type.vector_type_names_values or \
+                        column_type == 'string' and GPUdbColumnProperty.TIME in column_properties:
                             # convert the value
-                            index = record_type.column_names.index(column_name)
                             converted_value = _Util._convert_value_on_insertion(
                                 column_value, record_type.columns[index]
                             )
-                            records[column_name] = converted_value
-        return records
+                            record[column_name] = converted_value
+        return record
 
     @staticmethod
     def convert_special_type_values_in_get_records(record_type : GPUdbRecordType,
@@ -40320,13 +40535,14 @@ class GPUdbTable( object ):
             # Set the multi-head ingestor's options
             self._multihead_ingestor.options = options
 
-            # Call the insertion funciton
-            self._multihead_ingestor.insert_records( encoded_data,
+            # Call the insertion function
+            response = self._multihead_ingestor.insert_records( encoded_data,
                                                      is_data_encoded = True )
 
-            # Need to flush the records, per the setting
-            if self._flush_multi_head_ingest_per_insertion:
-                self._multihead_ingestor.flush( is_data_encoded = True )
+            # Need to flush the records, per the setting and if 'insert_records()' of 'GPUdbIngestor' returned None
+            if not response and self._flush_multi_head_ingest_per_insertion:
+                return self._multihead_ingestor.flush( is_data_encoded = True )
+            return response
         else:
             # Call the insert function and check the status
             response = self.db.insert_records( self.qualified_name, encoded_data,
@@ -40334,6 +40550,7 @@ class GPUdbTable( object ):
                                                record_type = self.record_type )
             if not _Util.is_ok( response ):
                 raise GPUdbException( _Util.get_error_msg( response ) )
+            return response
         # end if-else
     # end __insert_encoded_records
 
@@ -40406,7 +40623,15 @@ class GPUdbTable( object ):
         # self.__insert_encoded_records( encoded_data, options )
         try: # if the first attempt fails, we'll check if the table
             # type has been modified by any chance
-            self.__insert_encoded_records( encoded_data, options )
+            response = self.__insert_encoded_records( encoded_data, options )
+            if response:
+                self.__latest_insert_records_count = response.count_inserted
+                self.__latest_update_records_count = response.count_updated
+                self.__latest_duration = response.status_info['response_time']
+
+                self.__total_insert_records_count += response.count_inserted
+                self.__total_update_records_count += response.count_updated
+                self.__total_duration += response.status_info['response_time']
         except GPUdbException as e:
             self.__log_debug( "Got exception when trying to insert records: "
                               "{}".format( str(e) ) )
@@ -40414,7 +40639,15 @@ class GPUdbTable( object ):
                 # The table type indeed had been modified; retry insertion
                 # with the current/new type
                 encoded_data = self.__encode_data_for_insertion( *args, **kwargs )
-                self.__insert_encoded_records( encoded_data, options )
+                response = self.__insert_encoded_records( encoded_data, options )
+                if response:
+                    self.__latest_insert_records_count = response.count_inserted
+                    self.__latest_update_records_count = response.count_updated
+                    self.__latest_duration = response.status_info['response_time']
+
+                    self.__total_insert_records_count += response.count_inserted
+                    self.__total_update_records_count += response.count_updated
+                    self.__total_duration += response.status_info['response_time']
             else:
                 raise
         # end try-catch

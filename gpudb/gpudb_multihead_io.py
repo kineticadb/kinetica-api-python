@@ -15,6 +15,7 @@ from __future__ import print_function
 import inspect
 import sys
 import traceback
+from typing import Union, Optional
 
 # We'll need to do python 2 vs. 3 things in many places
 IS_PYTHON_3 = (sys.version_info[0] >= 3) # checking the major component
@@ -22,11 +23,11 @@ IS_PYTHON_27_OR_ABOVE = sys.version_info >= (2, 7)
 
 
 try:                   # Installed
-    from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, RecordType, _Util
+    from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, RecordType, _Util, AttrDict
     from gpudb.gpudb import GPUdbException, GPUdbConnectionException, GPUdbExitException, GPUdbFailoverDisabledException, GPUdbHAUnavailableException, GPUdbUnauthorizedAccessException
     from gpudb.protocol import Record
 except:                # Local
-    from gpudb       import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, RecordType, _Util
+    from gpudb       import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, RecordType, _Util, AttrDict
     from gpudb       import GPUdbException, GPUdbConnectionException, GPUdbExitException, GPUdbFailoverDisabledException, GPUdbHAUnavailableException, GPUdbUnauthorizedAccessException
     from protocol import Record
 
@@ -835,68 +836,38 @@ class _RecordKey:
     # end add_long
 
 
-    # We need two different versions for this function based on the python version
-    # Note: Choosing to have two different definitions even though the difference
-    #       is only in one line to avoid excessive python version check per func
-    #       call.
-    if IS_PYTHON_3:
-        def add_string( self, val ):
-            """Add the hash value of the given string to the buffer (can be
-            null)--eight bytes.
-            """
-            # Longs are eight bytes long
-            self.__will_buffer_overflow( _ColumnTypeSize.STRING )
+    def add_string( self, val ):
+        """Add the hash value of the given string to the buffer (can be
+        null)--eight bytes.
+        """
+        # Longs are eight bytes long
+        self.__will_buffer_overflow( _ColumnTypeSize.STRING )
 
-            # Handle nulls
-            if val is None:
-                # Adding a 0 long value
-                self._buffer_value += struct.pack( "=q", 0 )
-                return
-            # end if
+        # Handle nulls
+        if val is None:
+            # Adding a 0 long value
+            self._buffer_value += struct.pack( "=q", 0 )
+            return
+        # end if
 
-            # Hash the string value
-            a = mmh3.hash64( bytes(val, "utf-8"), seed = 10 )
+        # Hash the string value
+        a = mmh3.hash64( bytes(val, "utf-8"), seed = 10 )
 
-            hash_val = a[ 0 ] # the first half
+        hash_val = a[ 0 ] # the first half
 
-            # Add the eight bytes of the long hash value
-            self._buffer_value += struct.pack( "=q", hash_val )
-        # end add_string
-
-    else: # Python 2.x
-        def add_string( self, val ):
-            """Add the hash value of the given string to the buffer (can be
-            null)--eight bytes.
-            """
-            # Longs are eight bytes long
-            self.__will_buffer_overflow( _ColumnTypeSize.STRING )
-
-            # Handle nulls
-            if val is None:
-                # Adding a 0 long value
-                self._buffer_value += struct.pack( "=q", 0 )
-                return
-            # end if
-
-            # Hash the string value
-            a = mmh3.hash64( val, seed = 10 )
-
-            hash_val = a[ 0 ] # the first half
-
-            # Add the eight bytes of the long hash value
-            self._buffer_value += struct.pack( "=q", hash_val )
-        # end add_string
-    # end add_string() python version specific
+        # Add the eight bytes of the long hash value
+        self._buffer_value += struct.pack( "=q", hash_val )
+    # end add_string
 
 
     def add_date( self, val ):
-        """Add a date (given as a string or in a date stuct) to the buffer
+        """Add a date (given as a string or in a date struct) to the buffer
         (can be null)--four bytes.
 
         Parameters:
             val (str or datetime.datetime.date)
                 The date to add; if string, then in the format of "YYYY-MM-DD".
-                The year must be withing the range [1000, 2900].
+                The year must be within the range [1000, 2900].
         """
         # ints are four bytes long
         self.__will_buffer_overflow( _ColumnTypeSize.DATE )
@@ -972,7 +943,7 @@ class _RecordKey:
                     if "." in val:
                         # Convert the milliseconds to microseconds
                         val += "000"
-                    else: # No milli seconds given
+                    else: # No milliseconds given
                         val += ".000"
                     # end if-else
 
@@ -1140,7 +1111,7 @@ class _RecordKey:
         Parameters:
             val (str)
                 Must be in the form of "HH:MM:SS[.mmm]" where the
-                millisdeconds are optional.
+                milliseconds are optional.
         """
         # ints are four bytes long
         self.__will_buffer_overflow( _ColumnTypeSize.TIME )
@@ -1157,7 +1128,7 @@ class _RecordKey:
                 if "." in val:
                     # Convert the milliseconds to microseconds
                     val += "000"
-                else: # No milli seconds given
+                else: # No milliseconds given
                     val += ".000"
 
                 # Convert the string into a time object
@@ -1181,322 +1152,160 @@ class _RecordKey:
 
 
 
-    # We need different versions of the following 2 functions for python 2.x vs. 3.x
-    # Note: Choosing to have two different definitions even though the difference
-    #       is only in one line to avoid excessive python version check per func
-    #       call.
-    if IS_PYTHON_3:
-        def add_timestamp( self, val ):
-            """Add a long timestamp to the buffer (can be null)--eight bytes.
+    def add_timestamp( self, val ):
+        """Add a long timestamp to the buffer (can be null)--eight bytes.
 
-            Parameters:
-                val (long)
-                    Timestamp from the epoch in milliseconds.
-            """
-            # Longs are eight bytes long
-            self.__will_buffer_overflow( _ColumnTypeSize.TIMESTAMP )
+        Parameters:
+            val (long)
+                Timestamp from the epoch in milliseconds.
+        """
+        # Longs are eight bytes long
+        self.__will_buffer_overflow( _ColumnTypeSize.TIMESTAMP )
 
-            # Handle nulls
-            if val is None:
-                self._buffer_value += struct.pack( "=q", 0 )
-                return
-            # end if
+        # Handle nulls
+        if val is None:
+            self._buffer_value += struct.pack( "=q", 0 )
+            return
+        # end if
 
-            # Encode the timestamp for sharding purposes
-            # ------------------------------------------
-            # We need to extract the year, month, day, hour etc. fields
-            # from the timestamp value PRECISELY the way the server does
-            # it; python's datetime deviates every so slightly such that
-            # sharding causes a problem.  So, we must use the crazy long
-            # calculation below with many constants.
-            # Note: Do NOT delete the comments below--they keep your sanity
-            #       (nor the commented out lines)
-            YEARS_PER_QUAD_YEAR = 4
-            DAYS_PER_YEAR       = 365   # not leap year
-            DAYS_PER_QUAD_YEAR  = 1461 # (YEARS_PER_QUAD_YEAR * DAYS_PER_YEAR+1)
-            DAYS_PER_WEEK       = 7
-            HOURS_PER_DAY       = 24
-            MINUTES_PER_HOUR    = 60
-            SECS_PER_MINUTE     = 60
-            MSECS_PER_SEC       = 1000
-            MSECS_PER_MINUTE    = 60000 # (MSECS_PER_SEC * SECS_PER_MINUTE)
-            MSECS_PER_HOUR      = 3600000 # (MSECS_PER_MINUTE * MINUTES_PER_HOUR)
-            MSECS_PER_DAY       = 86400000 # (MSECS_PER_HOUR * HOURS_PER_DAY)
-            # MSECS_PER_YEAR      = 31536000000 # (DAYS_PER_YEAR * MSECS_PER_DAY)
-            # MSECS_PER_QUAD_YEAR = 126230400000 # (MSECS_PER_DAY * DAYS_PER_QUAD_YEAR)
-            YEARS_PER_CENTURY   = 100
-            # EPOCH_YEAR          = 1970
-            # CENTURIES_PER_QUAD_CENTURY = 4
+        # Encode the timestamp for sharding purposes
+        # ------------------------------------------
+        # We need to extract the year, month, day, hour etc. fields
+        # from the timestamp value PRECISELY the way the server does
+        # it; python's datetime deviates every so slightly such that
+        # sharding causes a problem.  So, we must use the crazy long
+        # calculation below with many constants.
+        # Note: Do NOT delete the comments below--they keep your sanity
+        #       (nor the commented out lines)
+        YEARS_PER_QUAD_YEAR = 4
+        DAYS_PER_YEAR       = 365   # not leap year
+        DAYS_PER_QUAD_YEAR  = 1461 # (YEARS_PER_QUAD_YEAR * DAYS_PER_YEAR+1)
+        DAYS_PER_WEEK       = 7
+        HOURS_PER_DAY       = 24
+        MINUTES_PER_HOUR    = 60
+        SECS_PER_MINUTE     = 60
+        MSECS_PER_SEC       = 1000
+        MSECS_PER_MINUTE    = 60000 # (MSECS_PER_SEC * SECS_PER_MINUTE)
+        MSECS_PER_HOUR      = 3600000 # (MSECS_PER_MINUTE * MINUTES_PER_HOUR)
+        MSECS_PER_DAY       = 86400000 # (MSECS_PER_HOUR * HOURS_PER_DAY)
+        # MSECS_PER_YEAR      = 31536000000 # (DAYS_PER_YEAR * MSECS_PER_DAY)
+        # MSECS_PER_QUAD_YEAR = 126230400000 # (MSECS_PER_DAY * DAYS_PER_QUAD_YEAR)
+        YEARS_PER_CENTURY   = 100
+        # EPOCH_YEAR          = 1970
+        # CENTURIES_PER_QUAD_CENTURY = 4
 
-            # LEAP_DAYS_PER_CENTURY  = 24 # ((YEARS_PER_CENTURY / YEARS_PER_QUAD_YEAR) - 1)
-            DAYS_PER_CENTURY       = 36524 # (YEARS_PER_CENTURY * DAYS_PER_YEAR + LEAP_DAYS_PER_CENTURY)
-            DAYS_PER_QUAD_CENTURY  = 146097 # (CENTURIES_PER_QUAD_CENTURY * DAYS_PER_CENTURY + 1)
-            # MSECS_PER_CENTURY      = 3155673600000 # (DAYS_PER_CENTURY * MSECS_PER_DAY)
-            # MSECS_PER_QUAD_CENTURY = 12622780800000  # (DAYS_PER_QUAD_CENTURY * MSECS_PER_DAY)
+        # LEAP_DAYS_PER_CENTURY  = 24 # ((YEARS_PER_CENTURY / YEARS_PER_QUAD_YEAR) - 1)
+        DAYS_PER_CENTURY       = 36524 # (YEARS_PER_CENTURY * DAYS_PER_YEAR + LEAP_DAYS_PER_CENTURY)
+        DAYS_PER_QUAD_CENTURY  = 146097 # (CENTURIES_PER_QUAD_CENTURY * DAYS_PER_CENTURY + 1)
+        # MSECS_PER_CENTURY      = 3155673600000 # (DAYS_PER_CENTURY * MSECS_PER_DAY)
+        # MSECS_PER_QUAD_CENTURY = 12622780800000  # (DAYS_PER_QUAD_CENTURY * MSECS_PER_DAY)
 
-            # YEARS_TO_EPOCH = 1969 # (EPOCH_YEAR-1) # from year 1
-            YEARS_PER_QUAD_CENTURY = 400 # (YEARS_PER_CENTURY*CENTURIES_PER_QUAD_CENTURY)
+        # YEARS_TO_EPOCH = 1969 # (EPOCH_YEAR-1) # from year 1
+        YEARS_PER_QUAD_CENTURY = 400 # (YEARS_PER_CENTURY*CENTURIES_PER_QUAD_CENTURY)
 
-            # QUAD_CENTURIES_OFFSET          =   4 # (YEARS_TO_EPOCH / YEARS_PER_QUAD_CENTURY)
-            # YEAR_IN_QUAD_CENTURY_OFFSET    = 369 # (YEARS_TO_EPOCH % YEARS_PER_QUAD_CENTURY)
-            # CENTURY_OF_QUAD_CENTURY_OFFSET =   3 # (YEAR_IN_QUAD_CENTURY_OFFSET / YEARS_PER_CENTURY)
-            # YEAR_IN_CENTURY_OFFSET         =  69 # (YEAR_IN_QUAD_CENTURY_OFFSET % YEARS_PER_CENTURY)
-            # QUAD_YEAR_OF_CENTURY_OFFSET    =  17 # (YEAR_IN_CENTURY_OFFSET / YEARS_PER_QUAD_YEAR)
-            # YEAR_IN_QUAD_YEAR_OFFSET       =   1 # (YEAR_IN_CENTURY_OFFSET % YEARS_PER_QUAD_YEAR)
+        # QUAD_CENTURIES_OFFSET          =   4 # (YEARS_TO_EPOCH / YEARS_PER_QUAD_CENTURY)
+        # YEAR_IN_QUAD_CENTURY_OFFSET    = 369 # (YEARS_TO_EPOCH % YEARS_PER_QUAD_CENTURY)
+        # CENTURY_OF_QUAD_CENTURY_OFFSET =   3 # (YEAR_IN_QUAD_CENTURY_OFFSET / YEARS_PER_CENTURY)
+        # YEAR_IN_CENTURY_OFFSET         =  69 # (YEAR_IN_QUAD_CENTURY_OFFSET % YEARS_PER_CENTURY)
+        # QUAD_YEAR_OF_CENTURY_OFFSET    =  17 # (YEAR_IN_CENTURY_OFFSET / YEARS_PER_QUAD_YEAR)
+        # YEAR_IN_QUAD_YEAR_OFFSET       =   1 # (YEAR_IN_CENTURY_OFFSET % YEARS_PER_QUAD_YEAR)
 
-            # MS_EPOCH_OFFSET = (QUAD_CENTURIES_OFFSET*MSECS_PER_QUAD_CENTURY
-            #                    + CENTURY_OF_QUAD_CENTURY_OFFSET*MSECS_PER_CENTURY
-            #                    + QUAD_YEAR_OF_CENTURY_OFFSET*MSECS_PER_QUAD_YEAR
-            #                    + YEAR_IN_QUAD_YEAR_OFFSET*MSECS_PER_YEAR)
-            MS_EPOCH_OFFSET = 62135596800000
+        # MS_EPOCH_OFFSET = (QUAD_CENTURIES_OFFSET*MSECS_PER_QUAD_CENTURY
+        #                    + CENTURY_OF_QUAD_CENTURY_OFFSET*MSECS_PER_CENTURY
+        #                    + QUAD_YEAR_OF_CENTURY_OFFSET*MSECS_PER_QUAD_YEAR
+        #                    + YEAR_IN_QUAD_YEAR_OFFSET*MSECS_PER_YEAR)
+        MS_EPOCH_OFFSET = 62135596800000
 
 
-            JAN_1_0001_DAY_OF_WEEK = 1  # 0 based day of week - is a friday (as if gregorian calandar started in year 1)
+        JAN_1_0001_DAY_OF_WEEK = 1  # 0 based day of week - is a Friday (as if Gregorian calendar started in year 1)
 
-            days_since_1 = (val + MS_EPOCH_OFFSET) // MSECS_PER_DAY
-            quad_century = days_since_1  // DAYS_PER_QUAD_CENTURY
-            day_of_quad_century = days_since_1 - (quad_century * DAYS_PER_QUAD_CENTURY)
-            century_of_quad_century = day_of_quad_century // DAYS_PER_CENTURY
-            if (century_of_quad_century == 4):
-                century_of_quad_century = 3
-            day_of_century = day_of_quad_century - (century_of_quad_century * DAYS_PER_CENTURY)
-            quad_year_of_century = day_of_century // DAYS_PER_QUAD_YEAR
-            day_of_quad_year = day_of_century - (quad_year_of_century * DAYS_PER_QUAD_YEAR)
-            year_of_quad_year = day_of_quad_year // DAYS_PER_YEAR
-            if (year_of_quad_year == 4):
-                year_of_quad_year = 3
+        days_since_1 = (val + MS_EPOCH_OFFSET) // MSECS_PER_DAY
+        quad_century = days_since_1  // DAYS_PER_QUAD_CENTURY
+        day_of_quad_century = days_since_1 - (quad_century * DAYS_PER_QUAD_CENTURY)
+        century_of_quad_century = day_of_quad_century // DAYS_PER_CENTURY
+        if (century_of_quad_century == 4):
+            century_of_quad_century = 3
+        day_of_century = day_of_quad_century - (century_of_quad_century * DAYS_PER_CENTURY)
+        quad_year_of_century = day_of_century // DAYS_PER_QUAD_YEAR
+        day_of_quad_year = day_of_century - (quad_year_of_century * DAYS_PER_QUAD_YEAR)
+        year_of_quad_year = day_of_quad_year // DAYS_PER_YEAR
+        if (year_of_quad_year == 4):
+            year_of_quad_year = 3
 
-            # We need this extracted value
-            day_of_year_field = int( day_of_quad_year - (year_of_quad_year * DAYS_PER_YEAR) + 1 )
+        # We need this extracted value
+        day_of_year_field = int( day_of_quad_year - (year_of_quad_year * DAYS_PER_YEAR) + 1 )
 
-            year = (YEARS_PER_QUAD_CENTURY * quad_century) \
-                   + (YEARS_PER_CENTURY * century_of_quad_century) \
-                   + (YEARS_PER_QUAD_YEAR * quad_year_of_century) \
-                   + year_of_quad_year + 1
+        year = (YEARS_PER_QUAD_CENTURY * quad_century) \
+               + (YEARS_PER_CENTURY * century_of_quad_century) \
+               + (YEARS_PER_QUAD_YEAR * quad_year_of_century) \
+               + year_of_quad_year + 1
 
-            # We also need this extracted value
-            year_field = int(year - 1900)
-            ly = 1 if ((year % YEARS_PER_QUAD_CENTURY) == 0) else \
-                 ( 0 if ( (year % YEARS_PER_CENTURY) == 0) else \
-                   ( 1 if ((year % YEARS_PER_QUAD_YEAR) == 0) else 0 ) )
+        # We also need this extracted value
+        year_field = int(year - 1900)
+        ly = 1 if ((year % YEARS_PER_QUAD_CENTURY) == 0) else \
+             ( 0 if ( (year % YEARS_PER_CENTURY) == 0) else \
+               ( 1 if ((year % YEARS_PER_QUAD_YEAR) == 0) else 0 ) )
 
-            month_of_year_field = None
-            dy = day_of_year_field
-            if (dy <= 31):
-                month_of_year_field = 1
-            elif (dy <= (59 + ly )):
-                dy -= 31;
-                month_of_year_field = 2
-            elif (dy <= (90 + ly)):
-                dy -= (59 + ly)
-                month_of_year_field = 3
-            elif (dy <= (120 + ly)):
-                dy -= (90 + ly)
-                month_of_year_field = 4
-            elif (dy <= (151 + ly)):
-                dy -= (120 + ly)
-                month_of_year_field = 5
-            elif (dy <= (181 + ly ) ):
-                dy -= (151 + ly)
-                month_of_year_field = 6
-            elif (dy <= (212 + ly) ):
-                dy -= (181 + ly)
-                month_of_year_field = 7
-            elif (dy <= (243 + ly) ):
-                dy -= (212 + ly)
-                month_of_year_field = 8
-            elif (dy <= (273 + ly) ):
-                dy -= (243 + ly)
-                month_of_year_field = 9
-            elif (dy <= (304 + ly) ):
-                dy -= (273 + ly)
-                month_of_year_field = 10
-            elif (dy <= (334 + ly) ):
-                dy -= (304 + ly)
-                month_of_year_field = 11
-            else:
-                dy -= (334 + ly)
-                month_of_year_field = 12    # december
+        month_of_year_field = None
+        dy = day_of_year_field
+        if (dy <= 31):
+            month_of_year_field = 1
+        elif (dy <= (59 + ly )):
+            dy -= 31;
+            month_of_year_field = 2
+        elif (dy <= (90 + ly)):
+            dy -= (59 + ly)
+            month_of_year_field = 3
+        elif (dy <= (120 + ly)):
+            dy -= (90 + ly)
+            month_of_year_field = 4
+        elif (dy <= (151 + ly)):
+            dy -= (120 + ly)
+            month_of_year_field = 5
+        elif (dy <= (181 + ly ) ):
+            dy -= (151 + ly)
+            month_of_year_field = 6
+        elif (dy <= (212 + ly) ):
+            dy -= (181 + ly)
+            month_of_year_field = 7
+        elif (dy <= (243 + ly) ):
+            dy -= (212 + ly)
+            month_of_year_field = 8
+        elif (dy <= (273 + ly) ):
+            dy -= (243 + ly)
+            month_of_year_field = 9
+        elif (dy <= (304 + ly) ):
+            dy -= (273 + ly)
+            month_of_year_field = 10
+        elif (dy <= (334 + ly) ):
+            dy -= (304 + ly)
+            month_of_year_field = 11
+        else:
+            dy -= (334 + ly)
+            month_of_year_field = 12    # December
 
-            # We need all of the following extracted values
-            day_of_month_field = dy
-            hour_field   = int(((val + MS_EPOCH_OFFSET) / MSECS_PER_HOUR) % HOURS_PER_DAY)
-            minute_field = int(((val + MS_EPOCH_OFFSET) / MSECS_PER_MINUTE) % MINUTES_PER_HOUR)
-            sec_field    = int(((val + MS_EPOCH_OFFSET) / MSECS_PER_SEC) % SECS_PER_MINUTE)
-            msec_field   = int((val + MS_EPOCH_OFFSET) % MSECS_PER_SEC)
-            days_since_0001_from_ms = (val + MS_EPOCH_OFFSET)/ MSECS_PER_DAY
-            day_of_week_field = int( ((days_since_0001_from_ms + JAN_1_0001_DAY_OF_WEEK) % DAYS_PER_WEEK) + 1 )
+        # We need all of the following extracted values
+        day_of_month_field = dy
+        hour_field   = int(((val + MS_EPOCH_OFFSET) / MSECS_PER_HOUR) % HOURS_PER_DAY)
+        minute_field = int(((val + MS_EPOCH_OFFSET) / MSECS_PER_MINUTE) % MINUTES_PER_HOUR)
+        sec_field    = int(((val + MS_EPOCH_OFFSET) / MSECS_PER_SEC) % SECS_PER_MINUTE)
+        msec_field   = int((val + MS_EPOCH_OFFSET) % MSECS_PER_SEC)
+        days_since_0001_from_ms = (val + MS_EPOCH_OFFSET)/ MSECS_PER_DAY
+        day_of_week_field = int( ((days_since_0001_from_ms + JAN_1_0001_DAY_OF_WEEK) % DAYS_PER_WEEK) + 1 )
 
-            timestamp = ( (   year_field          << 53 )
-                          | ( month_of_year_field << 49 )
-                          | ( day_of_month_field  << 44 )
-                          | ( hour_field          << 39 )
-                          | ( minute_field        << 33 )
-                          | ( sec_field           << 27 )
-                          | ( msec_field          << 17 )
-                          | ( day_of_year_field   <<  8 )
-                          | ( day_of_week_field   <<  5 ) )
+        timestamp = ( (   year_field          << 53 )
+                      | ( month_of_year_field << 49 )
+                      | ( day_of_month_field  << 44 )
+                      | ( hour_field          << 39 )
+                      | ( minute_field        << 33 )
+                      | ( sec_field           << 27 )
+                      | ( msec_field          << 17 )
+                      | ( day_of_year_field   <<  8 )
+                      | ( day_of_week_field   <<  5 ) )
 
-            # Add the eight bytes of the timestamp (long)
-            self._buffer_value += struct.pack( "=q", timestamp )
-        # end add_timestamp
-
-    else: # Python 2.x
-        def add_timestamp( self, val ):
-            """Add a long timestamp to the buffer (can be null)--eight bytes.
-
-            Parameters:
-                val (long)
-                    Timestamp from the epoch in milliseconds.
-            """
-            # Longs are eight bytes long
-            self.__will_buffer_overflow( _ColumnTypeSize.TIMESTAMP )
-
-            # Handle nulls
-            if val is None:
-                self._buffer_value += struct.pack( "=q", 0 )
-                return
-            # end if
-
-            # Encode the timestamp for sharding purposes
-            # ------------------------------------------
-            # We need to extract the year, month, day, hour etc. fields
-            # from the timestamp value PRECISELY the way the server does
-            # it; python's datetime deviates every so slightly such that
-            # sharding causes a problem.  So, we must use the crazy long
-            # calculation below with many constants.
-            # Note: Do NOT delete the comments below--they keep your sanity
-            YEARS_PER_QUAD_YEAR = 4
-            DAYS_PER_YEAR       = 365   # not leap year
-            DAYS_PER_QUAD_YEAR  = 1461 # (YEARS_PER_QUAD_YEAR * DAYS_PER_YEAR+1)
-            DAYS_PER_WEEK       = 7
-            HOURS_PER_DAY       = 24
-            MINUTES_PER_HOUR    = 60
-            SECS_PER_MINUTE     = 60
-            MSECS_PER_SEC       = 1000
-            MSECS_PER_MINUTE    = 60000 # (MSECS_PER_SEC * SECS_PER_MINUTE)
-            MSECS_PER_HOUR      = 3600000 # (MSECS_PER_MINUTE * MINUTES_PER_HOUR)
-            MSECS_PER_DAY       = 86400000 # (MSECS_PER_HOUR * HOURS_PER_DAY)
-            # MSECS_PER_YEAR      = 31536000000 # (DAYS_PER_YEAR * MSECS_PER_DAY)
-            # MSECS_PER_QUAD_YEAR = 126230400000 # (MSECS_PER_DAY * DAYS_PER_QUAD_YEAR)
-            YEARS_PER_CENTURY   = 100
-            # EPOCH_YEAR          = 1970
-            # CENTURIES_PER_QUAD_CENTURY = 4
-
-            # LEAP_DAYS_PER_CENTURY  = 24 # ((YEARS_PER_CENTURY / YEARS_PER_QUAD_YEAR) - 1)
-            DAYS_PER_CENTURY       = 36524 # (YEARS_PER_CENTURY * DAYS_PER_YEAR + LEAP_DAYS_PER_CENTURY)
-            DAYS_PER_QUAD_CENTURY  = 146097 # (CENTURIES_PER_QUAD_CENTURY * DAYS_PER_CENTURY + 1)
-            # MSECS_PER_CENTURY      = 3155673600000 # (DAYS_PER_CENTURY * MSECS_PER_DAY)
-            # MSECS_PER_QUAD_CENTURY = 12622780800000  # (DAYS_PER_QUAD_CENTURY * MSECS_PER_DAY)
-
-            # YEARS_TO_EPOCH = 1969 # (EPOCH_YEAR-1) # from year 1
-            YEARS_PER_QUAD_CENTURY = 400 # (YEARS_PER_CENTURY*CENTURIES_PER_QUAD_CENTURY)
-
-            # QUAD_CENTURIES_OFFSET          =   4 # (YEARS_TO_EPOCH / YEARS_PER_QUAD_CENTURY)
-            # YEAR_IN_QUAD_CENTURY_OFFSET    = 369 # (YEARS_TO_EPOCH % YEARS_PER_QUAD_CENTURY)
-            # CENTURY_OF_QUAD_CENTURY_OFFSET =   3 # (YEAR_IN_QUAD_CENTURY_OFFSET / YEARS_PER_CENTURY)
-            # YEAR_IN_CENTURY_OFFSET         =  69 # (YEAR_IN_QUAD_CENTURY_OFFSET % YEARS_PER_CENTURY)
-            # QUAD_YEAR_OF_CENTURY_OFFSET    =  17 # (YEAR_IN_CENTURY_OFFSET / YEARS_PER_QUAD_YEAR)
-            # YEAR_IN_QUAD_YEAR_OFFSET       =   1 # (YEAR_IN_CENTURY_OFFSET % YEARS_PER_QUAD_YEAR)
-
-            # MS_EPOCH_OFFSET = (QUAD_CENTURIES_OFFSET*MSECS_PER_QUAD_CENTURY
-            #                    + CENTURY_OF_QUAD_CENTURY_OFFSET*MSECS_PER_CENTURY
-            #                    + QUAD_YEAR_OF_CENTURY_OFFSET*MSECS_PER_QUAD_YEAR
-            #                    + YEAR_IN_QUAD_YEAR_OFFSET*MSECS_PER_YEAR)
-            MS_EPOCH_OFFSET = 62135596800000
-
-
-            JAN_1_0001_DAY_OF_WEEK = 1  # 0 based day of week - is a friday (as if gregorian calandar started in year 1)
-
-            days_since_1 = (val + MS_EPOCH_OFFSET) / MSECS_PER_DAY
-            quad_century = days_since_1  /DAYS_PER_QUAD_CENTURY
-            day_of_quad_century = days_since_1 - (quad_century * DAYS_PER_QUAD_CENTURY)
-            century_of_quad_century = day_of_quad_century / DAYS_PER_CENTURY
-            if (century_of_quad_century == 4):
-                century_of_quad_century = 3
-            day_of_century = day_of_quad_century - (century_of_quad_century * DAYS_PER_CENTURY)
-            quad_year_of_century = day_of_century / DAYS_PER_QUAD_YEAR
-            day_of_quad_year = day_of_century - (quad_year_of_century * DAYS_PER_QUAD_YEAR)
-            year_of_quad_year = day_of_quad_year / DAYS_PER_YEAR
-            if (year_of_quad_year == 4):
-                year_of_quad_year = 3
-
-            # We need this extracted value
-            day_of_year_field = int( day_of_quad_year - (year_of_quad_year * DAYS_PER_YEAR) + 1 )
-
-            year = (YEARS_PER_QUAD_CENTURY * quad_century) \
-                   + (YEARS_PER_CENTURY * century_of_quad_century) \
-                   + (YEARS_PER_QUAD_YEAR * quad_year_of_century) \
-                   + year_of_quad_year + 1
-
-            # We also need this extracted value
-            year_field = int(year - 1900)
-            ly = 1 if ((year % YEARS_PER_QUAD_CENTURY) == 0) else \
-                 ( 0 if ( (year % YEARS_PER_CENTURY) == 0) else \
-                   ( 1 if ((year % YEARS_PER_QUAD_YEAR) == 0) else 0 ) )
-
-            month_of_year_field = None
-            dy = day_of_year_field
-            if (dy <= 31):
-                month_of_year_field = 1
-            elif (dy <= (59 + ly )):
-                dy -= 31;
-                month_of_year_field = 2
-            elif (dy <= (90 + ly)):
-                dy -= (59 + ly)
-                month_of_year_field = 3
-            elif (dy <= (120 + ly)):
-                dy -= (90 + ly)
-                month_of_year_field = 4
-            elif (dy <= (151 + ly)):
-                dy -= (120 + ly)
-                month_of_year_field = 5
-            elif (dy <= (181 + ly ) ):
-                dy -= (151 + ly)
-                month_of_year_field = 6
-            elif (dy <= (212 + ly) ):
-                dy -= (181 + ly)
-                month_of_year_field = 7
-            elif (dy <= (243 + ly) ):
-                dy -= (212 + ly)
-                month_of_year_field = 8
-            elif (dy <= (273 + ly) ):
-                dy -= (243 + ly)
-                month_of_year_field = 9
-            elif (dy <= (304 + ly) ):
-                dy -= (273 + ly)
-                month_of_year_field = 10
-            elif (dy <= (334 + ly) ):
-                dy -= (304 + ly)
-                month_of_year_field = 11
-            else:
-                dy -= (334 + ly)
-                month_of_year_field = 12    # december
-
-            # We need all of the following extracted values
-            day_of_month_field = dy
-            hour_field   = int(((val + MS_EPOCH_OFFSET) / MSECS_PER_HOUR) % HOURS_PER_DAY)
-            minute_field = int(((val + MS_EPOCH_OFFSET) / MSECS_PER_MINUTE) % MINUTES_PER_HOUR)
-            sec_field    = int(((val + MS_EPOCH_OFFSET) / MSECS_PER_SEC) % SECS_PER_MINUTE)
-            msec_field   = int((val + MS_EPOCH_OFFSET) % MSECS_PER_SEC)
-            days_since_0001_from_ms = (val + MS_EPOCH_OFFSET)/ MSECS_PER_DAY
-            day_of_week_field = int( ((days_since_0001_from_ms + JAN_1_0001_DAY_OF_WEEK) % DAYS_PER_WEEK) + 1 )
-
-            timestamp = ( (   year_field          << 53 )
-                          | ( month_of_year_field << 49 )
-                          | ( day_of_month_field  << 44 )
-                          | ( hour_field          << 39 )
-                          | ( minute_field        << 33 )
-                          | ( sec_field           << 27 )
-                          | ( msec_field          << 17 )
-                          | ( day_of_year_field   <<  8 )
-                          | ( day_of_week_field   <<  5 ) )
-
-            # Add the eight bytes of the timestamp (long)
-            self._buffer_value += struct.pack( "=q", timestamp )
-        # end add_timestamp
-
-    # end defining python version specific add_timestamp()
+        # Add the eight bytes of the timestamp (long)
+        self._buffer_value += struct.pack( "=q", timestamp )
+    # end add_timestamp
 
 
     @staticmethod
@@ -1559,23 +1368,6 @@ class _RecordKey:
         """Check if the given value is a UUID.  If parsable as
         as UUID, return the value; else, return False.
         """
-        #  From core/Utils/Uuid.cpp:
-        #  Accept 'xxxxxxxx-xxxx-Mxxx-Nxxx-xxxxxxxxxxxx', with or without
-        #  hyphens are fine.
-        #  Version Msb0  Msb1  Msb2 Msb3     Description
-        #  1       0     0     0    1        The time-based version specified
-        #                                    in this document.
-        #  2       0     0     1    0        DCE Security version, with embedded
-        #                                    POSIX UIDs.
-        #  3       0     0     1    1        The name-based version specified in
-        #                                    this document that uses MD5 hashing.
-        #  4       0     1     0    0        The randomly or pseudo- randomly
-        #                                    generated version specified in this
-        #                                    document.
-        #  5       0     1     0    1        The name-based version specified in
-        #                                    this document that uses SHA-1
-        #                                    hashing.
-
         # Check that it is a string!
         if not isinstance(value, (basestring, unicode)):
             mh_log_debug( "Given UUID value {} is not a string!".format( value ) )
@@ -1600,20 +1392,11 @@ class _RecordKey:
                      and (c != '-') ):
                     # Supposed to be a hyphen!
                     return False
-                elif (idx == 14):
-                    # TODO: Figure out this logic; don't understand this!
-                    if ((c < '1') or (c > '5')):
-                        return False
                 # end if
 
             else:
                 # If not a hyphen, it better be a digit!
                 if not c.isdigit():
-                    return False
-                # end if
-
-                # TODO: Figure out this logic, too!
-                if ( (idx == 12) and ((c < '1') or (c > '5')) ):
                     return False
                 # end if
             # end if
@@ -1651,7 +1434,7 @@ class _RecordKey:
         # end if
 
         # Check that it is indeed a valid UUID (this will also extract
-        # the hyphens and return just th hexadecimal digits if it is a valid
+        # the hyphens and return just the hexadecimal digits if it is a valid
         # UUID)
         parsed_uuid = _RecordKey.validate_uuid( val )
         if (parsed_uuid is False):
@@ -1691,32 +1474,14 @@ class _RecordKey:
     # end add_uuid
 
 
+    def compute_hashes( self ):
+        """Compute the Murmur hash of the key.
+        """
+        a = mmh3.hash64( bytes(self._buffer_value), seed = 10 )
+        self._routing_hash = a[ 0 ] # the first half
 
-
-    # We need different versions of the following 2 functions for python 2.x vs. 3.x
-    # Note: Choosing to have two different definitions even though the difference
-    #       is only in one line to avoid excessive python version check per func
-    #       call.
-    if IS_PYTHON_3:
-        def compute_hashes( self ):
-            """Compute the Murmur hash of the key.
-            """
-            a = mmh3.hash64( bytes(self._buffer_value), seed = 10 )
-            self._routing_hash = a[ 0 ] # the first half
-
-            self._hash_code = int( self._routing_hash ^ ( self._routing_hash >> 32 ) )
-        # end compute_hashes
-
-    else: # Python 2.x
-        def compute_hashes( self ):
-            """Compute the Murmur hash of the key.
-            """
-            a = mmh3.hash64( str( self._buffer_value ), seed = 10 )
-            self._routing_hash = a[ 0 ] # the first half
-
-            self._hash_code = int( self._routing_hash ^ ( self._routing_hash >> 32 ) )
-        # end compute_hashes
-    # end python version dependent definition
+        self._hash_code = int( self._routing_hash ^ ( self._routing_hash >> 32 ) )
+    # end compute_hashes
 
 
     def route( self, routing_table ):
@@ -1850,7 +1615,7 @@ class _RecordKeyBuilder:
         is_track_type = track_type_special_columns.issubset( self._record_column_names )
         if ((not is_primary_key) and is_track_type):
             track_id_index = self._record_column_names.index( "TRACKID" )
-            if not self.routing_key_indices: # no pk/shard key found yet
+            if not self.routing_key_indices: # no primary/shard key found yet
                 self.routing_key_indices.append( track_id_index )
 
                 # Add the track ID to the schema fields for the keys
@@ -1866,7 +1631,7 @@ class _RecordKeyBuilder:
 
 
         self._key_buffer_size = 0
-        if not self.routing_key_indices: # no pk/shard key found
+        if not self.routing_key_indices: # no primary/shard key found
             return None
         # end if
 
@@ -2214,7 +1979,6 @@ class _RecordKeyBuilder:
 
             # Add the predicate to the list of expressions to be used
             expression_items.append( predicate )
-            # expression_items.append( "({} == {})".format( key, val ) )
         # end loop
 
         # Put the expression together
@@ -2446,7 +2210,7 @@ class GPUdbIngestor:
         self.table_name           = table_name
         self.record_type          = record_type
         self.batch_size           = batch_size
-        self.options              = options
+        self.options              = options if options else {}
         self.is_table_replicated  = is_table_replicated
         self.worker_list          = workers
 
@@ -2638,7 +2402,7 @@ class GPUdbIngestor:
     def __update_worker_queues( self, count_cluster_switches,
                                 do_reconstruct_worker_queues = True ):
         """Update the shard mapping for the ingestor.
-        
+
         Note:  This needs to reconstruct the worker queues even in head
                node-only mode, as the flush call will use the
                worker URL regardless of what mode it's in.  In head node-only
@@ -2999,7 +2763,7 @@ class GPUdbIngestor:
             is_data_encoded (bool)
                 Indicates if the data has already been encoded (so that we don't
                 do double encoding).  Use ONLY if the data has already been
-                encoded.  Default is False.
+                encoded.  Default is True.
 
         Raises:
             :class:`InserttionException`
@@ -3044,9 +2808,6 @@ class GPUdbIngestor:
                 shard_key = self.shard_key_builder.build( record )
         # end if not self.json_ingestion
 
-        # Create a worker queue
-        worker_queue = None
-
         # Get the index of the worker to be used
         if self.json_ingestion:
             worker_index = random.randint( 0, (self.num_ranks - 1) )
@@ -3069,7 +2830,7 @@ class GPUdbIngestor:
                               "".format( str(record), worker_index ) )
         # end if
 
-        # Check that the index is withing bounds
+        # Check that the index is within bounds
         if (worker_index >= len(self.worker_queues)):
             raise GPUdbException( "Sharded worker index is out of bound: {} "
                                   "(# worker ranks {})"
@@ -3083,12 +2844,14 @@ class GPUdbIngestor:
 
         # Flush, if necessary (when the worker queue returns a non-empty queue)
         if queue:
-            self.__flush( queue, worker_queue.get_url(), is_data_encoded = is_data_encoded )
+            return self.__flush( queue, worker_queue.get_url(), is_data_encoded = is_data_encoded )
+        else:
+            return None
     # end insert_record
 
 
     def insert_records( self, records, record_encoding = "binary",
-                        is_data_encoded = True ):
+                        is_data_encoded = True ) -> Optional[AttrDict]:
         """Queues a list of records for insertion into GPUdb. If any queue
         reaches the :meth:`batch size <get_batch_size>`, all records in that
         queue will be inserted into GPUdb before the method returns. If an error
@@ -3100,7 +2863,7 @@ class GPUdbIngestor:
         multiple calls to GPUdb may occur.
 
         Parameters:
-            record (list, dict, collections.OrderedDict, :class:`gpudb.GPUdbRecord`, Record, or JSON)
+            records (list, dict, collections.OrderedDict, :class:`gpudb.GPUdbRecord`, Record, or JSON)
                 The record(s) to insert.
 
             record_encoding (str)
@@ -3114,14 +2877,14 @@ class GPUdbIngestor:
             is_data_encoded (bool)
                 Indicates if the data has already been encoded (so that we don't
                 do double encoding).  Use ONLY if the data has already been
-                encoded.  Default is False.
+                encoded.  Default is True.
 
         Raises:
             :class:`InsertionException`
                 If an error occurs while inserting
         """
         if not records:
-            return # nothing to do!
+            return None  # nothing to do!
 
         # If a single record is provided, promote it to a list
         records = records if isinstance( records, list ) else [ records ]
@@ -3135,11 +2898,24 @@ class GPUdbIngestor:
             raise GPUdbException( "Input parameter 'is_data_encoded' must be "
                                   "boolean; given '{}'"
                                   "".format( str(type( is_data_encoded )) ) )
-
+        insert_records_response: Optional[AttrDict] = None
         for record in records:
             try:
-                self.insert_record( record, record_encoding,
+                response = self.insert_record( record, record_encoding,
                                     is_data_encoded = is_data_encoded )
+                if response:
+                    if not insert_records_response:
+                        insert_records_response = response if isinstance(response, AttrDict) else _Util.json_to_attrdict(response)
+                    else:
+                        resp_dict = response if isinstance(response, AttrDict) else _Util.json_to_attrdict(response)
+                        # Update the cumulative response dict 'insert_records_response'
+                        if 'duration' in insert_records_response:
+                            insert_records_response['duration'] += resp_dict['status_info']['response_time']
+                        else:
+                            insert_records_response['duration'] = resp_dict['status_info']['response_time']
+                        insert_records_response[C._count_inserted] += resp_dict[C._count_inserted]
+                        insert_records_response[C._count_updated] += resp_dict[C._count_updated]
+
             except InsertionException as e:
                 # Add the remaining records that could not be inserted
                 uninserted_records = e.get_records()
@@ -3148,12 +2924,13 @@ class GPUdbIngestor:
 
                 raise
             # done handling the error case
+        return insert_records_response
     # end insert_records
 
 
 
 
-    def flush( self, forced_flush = True, is_data_encoded = True ):
+    def flush( self, forced_flush = True, is_data_encoded = True ) -> Optional[AttrDict]:
         """Ensures that any queued records are inserted into GPUdb. If an error
         occurs while inserting the records from any queue, the records will no
         longer be in that queue nor in GPUdb; catch :class:`InsertionException`
@@ -3169,12 +2946,14 @@ class GPUdbIngestor:
             is_data_encoded (bool)
                 Indicates if the data has already been encoded (so that we don't
                 do double encoding).  Use ONLY if the data has already been
-                encoded.  Default is False.
+                encoded.  Default is True.
 
         Raises:
             :class:`InsertionException`
                 If an error occurs while inserting records.
         """
+        insert_records_response: Optional[AttrDict] = None
+
         for worker in self.worker_queues:
             if not worker:
                 continue # skipping empty workers
@@ -3183,18 +2962,34 @@ class GPUdbIngestor:
 
             if len(queue) > 0:
                 # Actually insert the records
-                self.__flush( queue, worker.get_url(), forced_flush = forced_flush,
+                response = self.__flush( queue, worker.get_url(), forced_flush = forced_flush,
                               is_data_encoded = is_data_encoded )
+                if response:
+                    if not insert_records_response:
+                        insert_records_response = response if isinstance(response, AttrDict) else _Util.json_to_attrdict(response)
+                    else:
+                        resp_dict = response if isinstance(response, AttrDict) else _Util.json_to_attrdict(response)
+                        # Update the cumulative response dict 'insert_records_response'
+                        if 'duration' in insert_records_response:
+                            insert_records_response['duration'] += resp_dict['status_info']['response_time']
+                        else:
+                            insert_records_response['duration'] = resp_dict['status_info']['response_time']
+                        insert_records_response[C._count_inserted] += resp_dict[C._count_inserted]
+                        insert_records_response[C._count_updated] += resp_dict[C._count_updated]
+
+        return insert_records_response
     # end flush
 
 
     def __insert_records_to_url( self, url = None, data = None,
-                                 encoding = None, options = {} ):
+                                 encoding = None, options = None ) -> Union[str, AttrDict]:
         """Makes an /insert/records call to the given URL using the internally
         stored :class:`GPUdb` object.  The returns value is the same as
         :meth:`GPUdb.insert_records`.
         """
-        response = None
+        if options is None:
+            options = {}
+        response: Union[str, AttrDict] = None
 
         if not self.json_ingestion:
             data = data if isinstance( data, list ) else ( [] if (data is None) else [ data ] )
@@ -3249,7 +3044,7 @@ class GPUdbIngestor:
     def __flush( self, queue, worker_url,
                  forced_flush = False,
                  record_encoding = "binary",
-                 is_data_encoded = True ):
+                 is_data_encoded = True ) -> Union[AttrDict, None, str]:
         """Internal method to flush--actually insert--the records to GPUdb.
 
         Parameters:
@@ -3274,10 +3069,10 @@ class GPUdbIngestor:
             is_data_encoded (bool)
                 Indicates if the data has already been encoded (so that we don't
                 do double encoding).  Use ONLY if the data has already been
-                encoded.  Default is False.
+                encoded.  Default is True.
         """
         if not queue:
-            return # nothing to do
+            return None  # nothing to do
 
         if record_encoding.lower() not in ("json", "binary"):
             raise GPUdbException( "Input parameter 'record_encoding' must be "
@@ -3336,8 +3131,8 @@ class GPUdbIngestor:
 
                             self.__update_worker_queues( current_count_cluster_switches )
                         # end inner if
-
-                        break # out of the while loop
+                        return insert_rsp  # AttrDict
+                        # break # out of the while loop
                     else:
                         # response is in JSON format
                         resp = json.loads(insert_rsp)
@@ -3348,7 +3143,9 @@ class GPUdbIngestor:
                         if resp['status'].upper() == 'OK':
                             self.count_inserted += resp['data'][C._count_inserted]
                             self.count_updated += resp['data'][C._count_updated]
-                        break
+
+                        return insert_rsp  # str
+                        # break
 
                 except GPUdbUnauthorizedAccessException as ex:
                     # Any permission related problem should get propagated
@@ -3372,7 +3169,7 @@ class GPUdbIngestor:
                             self.__force_failover( curr_url,
                                                    current_count_cluster_switches )
 
-                            # If we succesfully failed over, then we should
+                            # If we successfully failed over, then we should
                             # retry the insertion
                             retry = True
                         except GPUdbException as ex2:
@@ -3410,18 +3207,20 @@ class GPUdbIngestor:
 
                         try:
                             self.__log_debug( "Retrying insertion of the queued records" )
-                            self.insert_records( queue,
+                            resp = self.insert_records( queue,
                                                  record_encoding = record_encoding,
                                                  is_data_encoded = is_data_encoded )
 
                             # If the user intends a forceful flush, i.e. the public flush()
                             # was invoked, then make sure that the records get flushed
                             if forced_flush:
-                                self.flush( forced_flush    = forced_flush,
+                                flush_resp = self.flush( forced_flush    = forced_flush,
                                             is_data_encoded = is_data_encoded )
+                                if flush_resp and isinstance(flush_resp, AttrDict):
+                                    resp.update(flush_resp)
                             # end if
-
-                            break; # out of the while loop
+                            return resp
+                            # break  # out of the while loop
                         except Exception as ex2:
                             # Re-setting the exception since we may re-try again
                             if (retries <= 0):
@@ -3449,7 +3248,7 @@ class GPUdbIngestor:
                     # Insertion failed, but maybe due to shard mapping changes (due to
                     # cluster reconfiguration)? Check if the mapping needs to be updated
                     # or has been updated by another thread already after the
-                    # insertion was attemtped
+                    # insertion was attempted
                     updated_worker_queues = self.__update_worker_queues( current_count_cluster_switches )
 
                     retry = False
@@ -3464,18 +3263,21 @@ class GPUdbIngestor:
 
                         try:
                             self.__log_debug( "Retrying insertion of the queued records" )
-                            self.insert_records( queue,
+                            resp = self.insert_records( queue,
                                                  record_encoding = record_encoding,
                                                  is_data_encoded = is_data_encoded )
 
                             # If the user intends a forceful flush, i.e. the public flush()
                             # was invoked, then make sure that the records get flushed
                             if forced_flush:
-                                self.flush( forced_flush    = forced_flush,
+                                flush_resp = self.flush( forced_flush    = forced_flush,
                                             is_data_encoded = is_data_encoded )
+                                if flush_resp and isinstance(flush_resp, AttrDict):
+                                    resp.update(flush_resp)
                             # end if
 
-                            break # out of the while loop
+                            return resp
+                            # break # out of the while loop
                         except Exception as ex2:
                             # Re-setting the exception since we may re-try again
                             ex = ex2
@@ -3500,7 +3302,7 @@ class GPUdbIngestor:
             traceback_msg = "".join( traceback.format_exception( sys.exc_info()[0],
                                                                  sys.exc_info()[1],
                                                                  sys.exc_info()[2] ) )
-            self.__log_debug( "Got stacktrace: {}".format( traceback_msg ) )
+            self.__log_debug( "Got stack trace: {}".format( traceback_msg ) )
             raise InsertionException( GPUdbException.stringify_exception( ex ),
                                       queue )
         # end outer try
@@ -3572,7 +3374,7 @@ class RecordRetriever:
                                   "a boolean value; given %s"
                                   % str( type( is_table_replicated ) ) )
 
-        # Class level logger so that setting it for ond instance doesn't
+        # Class level logger so that setting it for an instance doesn't
         # set it for ALL instances after that change (even if it is
         # outside of the scope of the first instance whose log level was
         # changed
@@ -4087,7 +3889,7 @@ class RecordRetriever:
                 worker_index = shard_key.route( self.routing_table )
             # end if
 
-            # Check that the index is withing bounds
+            # Check that the index is within bounds
             if (worker_index >= len(self.worker_queues)):
                 raise GPUdbException( "Sharded worker index is out of bound: {} "
                                       "(# worker ranks {})"
@@ -4196,7 +3998,7 @@ class RecordRetriever:
             # Retrieval failed, but maybe due to shard mapping changes (due to
             # cluster reconfiguration)? Check if the mapping needs to be updated
             # or has been updated by another thread already after the
-            # insertion was attemtped
+            # insertion was attempted
             updated_worker_queues = self.__update_worker_queues( curr_count_cluster_switches )
 
             retry = False

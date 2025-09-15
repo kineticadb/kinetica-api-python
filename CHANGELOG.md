@@ -3,6 +3,23 @@
 ## Version 7.2
 
 
+### Version 7.2.2.13 - 2025-09-12
+
+#### Added
+-   Insert/update counts for multi-head ingest calls
+-   Simplified DML (insert, update, & delete) functions
+-   Example programs for working with date/time objects, multi-head insert
+    counts, and simplified DML functions
+
+#### Changed
+-   HTTP library from `httpx` to `requests`
+-   Improved handling of time and null value inserts
+-   Removed Python2 handling in multi-head I/O module
+
+#### Fixed
+-   Issue with invoking `GPUdbIngestor` directly without passing in options
+
+
 ### Version 7.2.2.12 - 2025-08-18
 
 #### Fixed
@@ -27,7 +44,7 @@
 -   Better request retry handling
 
 #### Changed
--   Switched HTTP library from httplib to httpx
+-   Switched HTTP library from `httplib` to `httpx`
 -   Updated installation instructions
 
 
