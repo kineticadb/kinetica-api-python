@@ -3,6 +3,14 @@
 ## Version 7.2
 
 
+### Version 7.2.3.1 - 2025-10-07
+
+#### Changed
+-   Improved connection management
+-   Returned parse failure reason from URL parser
+-   Pool size configuration of `requests` set to defaults
+
+
 ### Version 7.2.3.0 - 2025-09-15
 
 #### Added

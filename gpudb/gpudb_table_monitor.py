@@ -1,68 +1,19 @@
+import os, sys
+import logging
 import threading
 import time
 import types
 import uuid
 
+import http.client as httplib
+import queue
 import zmq
 
-try:
-    from io import BytesIO
-except:
-    from cStringIO import StringIO as BytesIO
+from gpudb.protocol import RecordType
+from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbException, GPUdbConnectionException
 
-try:
-    import httplib
-except:
-    import http.client as httplib
+import gpudb.packages.enum34 as enum
 
-import os, sys
-import logging
-
-# We'll need to do python 2 vs. 3 things in many places
-IS_PYTHON_3 = (sys.version_info[0] >= 3)  # checking the major component
-IS_PYTHON_2 = (sys.version_info[0] == 2)  # checking the major component
-IS_PYTHON_27_OR_ABOVE = sys.version_info >= (2, 7)
-
-if IS_PYTHON_3:
-    long = int
-    basestring = str
-
-
-    class unicode:
-        pass
-
-
-# ---------------------------------------------------------------------------
-# The absolute path of this gpudb.py module for importing local packages
-gpudb_module_path = os.path.dirname(os.path.abspath(__file__))
-
-# Search for our modules first, probably don't need imp or virt envs.
-for gpudb_path in [gpudb_module_path, gpudb_module_path + "/packages"]:
-    if not gpudb_path in sys.path:
-        sys.path.append(gpudb_path)
-
-
-try:
-    from gpudb.protocol import RecordType
-except ImportError:
-    from protocol import RecordType
-
-try:
-    from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbException, \
-        GPUdbConnectionException
-except:
-    from gpudb import GPUdb, GPUdbRecord, GPUdbException, \
-        GPUdbConnectionException
-
-try:
-    import gpudb.packages.enum34 as enum
-except ImportError:
-    import packages.enum34 as enum
-
-try:
-    import queue
-except ImportError:
-    import Queue as queue
 
 
 # -----------------------------------------------------------------
@@ -346,7 +297,7 @@ class GPUdbTableMonitor(object):
                 return False
 
             if (table_name is not None
-                    and isinstance(table_name, (basestring, unicode))
+                    and isinstance(table_name, str)
                     and len(table_name.strip()) > 0):
                 try:
                     has_table_response = db.has_table(table_name,
@@ -1159,7 +1110,7 @@ class _BaseTask(threading.Thread):
         self.db = db
 
         if ((table_name is None)
-                or (not isinstance(table_name, (basestring, unicode)))):
+                or (not isinstance(table_name, str))):
             raise GPUdbException("table_name must be a string")
         self.table_name = table_name
 

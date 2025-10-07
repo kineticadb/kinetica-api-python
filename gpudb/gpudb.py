@@ -4232,8 +4232,9 @@ class GPUdb(object):
 
             Returns:
                 A two-part tuple, the first is whether or not the URL was able
-                to be parsed, and the second is a 7-part tuple containing the
-                parsed URL and its components:
+                to be parsed, and the second is either the error message (if the
+                URL couldn't be parsed) or a 7-part tuple containing the
+                parsed URL and its components (if it could be parsed):
 
                 * Full URL
                 * Protocol (HTTP,HTTPS)
@@ -4244,11 +4245,11 @@ class GPUdb(object):
                 * Password (if specified in the URL)
             """
 
-            parsed_url = '' if url is None else url
+            parsed_url = '' if url is None else url.replace(" ", "")
 
             if parsed_url.count('://') > 1:
                 # Malformed URL
-                return False, None
+                return False, f"Multiple protocol separators found"
 
             if '://' not in parsed_url:
                 # If the URL doesn't start with any protocol
@@ -4261,7 +4262,7 @@ class GPUdb(object):
 
             if scheme not in ['http', 'https']:
                 # We don't deal with any protocol other than these
-                return False, None
+                return False, f"Invalid database connection protocol [{scheme}]"
 
             hostname = parsed_url.hostname
 
@@ -4272,8 +4273,8 @@ class GPUdb(object):
             # Check if port is out-of-bounds
             try:
                 port = parsed_url.port
-            except:
-                return False, None
+            except Exception as e:
+                return False, f"Error extracting port: {e}"
 
             path = parsed_url.path.rstrip('/')
 
@@ -4356,8 +4357,8 @@ class GPUdb(object):
             url_valid = GPUdb.ValidateUrl.validate_url(url)
 
             if not url_valid[0]:
-                raise GPUdbException("Failed to parse given url '{}'"
-                                "".format(url))
+                raise GPUdbException("Failed to parse given url '{}': {}"
+                                "".format(url, url_valid[1]))
 
             full_url, protocol_, hostname, port_, path, username, password = url_valid[1]
 
@@ -5098,7 +5099,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.3.0"
+    api_version = "7.2.3.1"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5157,6 +5158,11 @@ class GPUdb(object):
                 self.poller_service.stop()
             except:
                 pass
+        if hasattr(self, "_GPUdb__session") and self.__session is not None:
+            try:
+                self.__session.close()
+            except Exception as e:
+                pass
 
     def __enter__(self):
         return self
@@ -5166,6 +5172,11 @@ class GPUdb(object):
             try:
                 self.poller_service.stop()
             except:
+                pass
+        if hasattr(self, "_GPUdb__session") and self.__session is not None:
+            try:
+                self.__session.close()
+            except Exception as e:
                 pass
 
     def __construct( self, host = None, options = None, *args, **kwargs ):
@@ -5375,8 +5386,6 @@ class GPUdb(object):
 
         # High-throughput HTTP adapter configuration
         self.__adapter = HTTPAdapter(
-            pool_connections=100,    # Total connection pools to cache
-            pool_maxsize=50,  # Max connections per pool
             max_retries=self.__retry_strategy,
             pool_block=False,  # Don't block when pool is full, create new connection
         )
@@ -7868,6 +7877,10 @@ class GPUdb(object):
             # Check the HTTP status code and throw appropriate exceptions
             status_code = response.status_code
 
+            # Read the response data before throwing exceptions to release
+            # connections back into the pool
+            response_data = response.content
+
             if status_code == requests.codes.UNAUTHORIZED:
                 msg = f"Unauthorized access: '{response.reason}'"
                 self.__log_debug(msg)
@@ -7882,9 +7895,6 @@ class GPUdb(object):
                        f"code {status_code}: {response.reason}")
                 self.__log_debug(f"Throwing EXIT exception; {msg}")
                 raise GPUdbExitException(msg)
-
-            # Read the response data
-            response_data = response.content
 
             # Decode the response
             decoded_response = self.__read_datum_cext(response_schema,
@@ -8059,6 +8069,10 @@ class GPUdb(object):
             status_code = response.status_code
             response_msg = response.reason
 
+            # Read the response data before throwing exceptions to release
+            # connections back into the pool
+            response_data = response.text
+
             if status_code == requests.codes.UNAUTHORIZED:  # UNAUTHORIZED
                 msg = f"Unauthorized access: '{response_msg}'"
                 self.__log_debug(msg)
@@ -8073,7 +8087,7 @@ class GPUdb(object):
                 raise GPUdbException(msg)
 
             # Return the response content
-            return response.text
+            return response_data
 
         except ssl.SSLError as ex:
             msg = f"Unable to execute SSL handshake with '{url.url}' due to: {GPUdbException.stringify_exception(ex)}"
@@ -8218,6 +8232,10 @@ class GPUdb(object):
             # Check the HTTP status code and throw appropriate exceptions
             status_code = response.status_code
 
+            # Read the response data before throwing exceptions to release
+            # connections back into the pool
+            response_data = response.content.decode("UTF-8")
+
             if status_code == requests.codes.UNAUTHORIZED:  # UNAUTHORIZED
                 msg = f"Unauthorized access: '{response.reason}'"
                 self.__log_debug(msg)
@@ -8234,7 +8252,7 @@ class GPUdb(object):
                 raise GPUdbException(msg)
 
             # Return the response as a UTF-8 string
-            return response.content.decode("UTF-8")
+            return response_data
 
         except requests.Timeout as ex:
             msg = f"Request timed out connecting to {url.url}: {GPUdbException.stringify_exception(ex)}"
@@ -15887,6 +15905,15 @@ class GPUdb(object):
                   (values are summed).  The column must be a numerical type
                   (int, double, long, float).
 
+                * **start** --
+                  The start parameter for char types.
+
+                * **end** --
+                  The end parameter for char types.
+
+                * **interval** --
+                  The interval parameter for char types.
+
                 The default value is an empty dict ( {} ).
 
         Returns:
@@ -16112,6 +16139,17 @@ class GPUdb(object):
 
             info (dict of str to str)
                 Additional information.
+                Allowed keys are:
+
+                * **min_string** --
+                  The minimum value of input parameter *column_name* when it is
+                  a char type
+
+                * **max_string** --
+                  The maximum value of input parameter *column_name* when it is
+                  a char type
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( table_name, (basestring)), "aggregate_min_max(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( column_name, (basestring)), "aggregate_min_max(): Argument 'column_name' must be (one) of type(s) '(basestring)'; given %s" % type( column_name ).__name__
@@ -43089,6 +43127,15 @@ class GPUdbTable( object ):
                   (values are summed).  The column must be a numerical type
                   (int, double, long, float).
 
+                * **start** --
+                  The start parameter for char types.
+
+                * **end** --
+                  The end parameter for char types.
+
+                * **interval** --
+                  The interval parameter for char types.
+
                 The default value is an empty dict ( {} ).
 
         Returns:
@@ -43301,6 +43348,17 @@ class GPUdbTable( object ):
 
             info (dict of str to str)
                 Additional information.
+                Allowed keys are:
+
+                * **min_string** --
+                  The minimum value of input parameter *column_name* when it is
+                  a char type
+
+                * **max_string** --
+                  The maximum value of input parameter *column_name* when it is
+                  a char type
+
+                The default value is an empty dict ( {} ).
 
         Raises:
 
