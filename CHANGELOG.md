@@ -3,6 +3,23 @@
 ## Version 7.2
 
 
+### Version 7.2.3.2 - 2025-11-17
+
+#### Added
+-   Support for 12-byte decimals
+-   Support for unsigned long array types
+
+#### Changed
+-   Improved efficiency in processing column properties
+-   Improved & aligned handling of connection errors across endpoint types
+
+#### Fixed
+-   Check of HA queue draining status on fail-back
+
+#### Notes
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes
+
+
 ### Version 7.2.3.1 - 2025-10-07
 
 #### Changed
@@ -23,6 +40,23 @@
 
 #### Notes
 -   Check CHANGELOG-FUNCTIONS.md for endpoint related changes
+
+
+### Version 7.2.2.15 - 2025-11-12
+
+#### Added
+-   Support for unsigned long array types
+
+#### Changed
+-   Improved consistency of connection error handling
+
+
+### Version 7.2.2.14 - 2025-10-08
+
+#### Changed
+-   Improved connection management
+-   Returned parse failure reason from URL parser
+-   Pool size configuration of `requests` set to defaults
 
 
 ### Version 7.2.2.13 - 2025-09-12

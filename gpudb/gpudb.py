@@ -19,6 +19,8 @@ from typing import Any, List, Union
 import typing
 import functools
 import warnings
+import decimal
+from decimal import Decimal
 
 from io import BytesIO
 
@@ -42,7 +44,6 @@ import sys
 import time
 import traceback
 import uuid
-from decimal import Decimal
 
 import collections
 from collections.abc import Iterator
@@ -621,6 +622,96 @@ class _Util(object):
         return False
 
     @staticmethod
+    def _float_to_string(
+        value: Union[float, int, Decimal, List[Union[float, int, Decimal]]],
+        precision: int = None,
+        scale: int = None
+    ) -> Union[str, List[str]]:
+        """
+        Converts a single number or a list of numbers to their string representation,
+        respecting Kinetica's DECIMAL(precision, scale) constraints.
+        Rounds only when necessary and ensures fixed-point notation.
+
+        Args:
+            value: A single number (float, int, or Decimal) or a list of numbers.
+            precision: The total number of digits allowed (default: GPUdbRecordColumn.DEFAULT_DECIMAL_PRECISION).
+            scale: The maximum number of decimal places to output (default: GPUdbRecordColumn.DEFAULT_DECIMAL_SCALE).
+
+        Returns:
+            A string representation of the number(s).
+            Raises ValueError if a number exceeds the specified DECIMAL(precision, scale) limits.
+        """
+
+        # Set defaults if not provided
+        if precision is None:
+            precision = GPUdbRecordColumn.DEFAULT_DECIMAL_PRECISION
+        if scale is None:
+            scale = GPUdbRecordColumn.DEFAULT_DECIMAL_SCALE
+
+        # Calculate maximum integer digits and magnitude for this precision/scale
+        max_integer_digits = precision - scale
+        max_magnitude = Decimal('1').scaleb(max_integer_digits)
+
+        # Define the core conversion and conditional rounding logic as a local function
+        def convert_single_value(num: Union[float, int, Decimal]) -> str:
+            """Applies magnitude check, conditional rounding, and fixed-point formatting."""
+            if not isinstance(num, (int, float, Decimal)):
+                raise TypeError(f"Value must be a number, got {type(num)}")
+
+            # 1. Convert the number to a high-precision Decimal object
+            if isinstance(num, Decimal):
+                decimal_value = num
+            else:
+                decimal_value = Decimal(str(num))
+
+            # 2. Check magnitude constraint based on precision and scale
+            abs_integer_part = decimal_value.to_integral_value(rounding=decimal.ROUND_FLOOR).copy_abs()
+
+            if abs_integer_part >= max_magnitude:
+                raise ValueError(
+                    f"Value {num} exceeds DECIMAL({precision}, {scale}) limit. "
+                    f"The integer part must have at most {max_integer_digits} digits "
+                    f"(must be less than {max_magnitude})."
+                )
+
+            # 3. Check if rounding is necessary
+            quantizer = Decimal('1').scaleb(-scale)
+            normalized_value = decimal_value.normalize()
+
+            # Check if value has more decimal places than 'scale'
+            needs_rounding = normalized_value.as_tuple().exponent < -scale
+
+            if needs_rounding:
+                # 4. Perform ROUNDING (using ROUND_HALF_UP)
+                context = decimal.Context(prec=100, rounding=decimal.ROUND_HALF_UP)
+                final_value = decimal_value.quantize(quantizer, context=context)
+            else:
+                # 4. No ROUNDING: Use the original number's decimal object
+                final_value = decimal_value
+
+            # 5. Convert to string without trailing zeros
+            result_str = str(final_value)
+
+            # Ensure we don't have scientific notation
+            if 'E' in result_str or 'e' in result_str:
+                # Force fixed-point notation
+                format_spec = f"{{:.{scale}f}}"
+                result_str = format_spec.format(final_value)
+                # Remove trailing zeros after decimal point
+                if '.' in result_str:
+                    result_str = result_str.rstrip('0').rstrip('.').lstrip('0')
+
+            return result_str
+
+        # --- Main Logic for Single Value vs. List ---
+
+        if isinstance(value, list):
+            return [convert_single_value(v) for v in value]
+        else:
+            return convert_single_value(value)
+
+
+    @staticmethod
     def _convert_value_on_insertion(column_value: Any, column: GPUdbRecordColumn) -> object:
         """Convert column value for insertion into table for array, json and vector types
         JSON - str or dict (server needs it as string, so dict => str)
@@ -643,7 +734,7 @@ class _Util(object):
             except TypeError:
                 raise GPUdbException("Invalid JSON value : " + column_value)
         elif column.is_array():
-            if isinstance(column_value, list) and column.get_array_type() != GPUdbColumnProperty.BOOLEAN:
+            if isinstance(column_value, list) and column.array_type != GPUdbColumnProperty.BOOLEAN:
                 if _Util._is_heterogeneous_list(column_value):
                     converted_column_value = str(column_value).replace("'", "\"")
                 else:
@@ -662,12 +753,15 @@ class _Util(object):
             if isinstance(column_value, list):
                 column_value = [float(num) if isinstance(num, int) else num for num in column_value]
             if all(isinstance(e, float) for e in column_value):
-                dims = column.get_vector_dimensions()
+                dims = column.vector_dimension
                 # pack as bytes
                 converted_column_value = struct.pack("%sf" % dims, *column_value)
         else:
-            if isinstance(column_value, float) and column.column_type == "string" and GPUdbColumnProperty.TIME in column.column_properties:
-                converted_column_value = datetime.fromtimestamp(column_value).strftime('%H:%M:%S')
+            if isinstance(column_value, float) and column.column_type == "string":
+                if column.is_time():
+                    converted_column_value = datetime.fromtimestamp(column_value).strftime('%H:%M:%S')
+                elif column.is_decimal:
+                    converted_column_value = _Util._float_to_string(column_value, precision=column.precision, scale=column.scale)
 
         if converted_column_value:
             column_value = converted_column_value
@@ -694,7 +788,7 @@ class _Util(object):
                 converted_column_value = json.loads(column_value)
         elif column.is_array():
             if isinstance(column_value, str):
-                if column.get_array_type() != GPUdbColumnProperty.BOOLEAN:
+                if column.array_type != GPUdbColumnProperty.BOOLEAN:
                     # convert to list
                     converted_column_value = eval(column_value)
                 else:
@@ -702,7 +796,7 @@ class _Util(object):
                     converted_column_value = eval(column_value.replace('true', 'True').replace('false', 'False'))
         elif column.is_vector():
             if isinstance(column_value, bytes):
-                dims = column.get_vector_dimensions()
+                dims = column.vector_dimension
                 # convert to List[float] represented as bytes
                 converted_column_value = bytes(','.join(
                     str(e) for e in [*struct.unpack("%sf" % dims, column_value)]), 'utf-8'
@@ -1434,6 +1528,11 @@ class GPUdbRecordColumn(object):
     """Represents a column in a GPUdb record object (:class:`.GPUdbRecordType`).
     """
 
+    DEFAULT_DECIMAL_PRECISION = 18
+    DEFAULT_DECIMAL_SCALE = 4
+    DEFAULT_DECIMAL_MIN = -922337203685477.5808
+    DEFAULT_DECIMAL_MAX = 922337203685477.5807
+
     class _ColumnType(object):
         """A class acting as an enum for the data types allowed for a column."""
         INT    = "int"
@@ -1493,7 +1592,7 @@ class GPUdbRecordColumn(object):
                 nullable.
         """
         # Validate and save the stringified name
-        if (not name):
+        if not name:
             raise GPUdbException( "The name of the column must be a non-empty "
                                   "string; given " + repr(name) )
         self._name = name
@@ -1525,32 +1624,80 @@ class GPUdbRecordColumn(object):
                                   "".format( [str(type(p))
                                               for p in column_properties] ) )
 
-        # Normalize the properties by turning them all into lower case
-        column_properties = [prop.lower() for prop in column_properties]
+        self._is_shard_key = False
+        self._is_primary_key = False
+        self._is_decimal = False
+        self._is_time = False
+        self._is_json = False
+        self._is_array = False
+        self._array_type: GPUdbRecordColumn._ColumnType = None
+        self._is_vector = False
+        self._vector_dimension = None
+        self._precision = None
+        self._scale = None
 
-        # Sort and stringify the column properties so that the order for a given
-        # set of properties is always the same--handy for equivalency checks
-        self._column_properties = sorted( column_properties, key = lambda x : str(x[0]) )
+        # Normalize, extract flags, and collect properties in a single pass
+        self.__init_column_properties(column_properties, is_nullable)
 
-        # Check for nullability
-        self._is_nullable = False # default value
-        if (GPUdbColumnProperty.NULLABLE in self.column_properties):
-            self._is_nullable = True
+    # end __init__
+
+
+    def __init_column_properties(self, column_properties: List[str], is_nullable: bool):
+        has_nullable = False
+        normalized_properties = []
+        for prop in column_properties:
+            prop_lower = prop.lower()
+            normalized_properties.append(prop_lower)
+
+            # Check for special properties in single pass
+            if prop_lower == GPUdbColumnProperty.NULLABLE:
+                has_nullable = True
+            elif prop_lower == GPUdbColumnProperty.SHARD_KEY:
+                self._is_shard_key = True
+            elif prop_lower == GPUdbColumnProperty.PRIMARY_KEY:
+                self._is_primary_key = True
+            elif prop_lower.startswith(GPUdbColumnProperty.DECIMAL):
+                self._is_decimal = True
+                self.__get_decimal_info(prop_lower)
+            elif (GPUdbColumnProperty.TIME == prop_lower):
+                self._is_time = True
+            elif prop_lower.startswith(GPUdbColumnProperty.ARRAY):
+                self._is_array = True
+                self._array_type = GPUdbRecordColumn.__get_array_type(prop_lower)
+            elif prop_lower.startswith(GPUdbColumnProperty.JSON):
+                self._is_json = True
+            elif prop_lower.startswith(GPUdbColumnProperty.VECTOR):
+                self._is_vector = True
+                self._vector_dimension = GPUdbRecordColumn.__get_vector_dimensions(prop_lower)
 
         # Check the optional 'is_nullable' argument
         if is_nullable not in [True, False]:
             raise GPUdbException( "'is_nullable' must be a boolean value; given " + repr(type(is_nullable)) )
-        if (is_nullable == True):
-            self._is_nullable = True
-            # Enter the 'nullable' property into the list of properties, even though
-            # GPUdb doesn't actually use it (make sure not to make duplicates)
-            if (GPUdbColumnProperty.NULLABLE not in self._column_properties):
-                self._column_properties.append( GPUdbColumnProperty.NULLABLE )
-                # Re-sort for equivalency tests down the road
-                self._column_properties = sorted( self._column_properties, key = lambda x : str(x[0]) )
-            # end inner if
-        # end if
-    # end __init__
+
+        # Set nullability based on property or explicit parameter
+        self._is_nullable = has_nullable or is_nullable
+
+        # Add nullable property if needed and not already present
+        if is_nullable and not has_nullable:
+            normalized_properties.append(GPUdbColumnProperty.NULLABLE)
+
+        # Sort and save the column properties
+        self._column_properties = sorted(normalized_properties, key = lambda x : str(x[0]))
+
+    # End __init_column_properties
+
+    def __get_decimal_info(self,  prop_lower: str ):
+            """Find precision and scale from a decimal(x,y) property.
+
+            Returns:
+            """
+            match = re.match(GPUdbColumnProperty.DECIMAL + r"\((\d+),(\d+)\)", prop_lower)
+            if match:
+                self._precision = int(match.group(1))
+                self._scale = int(match.group(2))
+            else:
+                self._precision = GPUdbRecordColumn.DEFAULT_DECIMAL_PRECISION
+                self._scale = GPUdbRecordColumn.DEFAULT_DECIMAL_SCALE
 
 
     @property
@@ -1580,13 +1727,44 @@ class GPUdbRecordColumn(object):
         return self._is_nullable
     # end is_nullable
 
+    @property
+    def is_primary_key(self):  # read-only is_nullable
+        """The nullability of the column."""
+        return self._is_primary_key
+    # end is_primary_key
+
+    @property
+    def is_shard_key(self):  # read-only is_nullable
+        """The nullability of the column."""
+        return self._is_shard_key
+    # end is_shard_key
+
+    @property
+    def is_decimal(self):
+        return self._is_decimal
+
+    @property
+    def precision(self):
+        if self._is_decimal:
+            return self._precision
+        return None
+
+    @property
+    def scale(self):
+        if self._is_decimal:
+            return self._scale
+        return None
+
+    @property
+    def array_type(self):
+        return self._array_type
+
+    @property
+    def vector_dimension(self):
+        return self._vector_dimension
 
     def is_array(self):
-        for prop in self._column_properties:
-            if prop.startswith(GPUdbColumnProperty.ARRAY):
-                return True
-
-        return False
+        return self._is_array
 
     def all_numeric_array_types(self):
         return [GPUdbRecordColumn._ColumnType.INT,
@@ -1594,50 +1772,45 @@ class GPUdbRecordColumn(object):
                 GPUdbRecordColumn._ColumnType.FLOAT,
                 GPUdbRecordColumn._ColumnType.DOUBLE]
 
-    def get_array_type(self):
-        for prop in self._column_properties:
-            if prop.startswith(GPUdbColumnProperty.ARRAY):
-                open_index = prop.index("(")
-                close_index = prop.rindex(")")
-                if 0 < open_index < close_index:
-                    sub_type = prop[open_index+1:close_index].lower()
-                    if sub_type.startswith("int"):
-                        return GPUdbRecordColumn._ColumnType.INT
-                    elif sub_type.startswith("long"):
-                        return GPUdbRecordColumn._ColumnType.LONG
-                    elif sub_type.startswith("float"):
-                        return GPUdbRecordColumn._ColumnType.FLOAT
-                    elif sub_type.startswith("double"):
-                        return GPUdbRecordColumn._ColumnType.DOUBLE
-                    elif sub_type.startswith("string"):
-                        return GPUdbRecordColumn._ColumnType.STRING
-                    elif sub_type.startswith("boolean"):
-                        return "boolean"
-                    else:
-                        raise GPUdbException("Unknown array type: " + sub_type)
+    @staticmethod
+    def __get_array_type(prop: str):
+        open_index = prop.index("(")
+        close_index = prop.rindex(")")
+        if 0 < open_index < close_index:
+            sub_type = prop[open_index+1:close_index].lower()
+            if sub_type.startswith(GPUdbRecordColumn._ColumnType.INT):
+                return GPUdbRecordColumn._ColumnType.INT
+            elif sub_type.startswith(GPUdbRecordColumn._ColumnType.LONG):
+                return GPUdbRecordColumn._ColumnType.LONG
+            elif sub_type.startswith(GPUdbRecordColumn._ColumnType.FLOAT):
+                return GPUdbRecordColumn._ColumnType.FLOAT
+            elif sub_type.startswith(GPUdbRecordColumn._ColumnType.DOUBLE):
+                return GPUdbRecordColumn._ColumnType.DOUBLE
+            elif sub_type.startswith(GPUdbRecordColumn._ColumnType.STRING):
+                return GPUdbRecordColumn._ColumnType.STRING
+            elif sub_type.startswith(GPUdbColumnProperty.ULONG):
+                return GPUdbColumnProperty.ULONG
+            elif sub_type.startswith(GPUdbColumnProperty.BOOLEAN):
+                return GPUdbColumnProperty.BOOLEAN
+            else:
+                raise GPUdbException("Unknown array type: " + sub_type)
 
     def is_json(self):
-        for prop in self._column_properties:
-            if prop.startswith(GPUdbColumnProperty.JSON):
-                return True
-
-        return False
+        return self._is_json
 
     def is_vector(self):
-        for prop in self._column_properties:
-            if prop.startswith(GPUdbColumnProperty.VECTOR):
-                return True
+        return self._is_vector
 
-        return False
+    def is_time(self):
+        return self._is_time
 
-    def get_vector_dimensions(self):
+    @staticmethod
+    def __get_vector_dimensions(prop: str):
         dimensions: int = -1
-        for prop in self._column_properties:
-            if prop.startswith(GPUdbColumnProperty.VECTOR):
-                open_index = prop.index("(")
-                close_index = prop.rindex(")")
-                if 0 < open_index < close_index:
-                    dimensions = int(prop[open_index+1:close_index])
+        open_index = prop.index("(")
+        close_index = prop.rindex(")")
+        if 0 < open_index < close_index:
+            dimensions = int(prop[open_index+1:close_index])
         return dimensions
 
     def __eq__( self, other ):
@@ -1683,8 +1856,8 @@ class GPUdbRecordType(object):
     functions for creating the type in GPUdb (among others).
     """
 
-    def __init__( self, columns = None, label = "",
-                  schema_string = None, column_properties = None ):
+    def __init__( self, columns: List[GPUdbRecordColumn] = None, label = "",
+                  schema_string = None, column_properties: List[str] = None ):
         """Create a GPUdbRecordType object which represents the data type for
         a given record for GPUdb.
 
@@ -1737,7 +1910,7 @@ class GPUdbRecordType(object):
 
 
 
-    def __initiate_from_columns( self, columns ):
+    def __initiate_from_columns( self, columns: List[Union[GPUdbRecordColumn, str]] ):
         """Private method that constructs the object using the given columns.
 
         Parameters:
@@ -1754,14 +1927,14 @@ class GPUdbRecordType(object):
 
         # Check if the list contains only GPUdbRecordColumns, then nothing to do
         if all( isinstance( x, GPUdbRecordColumn ) for x in columns ):
-            self._columns = columns
+            self._columns: List[GPUdbRecordColumn] = columns
         else: # unroll the information contained within
             # If the caller provided one list of arguments, wrap it into a list of lists so we can
             # properly iterate over
             columns = columns if all( isinstance( elm, list ) for elm in columns ) else [ columns ]
 
             # Unroll the information about the column(s) and create GPUdbRecordColumn objects
-            self._columns = []
+            self._columns: List[GPUdbRecordColumn] = []
             for col_info in columns:
                 # Arguments 3 and beyond--these are properties--must be combined into one list argument
                 if len( col_info ) > 2:
@@ -2829,30 +3002,42 @@ class _FailbackPollerService:
                 options.password = self.db.password
                 options.skip_ssl_cert_verification = self.db.skip_ssl_cert_verification
 
+                # Reset running flag for HA queue draining check
+                kinetica_running = False
+
                 with GPUdb(str(self.primary_url), options) as conn:
                     response = conn.show_system_status()
                     if _Util.is_ok(response):
                         status_map = response['status_map']
                         # Check for the existence of the 'ha_status' key in the dictionary
                         if 'ha_status' in status_map:
-                            ha_status = status_map['ha_status']
+                            ha_status_map_str = status_map['ha_status']
 
-                            if ha_status == "drained":
-                                self.logger.debug(f"Failback to primary cluster at [{self.primary_url}] succeeded")
-                            else:
-                                self.logger.debug(
-                                    f"Kinetica running on primary cluster at [{self.primary_url}], "
-                                    f"but connection did not succeed"
-                                )
-                                kinetica_running = False
+                            try:
+                                ha_status_map = json.loads( ha_status_map_str )
+
+                                if 'drained' in ha_status_map:
+                                    ha_status = ha_status_map['drained']
+    
+                                    if ha_status == "draining":
+                                        self.logger.debug(f"Kinetica running on primary cluster at [{self.primary_url}], but HA queues are still draining")
+                                    else:
+                                        self.logger.info(f"Failback to primary cluster at [{self.primary_url}] succeeded")
+                                        kinetica_running = True
+                                else:
+                                    self.logger.warn(f"HA drained status not found in HA status map [{ha_status_map.keys()}] for URL: [{self.primary_url}]")
+                            except Exception as ex:
+                                self.logger.warn(f"Could not parse system status block [{ha_status_map_str}] for URL: [{self.primary_url}]")
+                        else:
+                            self.logger.warn(f"HA status not found in system status map [{status_map.keys()}] for URL: [{self.primary_url}]")
                     else:
-                        self.logger.error(f"Could not connect to Kinetica at {self.primary_url}")
+                        self.logger.debug(f"Could not connect to Kinetica at [{self.primary_url}]")
 
             except GPUdbException as e:
-                self.logger.info(f"Could not connect to Kinetica at {self.primary_url} - error: {e.message}")
+                self.logger.debug(f"Could not connect to Kinetica at [{self.primary_url}] - error: {e.message}")
 
         else:
-            self.logger.debug(f"Kinetica is not running at: {self.primary_url}")
+            self.logger.debug(f"Kinetica is not running at URL: [{self.primary_url}]")
 
         return kinetica_running
 
@@ -5099,7 +5284,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.3.1"
+    api_version = "7.2.3.2"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5786,7 +5971,7 @@ class GPUdb(object):
         # from servers and add them to the end of the queue while iterating
         # over it--other forms of collections don't allow for it)
         # Note: Doing this extra step to maintain order from the original list
-        duplicates_removed_in_order = sorted( set( urls ), key = urls.index )
+        duplicates_removed_in_order = list(dict.fromkeys(urls))
         url_deque = collections.deque( duplicates_removed_in_order )
 
         # Save the hostname of the primary URL (which could be an empty string)
@@ -7854,8 +8039,7 @@ class GPUdb(object):
 
         # Log the request and the endpoint at the trace level
         if self.__is_log_level_trace_enabled():
-            self.__log_trace("Sending {} request {} to {}"
-                             "".format(endpoint, request_body, str(url)))
+            self.__log_trace(f"Sending {endpoint} request {request_body} to {url}")
 
         # Encode the request
         encoded_request = self.encode_datum_cext(request_schema, request_body)
@@ -7905,7 +8089,7 @@ class GPUdb(object):
             message: str = decoded_response['status_info']['message']
 
             if self.__is_log_level_trace_enabled():
-                self.__log_trace("<Status|Message|Type>: <%d|%s|%s>".format(status_code, message, response.headers.get("Content-Type")))
+                self.__log_trace(f"<Status|Message|Type>: <{status_code}|{message}|{response.headers.get('Content-Type')}>")
 
             if status_code == requests.codes.BAD_REQUEST:
                 if message is not None and len(message) > 0:
@@ -7949,6 +8133,10 @@ class GPUdb(object):
             final_msg = self.__SSL_ERROR_MESSAGE_TEMPLATE.format(msg)
             self.__log_debug(final_msg)
             raise GPUdbUnauthorizedAccessException(final_msg)
+        except requests.ConnectionError as ex:
+            msg = f"Error connecting to '{url.url}' due to: {GPUdbException.stringify_exception(ex)}"
+            self.__log_debug(msg)
+            raise GPUdbConnectionException(msg)
         except requests.Timeout as ex:
             msg = f"Request timed out connecting to {url.url}: {GPUdbException.stringify_exception(ex)}"
             self.__log_debug(msg)
@@ -8094,26 +8282,29 @@ class GPUdb(object):
             final_msg = self.__SSL_ERROR_MESSAGE_TEMPLATE.format(msg)
             self.__log_debug(final_msg)
             raise GPUdbUnauthorizedAccessException(final_msg)
-
         except requests.ConnectionError as ex:
             msg = f"Error connecting to '{url.url}' due to: {GPUdbException.stringify_exception(ex)}"
             self.__log_debug(msg)
             raise GPUdbConnectionException(msg)
-
+        except requests.Timeout as ex:
+            msg = f"Request timed out connecting to {url.url}: {GPUdbException.stringify_exception(ex)}"
+            self.__log_debug(msg)
+            raise GPUdbConnectionException(msg)
+        except requests.HTTPError as ex:
+            msg = f"HTTP error occurred connecting to {url.url}: {GPUdbException.stringify_exception(ex)}"
+            self.__log_debug(msg)
+            raise GPUdbConnectionException(msg)
         except requests.RequestException as ex:
             msg = f"Error posting to '{url.url}' due to: {GPUdbException.stringify_exception(ex)}"
             self.__log_debug(msg)
             raise GPUdbConnectionException(msg)
-
         except GPUdbUnauthorizedAccessException:
             # Any permission related problem should get propagated
             raise
-
         except (GPUdbConnectionException, GPUdbExitException) as ex:
             # For special connection or exit errors, just pass them on
             self.__log_debug(f"Caught conn/exit exception: {str(ex)}")
             raise
-
         except GPUdbException as ex:
             # An end-of-file problem from the server is also a failover trigger
             if C._DB_EOF_FROM_SERVER_ERROR_MESSAGE in str(ex):
@@ -8124,7 +8315,6 @@ class GPUdb(object):
                 # All other errors are legitimate, and to be passed on to the user
                 self.__log_debug(f"Throwing GPUdb exception; {str(ex)}")
                 raise
-
         except Exception as ex:
             msg = f"Error reading response from {url.url} for endpoint {endpoint}: {GPUdbException.stringify_exception(ex)}"
             self.__log_debug(f"Throwing GPUdb exception; {msg}")
@@ -8209,8 +8399,7 @@ class GPUdb(object):
 
         # Log the request and the endpoint at the trace level
         if self.__is_log_level_trace_enabled():
-            self.__log_trace("Sending {} request {} to {}"
-                             "".format(endpoint, request_body, str(url)))
+            self.__log_trace(f"Sending {endpoint} request {request_body} to {url}")
 
         # Prepare headers
         headers = {
@@ -8254,6 +8443,15 @@ class GPUdb(object):
             # Return the response as a UTF-8 string
             return response_data
 
+        except ssl.SSLError as ex:
+            msg = f"Unable to execute SSL handshake with '{url.url}' due to: {GPUdbException.stringify_exception(ex)}"
+            final_msg = self.__SSL_ERROR_MESSAGE_TEMPLATE.format(msg)
+            self.__log_debug(final_msg)
+            raise GPUdbUnauthorizedAccessException(final_msg)
+        except requests.ConnectionError as ex:
+            msg = f"Error connecting to '{url.url}' due to: {GPUdbException.stringify_exception(ex)}"
+            self.__log_debug(msg)
+            raise GPUdbConnectionException(msg)
         except requests.Timeout as ex:
             msg = f"Request timed out connecting to {url.url}: {GPUdbException.stringify_exception(ex)}"
             self.__log_debug(msg)
@@ -8262,11 +8460,6 @@ class GPUdb(object):
             msg = f"HTTP error occurred connecting to {url.url}: {GPUdbException.stringify_exception(ex)}"
             self.__log_debug(msg)
             raise GPUdbConnectionException(msg)
-        except ssl.SSLError as ex:
-            msg = f"Unable to execute SSL handshake with '{url.url}' due to: {GPUdbException.stringify_exception(ex)}"
-            final_msg = self.__SSL_ERROR_MESSAGE_TEMPLATE.format(msg)
-            self.__log_debug(final_msg)
-            raise GPUdbUnauthorizedAccessException(final_msg)
         except GPUdbUnauthorizedAccessException:
             # Any permission related problem should get propagated
             raise
@@ -11000,9 +11193,9 @@ class GPUdb(object):
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
         name = "/admin/repair/table"
-        REQ_SCHEMA_STR = """{"type":"record","name":"admin_repair_table_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA_STR = """{"type":"record","name":"admin_repair_table_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"table_types","type":{"type":"map","values":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"admin_repair_table_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"repair_status","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("options", "map", [("string")])] )
+        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("table_types", "map", [("string")]), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("repair_status", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/admin/repair/table"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
@@ -11946,6 +12139,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("file_names", "array", [("string")]), ("read_offsets", "array", [("long")]), ("read_lengths", "array", [("long")]), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("file_names", "array", [("string")]), ("file_data", "array", [("bytes")]), ("info", "map", [("string")])] )
         ENDPOINT = "/download/files"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/drop/backup"
+        REQ_SCHEMA_STR = """{"type":"record","name":"drop_backup_request","fields":[{"name":"backup_name","type":"string"},{"name":"datasink_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"drop_backup_response","fields":[{"name":"backup_name","type":"string"},{"name":"backup_names","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("backup_name", "string"), ("datasink_name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("backup_name", "string"), ("backup_names", "array", [("string")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/drop/backup"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -13348,6 +13552,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["delete_role"] = "/delete/role"
         self.gpudb_func_to_endpoint_map["delete_user"] = "/delete/user"
         self.gpudb_func_to_endpoint_map["download_files"] = "/download/files"
+        self.gpudb_func_to_endpoint_map["drop_backup"] = "/drop/backup"
         self.gpudb_func_to_endpoint_map["drop_container_registry"] = "/drop/container/registry"
         self.gpudb_func_to_endpoint_map["drop_credential"] = "/drop/credential"
         self.gpudb_func_to_endpoint_map["drop_datasink"] = "/drop/datasink"
@@ -14247,7 +14452,8 @@ class GPUdb(object):
     # end admin_remove_ranks
 
     # begin admin_repair_table
-    def admin_repair_table( self, table_names = None, options = {} ):
+    def admin_repair_table( self, table_names = None, table_types = None,
+                            options = {} ):
         """Manually repair a corrupted table. Returns information about
         affected tables.
 
@@ -14257,6 +14463,9 @@ class GPUdb(object):
                 List of tables to query. An asterisk returns all tables. The
                 user can provide a single element (which will be automatically
                 promoted to a list internally) or a list.
+
+            table_types (dict of str to str)
+                internal: type_id per table.
 
             options (dict of str to str)
                 Optional parameters.
@@ -14274,6 +14483,9 @@ class GPUdb(object):
 
                   * **replay_wal** --
                     Manually invokes write-ahead log (WAL) replay on the table
+
+                  * **alter_table** --
+                    Reset columns modification after incomplete alter column.
 
                 * **verify_all** --
                   If *false* only table chunk data already known to be
@@ -14301,10 +14513,12 @@ class GPUdb(object):
                 Additional information.
         """
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        assert isinstance( table_types, (dict)), "admin_repair_table(): Argument 'table_types' must be (one) of type(s) '(dict)'; given %s" % type( table_types ).__name__
         assert isinstance( options, (dict)), "admin_repair_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
         obj = {}
         obj['table_names'] = table_names
+        obj['table_types'] = self.__sanitize_dicts( table_types )
         obj['options'] = self.__sanitize_dicts( options )
 
         response = self.__submit_request( '/admin/repair/table', obj, convert_to_attr_dict = True )
@@ -16142,12 +16356,12 @@ class GPUdb(object):
                 Allowed keys are:
 
                 * **min_string** --
-                  The minimum value of input parameter *column_name* when it is
-                  a char type
+                  The minimum value of input parameter *column_name*, stored as
+                  a byte vector.
 
                 * **max_string** --
-                  The maximum value of input parameter *column_name* when it is
-                  a char type
+                  The maximum value of input parameter *column_name*, stored as
+                  a byte vector
 
                 The default value is an empty dict ( {} ).
         """
@@ -17620,52 +17834,62 @@ class GPUdb(object):
     # begin alter_backup
     def alter_backup( self, backup_name = None, action = None, value = None,
                       datasink_name = None, options = {} ):
-        """Alters an existing database backup containing a current snapshot of
-        existing objects.
+        """Alters an existing database `backup
+        <../../../../admin/backup_restore/#database-backup>`__, accessible via
+        the `data sink <../../../../concepts/data_sinks/>`__ specified by input
+        parameter *datasink_name*.
 
         Parameters:
 
             backup_name (str)
-                Name of the backup object to be altered
+                Name of the backup to be altered.
 
             action (str)
                 Operation to be applied.
                 Allowed values are:
 
                 * **checksum** --
-                  Calculate checksum for backup files
+                  Calculate checksum for backed-up files.
 
                 * **ddl_only** --
-                  Only save the DDL, do not backup table data
+                  Whether or not to only save DDL and not back up table data,
+                  when taking future snapshots; set input parameter *value* to
+                  'true' or 'false' for DDL only or DDL and table data,
+                  respectively.
 
                 * **max_incremental_backups_to_keep** --
-                  Maximum number of incremental backups to keep
+                  Maximum number of incremental snapshots to keep, when taking
+                  future snapshots; set input parameter *value* to the number
+                  of snapshots to keep.
 
                 * **merge** --
-                  Merges all backup instances and creates a single full backup
+                  Merges all snapshots within a backup and creates a single
+                  full snapshot.
 
                 * **purge** --
-                  Purges backup instances
+                  Deletes a snapshot from a backup; set input parameter *value*
+                  to the snapshot ID to purge.
 
             value (str)
-                Action specific argument.
+                Value of the modification, depending on input parameter
+                *action*.
 
             datasink_name (str)
-                Datasink where backup will be stored.
+                Data sink through which the backup is accessible.
 
             options (dict of str to str)
                 Optional parameters.
                 Allowed keys are:
 
                 * **comment** --
-                  Comments to store with the new backup instance
+                  Comments to store with the backup.
 
                 * **dry_run** --
-                  Dry run of backup changes.
+                  Whether or not to perform a dry run of a backup alteration.
                   Allowed values are:
 
-                  * false
                   * true
+                  * false
 
                   The default value is 'false'.
 
@@ -17678,13 +17902,13 @@ class GPUdb(object):
                 Value of input parameter *backup_name*.
 
             backup_id (long)
-                Backup ID.
+                ID of the snapshot affected by the alter operation, if any.
 
             total_bytes (long)
-                Total size of files affected by alter operation
+                Total size of files affected by the alter operation.
 
             total_number_of_records (long)
-                Total number of records affected alter operation
+                Total number of records affected by the alter operation.
 
             info (dict of str to str)
                 Additional information.
@@ -20363,131 +20587,150 @@ class GPUdb(object):
     def create_backup( self, backup_name = None, backup_type = None,
                        backup_objects_map = None, datasink_name = None, options
                        = {} ):
-        """Creates a database backup containing a current snapshot of existing
-        objects.
+        """Creates a database `backup
+        <../../../../admin/backup_restore/#database-backup>`__, containing a
+        snapshot of existing objects, at the remote file store accessible via
+        the `data sink <../../../../concepts/data_sinks/>`__ specified by input
+        parameter *datasink_name*.
 
         Parameters:
 
             backup_name (str)
-                Name for this backup object. If the backup object already
-                exists, only an incremental or differential backup can be made,
-                unless recreate is specified
+                Name for this backup. If the backup already exists, only an
+                incremental or differential backup can be made, unless
+                *recreate* is set to *true*.
 
             backup_type (str)
-                Type of backup to create.
+                Type of snapshot to create.
                 Allowed values are:
 
-                * incremental
-                * differential
-                * full
+                * **incremental** --
+                  Snapshot of changes in the database objects & data since the
+                  last snapshot of any kind.
+
+                * **differential** --
+                  Snapshot of changes in the database objects & data since the
+                  last full snapshot.
+
+                * **full** --
+                  Snapshot of the given database objects and data.
 
             backup_objects_map (dict of str to str)
-                Map of objects to be captured in the backup. Error if empty and
-                creating full backup. Error if non-empty when creating an
-                incremental or differential backup.
+                Map of objects to be captured in the backup; must be specified
+                when creating a full snapshot and left unspecified when
+                creating an incremental or differential snapshot.
                 Allowed keys are:
 
                 * **all** --
-                  All object types in a schema (excludes permissions, system
-                  configuration, host secret key, KiFS directories and user
-                  defined functions)
+                  All object types and data contained in the given `schemas(s)
+                  <../../../../concepts/schemas/>`__.
 
                 * **table** --
-                  Database Table
+                  `Tables(s) <../../../../concepts/tables/>`__ and `SQL view(s)
+                  <../../../../sql/ddl/#create-view>`__.
 
                 * **credential** --
-                  Credential
+                  `Credential(s) <../../../../concepts/credentials/>`__.
 
                 * **context** --
-                  Context
+                  `Context(s)
+                  <../../../../sql-gpt/concepts/#sql-gpt-context>`__.
 
                 * **datasink** --
-                  Data Sink
+                  `Data sink(s) <../../../../concepts/data_sinks/>`__.
 
                 * **datasource** --
-                  Data Source
+                  `Data source(s) <../../../../concepts/data_sources/>`__.
 
                 * **stored_procedure** --
-                  SQL Procedure
+                  `SQL procedure(s) <../../../../sql/procedure/>`__.
 
                 * **monitor** --
-                  Table Monitor (Stream)
+                  `Table monitor(s) <../../../../concepts/table_monitors/>`__ /
+                  `SQL stream(s) <../../../../sql/ddl/#create-stream>`__.
 
                 * **user** --
-                  User (internal and external) and associated permissions
+                  `User(s)
+                  <../../../../security/sec_concepts/#security-concepts-users>`__
+                  (internal and external) and associated permissions.
 
                 * **role** --
-                  Role, role members (roles or users, recursively) and
-                  associated permissions
+                  `Role(s) <../../../../security/sec_concepts/#roles>`__, role
+                  members (roles or users, recursively), and associated
+                  permissions.
 
                 * **configuration** --
-                  If *true*, backup the database configuration file.
+                  If *true*, backup the database `configuration file
+                  <../../../../config/>`__.
                   Allowed values are:
 
-                  * false
                   * true
+                  * false
 
                   The default value is 'false'.
 
             datasink_name (str)
-                Datasink where backup will be stored.
+                Data sink through which the backup will be stored.
 
             options (dict of str to str)
                 Optional parameters.
                 Allowed keys are:
 
                 * **comment** --
-                  Comments to store with this backup
+                  Comments to store with this backup.
 
                 * **checksum** --
-                  Calculate checksum for backup files.
+                  Whether or not to calculate checksums for backup files.
                   Allowed values are:
 
-                  * false
                   * true
+                  * false
 
-                  The default value is 'true'.
+                  The default value is 'false'.
 
                 * **ddl_only** --
-                  Only save the DDL, do not backup table data.
+                  Whether or not, for tables, to only backup DDL and not table
+                  data.
                   Allowed values are:
 
-                  * true
-                  * false
+                  * **true** --
+                    For tables, only back up DDL, not data.
+
+                  * **false** --
+                    For tables, back up DDL and data.
 
                   The default value is 'false'.
 
                 * **max_incremental_backups_to_keep** --
-                  Maximum number of incremental backups to keep. The default
+                  Maximum number of incremental snapshots to keep. The default
                   value is '-1'.
 
                 * **delete_intermediate_backups** --
-                  When the backup type is differential, delete any intermediate
-                  incremental or differential backups. This overrides
-                  *max_incremental_backups_to_keep*.
+                  Whether or not to delete any intermediate snapshots when the
+                  input parameter *backup_type* is set to *differential*.
                   Allowed values are:
 
-                  * false
                   * true
+                  * false
 
                   The default value is 'false'.
 
                 * **recreate** --
-                  Replace the existing backup object with a new full backup if
-                  it already exists.
+                  Whether or not to replace an existing backup object with a
+                  new backup with a full snapshot, if one already exists.
                   Allowed values are:
 
-                  * false
                   * true
+                  * false
 
                   The default value is 'false'.
 
                 * **dry_run** --
-                  Dry run of backup.
+                  Whether or not to perform a dry run of a backup operation.
                   Allowed values are:
 
-                  * false
                   * true
+                  * false
 
                   The default value is 'false'.
 
@@ -20500,19 +20743,20 @@ class GPUdb(object):
                 Value of input parameter *backup_name*.
 
             backup_id (long)
-                Backup ID.
+                ID of the snapshot created.
 
             copied_bytes (long)
-                Total size of all files copied for this snapshot
+                Total size of all files copied for this snapshot.
 
             copied_files (long)
-                Total number of files copied for this snapshot
+                Total number of files copied for this snapshot.
 
             copied_records (long)
-                Total number of records in all files copied for this snapshot
+                Total number of records in all files copied for this snapshot.
 
             total_number_of_records (long)
-                Total number of records that can be restored from this snapshot
+                Total number of records that can be restored from this
+                snapshot.
 
             info (dict of str to str)
                 Additional information.
@@ -21601,15 +21845,6 @@ class GPUdb(object):
 
                 * **max_query_dimensions** --
                   No longer used.
-
-                * **optimize_lookups** --
-                  Use more memory to speed up the joining of tables.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
 
                 * **strategy_definition** --
                   The `tier strategy
@@ -23520,6 +23755,16 @@ class GPUdb(object):
                   'text_search' property to. Used only when
                   *text_search_columns* has a value.
 
+                * **trim_space** --
+                  If set to *true*, remove leading or trailing space from
+                  fields.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **truncate_strings** --
                   If set to *true*, truncate string values that are longer than
                   the column's type size.
@@ -25317,6 +25562,88 @@ class GPUdb(object):
 
         return response
     # end download_files
+
+    # begin drop_backup
+    def drop_backup( self, backup_name = None, datasink_name = None, options =
+                     {} ):
+        """Deletes one or more existing database `backups
+        <../../../../admin/backup_restore/#database-backup>`__ and contained
+        snapshots, accessible via the `data sink
+        <../../../../concepts/data_sinks/>`__ specified by input parameter
+        *datasink_name*.
+
+        Parameters:
+
+            backup_name (str)
+                Name of the backup to be deleted. An empty string or '*' will
+                delete all existing backups. Any text followed by a '*' will
+                delete backups whose name starts with that text.  When deleting
+                multiple backups, *delete_all_backups* must be set to *true*.
+
+            datasink_name (str)
+                Data sink through which the backup is accessible.
+
+            options (dict of str to str)
+                Optional parameters.
+                Allowed keys are:
+
+                * **dry_run** --
+                  Whether or not to perform a dry run of a backup deletion.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **delete_all_backups** --
+                  Allow multiple backups to be deleted if *true* and multiple
+                  backup names are found matching input parameter
+                  *backup_name*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **no_error_if_not_exists** --
+                  Whether or not to suppress the error if the specified backup
+                  does not exist.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            backup_name (str)
+                Value of input parameter *backup_name*.
+
+            backup_names (list of str)
+                Names of backups that were deleted.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( backup_name, (basestring)), "drop_backup(): Argument 'backup_name' must be (one) of type(s) '(basestring)'; given %s" % type( backup_name ).__name__
+        assert isinstance( datasink_name, (basestring)), "drop_backup(): Argument 'datasink_name' must be (one) of type(s) '(basestring)'; given %s" % type( datasink_name ).__name__
+        assert isinstance( options, (dict)), "drop_backup(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['backup_name'] = backup_name
+        obj['datasink_name'] = datasink_name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/drop/backup', obj, convert_to_attr_dict = True )
+
+        return response
+    # end drop_backup
 
     # begin drop_container_registry
     def drop_container_registry( self, registry_name = None, options = {} ):
@@ -30204,6 +30531,9 @@ class GPUdb(object):
                 * **insert** --
                   Insert access to tables.
 
+                * **monitor** --
+                  Monitor logs and statistics.
+
                 * **read** --
                   Ability to read, list and use the object.
 
@@ -30798,6 +31128,9 @@ class GPUdb(object):
 
                 * **insert** --
                   Insert access to tables.
+
+                * **monitor** --
+                  Monitor logs and statistics.
 
                 * **read** --
                   Ability to read, list and use the object.
@@ -32108,6 +32441,16 @@ class GPUdb(object):
                   'text_search' property to. Used only when
                   *text_search_columns* has a value.
 
+                * **trim_space** --
+                  If set to *true*, remove leading or trailing space from
+                  fields.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **truncate_strings** --
                   If set to *true*, truncate string values that are longer than
                   the column's type size.
@@ -32836,6 +33179,16 @@ class GPUdb(object):
                 * **text_search_min_column_length** --
                   Set minimum column size. Used only when 'text_search_columns'
                   has a value.
+
+                * **trim_space** --
+                  If set to *true*, remove leading or trailing space from
+                  fields.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 * **truncate_strings** --
                   If set to *true*, truncate string values that are longer than
@@ -34979,108 +35332,149 @@ class GPUdb(object):
     # begin restore_backup
     def restore_backup( self, backup_name = '', restore_objects_map = None,
                         datasource_name = None, options = {} ):
-        """Restores objects from a backup instance. Response from a backup
-        restoration operation.
+        """Restores database objects from a `backup
+        <../../../../admin/backup_restore/#database-backup>`__ accessible via
+        the `data source <../../../../concepts/data_sources/>`__ specified by
+        input parameter *datasource_name*.
 
         Parameters:
 
             backup_name (str)
-                Name of the backup object, which must refer to a currently
+                Name of the backup to restore from, which must refer to an
                 existing backup. The default value is ''.
 
             restore_objects_map (dict of str to str)
-                Map of objects to be restored from the backup. Error if empty.
+                Map of database objects to be restored from the backup.
                 Allowed keys are:
 
                 * **all** --
-                  All object types in a schema (excludes permissions, system
-                  configuration, host secret key, KiFS directories and user
-                  defined functions)
+                  All object types and data contained in the given `schemas(s)
+                  <../../../../concepts/schemas/>`__.
 
                 * **table** --
-                  Database Table
+                  `Tables(s) <../../../../concepts/tables/>`__ and `SQL view(s)
+                  <../../../../sql/ddl/#create-view>`__.
 
                 * **credential** --
-                  Credential
+                  `Credential(s) <../../../../concepts/credentials/>`__.
 
                 * **context** --
-                  Context
+                  `Context(s)
+                  <../../../../sql-gpt/concepts/#sql-gpt-context>`__.
 
                 * **datasink** --
-                  Data Sink
+                  `Data sink(s) <../../../../concepts/data_sinks/>`__.
 
                 * **datasource** --
-                  Data Source
+                  `Data source(s) <../../../../concepts/data_sources/>`__.
 
                 * **stored_procedure** --
-                  SQL Procedure
+                  `SQL procedure(s) <../../../../sql/procedure/>`__.
 
                 * **monitor** --
-                  Table Monitor (Stream)
+                  `Table monitor(s) <../../../../concepts/table_monitors/>`__ /
+                  `SQL stream(s) <../../../../sql/ddl/#create-stream>`__.
 
                 * **user** --
-                  User (internal and external) and associated permissions
+                  `User(s)
+                  <../../../../security/sec_concepts/#security-concepts-users>`__
+                  (internal and external) and associated permissions.
 
                 * **role** --
-                  Role, role members (roles or users, recursively) and
-                  associated permissions
+                  `Role(s) <../../../../security/sec_concepts/#roles>`__, role
+                  members (roles or users, recursively), and associated
+                  permissions.
 
                 * **configuration** --
-                  If *true*, restore the database configuration file.
+                  If *true*, restore the database `configuration file
+                  <../../../../config/>`__.
                   Allowed values are:
 
-                  * false
                   * true
+                  * false
 
                   The default value is 'false'.
 
             datasource_name (str)
-                Datasource where backup is located.
+                Data source through which the backup will be restored.
 
             options (dict of str to str)
                 Optional parameters.
                 Allowed keys are:
 
                 * **backup_id** --
-                  Backup instance ID to restore. Leave empty to restore the
-                  most recent backup instance. The default value is ''.
+                  ID of the snapshot to restore. Leave empty to restore the
+                  most recent snapshot in the backup. The default value is ''.
 
                 * **restore_policy** --
-                  Behavior to apply when restoring objects that already exist.
+                  Behavior to apply when any database object to restore already
+                  exists.
                   Allowed values are:
 
                   * **none** --
-                    If an object to be restored currently exists with the same
-                    name, abort and return error
+                    If an object to be restored already exists with the same
+                    name, abort and return error.
 
                   * **replace** --
-                    If an object to be restored currently exists with the same
-                    name, replace it with the backup version
+                    If an object to be restored already exists with the same
+                    name, replace it with the backup version.
 
                   * **rename** --
-                    If an object to be restored currently exists with the same
-                    name, rename the original version
+                    If an object to be restored already exists with the same
+                    name, move that existing one to the schema specified by
+                    *renamed_objects_schema*.
 
                   The default value is 'none'.
 
                 * **renamed_objects_schema** --
-                  If the restore policy is rename, optionally use this schema
-                  for renamed objects instead of a default generated one. The
-                  default value is ''.
+                  If the *restore_policy* is *rename*, use this schema for
+                  relocated existing objects instead of the default generated
+                  one. The default value is ''.
 
                 * **create_schema_if_not_exist** --
-                  Create the schema for an object to be restored if it does not
-                  currently exist. Error otherwise.
+                  Behavior to apply when the schema containing any database
+                  object to restore does not already exist.
                   Allowed values are:
 
-                  * false
-                  * true
+                  * **true** --
+                    If the schema containing any restored object does not
+                    exist, create it automatically.
+
+                  * **false** --
+                    If the schema containing any restored object does not
+                    exist, return an error.
 
                   The default value is 'true'.
 
+                * **reingest** --
+                  Behavior to apply when restoring table data.
+                  Allowed values are:
+
+                  * **true** --
+                    Restore table data by re-ingesting it.  This is the default
+                    behavior if the cluster topology differs from that of the
+                    contained backup.
+
+                  * **false** --
+                    Restore the persisted data files directly.
+
+                  The default value is 'false'.
+
                 * **ddl_only** --
-                  Only recreates the objects from their DDL, do not restore
-                  table data.
+                  Behavior to apply when restoring tables.
+                  Allowed values are:
+
+                  * **true** --
+                    Restore table DDL, but do not restore data.
+
+                  * **false** --
+                    Restore tables and their data.
+
+                  The default value is 'false'.
+
+                * **checksum** --
+                  Whether or not to verify checksums for backup files when
+                  restoring.
                   Allowed values are:
 
                   * true
@@ -35088,17 +35482,9 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-                * **checksum** --
-                  Verify checksum for backup files.
-                  Allowed values are:
-
-                  * false
-                  * true
-
-                  The default value is 'true'.
-
                 * **dry_run** --
-                  Does a dry-run restoration operation.
+                  Whether or not to perform a dry run of the restoration
+                  operation.
                   Allowed values are:
 
                   * true
@@ -35112,30 +35498,31 @@ class GPUdb(object):
             A dict with the following entries--
 
             backup_name (str)
-                The backup name
+                Value of input parameter *backup_name*.
 
             backup_id (long)
-                The backup ID that was restored
+                ID of the snapshot that was restored.
 
             restored_bytes (long)
-                Total size of data restored from backup
+                Total size of data restored from backup.
 
             restored_files (long)
-                Total number of files restored from backup
+                Total number of files restored from backup.
 
             restored_records (long)
-                Total number of records restored from backup
+                Total number of records restored from backup.
 
             restored_objects (dict of str to str)
-                Objects that were successfully restored and their associated
-                types.
+                Database objects that were successfully restored and their
+                associated types.
 
             renamed_objects (dict of str to str)
-                Original and new names of objects that were successfully
-                restored and their associated types.
+                Original and new names of database objects that were
+                successfully restored and their associated types.
 
             failed_objects (dict of str to str)
-                Objects that failed to be restored and their associated types.
+                Database objects that failed to be restored and their
+                associated types.
 
             info (dict of str to str)
                 Additional information.
@@ -35234,6 +35621,9 @@ class GPUdb(object):
 
                 * **insert** --
                   Insert access to tables.
+
+                * **monitor** --
+                  Monitor logs and statistics.
 
                 * **read** --
                   Ability to read, list and use the object.
@@ -35727,46 +36117,49 @@ class GPUdb(object):
     # begin show_backup
     def show_backup( self, backup_name = '', datasource_name = None, options =
                      {} ):
-        """Shows information about a backup Returns detailed information about
-        one or more backup instances.
+        """Shows information about one or more `backups
+        <../../../../admin/backup_restore/#database-backup>`__ accessible via
+        the `data source <../../../../concepts/data_sources/>`__ specified by
+        input parameter *datasource_name*.
 
         Parameters:
 
             backup_name (str)
-                Name of the backup object. An empty string or '*' will return
-                all existing backups. The default value is ''.
+                Name of the backup. An empty string or '*' will show all
+                existing backups. Any text followed by a '*' will show backups
+                whose name starts with that text. The default value is ''.
 
             datasource_name (str)
-                Datasource where backup is located.
+                Data source through which the backup is accessible.
 
             options (dict of str to str)
                 Optional parameters.
                 Allowed keys are:
 
                 * **backup_id** --
-                  Backup instance ID to show. Leave empty to show information
-                  from the most recent backup instance in the container. The
-                  default value is ''.
+                  ID of the snapshot to show. Leave empty to show information
+                  from the most recent snapshot in the backup. The default
+                  value is ''.
 
                 * **show_contents** --
-                  Shows the contents of the specified backup_id.
+                  Show the contents of the backed-up snapshots.
                   Allowed values are:
 
                   * **none** --
-                    No backup contents
+                    Don't show snapshot contents.
 
                   * **object_names** --
-                    Object names only
+                    Show backed-up object names, and for tables, sizing detail.
 
                   * **object_files** --
-                    Object names and files
+                    Show backed-up object names, and for tables, sizing detail
+                    and associated files.
 
                   The default value is 'none'.
 
                 * **no_error_if_not_exists** --
-                  If *false* will return an error if the provided input
-                  parameter *backup_name* does not exist. If *true* then it
-                  will return an empty result.
+                  Whether or not to suppress the error if the specified backup
+                  does not exist.
                   Allowed values are:
 
                   * true
@@ -35783,16 +36176,22 @@ class GPUdb(object):
                 Value of input parameter *backup_name*.
 
             backup_description (list of dicts of str to str)
-                Backup description
+                Details about the overall backup(s).
 
             backup_ids (list of dicts of str to str)
-                Backup instances in this backup
+                Details about the individual snapshots contained within the
+                backup(s).
 
             backup_contents (list of dicts of str to str)
-                Backup contents
+                When *show_contents* is *object_names*, the names of the
+                backed-up objects as well as sizing detail of any backed-up
+                tables; when *object_files*, the names of the backed-up objects
+                as well as sizing detail and associated data files of any
+                backed-up tables.
 
             deleted_backup_ids (list of dicts of str to str)
-                Backup instances that have been deleted from this backup object
+                IDs of any snapshots that have been deleted from the containing
+                backup(s).
 
             info (dict of str to str)
                 Additional information.
@@ -41126,10 +41525,11 @@ class GPUdbTable( object ):
                     if index in record_type.array_type_names_indices or \
                         index in record_type.json_type_names_indices or \
                         index in record_type.vector_type_names_indices or \
-                        column_type == 'string' and GPUdbColumnProperty.TIME in column_properties:
+                        column_type == 'string' and (GPUdbColumnProperty.TIME in column_properties or
+                                                    column.is_decimal):
                             # convert the value
                             converted_value = _Util._convert_value_on_insertion(
-                                column_value, record_type.columns[index]
+                                column_value, column
                             )
                             record[index] = converted_value
         elif isinstance(record, dict):
@@ -41138,6 +41538,7 @@ class GPUdbTable( object ):
                     raise GPUdbException(f"Column name <{column_name}> not found in target table")
 
                 index: int = record_type.column_names.index(column_name)
+                column: GPUdbRecordColumn = record_type.columns[index]
                 column_properties: List[str] = record_type.column_properties[column_name] \
                                                 if column_name in record_type.column_properties else []
                 column_type: str = record_type.columns[index].column_type
@@ -41145,10 +41546,11 @@ class GPUdbTable( object ):
                     if column_name in record_type.array_type_names_values or \
                         column_name in record_type.json_type_names_values or \
                         column_name in record_type.vector_type_names_values or \
-                        column_type == 'string' and GPUdbColumnProperty.TIME in column_properties:
+                        column_type == 'string' and (GPUdbColumnProperty.TIME in column_properties or
+                                                    column.is_decimal):
                             # convert the value
                             converted_value = _Util._convert_value_on_insertion(
-                                column_value, record_type.columns[index]
+                                column_value, column
                             )
                             record[column_name] = converted_value
         return record
@@ -42315,15 +42717,6 @@ class GPUdbTable( object ):
                 * **max_query_dimensions** --
                   No longer used.
 
-                * **optimize_lookups** --
-                  Use more memory to speed up the joining of tables.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
                 * **strategy_definition** --
                   The `tier strategy
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
@@ -43351,12 +43744,12 @@ class GPUdbTable( object ):
                 Allowed keys are:
 
                 * **min_string** --
-                  The minimum value of input parameter *column_name* when it is
-                  a char type
+                  The minimum value of input parameter *column_name*, stored as
+                  a byte vector.
 
                 * **max_string** --
-                  The maximum value of input parameter *column_name* when it is
-                  a char type
+                  The maximum value of input parameter *column_name*, stored as
+                  a byte vector
 
                 The default value is an empty dict ( {} ).
 

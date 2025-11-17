@@ -15,15 +15,15 @@ from __future__ import print_function
 import inspect
 import sys
 import traceback
-from typing import Union, Optional
+from typing import Union, Optional, Dict, Tuple
 
 
 try:                   # Installed
-    from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, RecordType, _Util, AttrDict
+    from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbRecordColumn, GPUdbColumnProperty, RecordType, _Util, AttrDict
     from gpudb.gpudb import GPUdbException, GPUdbConnectionException, GPUdbExitException, GPUdbFailoverDisabledException, GPUdbHAUnavailableException, GPUdbUnauthorizedAccessException
     from gpudb.protocol import Record
 except:                # Local
-    from gpudb       import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbColumnProperty, RecordType, _Util, AttrDict
+    from gpudb       import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbRecordColumn, GPUdbColumnProperty, RecordType, _Util, AttrDict
     from gpudb       import GPUdbException, GPUdbConnectionException, GPUdbExitException, GPUdbFailoverDisabledException, GPUdbHAUnavailableException, GPUdbUnauthorizedAccessException
     from protocol import Record
 
@@ -492,7 +492,8 @@ class _ColumnTypeSize:
     CHAR256   = 256
     DATE      =   4
     DATETIME  =   8
-    DECIMAL   =   8
+    DECIMAL8   =  8
+    DECIMAL12  = 12
     DOUBLE    =   8
     FLOAT     =   4
     INT       =   4
@@ -506,33 +507,35 @@ class _ColumnTypeSize:
     ULONG     =   8
     UUID      =  16
 
+    DECIMAL8_MAX_PRECISION = 18
+
     # A dict mapping column types to its size in bytes
     column_type_sizes = collections.OrderedDict()
-    column_type_sizes[ "boolean"  ] =   1
-    column_type_sizes[ "char1"    ] =   1
-    column_type_sizes[ "char2"    ] =   2
-    column_type_sizes[ "char4"    ] =   4
-    column_type_sizes[ "char8"    ] =   8
-    column_type_sizes[ "char16"   ] =  16
-    column_type_sizes[ "char32"   ] =  32
-    column_type_sizes[ "char64"   ] =  64
-    column_type_sizes[ "char128"  ] = 128
-    column_type_sizes[ "char256"  ] = 256
-    column_type_sizes[ "date"     ] =   4
-    column_type_sizes[ "datetime" ] =   8
-    column_type_sizes[ "decimal"  ] =   8
-    column_type_sizes[ "ipv4"     ] =   4
-    column_type_sizes[ "int8"     ] =   1
-    column_type_sizes[ "int16"    ] =   2
-    column_type_sizes[ "time"     ] =   4
-    column_type_sizes[ "timestamp"] =   8
-    column_type_sizes[ "int"      ] =   4
-    column_type_sizes[ "double"   ] =   8
-    column_type_sizes[ "float"    ] =   4
-    column_type_sizes[ "long"     ] =   8
-    column_type_sizes[ "string"   ] =   8
-    column_type_sizes[ "ulong"    ] =   8
-    column_type_sizes[ "uuid"     ] =  16
+    column_type_sizes[ GPUdbColumnProperty.BOOLEAN          ] = BOOLEAN
+    column_type_sizes[ GPUdbColumnProperty.CHAR1            ] = CHAR1
+    column_type_sizes[ GPUdbColumnProperty.CHAR2            ] = CHAR2
+    column_type_sizes[ GPUdbColumnProperty.CHAR4            ] = CHAR4
+    column_type_sizes[ GPUdbColumnProperty.CHAR8            ] = CHAR8
+    column_type_sizes[ GPUdbColumnProperty.CHAR16           ] = CHAR16
+    column_type_sizes[ GPUdbColumnProperty.CHAR32           ] = CHAR32
+    column_type_sizes[ GPUdbColumnProperty.CHAR64           ] = CHAR64
+    column_type_sizes[ GPUdbColumnProperty.CHAR128          ] = CHAR128
+    column_type_sizes[ GPUdbColumnProperty.CHAR256          ] = CHAR256
+    column_type_sizes[ GPUdbColumnProperty.DATE             ] = DATE
+    column_type_sizes[ GPUdbColumnProperty.DATETIME         ] = DATETIME
+    column_type_sizes[ GPUdbColumnProperty.DECIMAL          ] = DECIMAL8
+    column_type_sizes[ GPUdbRecordColumn._ColumnType.DOUBLE ] = DOUBLE
+    column_type_sizes[ GPUdbRecordColumn._ColumnType.FLOAT  ] = FLOAT
+    column_type_sizes[ GPUdbRecordColumn._ColumnType.INT    ] = INT
+    column_type_sizes[ GPUdbColumnProperty.INT8             ] = INT8
+    column_type_sizes[ GPUdbColumnProperty.INT16            ] = INT16
+    column_type_sizes[ GPUdbColumnProperty.IPV4             ] = IPV4
+    column_type_sizes[ GPUdbRecordColumn._ColumnType.LONG   ] = LONG
+    column_type_sizes[ GPUdbRecordColumn._ColumnType.STRING ] = STRING
+    column_type_sizes[ GPUdbColumnProperty.TIME             ] = TIME
+    column_type_sizes[ GPUdbColumnProperty.TIMESTAMP        ] = TIMESTAMP
+    column_type_sizes[ GPUdbColumnProperty.ULONG            ] = ULONG
+    column_type_sizes[ GPUdbColumnProperty.UUID             ] = UUID
 # end class _ColumnTypeSize
 
 
@@ -570,7 +573,6 @@ class _RecordKey:
 
         # Some regular expressions needed later
         self._ipv4_regex = re.compile( r"^(?P<a>\d{1,3})\.(?P<b>\d{1,3})\.(?P<c>\d{1,3})\.(?P<d>\d{1,3})$" )
-        self._decimal_regex = re.compile( r"^\s*(?P<sign>[+-]?)((?P<int>\d+)(\.(?P<frac1>\d{0,4}))?|\.(?P<frac2>\d{1,4}))\s*\Z" )
     # end RecordKey __init__
 
     @property
@@ -590,7 +592,6 @@ class _RecordKey:
         """Internal function which checks whether the buffer is already full.
         """
         if ( len( self._buffer_value ) == self._buffer_size ):
-        # if (self._current_size == self._buffer_size):
             if throw_if_full:
                 raise GPUdbException( "The buffer is already full!" )
             return True  # yes, buffer full, but we haven't thrown
@@ -609,8 +610,7 @@ class _RecordKey:
         if (n < 0):
             raise GPUdbException( "Argument 'n' must be greater than or equal"
                               " to zero; given %d" % n )
-        if ( (len( self._buffer_value ) + n) > self._buffer_size ):
-        # if ( (self._current_size + n) > self._buffer_size ):
+        if (len( self._buffer_value ) + n) > self._buffer_size:
             if throw_if_overflow:
                 raise GPUdbException( "The buffer (of size {s}) does not "
                                       "have sufficient room in it to put {n} "
@@ -983,69 +983,146 @@ class _RecordKey:
         self._buffer_value += struct.pack( "=q", datetime_integer )
     # end add_datetime
 
+    def add_decimal(self, val, precision, scale):
+        """Add a decimal number to the buffer (can be null)--eight or twelve bytes.
 
-
-    def add_decimal( self, val ):
-        """Add a decimal number to the buffer (can be null)--eight bytes.
+        Supports decimal(precision, scale). Dynamically determines whether to use
+        8 or 12 bytes. Raises an error if value cannot fit in either.
 
         Parameters:
-            val (str)
-                Must represent a decimal value up to 19 digits of precision and
-                four digits of scale.
+            val (str): Must represent a decimal value.
+            precision (int): Total number of digits.
+            scale (int): Number of digits after the decimal point.
+
+        Raises:
+            ValueError: If value cannot fit in 8 or 12 bytes
         """
-        # ints are four bytes long
-        self.__will_buffer_overflow( _ColumnTypeSize.DECIMAL )
 
-        # Handle nulls
+        # Validate precision
+        if not isinstance(precision, int) or precision < 1:
+            raise ValueError(f"Precision must be a positive integer, got {precision}")
+
+        # Validate scale
+        if not isinstance(scale, int) or not (0 <= scale <= precision):
+            raise ValueError(f"Scale must be an integer between 0 and {precision}, got {scale}")
+
+        # Parse decimal value
+        decimal_value = _RecordKey._parse_decimal_value(val, precision, scale)
+
+        # Determine packing size based on actual value
+        if precision <= _ColumnTypeSize.DECIMAL8_MAX_PRECISION:
+            
+            # Handle nulls
+            if decimal_value is None:
+                decimal_value = 0
+            # Value fits in 8 bytes
+            self.__will_buffer_overflow(_ColumnTypeSize.DECIMAL8)
+            self._buffer_value += struct.pack("=q", decimal_value)
+            return
+        else:
+            # Value needs 12 bytes
+            self.__will_buffer_overflow(_ColumnTypeSize.DECIMAL12)
+
+            if decimal_value is None:
+                self._buffer_value += struct.pack("=QI", 0, 0)
+            elif decimal_value >= 0:
+                low_part = decimal_value & 0xFFFFFFFFFFFFFFFF
+                high_part = (decimal_value >> 64) & 0xFFFFFFFF
+                self._buffer_value += struct.pack("=QI", low_part, high_part)
+            else:
+                pos_value = (1 << 96) + decimal_value
+                low_part = pos_value & 0xFFFFFFFFFFFFFFFF
+                high_part = (pos_value >> 64) & 0xFFFFFFFF
+                self._buffer_value += struct.pack("=QI", low_part, high_part)
+            return
+
+
+    @staticmethod
+    def _parse_decimal_value(val, precision, scale):
+        """Parse decimal string to scaled integer value."""
+
         if val is None:
-            self._buffer_value += struct.pack( "=Q", 0 )
-            return
-        # end if
+            return None
 
-        # Parse the IPv4
-        match = self._decimal_regex.match( val )
-        if not match:
-            # Incorrect format; so we have an invalid key
-            self._buffer_value += struct.pack( "=q", 0 )
-            self._is_valid = False
-            return
-        # end if
+        if not isinstance(val, str):
+            return None
 
-        # Parse the string to get the decimal value
-        decimal_value = 0
+        val = val.strip()
+        if not val:
+            return None
+
+        # Parse sign
+        sign = 1
+        pos = 0
+        if val[0] in ('+', '-'):
+            if val[0] == '-':
+                sign = -1
+            pos = 1
+
+        if pos >= len(val):
+            return None
+
+        # Find decimal point
+        decimal_pos = -1
+        for i in range(pos, len(val)):
+            if val[i] == '.':
+                if decimal_pos != -1:
+                    return None
+                decimal_pos = i
+            elif not val[i].isdigit():
+                return None
+
+        # Extract parts
+        if decimal_pos == -1:
+            int_part = val[pos:]
+            frac_part = ""
+        else:
+            int_part = val[pos:decimal_pos] if decimal_pos > pos else "0"
+            frac_part = val[decimal_pos + 1:] if decimal_pos + 1 < len(val) else ""
+
+        if not int_part and not frac_part:
+            return None
+
+        if not int_part:
+            int_part = "0"
+
+        # Validate scale
+        if scale == 0 and frac_part:
+            return None
+
+        if len(frac_part) > scale:
+            return None
+
+        # Calculate scaled value
         try:
-            # Extract the integral and fractional parts, if any
-            values = match.groupdict()
-            integral_part = int( values[ "int" ] ) if values[ "int" ] else 0
-            fraction      = values[ "frac1" ] if values[ "frac1" ] else \
-                            ( values[ "frac2" ] if values[ "frac2" ] else "")
-            sign = values[ "sign" ]
+            int_value = int(int_part)
+            scale_factor = 10 ** scale
+            result = int_value * scale_factor
 
-            # Get the integral part of the decimal value
-            decimal_value = integral_part * 10000
+            if frac_part:
+                frac_value = int(frac_part)
+                frac_multiplier = 10 ** (scale - len(frac_part))
+                result += frac_value * frac_multiplier
 
-            # Put together the integral and fractional part
-            frac_len = len( fraction )
-            if (frac_len > 0):
-                fractional_part = int( fraction ) * (10**(4 - frac_len))
-                decimal_value = (integral_part * 10000 ) + fractional_part
-            # end if
+            result *= sign
 
-            # Incorporate the sign
-            if (sign == "-"):
-                decimal_value = -decimal_value
-        except:
-            # Incorrect format; so we have an invalid key
-            self._buffer_value += struct.pack( "=q", 0 )
-            self._is_valid = False
-            return
-        # end try-catch
+            # Check integer digits
+            max_int_digits = precision - scale
+            int_part_stripped = int_part.lstrip('0') or '0'
+    
+            if (
+                len(int_part_stripped) > max_int_digits and not (
+                    precision == GPUdbRecordColumn.DEFAULT_DECIMAL_PRECISION and
+                    scale == GPUdbRecordColumn.DEFAULT_DECIMAL_SCALE and
+                    result >= GPUdbRecordColumn.DEFAULT_DECIMAL_MIN * 10 ** GPUdbRecordColumn.DEFAULT_DECIMAL_SCALE and
+                    result <= GPUdbRecordColumn.DEFAULT_DECIMAL_MAX * 10 ** GPUdbRecordColumn.DEFAULT_DECIMAL_SCALE
+                )
+            ):
+                return None
 
-        # Add each of the four bytes of the integer
-        self._buffer_value += struct.pack( "=q", decimal_value )
-    # end add_decimal
-
-
+            return result
+        except (ValueError, OverflowError):
+            return None
 
     def add_ipv4( self, val ):
         """Add a IPv4 address to the buffer (can be null)--four bytes.
@@ -1517,40 +1594,55 @@ class _RecordKeyBuilder:
 
     # A dict mapping column type to _RecordKey appropriate add functions
     _column_type_add_functions = collections.OrderedDict()
-    _column_type_add_functions[ "boolean"   ] = _RecordKey.add_boolean
-    _column_type_add_functions[ "char1"     ] = _RecordKey.add_char1
-    _column_type_add_functions[ "char2"     ] = _RecordKey.add_char2
-    _column_type_add_functions[ "char4"     ] = _RecordKey.add_char4
-    _column_type_add_functions[ "char8"     ] = _RecordKey.add_char8
-    _column_type_add_functions[ "char16"    ] = _RecordKey.add_char16
-    _column_type_add_functions[ "char32"    ] = _RecordKey.add_char32
-    _column_type_add_functions[ "char64"    ] = _RecordKey.add_char64
-    _column_type_add_functions[ "char128"   ] = _RecordKey.add_char128
-    _column_type_add_functions[ "char256"   ] = _RecordKey.add_char256
-    _column_type_add_functions[ "date"      ] = _RecordKey.add_date
-    _column_type_add_functions[ "datetime"  ] = _RecordKey.add_datetime
-    _column_type_add_functions[ "double"    ] = _RecordKey.add_double
-    _column_type_add_functions[ "float"     ] = _RecordKey.add_float
-    _column_type_add_functions[ "int"       ] = _RecordKey.add_int
-    _column_type_add_functions[ "int8"      ] = _RecordKey.add_int8
-    _column_type_add_functions[ "int16"     ] = _RecordKey.add_int16
-    _column_type_add_functions[ "long"      ] = _RecordKey.add_long
-    _column_type_add_functions[ "string"    ] = _RecordKey.add_string
-    _column_type_add_functions[ "decimal"   ] = _RecordKey.add_decimal
-    _column_type_add_functions[ "ipv4"      ] = _RecordKey.add_ipv4
-    _column_type_add_functions[ "time"      ] = _RecordKey.add_time
-    _column_type_add_functions[ "timestamp" ] = _RecordKey.add_timestamp
-    _column_type_add_functions[ "ulong"     ] = _RecordKey.add_ulong
-    _column_type_add_functions[ "uuid"      ] = _RecordKey.add_uuid
+    _column_type_add_functions[ GPUdbColumnProperty.BOOLEAN          ] = _RecordKey.add_boolean
+    _column_type_add_functions[ GPUdbColumnProperty.CHAR1            ] = _RecordKey.add_char1
+    _column_type_add_functions[ GPUdbColumnProperty.CHAR2            ] = _RecordKey.add_char2
+    _column_type_add_functions[ GPUdbColumnProperty.CHAR4            ] = _RecordKey.add_char4
+    _column_type_add_functions[ GPUdbColumnProperty.CHAR8            ] = _RecordKey.add_char8
+    _column_type_add_functions[ GPUdbColumnProperty.CHAR16           ] = _RecordKey.add_char16
+    _column_type_add_functions[ GPUdbColumnProperty.CHAR32           ] = _RecordKey.add_char32
+    _column_type_add_functions[ GPUdbColumnProperty.CHAR64           ] = _RecordKey.add_char64
+    _column_type_add_functions[ GPUdbColumnProperty.CHAR128          ] = _RecordKey.add_char128
+    _column_type_add_functions[ GPUdbColumnProperty.CHAR256          ] = _RecordKey.add_char256
+    _column_type_add_functions[ GPUdbColumnProperty.DATE             ] = _RecordKey.add_date
+    _column_type_add_functions[ GPUdbColumnProperty.DATETIME         ] = _RecordKey.add_datetime
+    _column_type_add_functions[ GPUdbColumnProperty.DECIMAL          ] = _RecordKey.add_decimal
+    _column_type_add_functions[ GPUdbRecordColumn._ColumnType.DOUBLE ] = _RecordKey.add_double
+    _column_type_add_functions[ GPUdbRecordColumn._ColumnType.FLOAT  ] = _RecordKey.add_float
+    _column_type_add_functions[ GPUdbRecordColumn._ColumnType.INT    ] = _RecordKey.add_int
+    _column_type_add_functions[ GPUdbColumnProperty.INT8             ] = _RecordKey.add_int8
+    _column_type_add_functions[ GPUdbColumnProperty.INT16            ] = _RecordKey.add_int16
+    _column_type_add_functions[ GPUdbColumnProperty.IPV4             ] = _RecordKey.add_ipv4
+    _column_type_add_functions[ GPUdbRecordColumn._ColumnType.LONG   ] = _RecordKey.add_long
+    _column_type_add_functions[ GPUdbRecordColumn._ColumnType.STRING ] = _RecordKey.add_string
+    _column_type_add_functions[ GPUdbColumnProperty.TIME             ] = _RecordKey.add_time
+    _column_type_add_functions[ GPUdbColumnProperty.TIMESTAMP        ] = _RecordKey.add_timestamp
+    _column_type_add_functions[ GPUdbColumnProperty.ULONG            ] = _RecordKey.add_ulong
+    _column_type_add_functions[ GPUdbColumnProperty.UUID             ] = _RecordKey.add_uuid
 
 
-    # A dict for string types
-    _string_types = [ "char1",  "char2",  "char4",  "char8",
-                      "char16", "char32", "char64", "char128", "char256",
-                      "date", "datetime", "decimal", "ipv4", "time",
-                      "uuid", "string" ]
+    # A list of string types
+    _string_types = [
+        GPUdbColumnProperty.CHAR1,
+        GPUdbColumnProperty.CHAR2,
+        GPUdbColumnProperty.CHAR4,
+        GPUdbColumnProperty.CHAR8,
+        GPUdbColumnProperty.CHAR16,
+        GPUdbColumnProperty.CHAR32,
+        GPUdbColumnProperty.CHAR64,
+        GPUdbColumnProperty.CHAR128,
+        GPUdbColumnProperty.CHAR256,
+        GPUdbColumnProperty.DATE,
+        GPUdbColumnProperty.DATETIME,
+        GPUdbColumnProperty.DECIMAL,
+        GPUdbColumnProperty.IPV4,
+        GPUdbRecordColumn._ColumnType.STRING,
+        GPUdbColumnProperty.TIME,
+        GPUdbColumnProperty.ULONG,
+        GPUdbColumnProperty.UUID
+    ]
 
-    def __init__( self, record_type,
+    def __init__( self, record_type: GPUdbRecordType,
                   is_primary_key = False ):
         """Initializes a RecordKeyBuilder object.
         """
@@ -1570,38 +1662,37 @@ class _RecordKeyBuilder:
         self._column_properties   = record_type.column_properties
 
         # A list of which columns are primary/shard keys
-        self.routing_key_indices = []
+        self.routing_key_indices: Dict[int, GPUdbRecordColumn] = {}
         self.key_columns_names = []
         self.key_schema_fields = []
         self.key_schema_str = None
         self._key_types = []
 
         # Go over all columns and see which ones are primary or shard keys
-        for i in range(len( record_type.columns )):
-            column_name = self._record_column_names[ i ]
-            column_type = record_type.columns[ i ].column_type
-            column_properties = self._column_properties[ column_name ] \
-                                if (column_name in self._column_properties) else None
+        for i, column in enumerate( record_type.columns ):
+            column_name = column.name
+            column_type = column.column_type
+            column_properties = column.column_properties
 
             is_key = False
             # Check for primary keys, if any
-            if is_primary_key and column_properties and (C._pk in column_properties):
+            if is_primary_key and column.is_primary_key:
                 is_key = True
             elif ( (not is_primary_key)
-                   and column_properties and (C._shard_key in column_properties) ):
+                   and column.is_shard_key):
                 # turned out to be a shard key
                 is_key = True
 
             # Save the key index for primary or shard keys
             if is_key:
-                self.routing_key_indices.append( i )
+                self.routing_key_indices[i] = column
                 self.key_columns_names.append( column_name )
 
                 # Build the key schema fields
                 key = collections.OrderedDict()
                 key[ C._name ] = column_name
                 key[ C._type ] = column_type
-                key[ C._is_nullable ] = (GPUdbColumnProperty.NULLABLE in column_properties)
+                key[ C._is_nullable ] = column.is_nullable
                 self.key_schema_fields.append( key )
             # end if
         # end loop over columns
@@ -1634,11 +1725,11 @@ class _RecordKeyBuilder:
 
         # Calculate the buffer size for this type of objects/records
         # with the given primary (and/or) shard keys
-        for i in self.routing_key_indices:
-            column_name = self._record_column_names[ i ]
-            column_type = record_type.columns[ i ].column_type
-            column_properties = self._column_properties[ column_name ] \
-                                if (column_name in self._column_properties) else None
+        for i in self.routing_key_indices.keys():
+            column = self.routing_key_indices[i]
+            column_name = self.routing_key_indices[i].name
+            column_type = self.routing_key_indices[i].column_type
+            column_properties = self.routing_key_indices[i].column_properties
 
             # Check for any property related to data types
             type_related_properties = set( column_properties ).intersection( _ColumnTypeSize.column_type_sizes.keys() )
@@ -1656,9 +1747,15 @@ class _RecordKeyBuilder:
             # end if
 
             # Increment the key's buffer size and save the column type
-            self._key_buffer_size += _ColumnTypeSize.column_type_sizes[ column_type ]
+            bytes_needed = _ColumnTypeSize.column_type_sizes[column_type]
+            # Note that parameterized decimals will have a column_type of
+            #   "string" at this point, and be found as such in the sizing map
+            if column.is_decimal:
+                bytes_needed = _ColumnTypeSize.DECIMAL8 if column.precision <= _ColumnTypeSize.DECIMAL8_MAX_PRECISION else _ColumnTypeSize.DECIMAL12
+
+            self._key_buffer_size += bytes_needed
             self._key_types.append( column_type )
-        # end loop
+        # end loop for calculating buffer size
 
 
         # Build the key schema
@@ -1687,7 +1784,6 @@ class _RecordKeyBuilder:
     # end RecordKeyBuilder __init__
 
 
-
     def build( self, record ):
         """Builds a RecordKey object based on the input data and returns it.
 
@@ -1700,7 +1796,7 @@ class _RecordKeyBuilder:
             A _RecordKey object.
         """
         # Nothing to do if the key size is zero!
-        if (self._key_buffer_size == 0):
+        if self._key_buffer_size == 0:
             return None
 
         # Extract the internal ordered dict if it's a GPUdbRecord
@@ -1714,7 +1810,7 @@ class _RecordKeyBuilder:
             # number of columns (need to explicitly convert to a list for
             # python 3)
             record_keys = list( record.keys() )
-            if ( record_keys != self._record_column_names):
+            if record_keys != self._record_column_names:
                 raise GPUdbException( "Given record must be of the type '{}'"
                                       " (with columns {}); given record has columns: {} "
                                       "".format( self._record_type.schema_string,
@@ -1753,8 +1849,12 @@ class _RecordKeyBuilder:
 
             # Based on the column's type, call the appropriate
             # Record.add_xxx() function
+            column = self.routing_key_indices[key_idx]
             col_type = self._key_types[ i ]
-            self._column_type_add_functions[ col_type ]( record_key, value )
+            if column.is_decimal:
+                self._column_type_add_functions[ GPUdbColumnProperty.DECIMAL ]( record_key, value, column.precision, column.scale )
+            else:
+                self._column_type_add_functions[ col_type ]( record_key, value )
         # end loop
 
         # Compute the key hash and return the key
@@ -1809,14 +1909,18 @@ class _RecordKeyBuilder:
         record_key = _RecordKey( self._key_buffer_size )
 
         # Add each routing column's value to the key
-        for i in range( len( self.routing_key_indices ) ):
+        for i, key_idx in enumerate( self.routing_key_indices ):
             # Extract the value for the relevant routing column
             value = key_values[ i ]
 
             # Based on the column's type, call the appropriate
             # Record.add_xxx() function
+            column = self.routing_key_indices[key_idx]
             col_type = self._key_types[ i ]
-            self._column_type_add_functions[ col_type ]( record_key, value )
+            if column.is_decimal:
+                self._column_type_add_functions[ GPUdbColumnProperty.DECIMAL ]( record_key, value, column.precision, column.scale )
+            else:
+                self._column_type_add_functions[ col_type ]( record_key, value )
         # end loop
 
         # Compute the key hash and return the key
@@ -1843,7 +1947,7 @@ class _RecordKeyBuilder:
             A string with the expression built based on the input values.
         """
         # Nothing to do if the key size is zero!
-        if (self._key_buffer_size == 0):
+        if self._key_buffer_size == 0:
             return None
 
         # Type checking
@@ -1853,7 +1957,7 @@ class _RecordKeyBuilder:
                                   "or a dict; given %s" % str(type( key_values )))
 
         # Make sure that there are the correct number of values given
-        if ( len( key_values ) != len( self.key_columns_names ) ):
+        if len( key_values ) != len( self.key_columns_names ):
             raise GPUdbException( "Incorrect number of key values specified; expected "
                                   " %d, received %d" % ( len( self.key_columns_names),
                                                          len( key_values ) ) )
@@ -1877,10 +1981,10 @@ class _RecordKeyBuilder:
             col_name = self.key_columns_names[ i ]
 
             # Handle unsigned longs specially (only when it's not a null)
-            if ( (col_type == "ulong") and (key_value is not None) ):
+            if (col_type == "ulong") and (key_value is not None):
                 ulong_value = _RecordKey.is_unsigned_long( key_value )
                 # Make sure that zero does not get falsely evaluated
-                if ( isinstance(ulong_value, bool) and (ulong_value == False) ):
+                if isinstance(ulong_value, bool) and (ulong_value == False):
                     raise GPUdbException( "Value '{}' could not be parsed as an unsigned"
                                           " long!".format( key_value ) )
 
@@ -1889,10 +1993,10 @@ class _RecordKeyBuilder:
 
             # Add the column's value (use function 'is_null()' if the value is a null,
             # otherwise just an equivalency, with double quotes for string types)
-            if (key_value is None):
+            if key_value is None :
                 # Handle nulls specially
                 predicate = "is_null({n})".format( n = col_name)
-            elif (col_type in self._string_types):
+            elif col_type in self._string_types:
                 # String values need to be quoted
                 predicate = '({n} = "{d}")'.format( n = col_name,
                                                     d = key_value )
@@ -2093,7 +2197,7 @@ class GPUdbIngestor:
     def __init__( self,
                   gpudb,
                   table_name,
-                  record_type,
+                  record_type: GPUdbRecordType,
                   batch_size,
                   options = None,
                   workers = None,
@@ -3319,7 +3423,7 @@ class RecordRetriever:
     def __init__( self,
                   gpudb,
                   table_name,
-                  record_type,
+                  record_type: GPUdbRecordType,
                   workers = None,
                   is_table_replicated = False ):
         """Initializes the RecordRetriever instance.
@@ -3394,7 +3498,7 @@ class RecordRetriever:
         # Save the parameter values
         self.gpudb       = gpudb
         self.table_name  = table_name
-        self.record_type = record_type
+        self.record_type: GPUdbRecordType = record_type
         self.worker_list = workers
         self.is_table_replicated = is_table_replicated
 

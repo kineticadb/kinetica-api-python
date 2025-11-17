@@ -1,5 +1,9 @@
 # Kinetica REST API Changelog
 
+## Version 7.2.3.3
+#### Added
+-   Added ``/drop/backup`` endpoint to delete backup objects
+
 ## Version 7.2.3.1
 #### Changed Endpoints
 -   Added new option ``ha_consumer_replay_offset`` to ``/alter/system/properties`` request
