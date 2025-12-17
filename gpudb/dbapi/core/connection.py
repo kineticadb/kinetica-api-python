@@ -87,6 +87,10 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
             if "logging_level" in connection_options:
                 options.logging_level = connection_options["logging_level"]
 
+            if "http_headers" in connection_options:
+                for header_key, header_value in connection_options["http_headers"].items():
+                    options.add_http_header(header_key, header_value)
+
         self._connection = GPUdb(host=url, options=options)
 
     @raise_if_closed
