@@ -3,6 +3,16 @@
 ## Version 7.2
 
 
+### Version 7.2.3.3 - 2026-01-05
+
+#### Added
+-   Support for a user-specified default schema when using the DBAPI
+-   Support for user-specified HTTP headers when using the DBAPI
+
+#### Notes
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes
+
+
 ### Version 7.2.3.2 - 2025-11-17
 
 #### Added

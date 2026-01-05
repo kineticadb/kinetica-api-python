@@ -39,16 +39,15 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
 
     """
 
-    def __init__(
-        self,
-        param_style: Optional[str] = ParamStyle.NUMERIC_DOLLAR.value,
-        *,
-        url: Optional[str] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        oauth_token: Optional[str] = None,
-        connection_options: Optional[dict] = None,
-    ):
+    def __init__(self,
+                param_style: Optional[str] = ParamStyle.NUMERIC_DOLLAR.value,
+                *,
+                url: Optional[str] = None,
+                username: Optional[str] = None,
+                password: Optional[str] = None,
+                oauth_token: Optional[str] = None,
+                connection_options: Optional[dict] = None,
+                default_schema: Optional[str] = None):
         """Constructor
         Called by :py:meth:`connect()` in :py:mod:`gpudb.dbapi`
 
@@ -58,6 +57,7 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
             url (Optional[str], optional): the Kinetica URL; has to be keyword only. Defaults to None.
             username (Optional[str], optional): the Kinetica username; has to be keyword only. Defaults to None.
             password (Optional[str], optional): the Kinetica password; has to be keyword only. Defaults to None.
+            default_schema (Optional[str], optional): the Kinetica default schema; has to be keyword only. Defaults to None.
             oauth_token (Optional[str], optional): the oauth2 token; has to be keyword only. Defaults to None.
             connection_options (Optional[dict], optional): Defaults to None.  Possible keys are:
                 bypass_ssl_cert_check [True|False] to turn on/off SSL certificate checking and logging_level
@@ -87,7 +87,14 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
             if "logging_level" in connection_options:
                 options.logging_level = connection_options["logging_level"]
 
+            if "http_headers" in connection_options:
+                for header_key, header_value in connection_options["http_headers"].items():
+                    options.add_http_header(header_key, header_value)
+
         self._connection = GPUdb(host=url, options=options)
+        self._default_schema = default_schema
+        if not self._connection.has_schema(self._default_schema)["schema_exists"]:
+            raise ConnectionError("Given Kinetica schema doesn't exist ...")
 
     @raise_if_closed
     @convert_runtime_errors
@@ -131,7 +138,7 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
         Returns:
             Optional[ProcArgs]: None
         """
-        return self.cursor().callproc(procname, parameters)
+        return self.cursor().callproc(procname, [parameters, self._default_schema])
 
     def execute(
         self, sql_statement: SQLQuery, parameters: Optional[QueryParameters] = None
@@ -154,7 +161,7 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
         Returns:
             Cursor: a Cursor containing the results of the query
         """
-        return self.cursor().execute(sql_statement, parameters)
+        return self.cursor().execute(sql_statement, parameters, self._default_schema)
 
     def executemany(
         self, operation: SQLQuery, seq_of_parameters: Sequence[QueryParameters]
@@ -195,7 +202,7 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
         Returns:
             Cursor: a Cursor instance to iterate over the results
         """
-        return self.cursor().executemany(operation, seq_of_parameters)
+        return self.cursor().executemany(operation, seq_of_parameters, self._default_schema)
 
     def executescript(self, script: SQLQuery) -> Cursor:
         """This method executes an SQL script which is a ';' separated list of SQL statements.

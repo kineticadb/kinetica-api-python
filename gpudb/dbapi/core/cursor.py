@@ -214,7 +214,7 @@ class Cursor(CursorConnectionMixin, IterableCursorMixin, TransactionalCursor):
         self, procname: ProcName, parameters: Optional[ProcArgs] = None
     ) -> Optional[ProcArgs]:
         sql_statement = f"EXECUTE PROCEDURE {procname}"
-        cursor = self.execute(sql_statement)
+        cursor = self.execute(sql_statement, parameters[:-1] if len(parameters) > 0 else None, parameters[-1] if len(parameters) > 0 else None)
         cursor.close()
         return None
 
@@ -234,7 +234,7 @@ class Cursor(CursorConnectionMixin, IterableCursorMixin, TransactionalCursor):
     @raise_if_closed
     @convert_runtime_errors
     def execute(
-        self, operation: SQLQuery, parameters: Optional[QueryParameters] = None
+        self, operation: SQLQuery, parameters: Optional[QueryParameters] = None, default_schema: Optional[str] = None
     ) -> "Cursor":
         """Executes an SQL statement and returns a Cursor instance which can
             used to iterate over the results of the query
@@ -243,6 +243,7 @@ class Cursor(CursorConnectionMixin, IterableCursorMixin, TransactionalCursor):
             operation (SQLQuery): an SQL statement
             parameters (Optional[QueryParameters], optional): the parameters
                 to the SQL statement; typically a heterogeneous list. Defaults to None.
+            default_schema (Optional[str], optional): the default schema to
 
         Returns:
             Cursor: Returns an instance of self which is used by KineticaConnection
@@ -270,6 +271,7 @@ class Cursor(CursorConnectionMixin, IterableCursorMixin, TransactionalCursor):
             self._connection.connection,
             sql_statement,
             sql_params=list(parameters) if parameters else [],
+            sql_opts={"current_schema": default_schema} if default_schema and len(default_schema) > 0 else {},
         )
         self._cursors.append(internal_cursor)
         self.arraysize = self._cursors[-1].batch_size
@@ -287,7 +289,7 @@ class Cursor(CursorConnectionMixin, IterableCursorMixin, TransactionalCursor):
     @raise_if_closed
     @convert_runtime_errors
     def executemany(
-        self, operation: SQLQuery, seq_of_parameters: Sequence[QueryParameters]
+        self, operation: SQLQuery, seq_of_parameters: Sequence[QueryParameters], default_schema: Optional[str] = None
     ) -> "Cursor":
         def split_list_iter(lst, size):
             it = iter(lst)
@@ -303,8 +305,11 @@ class Cursor(CursorConnectionMixin, IterableCursorMixin, TransactionalCursor):
             json_lists = split_list_iter(seq_of_parameters, Cursor.__INSERT_BATCH_SIZE)
 
             for json_list in json_lists:
+                options = {"query_parameters": json.dumps(json_list)}
+                if default_schema and len(default_schema) > 0:
+                    options["default_schema"] = default_schema
                 resp = self.connection.connection.execute_sql_and_decode(
-                    operation, options={"query_parameters": json.dumps(json_list)}
+                    operation, options=options
                 )
                 if resp and resp["status_info"]["status"] == "ERROR":
                     raise GPUdbException(resp["status_info"]["message"])
@@ -313,7 +318,7 @@ class Cursor(CursorConnectionMixin, IterableCursorMixin, TransactionalCursor):
         else:
             cursor_list = []
             for params in seq_of_parameters:
-                cursor = self.execute(operation, params)
+                cursor = self.execute(operation, params, default_schema)
                 cursor_list.append(cursor)
             last_cursor = cursor_list[:-1][0]
 

@@ -64,6 +64,7 @@ def connect(
             url = URL,
             username = USER,
             password = PASS,
+            default_schema = SCHEMA,
             options = {"bypass_ssl_cert_check": True}
         )
 
@@ -97,8 +98,8 @@ def connect(
     if connection_args:
         kwargs.update(connection_args)
 
-    url, username, password, oauth_token, options = extract_connect_args(
-        kwargs, "url", "username", "password", "oauth_token", "options"
+    url, username, password, default_schema, oauth_token, options = extract_connect_args(
+        kwargs, "url", "username", "password", "default_schema", "oauth_token", "options"
     )
 
     if not url or not len(url) > 0:
@@ -106,12 +107,14 @@ def connect(
 
     username = username if username else ""
     password = password if password else ""
+    default_schema = default_schema if default_schema else ""
     oauth_token = oauth_token if oauth_token else ""
 
     return KineticaConnection(
         url=url,
         username=username,
         password=password,
+        default_schema = default_schema,
         oauth_token=oauth_token,
         connection_options=options if options else {},
     )

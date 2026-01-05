@@ -5284,7 +5284,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.3.2"
+    api_version = "7.2.3.3"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -11737,6 +11737,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/create/catalog"
+        REQ_SCHEMA_STR = """{"type":"record","name":"create_catalog_request","fields":[{"name":"name","type":"string"},{"name":"table_format","type":"string"},{"name":"location","type":"string"},{"name":"type","type":"string"},{"name":"credential","type":"string"},{"name":"datasource","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"create_catalog_response","fields":[{"name":"name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("name", "string"), ("table_format", "string"), ("location", "string"), ("type", "string"), ("credential", "string"), ("datasource", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/create/catalog"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/create/container/registry"
         REQ_SCHEMA_STR = """{"type":"record","name":"create_container_registry_request","fields":[{"name":"registry_name","type":"string"},{"name":"uri","type":"string"},{"name":"credential","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"create_container_registry_response","fields":[{"name":"registry_name","type":"string"},{"name":"entity_id","type":"int"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -12150,6 +12161,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("backup_name", "string"), ("datasink_name", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("backup_name", "string"), ("backup_names", "array", [("string")]), ("info", "map", [("string")])] )
         ENDPOINT = "/drop/backup"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/drop/catalog"
+        REQ_SCHEMA_STR = """{"type":"record","name":"drop_catalog_request","fields":[{"name":"name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"drop_catalog_response","fields":[{"name":"name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("name", "string"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("name", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/drop/catalog"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -13324,17 +13346,6 @@ class GPUdb(object):
                                        "REQ_SCHEMA_CEXT" : REQ_SCHEMA_CEXT,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
-        name = "/update/records/byseries"
-        REQ_SCHEMA_STR = """{"type":"record","name":"update_records_by_series_request","fields":[{"name":"table_name","type":"string"},{"name":"world_table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"reserved","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"update_records_by_series_response","fields":[{"name":"count","type":"int"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
-        REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("world_table_name", "string"), ("view_name", "string"), ("reserved", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("count", "int"), ("info", "map", [("string")])] )
-        ENDPOINT = "/update/records/byseries"
-        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
-                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
-                                       "REQ_SCHEMA" : REQ_SCHEMA,
-                                       "RSP_SCHEMA" : RSP_SCHEMA,
-                                       "ENDPOINT" : ENDPOINT }
         name = "/upload/files"
         REQ_SCHEMA_STR = """{"type":"record","name":"upload_files_request","fields":[{"name":"file_names","type":{"type":"array","items":"string"}},{"name":"file_data","type":{"type":"array","items":"bytes"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"upload_files_response","fields":[{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -13515,6 +13526,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["clear_trigger"] = "/clear/trigger"
         self.gpudb_func_to_endpoint_map["collect_statistics"] = "/collect/statistics"
         self.gpudb_func_to_endpoint_map["create_backup"] = "/create/backup"
+        self.gpudb_func_to_endpoint_map["create_catalog"] = "/create/catalog"
         self.gpudb_func_to_endpoint_map["create_container_registry"] = "/create/container/registry"
         self.gpudb_func_to_endpoint_map["create_credential"] = "/create/credential"
         self.gpudb_func_to_endpoint_map["create_datasink"] = "/create/datasink"
@@ -13553,6 +13565,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["delete_user"] = "/delete/user"
         self.gpudb_func_to_endpoint_map["download_files"] = "/download/files"
         self.gpudb_func_to_endpoint_map["drop_backup"] = "/drop/backup"
+        self.gpudb_func_to_endpoint_map["drop_catalog"] = "/drop/catalog"
         self.gpudb_func_to_endpoint_map["drop_container_registry"] = "/drop/container/registry"
         self.gpudb_func_to_endpoint_map["drop_credential"] = "/drop/credential"
         self.gpudb_func_to_endpoint_map["drop_datasink"] = "/drop/datasink"
@@ -13658,7 +13671,6 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["show_wal"] = "/show/wal"
         self.gpudb_func_to_endpoint_map["solve_graph"] = "/solve/graph"
         self.gpudb_func_to_endpoint_map["update_records"] = "/update/records"
-        self.gpudb_func_to_endpoint_map["update_records_by_series"] = "/update/records/byseries"
         self.gpudb_func_to_endpoint_map["upload_files"] = "/upload/files"
         self.gpudb_func_to_endpoint_map["upload_files_fromurl"] = "/upload/files/fromurl"
         self.gpudb_func_to_endpoint_map["visualize_get_feature_info"] = "/visualize/getfeatureinfo"
@@ -15343,7 +15355,7 @@ class GPUdb(object):
                 <../../../../config/#config-main-general>`__ parameter in the
                 server configuration. Use output parameter *has_more_records*
                 to see if more records exist in the result to be fetched, and
-                input parameter *offset* & input parameter *limit* to request
+                input parameter *offset* and input parameter *limit* to request
                 subsequent pages of results. The default value is -9999.
 
             encoding (str)
@@ -15736,7 +15748,7 @@ class GPUdb(object):
                 <../../../../config/#config-main-general>`__ parameter in the
                 server configuration. Use output parameter *has_more_records*
                 to see if more records exist in the result to be fetched, and
-                input parameter *offset* & input parameter *limit* to request
+                input parameter *offset* and input parameter *limit* to request
                 subsequent pages of results. The default value is -9999.
 
             encoding (str)
@@ -16470,10 +16482,10 @@ class GPUdb(object):
         *additional_column_names*.  Values in these columns will be included in
         the overall aggregate calculation--individual aggregates will not be
         calculated per additional column.  For instance, requesting the *count*
-        & *mean* of input parameter *column_name* x and
-        *additional_column_names* y & z, where x holds the numbers 1-10, y
+        and *mean* of input parameter *column_name* x and
+        *additional_column_names* y and z, where x holds the numbers 1-10, y
         holds 11-20, and z holds 21-30, would return the total number of x, y,
-        & z values (30), and the single average value across all x, y, & z
+        and z values (30), and the single average value across all x, y, and z
         values (15.5).
 
         The response includes a list of key/value pairs of each statistic
@@ -16784,7 +16796,7 @@ class GPUdb(object):
                 <../../../../config/#config-main-general>`__ parameter in the
                 server configuration. Use output parameter *has_more_records*
                 to see if more records exist in the result to be fetched, and
-                input parameter *offset* & input parameter *limit* to request
+                input parameter *offset* and input parameter *limit* to request
                 subsequent pages of results. The default value is -9999.
 
             encoding (str)
@@ -17054,7 +17066,7 @@ class GPUdb(object):
                 <../../../../config/#config-main-general>`__ parameter in the
                 server configuration. Use output parameter *has_more_records*
                 to see if more records exist in the result to be fetched, and
-                input parameter *offset* & input parameter *limit* to request
+                input parameter *offset* and input parameter *limit* to request
                 subsequent pages of results. The default value is -9999.
 
             encoding (str)
@@ -18655,7 +18667,7 @@ class GPUdb(object):
             tier_attributes (dict of str to dicts of str to str)
                 Optional map containing tier names and their respective
                 attribute group limits.  The only valid attribute limit that
-                can be set is max_memory (in bytes) for the VRAM & RAM tiers.
+                can be set is max_memory (in bytes) for the VRAM and RAM tiers.
 
                 For instance, to set max VRAM capacity to 1GB per rank per GPU
                 and max RAM capacity to 10GB per rank, use:
@@ -19034,7 +19046,7 @@ class GPUdb(object):
 
                 * **tps_per_tom** --
                   Size of the worker rank data processing thread pool.  This
-                  includes operations such as inserts, updates, & deletes on
+                  includes operations such as inserts, updates, and deletes on
                   table data.  Multi-head inserts are not affected by this
                   limit. The minimum allowed value is '2'. The maximum allowed
                   value is '8192'.
@@ -19417,6 +19429,9 @@ class GPUdb(object):
                   Permanently unsubscribe a data source that is loading
                   continuously as a stream. The data source can be Kafka / S3 /
                   Azure.
+
+                * **drop_datasource_subscription** --
+                  Permanently delete a cancelled data source subscription.
 
                 * **pause_datasource_subscription** --
                   Temporarily unsubscribe a data source that is loading
@@ -20605,12 +20620,12 @@ class GPUdb(object):
                 Allowed values are:
 
                 * **incremental** --
-                  Snapshot of changes in the database objects & data since the
-                  last snapshot of any kind.
+                  Snapshot of changes in the database objects and data since
+                  the last snapshot of any kind.
 
                 * **differential** --
-                  Snapshot of changes in the database objects & data since the
-                  last full snapshot.
+                  Snapshot of changes in the database objects and data since
+                  the last full snapshot.
 
                 * **full** --
                   Snapshot of the given database objects and data.
@@ -20628,6 +20643,9 @@ class GPUdb(object):
                 * **table** --
                   `Tables(s) <../../../../concepts/tables/>`__ and `SQL view(s)
                   <../../../../sql/ddl/#create-view>`__.
+
+                * **catalog** --
+                  Catalog
 
                 * **credential** --
                   `Credential(s) <../../../../concepts/credentials/>`__.
@@ -20778,6 +20796,90 @@ class GPUdb(object):
 
         return response
     # end create_backup
+
+    # begin create_catalog
+    def create_catalog( self, name = None, table_format = None, location = None,
+                        type = None, credential = None, datasource = None,
+                        options = {} ):
+        """Creates a catalog, which contains the location and connection
+        information for a deltalake catalog that is external to the database.
+
+        Parameters:
+
+            name (str)
+                Name of the catalog to be created.
+
+            table_format (str)
+                Table format (iceberg, hudi, deltalake)
+
+            location (str)
+                Location of the catalog in 'http[s]://[server[:port]]]' format.
+
+            type (str)
+                Type of the catalog (REST (unity, polaris, tabular), nessie,
+                hive, glue)
+
+            credential (str)
+                Name of the `credential <../../../../concepts/credentials>`__
+                object to be used in catalog
+
+            datasource (str)
+                Password for the remote system user; may be an empty string
+
+            options (dict of str to str)
+                Optional parameters.
+                Allowed keys are:
+
+                * **access_delegation** --
+                  Use access delegation for object store.
+                  Allowed values are:
+
+                  * datasource_credentials
+                  * vended_credentials
+
+                  The default value is 'datasource_credentials'.
+
+                * **skip_validation** --
+                  Bypass validation of connection to remote source.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                The default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( name, (basestring)), "create_catalog(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( table_format, (basestring)), "create_catalog(): Argument 'table_format' must be (one) of type(s) '(basestring)'; given %s" % type( table_format ).__name__
+        assert isinstance( location, (basestring)), "create_catalog(): Argument 'location' must be (one) of type(s) '(basestring)'; given %s" % type( location ).__name__
+        assert isinstance( type, (basestring)), "create_catalog(): Argument 'type' must be (one) of type(s) '(basestring)'; given %s" % type( type ).__name__
+        assert isinstance( credential, (basestring)), "create_catalog(): Argument 'credential' must be (one) of type(s) '(basestring)'; given %s" % type( credential ).__name__
+        assert isinstance( datasource, (basestring)), "create_catalog(): Argument 'datasource' must be (one) of type(s) '(basestring)'; given %s" % type( datasource ).__name__
+        assert isinstance( options, (dict)), "create_catalog(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['name'] = name
+        obj['table_format'] = table_format
+        obj['location'] = location
+        obj['type'] = type
+        obj['credential'] = credential
+        obj['datasource'] = datasource
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/create/catalog', obj, convert_to_attr_dict = True )
+
+        return response
+    # end create_catalog
 
     # begin create_container_registry
     def create_container_registry( self, registry_name = None, uri = None,
@@ -21430,7 +21532,7 @@ class GPUdb(object):
         """Creates a new graph network using given nodes, edges, weights, and
         restrictions.
 
-        IMPORTANT: It's highly recommended that you review the `Graphs &
+        IMPORTANT: It's highly recommended that you review the `Graphs and
         Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
         documentation, the `Graph REST Tutorial
         <../../../../guides/graph_rest_guide/>`__, and/or some `graph examples
@@ -22514,7 +22616,7 @@ class GPUdb(object):
             tier_attributes (dict of str to dicts of str to str)
                 Optional map containing tier names and their respective
                 attribute group limits.  The only valid attribute limit that
-                can be set is max_memory (in bytes) for the VRAM & RAM tiers.
+                can be set is max_memory (in bytes) for the VRAM and RAM tiers.
 
                 For instance, to set max VRAM capacity to 1GB per rank per GPU
                 and max RAM capacity to 10GB per rank, use:
@@ -23272,7 +23374,7 @@ class GPUdb(object):
                   that column.  Each column format will contain a mapping of
                   one or more of its column properties to an appropriate format
                   for each property.  Currently supported column properties
-                  include date, time, & datetime. The parameter value must be
+                  include date, time, and datetime. The parameter value must be
                   formatted as a JSON string of maps of column names to maps of
                   column properties to their corresponding column formats,
                   e.g., '{ "order_date" : { "date" : "%Y.%m.%d" }, "order_time"
@@ -23338,9 +23440,9 @@ class GPUdb(object):
                 * **default_column_formats** --
                   Specifies the default format to be applied to source data
                   loaded into columns with the corresponding column property.
-                  Currently supported column properties include date, time, &
+                  Currently supported column properties include date, time, and
                   datetime.  This default column-property-bound format can be
-                  overridden by specifying a column property & format for a
+                  overridden by specifying a column property and format for a
                   given target column in *column_formats*. For each specified
                   annotation, the format will apply to all columns with that
                   annotation unless a custom *column_formats* for that
@@ -23363,6 +23465,16 @@ class GPUdb(object):
                   annotation meet both the 'date' and 'time' control character
                   requirements. For example, '{"datetime" : "%m/%d/%Y %H:%M:%S"
                   }' would be used to interpret text as "05/04/2000 12:12:11"
+
+                * **datalake_catalog** --
+                  Name of an existing datalake(iceberg) catalog used in loading
+                  files
+
+                * **datalake_path** --
+                  Path of datalake(iceberg) object
+
+                * **datalake_snapshot** --
+                  Snapshot ID of datalake(iceberg) object
 
                 * **error_handling** --
                   Specifies how errors should be handled upon insertion.
@@ -23692,7 +23804,7 @@ class GPUdb(object):
 
                   An 'a', 'b', 'f', 'n', 'r', 't', or 'v' preceded by an escape
                   character will be interpreted as the ASCII bell, backspace,
-                  form feed, line feed, carriage return, horizontal tab, &
+                  form feed, line feed, carriage return, horizontal tab, and
                   vertical tab, respectively.  For example, the escape
                   character followed by an 'n' will be interpreted as a newline
                   within a field value.
@@ -23792,7 +23904,7 @@ class GPUdb(object):
                   Allowed values are:
 
                   * **accuracy** --
-                    Scans data to get exactly-typed & sized columns for all
+                    Scans data to get exactly-typed and sized columns for all
                     data scanned.
 
                   * **speed** --
@@ -23826,7 +23938,7 @@ class GPUdb(object):
                   to *false*, any existing table record with primary key values
                   that match those of a record being inserted will remain
                   unchanged, while the new record will be rejected and the
-                  error handled as determined by *ignore_existing_pk* &
+                  error handled as determined by *ignore_existing_pk* and
                   *error_handling*.  If the specified table does not have a
                   primary key, then this option has no effect.
                   Allowed values are:
@@ -25645,6 +25757,40 @@ class GPUdb(object):
         return response
     # end drop_backup
 
+    # begin drop_catalog
+    def drop_catalog( self, name = None, options = {} ):
+        """Drops an existing catalog.  Any external tables that depend on the
+        catalog must be dropped before it can be dropped.
+
+        Parameters:
+
+            name (str)
+                Name of the catalog to be dropped. Must be an existing catalog.
+
+            options (dict of str to str)
+                Optional parameters. The default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            name (str)
+                Value of input parameter *name*.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( name, (basestring)), "drop_catalog(): Argument 'name' must be (one) of type(s) '(basestring)'; given %s" % type( name ).__name__
+        assert isinstance( options, (dict)), "drop_catalog(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['name'] = name
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/drop/catalog', obj, convert_to_attr_dict = True )
+
+        return response
+    # end drop_catalog
+
     # begin drop_container_registry
     def drop_container_registry( self, registry_name = None, options = {} ):
         assert isinstance( registry_name, (basestring)), "drop_container_registry(): Argument 'registry_name' must be (one) of type(s) '(basestring)'; given %s" % type( registry_name ).__name__
@@ -25938,7 +26084,7 @@ class GPUdb(object):
         the proc to complete before returning.
 
         If the proc being executed is distributed, input parameter
-        *input_table_names* & input parameter *input_column_names* may be
+        *input_table_names* and input parameter *input_column_names* may be
         passed to the proc to use for reading data, and input parameter
         *output_table_names* may be passed to the proc to use for writing data.
 
@@ -26120,7 +26266,7 @@ class GPUdb(object):
                 <../../../../config/#config-main-general>`__ parameter in the
                 server configuration. Use output parameter *has_more_records*
                 to see if more records exist in the result to be fetched, and
-                input parameter *offset* & input parameter *limit* to request
+                input parameter *offset* and input parameter *limit* to request
                 subsequent pages of results. The default value is -9999.
 
             encoding (str)
@@ -26498,7 +26644,7 @@ class GPUdb(object):
                 <../../../../config/#config-main-general>`__ parameter in the
                 server configuration. Use output parameter *has_more_records*
                 to see if more records exist in the result to be fetched, and
-                input parameter *offset* & input parameter *limit* to request
+                input parameter *offset* and input parameter *limit* to request
                 subsequent pages of results. The default value is -9999.
 
             encoding (str)
@@ -26979,7 +27125,7 @@ class GPUdb(object):
                 * **column_formats** --
                   For each source column specified, applies the
                   column-property-bound format.  Currently supported column
-                  properties include date, time, & datetime. The parameter
+                  properties include date, time, and datetime. The parameter
                   value must be formatted as a JSON string of maps of column
                   names to maps of column properties to their corresponding
                   column formats, e.g., '{ "order_date" : { "date" : "%Y.%m.%d"
@@ -27017,9 +27163,9 @@ class GPUdb(object):
 
                 * **default_column_formats** --
                   Specifies the default format to use to write data.  Currently
-                  supported column properties include date, time, & datetime.
+                  supported column properties include date, time, and datetime.
                   This default column-property-bound format can be overridden
-                  by specifying a column property & format for a given source
+                  by specifying a column property and format for a given source
                   column in *column_formats*. For each specified annotation,
                   the format will apply to all columns with that annotation
                   unless custom *column_formats* for that annotation are
@@ -29118,7 +29264,7 @@ class GPUdb(object):
                 <../../../../config/#config-main-general>`__ parameter in the
                 server configuration. Use output parameter *has_more_records*
                 to see if more records exist in the result to be fetched, and
-                input parameter *offset* & input parameter *limit* to request
+                input parameter *offset* and input parameter *limit* to request
                 subsequent pages of results. The default value is -9999.
 
             encoding (str)
@@ -29284,7 +29430,7 @@ class GPUdb(object):
                 <../../../../config/#config-main-general>`__ parameter in the
                 server configuration. Use output parameter *has_more_records*
                 to see if more records exist in the result to be fetched, and
-                input parameter *offset* & input parameter *limit* to request
+                input parameter *offset* and input parameter *limit* to request
                 subsequent pages of results. The default value is -9999.
 
             encoding (str)
@@ -29488,7 +29634,7 @@ class GPUdb(object):
                 <../../../../config/#config-main-general>`__ parameter in the
                 server configuration. Use output parameter *has_more_records*
                 to see if more records exist in the result to be fetched, and
-                input parameter *offset* & input parameter *limit* to request
+                input parameter *offset* and input parameter *limit* to request
                 subsequent pages of results. The default value is -9999.
 
             encoding (str)
@@ -29676,7 +29822,7 @@ class GPUdb(object):
                 <../../../../config/#config-main-general>`__ parameter in the
                 server configuration. Use output parameter *has_more_records*
                 to see if more records exist in the result to be fetched, and
-                input parameter *offset* & input parameter *limit* to request
+                input parameter *offset* and input parameter *limit* to request
                 subsequent pages of results. The default value is -9999.
 
             encoding (str)
@@ -30149,7 +30295,7 @@ class GPUdb(object):
                 The number of records returned will never exceed the server's
                 own limit, defined by the `max_get_records_size
                 <../../../../config/#config-main-general>`__ parameter in the
-                server configuration. Use input parameter *offset* & input
+                server configuration. Use input parameter *offset* and input
                 parameter *limit* to request subsequent pages of results. The
                 default value is -9999.
 
@@ -30298,7 +30444,7 @@ class GPUdb(object):
                 The number of records returned will never exceed the server's
                 own limit, defined by the `max_get_records_size
                 <../../../../config/#config-main-general>`__ parameter in the
-                server configuration. Use input parameter *offset* & input
+                server configuration. Use input parameter *offset* and input
                 parameter *limit* to request subsequent pages of results. The
                 default value is -9999.
 
@@ -30472,6 +30618,9 @@ class GPUdb(object):
             object_type (str)
                 The type of object being granted to.
                 Allowed values are:
+
+                * **catalog** --
+                  Catalog
 
                 * **context** --
                   Context
@@ -31071,6 +31220,9 @@ class GPUdb(object):
                 The type of object being checked.
                 Allowed values are:
 
+                * **catalog** --
+                  External Catalog
+
                 * **context** --
                   Context
 
@@ -31557,9 +31709,9 @@ class GPUdb(object):
                   that match those of a record being inserted will remain
                   unchanged, while the new record will be rejected and the
                   error handled as determined by *ignore_existing_pk*,
-                  *allow_partial_batch*, & *return_individual_errors*.  If the
-                  specified table does not have a primary key, then this option
-                  has no effect.
+                  *allow_partial_batch*, and *return_individual_errors*.  If
+                  the specified table does not have a primary key, then this
+                  option has no effect.
                   Allowed values are:
 
                   * **true** --
@@ -31581,7 +31733,7 @@ class GPUdb(object):
                   ignored with no error generated.  If *false*, the rejection
                   of any record for having primary key values matching an
                   existing record will result in an error being reported, as
-                  determined by *allow_partial_batch* &
+                  determined by *allow_partial_batch* and
                   *return_individual_errors*.  If the specified table does not
                   have a primary key or if upsert mode is in effect
                   (*update_on_existing_pk* is *true*), then this option has no
@@ -31994,7 +32146,7 @@ class GPUdb(object):
                   that column.  Each column format will contain a mapping of
                   one or more of its column properties to an appropriate format
                   for each property.  Currently supported column properties
-                  include date, time, & datetime. The parameter value must be
+                  include date, time, and datetime. The parameter value must be
                   formatted as a JSON string of maps of column names to maps of
                   column properties to their corresponding column formats,
                   e.g., '{ "order_date" : { "date" : "%Y.%m.%d" }, "order_time"
@@ -32060,9 +32212,9 @@ class GPUdb(object):
                 * **default_column_formats** --
                   Specifies the default format to be applied to source data
                   loaded into columns with the corresponding column property.
-                  Currently supported column properties include date, time, &
+                  Currently supported column properties include date, time, and
                   datetime.  This default column-property-bound format can be
-                  overridden by specifying a column property & format for a
+                  overridden by specifying a column property and format for a
                   given target column in *column_formats*. For each specified
                   annotation, the format will apply to all columns with that
                   annotation unless a custom *column_formats* for that
@@ -32378,7 +32530,7 @@ class GPUdb(object):
 
                   An 'a', 'b', 'f', 'n', 'r', 't', or 'v' preceded by an escape
                   character will be interpreted as the ASCII bell, backspace,
-                  form feed, line feed, carriage return, horizontal tab, &
+                  form feed, line feed, carriage return, horizontal tab, and
                   vertical tab, respectively.  For example, the escape
                   character followed by an 'n' will be interpreted as a newline
                   within a field value.
@@ -32478,7 +32630,7 @@ class GPUdb(object):
                   Allowed values are:
 
                   * **accuracy** --
-                    Scans data to get exactly-typed & sized columns for all
+                    Scans data to get exactly-typed and sized columns for all
                     data scanned.
 
                   * **speed** --
@@ -32497,7 +32649,7 @@ class GPUdb(object):
                   to *false*, any existing table record with primary key values
                   that match those of a record being inserted will remain
                   unchanged, while the new record will be rejected and the
-                  error handled as determined by *ignore_existing_pk* &
+                  error handled as determined by *ignore_existing_pk* and
                   *error_handling*.  If the specified table does not have a
                   primary key, then this option has no effect.
                   Allowed values are:
@@ -32781,7 +32933,7 @@ class GPUdb(object):
                   that column.  Each column format will contain a mapping of
                   one or more of its column properties to an appropriate format
                   for each property.  Currently supported column properties
-                  include date, time, & datetime. The parameter value must be
+                  include date, time, and datetime. The parameter value must be
                   formatted as a JSON string of maps of column names to maps of
                   column properties to their corresponding column formats,
                   e.g., '{ "order_date" : { "date" : "%Y.%m.%d" }, "order_time"
@@ -32842,9 +32994,9 @@ class GPUdb(object):
                 * **default_column_formats** --
                   Specifies the default format to be applied to source data
                   loaded into columns with the corresponding column property.
-                  Currently supported column properties include date, time, &
+                  Currently supported column properties include date, time, and
                   datetime.  This default column-property-bound format can be
-                  overridden by specifying a column property & format for a
+                  overridden by specifying a column property and format for a
                   given target column in *column_formats*. For each specified
                   annotation, the format will apply to all columns with that
                   annotation unless a custom *column_formats* for that
@@ -33118,7 +33270,7 @@ class GPUdb(object):
 
                   An 'a', 'b', 'f', 'n', 'r', 't', or 'v' preceded by an escape
                   character will be interpreted as the ASCII bell, backspace,
-                  form feed, line feed, carriage return, horizontal tab, &
+                  form feed, line feed, carriage return, horizontal tab, and
                   vertical tab, respectively.  For example, the escape
                   character followed by an 'n' will be interpreted as a newline
                   within a field value.
@@ -33217,7 +33369,7 @@ class GPUdb(object):
                   Allowed values are:
 
                   * **accuracy** --
-                    Scans data to get exactly-typed & sized columns for all
+                    Scans data to get exactly-typed and sized columns for all
                     data scanned.
 
                   * **speed** --
@@ -33236,7 +33388,7 @@ class GPUdb(object):
                   to *false*, any existing table record with primary key values
                   that match those of a record being inserted will remain
                   unchanged, while the new record will be rejected and the
-                  error handled as determined by *ignore_existing_pk* &
+                  error handled as determined by *ignore_existing_pk* and
                   *error_handling*.  If the specified table does not have a
                   primary key, then this option has no effect.
                   Allowed values are:
@@ -33649,7 +33801,7 @@ class GPUdb(object):
                   to *false*, any existing table record with primary key values
                   that match those of a record being inserted will remain
                   unchanged, while the new record will be rejected and the
-                  error handled as determined by *ignore_existing_pk* &
+                  error handled as determined by *ignore_existing_pk* and
                   *error_handling*.  If the specified table does not have a
                   primary key, then this option has no effect.
                   Allowed values are:
@@ -34188,7 +34340,7 @@ class GPUdb(object):
         latitude/longitude points to an existing underlying road network graph
         using a given solution type.
 
-        IMPORTANT: It's highly recommended that you review the `Graphs &
+        IMPORTANT: It's highly recommended that you review the `Graphs and
         Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
         documentation, the `Graph REST Tutorial
         <../../../../guides/graph_rest_guide/>`__, and/or some `/match/graph
@@ -34623,6 +34775,18 @@ class GPUdb(object):
                   batch size of the number of loops in flushing(inserting) to
                   the output table. The default value is '1000'.
 
+                * **multi_step** --
+                  For the *match_supply_demand* solver only. Runs multiple
+                  supply demand solver repeatedly in a multi step cycle by
+                  switching supplies to demands until it reaches the main hub
+                  supply.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **charging_capacity** --
                   For the *match_charging_stations* solver only. This is the
                   maximum ev-charging capacity of a vehicle (distance in meters
@@ -34767,7 +34931,7 @@ class GPUdb(object):
         """Update an existing graph network using given nodes, edges, weights,
         restrictions, and options.
 
-        IMPORTANT: It's highly recommended that you review the `Graphs &
+        IMPORTANT: It's highly recommended that you review the `Graphs and
         Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
         documentation, and `Graph REST Tutorial
         <../../../../guides/graph_rest_guide/>`__ before using this endpoint.
@@ -35058,7 +35222,7 @@ class GPUdb(object):
         To return the adjacency list in the response, leave input parameter
         *adjacency_table* empty.
 
-        IMPORTANT: It's highly recommended that you review the `Graphs &
+        IMPORTANT: It's highly recommended that you review the `Graphs and
         Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
         documentation, the `Graph REST Tutorial
         <../../../../guides/graph_rest_guide/>`__, and/or some `/match/graph
@@ -35251,7 +35415,7 @@ class GPUdb(object):
     def repartition_graph( self, graph_name = None, options = {} ):
         """Rebalances an existing partitioned graph.
 
-        IMPORTANT: It's highly recommended that you review the `Graphs &
+        IMPORTANT: It's highly recommended that you review the `Graphs and
         Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
         documentation, the `Graph REST Tutorial
         <../../../../guides/graph_rest_guide/>`__, and/or some `graph examples
@@ -35563,6 +35727,9 @@ class GPUdb(object):
             object_type (str)
                 The type of object being revoked.
                 Allowed values are:
+
+                * **catalog** --
+                  Catalog
 
                 * **context** --
                   Context
@@ -37003,6 +37170,10 @@ class GPUdb(object):
                   * priority
                   * tier
                   * evictable
+                  * locked
+                  * pin_count
+                  * ram_evictions
+                  * persist_evictions
                   * owner_resource_group
 
                 * **limit** --
@@ -38527,7 +38698,7 @@ class GPUdb(object):
         page rank, traveling salesman, etc.) using source nodes, destination
         nodes, and additional, optional weights and restrictions.
 
-        IMPORTANT: It's highly recommended that you review the `Graphs &
+        IMPORTANT: It's highly recommended that you review the `Graphs and
         Solvers <../../../../graph_solver/network_graph_solver/>`__ concepts
         documentation, the `Graph REST Tutorial
         <../../../../guides/graph_rest_guide/>`__, and/or some `/solve/graph
@@ -39137,71 +39308,6 @@ class GPUdb(object):
 
         return response
     # end update_records
-
-    # begin update_records_by_series
-    def update_records_by_series( self, table_name = None, world_table_name =
-                                  None, view_name = '', reserved = [], options =
-                                  {} ):
-        """Updates the view specified by input parameter *table_name* to
-        include full series (track) information from the input parameter
-        *world_table_name* for the series (tracks) present in the input
-        parameter *view_name*.
-
-        Parameters:
-
-            table_name (str)
-                Name of the view on which the update operation will be
-                performed, in [schema_name.]view_name format, using standard
-                `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__.  Must
-                be an existing view.
-
-            world_table_name (str)
-                Name of the table containing the complete series (track)
-                information, in [schema_name.]table_name format, using standard
-                `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__.
-
-            view_name (str)
-                Name of the view containing the series (tracks) which have to
-                be updated, in [schema_name.]view_name format, using standard
-                `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__. The
-                default value is ''.
-
-            reserved (list of str)
-                The default value is an empty list ( [] ). The user can provide
-                a single element (which will be automatically promoted to a
-                list internally) or a list.
-
-            options (dict of str to str)
-                Optional parameters. The default value is an empty dict ( {} ).
-
-        Returns:
-            A dict with the following entries--
-
-            count (int)
-
-            info (dict of str to str)
-                Additional information.
-        """
-        assert isinstance( table_name, (basestring)), "update_records_by_series(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
-        assert isinstance( world_table_name, (basestring)), "update_records_by_series(): Argument 'world_table_name' must be (one) of type(s) '(basestring)'; given %s" % type( world_table_name ).__name__
-        assert isinstance( view_name, (basestring)), "update_records_by_series(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
-        reserved = reserved if isinstance( reserved, list ) else ( [] if (reserved is None) else [ reserved ] )
-        assert isinstance( options, (dict)), "update_records_by_series(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
-
-        obj = {}
-        obj['table_name'] = table_name
-        obj['world_table_name'] = world_table_name
-        obj['view_name'] = view_name
-        obj['reserved'] = reserved
-        obj['options'] = self.__sanitize_dicts( options )
-
-        response = self.__submit_request( '/update/records/byseries', obj, convert_to_attr_dict = True )
-
-        return response
-    # end update_records_by_series
 
     # begin upload_files
     def upload_files( self, file_names = None, file_data = None, options = {} ):
@@ -40058,7 +40164,7 @@ class GPUdb(object):
         """Generate an image containing isolines for travel results using an
         existing graph. Isolines represent curves of equal cost, with cost
         typically referring to the time or distance assigned as the weights of
-        the underlying graph. See `Graphs & Solvers
+        the underlying graph. See `Graphs and Solvers
         <../../../../graph_solver/network_graph_solver/>`__ for more
         information on graphs.
 
@@ -43172,7 +43278,7 @@ class GPUdbTable( object ):
                 <../../../../config/#config-main-general>`__ parameter in the
                 server configuration. Use output parameter *has_more_records*
                 to see if more records exist in the result to be fetched, and
-                input parameter *offset* & input parameter *limit* to request
+                input parameter *offset* and input parameter *limit* to request
                 subsequent pages of results. The default value is -9999.
 
             encoding (str)
@@ -43848,10 +43954,10 @@ class GPUdbTable( object ):
         *additional_column_names*.  Values in these columns will be included in
         the overall aggregate calculation--individual aggregates will not be
         calculated per additional column.  For instance, requesting the *count*
-        & *mean* of input parameter *column_name* x and
-        *additional_column_names* y & z, where x holds the numbers 1-10, y
+        and *mean* of input parameter *column_name* x and
+        *additional_column_names* y and z, where x holds the numbers 1-10, y
         holds 11-20, and z holds 21-30, would return the total number of x, y,
-        & z values (30), and the single average value across all x, y, & z
+        and z values (30), and the single average value across all x, y, and z
         values (15.5).
 
         The response includes a list of key/value pairs of each statistic
@@ -44133,7 +44239,7 @@ class GPUdbTable( object ):
                 <../../../../config/#config-main-general>`__ parameter in the
                 server configuration. Use output parameter *has_more_records*
                 to see if more records exist in the result to be fetched, and
-                input parameter *offset* & input parameter *limit* to request
+                input parameter *offset* and input parameter *limit* to request
                 subsequent pages of results. The default value is -9999.
 
             encoding (str)
@@ -44859,6 +44965,9 @@ class GPUdbTable( object ):
                   Permanently unsubscribe a data source that is loading
                   continuously as a stream. The data source can be Kafka / S3 /
                   Azure.
+
+                * **drop_datasource_subscription** --
+                  Permanently delete a cancelled data source subscription.
 
                 * **pause_datasource_subscription** --
                   Temporarily unsubscribe a data source that is loading
@@ -48181,60 +48290,6 @@ class GPUdbTable( object ):
 
         return response
     # end update_records
-
-    def update_records_by_series( self, world_table_name = None, view_name = '',
-                                  reserved = [], options = {} ):
-        """Updates the view specified by input parameter *table_name* to
-        include full series (track) information from the input parameter
-        *world_table_name* for the series (tracks) present in the input
-        parameter *view_name*.
-
-        Parameters:
-
-            world_table_name (str)
-                Name of the table containing the complete series (track)
-                information, in [schema_name.]table_name format, using standard
-                `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__.
-
-            view_name (str)
-                Name of the view containing the series (tracks) which have to
-                be updated, in [schema_name.]view_name format, using standard
-                `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__. The
-                default value is ''.
-
-            reserved (list of str)
-                The default value is an empty list ( [] ). The user can provide
-                a single element (which will be automatically promoted to a
-                list internally) or a list.
-
-            options (dict of str to str)
-                Optional parameters. The default value is an empty dict ( {} ).
-
-        Returns:
-            The response from the server which is a dict containing the
-            following entries--
-
-            count (int)
-
-            info (dict of str to str)
-                Additional information.
-
-        Raises:
-
-            GPUdbException --
-                Upon an error from the server.
-        """
-        response = self.db.update_records_by_series( self.qualified_name,
-                                                     world_table_name,
-                                                     view_name, reserved,
-                                                     options )
-        if not response.is_ok():
-            raise GPUdbException( response.get_error_msg() )
-
-        return response
-    # end update_records_by_series
 
     def visualize_image_labels( self, x_column_name = None, y_column_name =
                                 None, x_offset = '', y_offset = '', text_string

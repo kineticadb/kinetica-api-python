@@ -20,6 +20,7 @@ def example_sync():
             "url": URL,
             "username": USER,
             "password": PASS,
+            "default_schema": SCHEMA,
             "bypass_ssl_cert_check": BYPASS_SSL_CERT_CHECK,
         },
     )
