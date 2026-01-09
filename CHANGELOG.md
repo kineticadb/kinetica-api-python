@@ -3,7 +3,7 @@
 ## Version 7.2
 
 
-### Version 7.2.3.3 - 2026-01-05
+### Version 7.2.3.3 - 2026-01-09
 
 #### Added
 -   Support for a user-specified default schema when using the DBAPI

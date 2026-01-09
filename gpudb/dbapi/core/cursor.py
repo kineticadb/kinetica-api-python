@@ -418,83 +418,96 @@ class Cursor(CursorConnectionMixin, IterableCursorMixin, TransactionalCursor):
         return placeholders
 
     @staticmethod
+    def __transform_sql(sql: str, param_style: ParamStyle) -> str:
+        """
+        Parses SQL to safely replace placeholders with $n syntax, skipping
+        placeholders found inside quotes (', ") or comments.
+        """
+        # Regex to match SQL constructs:
+        # 1. Single-quoted strings (handling standard SQL escaped quotes '')
+        # 2. Double-quoted identifiers (handling escaped quotes "")
+        # 3. Block comments /* ... */
+        # 4. Line comments -- ...
+        # 5. The specific parameter placeholders we want to replace
+
+        # Base patterns for static SQL structures
+        pattern_string = r"('(''|[^'])*')"
+        pattern_ident = r'("(""|[^"])*")'
+        pattern_comment_blk = r"(/\*.*?\*/)"
+        pattern_comment_line = r"(--[^\r\n]*)"
+
+        # Define the placeholder regex based on the style
+        if param_style == ParamStyle.QMARK:
+            pattern_param = r"(\?)"
+        elif param_style == ParamStyle.NUMERIC:
+            pattern_param = r"(:[0-9]+)"
+        elif param_style == ParamStyle.FORMAT:
+            # FIX: Matches %s, %d, %i, %f, %l to align with detection logic
+            pattern_param = r"(%[sdifl])"
+        else:
+            return sql # Unsupported or no transformation needed
+
+        # Combine into one master regex
+        # Order matters: check strings/comments first to "consume" them
+        master_pattern = re.compile(
+            f"{pattern_string}|{pattern_ident}|{pattern_comment_blk}|{pattern_comment_line}|{pattern_param}",
+            re.DOTALL | re.MULTILINE
+        )
+
+        output = []
+        last_pos = 0
+        param_counter = 1
+
+        for match in master_pattern.finditer(sql):
+            # Append everything between the last match and this one
+            output.append(sql[last_pos:match.start()])
+
+            # match.group() returns the full match. We check what it looks like.
+            full_match = match.group(0)
+
+            # If it starts with ' or " or / or -, it's a safe zone (string/comment). Keep as is.
+            if full_match[0] in ("'", '"', '/', '-'):
+                output.append(full_match)
+            elif param_style == ParamStyle.QMARK and full_match == '?':
+                output.append(f"${param_counter}")
+                param_counter += 1
+            elif param_style == ParamStyle.NUMERIC and full_match.startswith(':'):
+                # :1 -> $1. Extract number.
+                num = full_match[1:]
+                output.append(f"${num}")
+            elif param_style == ParamStyle.FORMAT and full_match.startswith('%'):
+                output.append(f"${param_counter}")
+                param_counter += 1
+            else:
+                # Should not happen given the regex, but safe fallback
+                output.append(full_match)
+
+            last_pos = match.end()
+
+        # Append remaining string
+        output.append(sql[last_pos:])
+        return "".join(output)
+
+    @staticmethod
     def __process_params_qmark(query: str):
         """Replace all occurrences of '?' with $1, $2, ..., $n in the SQL statement
-
-        Args:
-            query (str): the SQL statement
-
-        Returns:
-            str: the modified SQL statement
+        safely ignoring strings and comments.
         """
-
-        # Initialize a counter to keep track of the occurrences of '?'
-        counter = 1
-
-        # Find the last occurrence of '?'
-        last_question_mark_index = query.rfind("?")
-
-        # Replace all occurrences of '?' with $1, $2, ..., $n
-        replaced_string = ""
-        for char in query:
-            if char == "?":
-                replaced_string += f"${counter}"
-                # Increment the counter until the last occurrence of '?'
-                if counter < last_question_mark_index + 1:
-                    counter += 1
-            else:
-                replaced_string += char
-
-        return replaced_string
+        return Cursor.__transform_sql(query, ParamStyle.QMARK)
 
     @staticmethod
     def __process_params_numeric(query: str):
         """Replace each ':n' with corresponding '$n' in the SQL statement
-
-        Args:
-            query (str): the SQL statement
-
-        Returns:
-            str: the modified SQL statement
+        safely ignoring strings and comments.
         """
-
-        def replacer(match):
-            # Check if the match is within a quoted string (single or double quotes)
-            if match.group(1):  # If the first group (quoted string) is matched, return it as is
-                return match.group(0)
-            else:  # Otherwise, replace ':n' with '$n'
-                return f"${match.group(2)}"
-
-        # This pattern matches either a quoted string (group 1) or a :n placeholder (group 2)
-        pattern = r"(['\"].*?['\"])|:([0-9]+)"
-
-        # Perform the replacement using the pattern and replacer function
-        result = re.sub(pattern, replacer, query)
-        return result
-
+        return Cursor.__transform_sql(query, ParamStyle.NUMERIC)
 
     @staticmethod
     def __process_params_format(query: str):
         """Replace each ANSI C format specifier with corresponding $n in the SQL statement
-
-        Args:
-            query (str): the SQL statement
-
-        Returns:
-            str: the modified SQL statement
+        safely ignoring strings and comments.
         """
-
-        # Regular expression pattern to match ANSI C format specifiers
-        pattern = r"%[sdifl]"
-
-        # Find all matches
-        matches = re.findall(pattern, query)
-
-        # Replace each format specifier with corresponding $n
-        for i, match in enumerate(matches, start=1):
-            query = query.replace(match, f"${i}", 1)
-
-        return query
+        return Cursor.__transform_sql(query, ParamStyle.FORMAT)
 
     @staticmethod
     def __extract_table_name_from_insert_statement(sql):

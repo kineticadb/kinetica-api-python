@@ -93,7 +93,7 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
 
         self._connection = GPUdb(host=url, options=options)
         self._default_schema = default_schema
-        if not self._connection.has_schema(self._default_schema)["schema_exists"]:
+        if self._default_schema and not self._connection.has_schema(self._default_schema)["schema_exists"]:
             raise ConnectionError("Given Kinetica schema doesn't exist ...")
 
     @raise_if_closed
