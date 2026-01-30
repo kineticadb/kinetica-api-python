@@ -5284,7 +5284,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.3.3"
+    api_version = "7.2.3.4"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -13258,9 +13258,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/show/tablemonitors"
         REQ_SCHEMA_STR = """{"type":"record","name":"show_table_monitors_request","fields":[{"name":"monitor_ids","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"show_table_monitors_response","fields":[{"name":"monitor_ids","type":{"type":"array","items":"string"}},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"events","type":{"type":"array","items":"string"}},{"name":"increasing_columns","type":{"type":"array","items":"string"}},{"name":"filter_expressions","type":{"type":"array","items":"string"}},{"name":"join_table_names","type":{"type":"array","items":"string"}},{"name":"join_column_names","type":{"type":"array","items":"string"}},{"name":"join_expressions","type":{"type":"array","items":"string"}},{"name":"refresh_method","type":{"type":"array","items":"string"}},{"name":"refresh_period","type":{"type":"array","items":"string"}},{"name":"refresh_start_time","type":{"type":"array","items":"string"}},{"name":"datasink_names","type":{"type":"array","items":"string"}},{"name":"additional_info","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"show_table_monitors_response","fields":[{"name":"monitor_ids","type":{"type":"array","items":"string"}},{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"events","type":{"type":"array","items":"string"}},{"name":"increasing_columns","type":{"type":"array","items":"string"}},{"name":"filter_expressions","type":{"type":"array","items":"string"}},{"name":"join_table_names","type":{"type":"array","items":"string"}},{"name":"join_column_names","type":{"type":"array","items":"string"}},{"name":"join_expressions","type":{"type":"array","items":"string"}},{"name":"refresh_method","type":{"type":"array","items":"string"}},{"name":"refresh_period","type":{"type":"array","items":"string"}},{"name":"refresh_start_time","type":{"type":"array","items":"string"}},{"name":"datasink_names","type":{"type":"array","items":"string"}},{"name":"max_consecutive_failures","type":{"type":"array","items":"int"}},{"name":"failed_notifications_table_names","type":{"type":"array","items":"string"}},{"name":"statuses","type":{"type":"array","items":"string"}},{"name":"additional_info","type":{"type":"array","items":{"type":"map","values":"string"}}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("monitor_ids", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("monitor_ids", "array", [("string")]), ("table_names", "array", [("string")]), ("events", "array", [("string")]), ("increasing_columns", "array", [("string")]), ("filter_expressions", "array", [("string")]), ("join_table_names", "array", [("string")]), ("join_column_names", "array", [("string")]), ("join_expressions", "array", [("string")]), ("refresh_method", "array", [("string")]), ("refresh_period", "array", [("string")]), ("refresh_start_time", "array", [("string")]), ("datasink_names", "array", [("string")]), ("additional_info", "array", [("map", [("string")])]), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("monitor_ids", "array", [("string")]), ("table_names", "array", [("string")]), ("events", "array", [("string")]), ("increasing_columns", "array", [("string")]), ("filter_expressions", "array", [("string")]), ("join_table_names", "array", [("string")]), ("join_column_names", "array", [("string")]), ("join_expressions", "array", [("string")]), ("refresh_method", "array", [("string")]), ("refresh_period", "array", [("string")]), ("refresh_start_time", "array", [("string")]), ("datasink_names", "array", [("string")]), ("max_consecutive_failures", "array", [("int")]), ("failed_notifications_table_names", "array", [("string")]), ("statuses", "array", [("string")]), ("additional_info", "array", [("map", [("string")])]), ("info", "map", [("string")])] )
         ENDPOINT = "/show/tablemonitors"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -19781,7 +19781,7 @@ class GPUdb(object):
 
     # begin alter_table_monitor
     def alter_table_monitor( self, topic_id = None, monitor_updates_map = None,
-                             options = None ):
+                             options = {} ):
         """Alters a table monitor previously created with
         :meth:`GPUdb.create_table_monitor`.
 
@@ -19800,8 +19800,31 @@ class GPUdb(object):
                   error will be thrown. If *schema_name* is empty, then the
                   user's default schema will be used.
 
+                * **max_consecutive_failures** --
+                  Updates the maximum number of consecutive failures before
+                  suspending the stream. A value of '-1' to disables
+                  auto-suspend. This value is by rank and not overall.
+
+                * **notifications** --
+                  Updates the state of the monitor.
+                  Allowed values are:
+
+                  * resume
+                  * suspend
+
+                  The default value is an empty dict ( {} ).
+
             options (dict of str to str)
                 Optional parameters.
+                Allowed keys are:
+
+                * **reason** --
+                  [Developer option] Additional information about this update
+
+                * **log_level** --
+                  [Developer option] Log level
+
+                The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -20643,9 +20666,6 @@ class GPUdb(object):
                 * **table** --
                   `Tables(s) <../../../../concepts/tables/>`__ and `SQL view(s)
                   <../../../../sql/ddl/#create-view>`__.
-
-                * **catalog** --
-                  Catalog
 
                 * **credential** --
                   `Credential(s) <../../../../concepts/credentials/>`__.
@@ -24065,6 +24085,21 @@ class GPUdb(object):
                   Name of an existing `data sink
                   <../../../../concepts/data_sinks/>`__ to send change data
                   notifications to
+
+                * **max_consecutive_failures** --
+                  Maximum number of consecutive failed notification attempts
+                  before suspending the stream. A value of -1 (default)
+                  disables auto-suspend. This value is by rank and not overall.
+
+                * **failed_notifications_table_name** --
+                  Name of a `table <../../../../concepts/tables/>`__ to which
+                  failed stream notifications are written when the stream is
+                  suspended. The database will attempt to send notifications
+                  persisted in this table when the stream is resumed. The table
+                  has the following columns: rank (long), job_id (long), uuid
+                  (uuid), timestamp (timestamp), error_msg (string), payload
+                  (bytes). Leave the this option empty to disable persisting
+                  failed notification events.
 
                 * **destination** --
                   Destination for the output data in format
@@ -37814,6 +37849,15 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **referencing_materialized_views** --
+                  Include view dependents in the output.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **skip_additional_info** --
                   If *true* then the response will not populate the
                   additional_info field.
@@ -38352,6 +38396,20 @@ class GPUdb(object):
             datasink_names (list of str)
                 List of datasink names for the respective output parameter
                 *monitor_ids* if one is defined.
+
+            max_consecutive_failures (list of ints)
+                Maximum number of consecutive failures for the respective
+                output parameter *monitor_ids* before stream is automatically
+                suspended.
+
+            failed_notifications_table_names (list of str)
+                List of table names that will hold failed notification events
+                when the respective output parameter *monitor_ids* is
+                suspended.
+
+            statuses (list of str)
+                Status of stream for the respective output parameter
+                *monitor_ids*.
 
             additional_info (list of dicts of str to str)
                 Additional information about the respective monitors in output
@@ -45885,6 +45943,21 @@ class GPUdbTable( object ):
                   <../../../../concepts/data_sinks/>`__ to send change data
                   notifications to
 
+                * **max_consecutive_failures** --
+                  Maximum number of consecutive failed notification attempts
+                  before suspending the stream. A value of -1 (default)
+                  disables auto-suspend. This value is by rank and not overall.
+
+                * **failed_notifications_table_name** --
+                  Name of a `table <../../../../concepts/tables/>`__ to which
+                  failed stream notifications are written when the stream is
+                  suspended. The database will attempt to send notifications
+                  persisted in this table when the stream is resumed. The table
+                  has the following columns: rank (long), job_id (long), uuid
+                  (uuid), timestamp (timestamp), error_msg (string), payload
+                  (bytes). Leave the this option empty to disable persisting
+                  failed notification events.
+
                 * **destination** --
                   Destination for the output data in format
                   'destination_type://path[:port]'. Supported destination types
@@ -47615,6 +47688,15 @@ class GPUdbTable( object ):
                 * **get_sizes** --
                   If *true* then the number of records in each table, along
                   with a cumulative count, will be returned; blank, otherwise.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **referencing_materialized_views** --
+                  Include view dependents in the output.
                   Allowed values are:
 
                   * true

@@ -7,6 +7,7 @@ aggregating/grouping records, and deleting records.
 
 from __future__ import print_function
 
+import argparse
 import collections
 import json
 import random
@@ -15,7 +16,7 @@ import string
 import gpudb
 
 
-def gpudb_example():
+def gpudb_example(url, username, password):
     
     print ( "TUTORIAL OUTPUT")
     print ( "===============\n")
@@ -31,7 +32,12 @@ def gpudb_example():
 
     """ Establish connection with a locally-running instance of Kinetica,
         using binary encoding to save memory """
-    h_db = gpudb.GPUdb(encoding='BINARY', host='127.0.0.1', port='9191')
+    options = gpudb.GPUdb.Options()
+    options.username = username
+    options.password = password
+    options.encoding = "BINARY"
+    options.skip_ssl_cert_verification = True
+    h_db = gpudb.GPUdb(url, options=options)
 
     print ()
     print ( "CREATING A TYPE & TABLE")
@@ -460,10 +466,19 @@ def gpudb_example():
     print ( "Size of sharded table post forced flush (expect 100): ", sharded_table.size() )
     print ()
 
-    
-    
 # end gpudb_example()
 
 
 if __name__ == '__main__':
-    gpudb_example()
+
+    # Set up args
+    parser = argparse.ArgumentParser(description='Run tutorial.')
+    parser.add_argument('--url', default='http://localhost:9191', help='Kinetica URL to run example against')
+    parser.add_argument('--username', default='', help='Username of user to run example with')
+    parser.add_argument('--password', default='', help='Password of user')
+
+    args = parser.parse_args()
+
+    gpudb_example(args.url, args.username, args.password)
+
+# end main

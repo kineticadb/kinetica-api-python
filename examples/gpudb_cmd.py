@@ -16,6 +16,7 @@ import getpass
 import os
 import sys
 import argparse
+import collections
 import json
 
 from avro import schema
@@ -31,8 +32,10 @@ def gpudb_cmd( argv ):
 
     # Add arguments to the parser
     parser = argparse.ArgumentParser()
-    parser.add_argument( '-g', '--gpudb', nargs = '?', default = "127.0.0.1:9191",
-                         help = "IP address and port of GPUdb in the format: http[s]://IP_ADDRESS:PORT (default http://127.0.0.1:9191)" )
+    parser.add_argument( '-u', '--url', nargs = '?', default = "http://localhost:9191",
+                         help = "URL of GPUdb in the format: http[s]://IP_ADDRESS:PORT (default http://localhost:9191)" )
+    parser.add_argument( '-g', '--gpudb', nargs = '?', default = None,
+                         help = "IP address and port of GPUdb in the format: http[s]://IP_ADDRESS:PORT" )
     parser.add_argument( '--username', nargs = '?', default = "",
                          help = "Username used when connecting to GPUdb." )
     parser.add_argument( '--password', nargs = '?', default = "",
@@ -70,14 +73,13 @@ def gpudb_cmd( argv ):
 
     # --------------------------------------
     # Set up GPUdb
-    GPUdb_HOST = args.gpudb
+    GPUdb_HOST = args.gpudb if args.gpudb else args.url
     # GPUdb_IP, GPUdb_Port = args.gpudb.split( ":" )
     password = args.password
     if args.ask_password:
         password = getpass.getpass("GPUdb password:")
     encoding = 'JSON' if args.json_encoding else 'BINARY'
-    gpudb = GPUdb( encoding = encoding, host = GPUdb_HOST, username = args.username, password = password )
-    # gpudb = GPUdb( encoding = encoding, host = GPUdb_IP, port = GPUdb_Port, username = args.username, password = password )
+    gpudb = GPUdb( host = GPUdb_HOST, username = args.username, password = password, encoding = encoding )
 
     # Get a list of all endpoint names
     query_names = sorted( gpudb.gpudb_schemas.keys() )

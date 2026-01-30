@@ -1,6 +1,8 @@
+import argparse
 import asyncio
 import os
 import time
+from gpudb.dbapi.aio import AsyncKineticaConnection
 from gpudb.dbapi import *
 from gpudb.dbapi import aio
 
@@ -10,22 +12,23 @@ from gpudb.dbapi.pep249.aiopep249.connection import AsyncConnection
 URL = os.getenv('PY_TEST_URL', 'http://localhost:9191')
 USER = os.getenv('PY_TEST_USER', "")
 PASS = os.getenv('PY_TEST_PASS', "")
-SCHEMA = os.getenv('PY_TEST_SCHEMA', 'async_example')
+SCHEMA = os.getenv('PY_TEST_SCHEMA', 'example_dbapi_async')
 BYPASS_SSL_CERT_CHECK = os.getenv('PY_TEST_BYPASS_CERT_CHECK', True)
 if BYPASS_SSL_CERT_CHECK in ["1", 1]:
     BYPASS_SSL_CERT_CHECK = True
 
 
-async def example_async():
+async def example_async(url, username, password, schema):
     """async calls"""
 
-    con1: AsyncConnection = aconnect(
+    con1: AsyncKineticaConnection = aconnect(
         "kinetica://",
-        connect_args={
-            "url": URL,
-            "username": USER,
-            "password": PASS,
-            "bypass_ssl_cert_check": BYPASS_SSL_CERT_CHECK,
+        url = url,
+        username = username,
+        password = password,
+        default_schema = schema,
+        options = {
+            "skip_ssl_cert_verification": BYPASS_SSL_CERT_CHECK,
         },
     )
 
@@ -39,7 +42,7 @@ async def example_async():
         "s" VARCHAR NOT NULL,
         "f" REAL NOT NULL,
         "l" BIGINT NOT NULL
-    ) using table properties (no_error_if_exists=TRUE)"""
+    ) USING TABLE PROPERTIES (no_error_if_exists = TRUE)"""
 
     await con1.execute(create_table)
     # ParamStyle - numeric_dollar
@@ -112,10 +115,21 @@ async def example_async():
 
 
 
-async def main():
+async def main(url, username, password, schema):
     print(f'{time.ctime()} Hello!')
-    await example_async()
+    await example_async(url, username, password, schema)
     print(f'{time.ctime()} Goodbye!')
 
 
-asyncio.run(main())
+if __name__ == '__main__':
+
+    # Set up args
+    parser = argparse.ArgumentParser(description='Run asynchronous DBAPI example.')
+    parser.add_argument('--url', default=URL, help='Kinetica URL to run example against')
+    parser.add_argument('--username', default=USER, help='Username of user to run example with')
+    parser.add_argument('--password', default=PASS, help='Password of user')
+    parser.add_argument('--schema', default=SCHEMA, help='Schema containing test tables')
+
+    args = parser.parse_args()
+
+    asyncio.run(main(args.url, args.username, args.password, args.schema))

@@ -3,6 +3,12 @@
 ## Version 7.2
 
 
+### Version 7.2.3.4 - 2026-01-28
+
+#### Added
+-   Support for full range of connection options when using the DBAPI
+
+
 ### Version 7.2.3.3 - 2026-01-09
 
 #### Added

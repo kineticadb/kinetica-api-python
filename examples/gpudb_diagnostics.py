@@ -20,6 +20,9 @@ import getopt
 
 
 helpMessage = """Usage:
+  -u <URL> -- Run script on given URL
+  -U <username> -- Run script with the given username
+  -P <password> -- Run script with the given password
   -l -- Run script on local GPUdb (127.0.0.1:9191) (lower case L)
         (This is default if neither -l nor -g is specified)
   -g ###.##.##.## -- Run script on server GPUdb @ the IP address provided
@@ -51,12 +54,15 @@ def diagnose_gpudb( argv ):
         print ( helpMessage )
         sys.exit( 2 )
     try: # Parse the command line arguments
-        opts, args = getopt.getopt( sys.argv[1:], "hlg:p:v" )
+        opts, args = getopt.getopt( sys.argv[1:], "hu:U:P:lg:p:v" )
     except getopt.GetoptError:
         print ( helpMessage )
         sys.exit( 2 )
 
     # Some default values
+    GPUdb_URL  = None
+    GPUdb_User = None
+    GPUdb_Pass = None
     GPUdb_IP   = '127.0.0.1' # Run locally by default
     GPUdb_Port = '9191' # Default port
     isVerbose  = False
@@ -66,6 +72,12 @@ def diagnose_gpudb( argv ):
         if opt == '-h': # print usage and exit
             print ( helpMessage )
             sys.exit()
+        if opt == '-u': # run gpudb on a server gpudb at the specified URL
+            GPUdb_URL = arg
+        if opt == '-U': # run gpudb on a server gpudb with the specified username
+            GPUdb_User = arg
+        if opt == '-P': # run gpudb on a server gpudb with the specified password
+            GPUdb_Pass = arg
         if opt == '-l': # run gpudb on local machine
             isServer = False
         if opt == '-g': # run gpudb on a server gpudb at the specified IP address
@@ -77,7 +89,10 @@ def diagnose_gpudb( argv ):
             isVerbose = True
 
     # Set up GPUdb with binary encoding
-    gpudb = GPUdb( encoding='BINARY', host = GPUdb_IP, port = GPUdb_Port )
+    if GPUdb_URL:
+        gpudb = GPUdb( host = GPUdb_URL, username = GPUdb_User, password = GPUdb_Pass, encoding='BINARY' )
+    else:
+        gpudb = GPUdb( encoding='BINARY', host = GPUdb_IP, port = GPUdb_Port )
 
 
     # Create a data type

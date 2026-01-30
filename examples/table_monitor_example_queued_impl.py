@@ -54,7 +54,7 @@ class QueuedGPUdbTableMonitor(GPUdbTableMonitor.Client):
         of this class.
     """
 
-    def __init__(self, db, tablename,
+    def __init__(self, db, table_name,
                  record_queue, options = None):
         """ Constructor for QueuedGPUdbTableMonitor class
 
@@ -113,7 +113,7 @@ class QueuedGPUdbTableMonitor(GPUdbTableMonitor.Client):
         # Invoke the base class constructor. This invocation is mandatory for
         # the table monitor to be actually functional.
         super(QueuedGPUdbTableMonitor, self).__init__(
-            db, tablename,callback_list=callbacks,
+            db, table_name,callback_list=callbacks,
             options=options)
 
         self.record_queue = record_queue
@@ -198,7 +198,7 @@ class TableMonitorExampleClient(threading.Thread):
 
     def __init__(self, table_monitor, work_queue):
         """
-        [summary]
+        Table monitor client thread class.
 
         Args:
             table_monitor (GPUdbTableMonitor.Client): An instance of
@@ -302,16 +302,14 @@ def load_data(table_name):
         time.sleep(2)
 
 
-# end load_data_and_wait()
+# end load_data()
 
 
-""" Create the city weather "history" & "status" tables used in this example
+""" Create the city weather "history" table used in this example
 """
 
 
 def create_table(table_name):
-    # Put both tables into the "examples" schema
-    schema_option = {"collection_name": "examples"}
 
     # Create a column list for the "history" table
     columns = [
@@ -329,13 +327,10 @@ def create_table(table_name):
     gpudb.GPUdbTable(
         columns,
         name=table_name,
-        options=schema_option,
         db=h_db
     )
 
-
-
-# end create_tables()
+# end create_table()
 
 
 """ Drop the city weather "history" table
@@ -343,19 +338,20 @@ def create_table(table_name):
 
 
 def clear_table(table_name):
-    # Drop all the tables
+
     h_db.clear_table(table_name)
 
-
-# end clear_tables()
+# end clear_table()
 
 def delete_records(h_db, table_name):
     """
+    Delete a subset of the records from the monitored table.
 
     Args:
-        h_db:
+        h_db (GPUdb): GPUdb object
+        table_name (str): Name of the table.
 
-    Returns:
+    Returns: Number of records deleted.
 
     """
     print("In delete records ...")
@@ -371,26 +367,31 @@ def delete_records(h_db, table_name):
 
 
 if __name__ == '__main__':
-    # Set up args
-    parser = argparse.ArgumentParser(description='Run table monitor example.')
+
+    parser = argparse.ArgumentParser(description='Run table monitor shared queue example.')
     parser.add_argument('command', nargs="?",
                         help='command to execute (currently only "clear" to remove the example tables')
+    parser.add_argument('--url', default=None, help='Kinetica URL')
     parser.add_argument('--host', default='localhost', help='Kinetica host to '
                                                             'run '
                                                             'example against')
     parser.add_argument('--port', default='9191', help='Kinetica port')
-    parser.add_argument('--username', help='Username of user to run example with')
-    parser.add_argument('--password', help='Password of the given user')
+    parser.add_argument('--username', default='', help='Username of user to run example with')
+    parser.add_argument('--password', default='', help='Password of the given user')
+    parser.add_argument('--schema', default='examples', help='Database schema in which to create example objects')
 
     args = parser.parse_args()
 
-    # Establish connection with an instance of Kinetica on port 9191
-    h_db = gpudb.GPUdb(encoding="BINARY", host=args.host, port="9191", 
-                       username=args.username, password=args.password)
+    if args.url:
+        h_db = gpudb.GPUdb(host=args.url, username = args.username, password = args.password)
+    else:
+        # Establish connection with an instance of Kinetica on port 9191
+        h_db = gpudb.GPUdb(encoding="BINARY", host=args.host, port="9191", 
+                           username=args.username, password=args.password)
     
     # Identify the message queue, running on port 9002
-    table_monitor_queue_url = "tcp://" + args.host + ":9002"
-    tablename = 'examples.table_monitor_history'
+    table_monitor_queue_url = "tcp://" + h_db.get_host() + ":9002"
+    tablename = args.schema + '.table_monitor_history'
 
     # If command line arg is clear, just clear tables and exit
     if (args.command == "clear"):

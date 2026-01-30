@@ -5,11 +5,11 @@ This demonstrates how to work with the Kinetica Python API and handle datetime d
 """
 import os
 
-import gpudb
+import argparse
 from datetime import datetime, timezone
 import random
 import time
-from gpudb import GPUdbTable
+from gpudb import GPUdb, GPUdbTable
 
 # Configuration
 KINETICA_URL = os.getenv("KINETICA_URL", "http://localhost:9191")  # Replace with your Kinetica instance URL
@@ -29,18 +29,18 @@ TABLE_SCHEMA = """[
     ["value", "double"]
 ]"""
 
-def create_kinetica_connection():
+def create_kinetica_connection(url, username, password):
     """Create and return a connection to Kinetica."""
     try:
         # Create connection options
-        options = gpudb.GPUdb.Options()
-        options.username = USERNAME
-        options.password = PASSWORD
+        options = GPUdb.Options()
+        options.username = username
+        options.password = password
 
         # Create connection
-        kdb = gpudb.GPUdb(host=KINETICA_URL, options=options)
+        kdb = GPUdb(host=url, options=options)
 
-        print(f"Connected to Kinetica at {KINETICA_URL}")
+        print(f"Connected to Kinetica at {url}")
         return kdb
 
     except Exception as e:
@@ -243,13 +243,13 @@ def insert_bulk_datetime_data(kdb, num_records=100):
         print(f"Error inserting bulk data: {e}")
         return False
 
-def main():
+def main(url, username, password):
     """Main function to demonstrate datetime insertion."""
     print("Kinetica Python API DateTime Insert Example")
     print("=" * 50)
 
     # Create connection
-    kdb = create_kinetica_connection()
+    kdb = create_kinetica_connection(url, username, password)
     if not kdb:
         return
 
@@ -277,4 +277,13 @@ def main():
     print("\nExample completed successfully!")
 
 if __name__ == "__main__":
-    main()
+
+    # Set up args
+    parser = argparse.ArgumentParser(description='Run insert date/time example.')
+    parser.add_argument('--url', default=KINETICA_URL, help='Kinetica URL to run example against')
+    parser.add_argument('--username', default=USERNAME, help='Username of user to run example with')
+    parser.add_argument('--password', default=PASSWORD, help='Password of user')
+
+    args = parser.parse_args()
+
+    main(args.url, args.username, args.password)

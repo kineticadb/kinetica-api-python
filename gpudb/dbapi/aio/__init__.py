@@ -59,50 +59,9 @@ threadsafety = 1
 paramstyle = "qmark"
 
 
-@overload
-def aconnect(
-    connection_string: str = "kinetica://", *, connect_args: Dict[str, Any] = ...
-) -> AsyncKineticaConnection:
-    """The global method to return an async Kinetica connection
-
-    Example
-    ::
-
-        con = gpudb.aconnect(
-            "kinetica://",
-            connect_args = {
-                "url": "http://localhost:9191",
-                "username": "user",
-                "password": "password",
-                "options": {"bypass_ssl_cert_check": True},
-            }
-        )
-
-
-    Args:
-        connection_string (str): the connection string which must be "kinetica://"
-        connect_args (Dict[str, Any], optional): a mandatory `dict` like
-
-            connect_args={
-                "url": "http://localhost:9191",
-                "username": "user",
-                "password": "password",
-                "options": {"bypass_ssl_cert_check": True},
-            })
-
-            The keys that are valid for the `options` dict within `connect_args` 
-            is the same set that is allowed by the class :class:`GPUDB.Options` 
-            in the module :py:mod:`gpudb`
-
-    Returns:
-        KineticaConnection: an instance of the :class:`AsyncKineticaConnection`
-    """
-    ...
-
-
 def aconnect(
     connection_string: str = "kinetica://",
-    **kwargs: Dict[str, Any],
+    **kwargs: Any,
 ) -> AsyncKineticaConnection:
     """The global method to return an async Kinetica connection
 
@@ -115,7 +74,8 @@ def aconnect(
             url = URL,
             username = USER,
             password = PASS,
-            options = {"bypass_ssl_cert_check": True}
+            default_schema = SCHEMA,
+            options = {"skip_ssl_cert_verification": True}
         )
 
         #  oauth2 authentication
@@ -123,7 +83,7 @@ def aconnect(
             "kinetica://",
             url = URL,
             oauth_token = "token_value",
-            options = {"bypass_ssl_cert_check": True}
+            options = {"skip_ssl_cert_verification": True}
         )
 
     Args:
@@ -143,26 +103,20 @@ def aconnect(
     if connection_string is None or connection_string != "kinetica://":
         raise ProgrammingError("'connection_string' has to be 'kinetica://'")
 
-    connection_args = kwargs.pop("connect_args", None)
-    
-    if connection_args:
-        kwargs |= connection_args
-
-    url, username, password, oauth_token, options = extract_connect_args(
-        kwargs, "url", "username", "password", "oauth_token", "options"
+    url, username, password, oauth_token, default_schema, gpudb_options = extract_connect_args(
+        kwargs, "url", "username", "password", "oauth_token", "default_schema", "options"
     )
 
     if not url or not len(url) > 0:
         raise ProgrammingError("Valid URL not specified ...")
 
-    username = username if username else ""
-    password = password if password else ""
-    oauth_token = oauth_token if oauth_token else ""
+    default_schema = default_schema if default_schema else ""
 
     return AsyncKineticaConnection(
         url=url,
-        username=username,
-        password=password,
-        oauth_token=oauth_token,
-        connection_options=options if options else {},
+        username = username,
+        password = password,
+        oauth_token = oauth_token,
+        default_schema = default_schema,
+        gpudb_options = gpudb_options,
     )

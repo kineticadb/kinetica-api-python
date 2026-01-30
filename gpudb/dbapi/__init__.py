@@ -51,7 +51,7 @@ paramstyle = "qmark"
 
 def connect(
     connection_string: str = "kinetica://",
-    **kwargs: Dict[str, Any],
+    **kwargs: Any,
 ) -> KineticaConnection:
     """The global method to return a Kinetica connection
 
@@ -65,7 +65,7 @@ def connect(
             username = USER,
             password = PASS,
             default_schema = SCHEMA,
-            options = {"bypass_ssl_cert_check": True}
+            options = {"skip_ssl_cert_verification": True}
         )
 
         #  oauth2 authentication
@@ -73,7 +73,7 @@ def connect(
             "kinetica://",
             url = URL,
             oauth_token = "token_value",
-            options = {"bypass_ssl_cert_check": True}
+            options = {"skip_ssl_cert_verification": True}
         )
 
     Args:
@@ -93,28 +93,20 @@ def connect(
     if connection_string is None or connection_string != "kinetica://":
         raise ProgrammingError("'connection_string' has to be 'kinetica://'")
 
-    connection_args = kwargs.pop("connect_args", None)
-    
-    if connection_args:
-        kwargs.update(connection_args)
-
-    url, username, password, default_schema, oauth_token, options = extract_connect_args(
-        kwargs, "url", "username", "password", "default_schema", "oauth_token", "options"
+    url, username, password, oauth_token, default_schema, gpudb_options = extract_connect_args(
+        kwargs, "url", "username", "password", "oauth_token", "default_schema", "options"
     )
 
     if not url or not len(url) > 0:
         raise ProgrammingError("Valid URL not specified ...")
 
-    username = username if username else ""
-    password = password if password else ""
     default_schema = default_schema if default_schema else ""
-    oauth_token = oauth_token if oauth_token else ""
 
     return KineticaConnection(
         url=url,
-        username=username,
-        password=password,
+        username = username,
+        password = password,
+        oauth_token = oauth_token,
         default_schema = default_schema,
-        oauth_token=oauth_token,
-        connection_options=options if options else {},
+        gpudb_options = gpudb_options,
     )

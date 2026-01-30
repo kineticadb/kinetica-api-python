@@ -1,27 +1,30 @@
-import json
 import os
+import argparse
 from typing import Optional
-import gpudb
-from gpudb import GPUdb, GPUdbTable, AttrDict
+
+import json
 import pandas as pd
-from datetime import datetime
+
+from gpudb import GPUdb, GPUdbTable, AttrDict
 
 # Configuration
 KINETICA_URL = os.getenv("KINETICA_URL", "http://localhost:9191")  # Replace with your Kinetica instance URL
 USERNAME = os.getenv("USERNAME", "")  # Replace with your username
 PASSWORD = os.getenv("PASSWORD", "")  # Replace with your password
-TABLE_NAME = "employees"
+TABLE_NAME = "employee"
 
-def connect_to_kinetica() -> Optional[GPUdb]:
+
+
+def connect_to_kinetica(url, username, password) -> Optional[GPUdb]:
     """Establish connection to Kinetica database"""
     try:
         # Create connection options
-        options = gpudb.GPUdb.Options()
-        options.username = USERNAME
-        options.password = PASSWORD
+        options = GPUdb.Options()
+        options.username = username
+        options.password = password
 
         # Connect to Kinetica
-        db = GPUdb(host=KINETICA_URL, options=options)
+        db = GPUdb(host=url, options=options)
 
         print("Connected to Kinetica successfully!")
         return db
@@ -40,7 +43,7 @@ def create_sample_table(db: GPUdb):
         ["id", "int", "primary_key"],
         ["name", "string"],
         ["department", "string"],
-        ["salary", "double", "nullable"],
+        ["salary", "decimal(10,2)", "nullable"],
         ["hire_date", "string"],
         ["is_active", "boolean"]
     ]"""
@@ -63,7 +66,7 @@ def insert_single_record(db: GPUdb, table_name):
             "id": 1,
             "name": "John Doe",
             "department": "Engineering",
-            "salary": None,
+            "salary": 50000.98,
             "hire_date": "2023-01-15",
             "is_active": True
         }
@@ -85,7 +88,7 @@ def insert_multiple_records(db: GPUdb, table_name):
                 "id": 2,
                 "name": "Jane Smith",
                 "department": "Marketing",
-                "salary": 65000.0,
+                "salary": 65000.00,
                 "hire_date": "2023-02-20",
                 "is_active": True
             },
@@ -101,7 +104,7 @@ def insert_multiple_records(db: GPUdb, table_name):
                 "id": 4,
                 "name": "Alice Brown",
                 "department": "Engineering",
-                "salary": 80000.0,
+                "salary": 80000.01,
                 "hire_date": "2023-01-05",
                 "is_active": True
             }
@@ -126,7 +129,7 @@ def insert_from_pandas(db: GPUdb, table_name):
             'id': [5, 6, 7],
             'name': ['Charlie Wilson', 'Diana Prince', 'Eddie Murphy'],
             'department': ['HR', 'Finance', 'IT'],
-            'salary': [60000.0, 70000.0, 85000.0],
+            'salary': [60000.23, 70000.04, 850000.03],
             'hire_date': ['2023-04-01', '2023-05-15', '2023-06-20'],
             'is_active': [True, True, False]
         })
@@ -151,12 +154,12 @@ def insert_with_batch_size(db: GPUdb, table_name, batch_size=1000):
     try:
         # Generate sample data
         large_dataset = []
-        for i in range(8, 5008):  # Generate 5000 records
+        for i in range(8, 58):  # Generate 5000 records
             record = {
                 "id": i,
                 "name": f"Employee_{i}",
                 "department": ["Engineering", "Sales", "Marketing", "HR", "Finance"][i % 5],
-                "salary": 50000.0 + (i * 100),
+                "salary": 1500001.03 + (i * 100),
                 "hire_date": "2023-01-01",
                 "is_active": i % 2 == 0
             }
@@ -188,7 +191,7 @@ def insert_with_options(db: GPUdb, table_name):
                 "id": 10001,
                 "name": "Test User 1",
                 "department": "QA",
-                "salary": 72000.0,
+                "salary": f"{72000.0}",
                 "hire_date": "2023-07-01",
                 "is_active": True
             },
@@ -196,7 +199,7 @@ def insert_with_options(db: GPUdb, table_name):
                 "id": 10002,
                 "name": "Test User 2",
                 "department": "QA",
-                "salary": 74000.0,
+                "salary": f"{74000.0}",
                 "hire_date": "2023-07-15",
                 "is_active": True
             }
@@ -231,14 +234,24 @@ def delete_records(db: GPUdb, table_name):
     response: AttrDict = db.delete(table_name=table_name, expression="id = 10002")
     print(f"Delete response = {response}")
 
+def agg_group_by(db: GPUdb):
+    table_employees = GPUdbTable(_type=None, name=TABLE_NAME, db=db)
+    resp = table_employees.aggregate_group_by(
+            column_names = ["department", "name", "SUM(salary)"],
+            offset = 0,
+            limit = 10,
+            options = {"sort_by": "key"}
+        )  # ["data"]
 
-def main():
+    print(json.dumps(resp, indent = 4))
+
+def main(url, username, password):
     """Main function to demonstrate GPUdb.insert_records usage"""
     print("Kinetica GPUdb.insert_records Data Insert Example")
     print("=" * 55)
 
     # Connect to Kinetica
-    db = connect_to_kinetica()
+    db = connect_to_kinetica(url, username, password)
     if not db:
         return
 
@@ -271,5 +284,21 @@ def main():
 
     delete_records(db, table_name)
 
+    print("\n6. Aggregating data with options using GPUdbTable.aggregate_group_by...")
+    agg_group_by(db)
+
+    print("\n7. Getting data with options using GPUdb.get_records...")
+    resp = db.get_records(table_name=table_name, encoding = 'json', options = {"sort_by": "id"})
+    print(json.dumps(resp["records_json"], indent = 4))
+
 if __name__ == "__main__":
-    main()
+
+    # Set up args
+    parser = argparse.ArgumentParser(description='Run insert/update/delete example.')
+    parser.add_argument('--url', default=KINETICA_URL, help='Kinetica URL to run example against')
+    parser.add_argument('--username', default=USERNAME, help='Username of user to run example with')
+    parser.add_argument('--password', default=PASSWORD, help='Password of user')
+
+    args = parser.parse_args()
+
+    main(args.url, args.username, args.password)

@@ -46,8 +46,8 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
                 username: Optional[str] = None,
                 password: Optional[str] = None,
                 oauth_token: Optional[str] = None,
-                connection_options: Optional[dict] = None,
-                default_schema: Optional[str] = None):
+                default_schema: Optional[str] = None,
+                gpudb_options: Optional[dict] = None):
         """Constructor
         Called by :py:meth:`connect()` in :py:mod:`gpudb.dbapi`
 
@@ -55,42 +55,42 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
             param_style (Optional[str], optional): String constant stating the type of parameter marker formatting
                 expected by the interface. Defaults to ParamStyle.NUMERIC_DOLLAR.
             url (Optional[str], optional): the Kinetica URL; has to be keyword only. Defaults to None.
-            username (Optional[str], optional): the Kinetica username; has to be keyword only. Defaults to None.
-            password (Optional[str], optional): the Kinetica password; has to be keyword only. Defaults to None.
+            username (Optional[str], optional): the Kinetica username. Defaults to None.
+            password (Optional[str], optional): the Kinetica password. Defaults to None.
+            oauth_token (Optional[str], optional): the oauth2 token. Defaults to None.
             default_schema (Optional[str], optional): the Kinetica default schema; has to be keyword only. Defaults to None.
-            oauth_token (Optional[str], optional): the oauth2 token; has to be keyword only. Defaults to None.
-            connection_options (Optional[dict], optional): Defaults to None.  Possible keys are:
-                bypass_ssl_cert_check [True|False] to turn on/off SSL certificate checking and logging_level
-                [ERROR|WARNING|INFO|DEBUG|TRACE] to set the Kinetica Python API log level.
+            gpudb_options (Optional[dict], optional): Defaults to None. Allows all standard GPUdb.Options keys.
 
         Raises:
             ProgrammingError: Raised in case of incorrect parameters passed in
         """
+        self.password = password
+        self.username = username
+        self.oauth_token = oauth_token
         self._closed = False
         self._param_style = param_style
 
         if not url or not len(url) > 0:
             raise ProgrammingError("Server url must be given ...")
-        options = GPUdb.Options()
+        options: GPUdb.Options = GPUdb.Options()
 
-        if username and len(username) > 0:
-            options.username = username
-            options.password = password
+        if gpudb_options:
+            for key, value in gpudb_options.items():
+                is_valid_options_key = hasattr(options, key)
+                if is_valid_options_key:
+                    if key == 'http_headers':
+                        for header_key, header_value in gpudb_options["http_headers"].items():
+                            options.add_http_header(header_key, header_value)
+                    else:
+                        setattr(options, key, value)
+                        if key == 'timeout':
+                            print(f"Warning - The timeout setting supplied ({value} ms) does nothing unless in an async context")
+                else:
+                    raise ValueError(f"Unable to add '{key}' to options - not a standard key")
 
-        if oauth_token and len(oauth_token) > 0:
-            options.oauth_token = oauth_token
-
-        if connection_options:
-            if "bypass_ssl_cert_check" in connection_options:
-                options.skip_ssl_cert_verification = connection_options["bypass_ssl_cert_check"]
-
-            if "logging_level" in connection_options:
-                options.logging_level = connection_options["logging_level"]
-
-            if "http_headers" in connection_options:
-                for header_key, header_value in connection_options["http_headers"].items():
-                    options.add_http_header(header_key, header_value)
-
+        options.username = username
+        options.password = password
+        options.oauth_token = oauth_token
         self._connection = GPUdb(host=url, options=options)
         self._default_schema = default_schema
         if self._default_schema and not self._connection.has_schema(self._default_schema)["schema_exists"]:

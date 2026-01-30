@@ -1,3 +1,4 @@
+import argparse
 import os
 from gpudb.dbapi import *
 
@@ -5,27 +6,27 @@ from gpudb.dbapi import *
 URL = os.getenv('PY_TEST_URL', 'http://localhost:9191')
 USER = os.getenv('PY_TEST_USER', "")
 PASS = os.getenv('PY_TEST_PASS', "")
-SCHEMA = os.getenv('PY_TEST_SCHEMA', 'sync_example')
+SCHEMA = os.getenv('PY_TEST_SCHEMA', 'example_dbapi_sync')
 BYPASS_SSL_CERT_CHECK = os.getenv('PY_TEST_BYPASS_CERT_CHECK', True)
 if BYPASS_SSL_CERT_CHECK in ["1", 1]:
     BYPASS_SSL_CERT_CHECK = True
 
 
-def example_sync():
+def example_sync(url, username, password, schema):
     """Sync calls"""
 
     con1 = connect(
         "kinetica://",
-        connect_args={
-            "url": URL,
-            "username": USER,
-            "password": PASS,
-            "default_schema": SCHEMA,
-            "bypass_ssl_cert_check": BYPASS_SSL_CERT_CHECK,
+        url = url,
+        username = username,
+        password = password,
+        default_schema = schema,
+        options = {
+            "skip_ssl_cert_verification": BYPASS_SSL_CERT_CHECK,
         },
     )
 
-    table_name = f'"{SCHEMA}"."dbapi_example"'
+    table_name = f'"{SCHEMA}"."dbapi_example"' if SCHEMA else "dbapi_example"
 
     create_table = f"""
     CREATE TABLE {table_name}
@@ -35,7 +36,7 @@ def example_sync():
         "s" VARCHAR NOT NULL,
         "f" REAL NOT NULL,
         "l" BIGINT NOT NULL
-    ) using table properties (no_error_if_exists=TRUE)"""
+    ) USING TABLE PROPERTIES (no_error_if_exists = TRUE)"""
 
     con1.execute(create_table)
     # ParamStyle - numeric_dollar
@@ -109,4 +110,14 @@ def example_sync():
 
 
 if __name__ == "__main__":
-    example_sync()
+
+    # Set up args
+    parser = argparse.ArgumentParser(description='Run synchronous DBAPI example.')
+    parser.add_argument('--url', default=URL, help='Kinetica URL to run example against')
+    parser.add_argument('--username', default=USER, help='Username of user to run example with')
+    parser.add_argument('--password', default=PASS, help='Password of user')
+    parser.add_argument('--schema', default=SCHEMA, help='Schema containing test tables')
+
+    args = parser.parse_args()
+
+    example_sync(args.url, args.username, args.password, args.schema)
