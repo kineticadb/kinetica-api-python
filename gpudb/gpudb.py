@@ -2932,29 +2932,30 @@ class _FailbackPollerService:
 
     def __init__(self,
                  db,
-                 options=FailbackOptions.default_options(),
-                 log_level=logging.INFO):
+                 options=FailbackOptions.default_options()):
         """Constructor
 
         Args:
             db (GPUdb): _description_
             options (FailbackOptions, optional): _description_. Defaults to FailbackOptions.default_options().
-            log_level (str, optional): _description_. Defaults to logging.INFO.
         """
 
         if not hasattr(self, "initialized"):
             # Set up the logger for this class
             self.logger = logging.getLogger(self.__class__.__name__)
-            self.logger.setLevel(log_level)
+            self.logger.setLevel(db.logging_level)
 
             if not self.logger.handlers:
                 handler = logging.StreamHandler()
-                formatter = logging.Formatter("[%(filename)s:%(lineno)d - %(name)s.%(funcName)s() ] %(message)s")
+                formatter = logging.Formatter(
+                    fmt = GPUdb._LOG_MESSAGE_FORMAT.replace("%(message)s", "[FailbackPollerService::%(filename)s::%(lineno)d::%(funcName)s] %(message)s"),
+                    datefmt = GPUdb._LOG_DATETIME_FORMAT
+                )
                 handler.setFormatter(formatter)
                 self.logger.addHandler(handler)
 
             self.db: GPUdb = db
-            self.primary_url = self.db.get_primary_host()
+            self.primary_url = self.db.get_primary_url()
             self.polling_interval = options.polling_interval
             self.poller_thread = None
             self.is_running = False
@@ -3022,12 +3023,22 @@ class _FailbackPollerService:
                                     if ha_status == "draining":
                                         self.logger.debug(f"Kinetica running on primary cluster at [{self.primary_url}], but HA queues are still draining")
                                     else:
-                                        self.logger.info(f"Failback to primary cluster at [{self.primary_url}] succeeded")
-                                        kinetica_running = True
+                                        # Ensure query planner is up & running
+                                        try:
+                                            ts = time.time_ns() // 1_000_000
+                                            resp_ts = self.db.query_one(f"SELECT {ts}")[0]
+                                            
+                                            if ts != resp_ts:
+                                                self.logger.warn(f"Kinetica running on primary cluster at [{self.primary_url}], but query check failed to return expected result--instead [{resp_ts}] != [{ts}]")
+                                            else:
+                                                self.logger.info(f"Failback to primary cluster at [{self.primary_url}] succeeded")
+                                                kinetica_running = True
+                                        except Exception as ex:
+                                            self.logger.warn(f"Kinetica running on primary cluster at [{self.primary_url}], but query check failed: [{ex.message}]")
                                 else:
                                     self.logger.warn(f"HA drained status not found in HA status map [{ha_status_map.keys()}] for URL: [{self.primary_url}]")
                             except Exception as ex:
-                                self.logger.warn(f"Could not parse system status block [{ha_status_map_str}] for URL: [{self.primary_url}]")
+                                self.logger.warn(f"Could not parse system status block [{ha_status_map_str}] for URL [{self.primary_url}]: {ex.message}")
                         else:
                             self.logger.warn(f"HA status not found in system status map [{status_map.keys()}] for URL: [{self.primary_url}]")
                     else:
@@ -3204,7 +3215,7 @@ class GPUdb(object):
             opts.disable_failover = True
             db1 = gpudb.GPUdb( host = "http://1.2.3.4:9191",
                                options = opts )
-            opts.primary_host = "http://7.8.9.0:9191"
+            opts.primary_url = "http://7.8.9.0:9191"
             db2 = gpudb.GPUdb( host = "http://1.2.3.4:9191",
                                options = opts )
         """
@@ -3221,6 +3232,7 @@ class GPUdb(object):
         __server_connection_timeout_str          = "_Options__server_connection_timeout"
         __logging_level_str                      = "_Options__logging_level"
         __password_str                           = "_Options__password"
+        __primary_url_str                        = "_Options__primary_url"
         __primary_host_str                       = "_Options__primary_host"
         __protocol_str                           = "_Options__protocol"
         __skip_ssl_cert_verification_str         = "_Options__skip_ssl_cert_verification"
@@ -3240,6 +3252,7 @@ class GPUdb(object):
                                __server_connection_timeout_str,
                                __logging_level_str,
                                __password_str,
+                               __primary_url_str,
                                __primary_host_str,
                                __protocol_str,
                                __skip_ssl_cert_verification_str,
@@ -3280,6 +3293,7 @@ class GPUdb(object):
             self.__server_connection_timeout          = GPUdb._DEFAULT_SERVER_CONNECTION_TIMEOUT
             self.__logging_level                      = None
             self.__password                           = None
+            self.__primary_url                        = None
             self.__primary_host                       = None
             self.__protocol                           = None
             self.__skip_ssl_cert_verification         = False
@@ -3346,6 +3360,7 @@ class GPUdb(object):
                     '_Options__http_headers',
                     '_Options__server_connection_timeout',
                     '_Options__logging_level',
+                    '_Options__primary_url',
                     '_Options__primary_host',
                     '_Options__protocol',
                     '_Options__skip_ssl_cert_verification',
@@ -3390,11 +3405,11 @@ class GPUdb(object):
             # The primary host equivalence is only strict for given hosts;
             # None and empty string are considered to be equivalent to each
             # other
-            if not self.primary_host:
-                if other.primary_host:
+            if not self.primary_url:
+                if other.primary_url:
                     return False
                 # end inner if
-            elif ( self.primary_host != other.primary_host ):
+            elif ( self.primary_url != other.primary_url ):
                 return False
 
             return True
@@ -3416,10 +3431,10 @@ class GPUdb(object):
             result = self.__dict__.copy()
 
             # Special handling of some properties is required
-            if self.primary_host:
-                result[ self.__primary_host_str ] = str(self.primary_host)
+            if self.primary_url:
+                result[ self.__primary_url_str ] = str(self.primary_url)
             else:
-                result[ self.__primary_host_str ] = None
+                result[ self.__primary_url_str ] = None
             # end if
 
             if self.ha_failover_order:
@@ -3988,8 +4003,55 @@ class GPUdb(object):
 
 
         @property
+        def primary_url(self):
+            """Gets the URL of the primary cluster's head node in an HA
+            environment.
+            """
+            return self.__primary_url
+
+
+        @primary_url.setter
+        def primary_url(self, value):
+            """Identifies the primary cluster's head node in an HA environment
+            (by setting the URL).  Can be either a string or a
+            :class:`GPUdb.URL` object.
+            """
+            # Handle none or empty primary URLs
+            if not value:
+                self.__primary_url = ""
+                self.__primary_host = ""
+                return
+            # end if
+
+            if isinstance( value, str ):
+                # Convert the string to a URL object
+                try:
+                    url = GPUdb.URL( value )
+                except GPUdbException as ex:
+                    raise GPUdbException( "Problem parsing string value '{}' for"
+                                          " property 'primary_url' as a URL: {}"
+                                          "".format( value, str(ex) ) )
+            elif isinstance( value, GPUdb.URL ):
+                url = value
+            else:
+                raise GPUdbException( "Property 'primary_url' must be a string"
+                                      " or a GPUdb.URL object; given '{}' type "
+                                      "{}".format( value, str(type(value)) ) )
+            self.__primary_url = url
+            self.__primary_host = url.host
+        # end primary_host setter
+
+
+        @property
         def primary_host(self):
-            """Gets the hostname of the primary cluster of the HA environment."""
+            """Gets the hostname of the primary cluster of the HA environment.
+
+            .. deprecated:: 7.2.3.5
+    
+                The method will be removed in version 8.0.0.0.  Instead of
+                setting the primary host, the primary URL should be set using
+                `GPUdb.Options.primary_url` at `GPUdb` initialization.
+            """
             return self.__primary_host
 
 
@@ -4000,29 +4062,36 @@ class GPUdb(object):
             Can be a fully qualified URL, e.g. "https://1.2.3.4:9191", or just a
             hostname (in which case, it needs to be a string only).  Will save
             the hostname only (if a fully qualified URL is given).
+
+            .. deprecated:: 7.2.3.5
+    
+                The method will be removed in version 8.0.0.0.  Instead of
+                setting the primary host, the primary URL should be set using
+                `GPUdb.Options.primary_url` at `GPUdb` initialization.
             """
             # Handle none or empty primary hosts
             if not value:
                 self.__primary_host = ""
+                self.__primary_url = ""
                 return
             # end if
 
             if isinstance( value, str ):
-                # Convert the string to a URL object and keep the hostname only
+                # Convert the string to a URL object
                 try:
-                    value = GPUdb.URL( value ).host
+                    url = GPUdb.URL( value )
                 except GPUdbException as ex:
                     raise GPUdbException( "Problem parsing string value '{}' for"
                                           " property 'primary_host' as a URL: {}"
                                           "".format( value, str(ex) ) )
             elif isinstance( value, GPUdb.URL ):
-                # Keep the hostname only
-                value = value.host
+                url = value
             else:
                 raise GPUdbException( "Property 'primary_host' must be a string"
                                       " or a GPUdb.URL object; given '{}' type "
                                       "{}".format( value, str(type(value)) ) )
-            self.__primary_host = value
+            self.__primary_host = url.host
+            self.__primary_url = url
         # end primary_host setter
 
 
@@ -5284,7 +5353,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.3.4"
+    api_version = "7.2.3.5"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5310,7 +5379,7 @@ class GPUdb(object):
                 separated string or a list of strings containing head or worker
                 rank URLs of the server clusters.  Must be full and valid URLs.
                 Example: "https://domain.com:port/path/".
-                If only a single URL or host is given, and no *primary_host* is
+                If only a single URL or host is given, and no *primary_url* is
                 explicitly specified via the options, then the given URL will be
                 used as the primary URL.  Default is 'http://127.0.0.1:9191'
                 (implemented internally).
@@ -5420,6 +5489,7 @@ class GPUdb(object):
         self.__password   = self.options.password
         self.__oauth_token = self.options.oauth_token
         self.__logging_level = self.options.logging_level
+        self.__primary_url   = self.options.primary_url
         self.__primary_host  = self.options.primary_host
         self.__protocol      = self.options.protocol
         self.__timeout       = self.options.timeout
@@ -5567,6 +5637,7 @@ class GPUdb(object):
             read=5,
             status_forcelist=[502, 503],
             allowed_methods=["GET", "POST", "PUT"],
+            raise_on_status = False
         )
 
         # High-throughput HTTP adapter configuration
@@ -5975,29 +6046,17 @@ class GPUdb(object):
         url_deque = collections.deque( duplicates_removed_in_order )
 
         # Save the hostname of the primary URL (which could be an empty string)
-        if ( self.primary_host ):
-            try:
-                # If it's a full URL, add it to the queue for processing
-                primary_url = GPUdb.URL( self.primary_host,
-                                         accept_full_urls_only = True )
+        if ( self.options.primary_url ):
+            # Add this URL to the list of URLs to process if it's not
+            # already in it
+            if self.options.primary_url not in duplicates_removed_in_order:
+                self.__log_debug( "Primary URL not in user-given URLs; adding it" )
+                url_deque.append( self.options.primary_url )
+            # end if
 
-                # Add this URL to the list of URLs to process if it's not
-                # already in it
-                if primary_url not in duplicates_removed_in_order:
-                    self.__log_debug( "Primary URL not in user-given URLs; adding it" )
-                    url_deque.append( primary_url )
-                # end if
-
-                # Update the hostname of the primary cluster's URL for
-                # future use (instead of having the full URL)
-                self.__primary_host = primary_url.host
-            except GPUdbException as ex:
-                self.__log_debug( "Problem parsing primary host '{}': {}"
-                                  "".format( str(self.primary_host),
-                                             str(ex) ) )
-                # No-op if it's not a fully qualified URL (e.g. the user
-                # may have only given a hostname)
-            # end try
+            # Update the hostname of the primary cluster's URL for
+            # future use (instead of having the full URL)
+            self.__primary_host = self.options.primary_url.host
         # end if
 
         self.__log_debug( "Consolidated list of {} URLs to process: {}"
@@ -6193,18 +6252,16 @@ class GPUdb(object):
         # Set the primary cluster & head node
         if ( self.__get_ha_ring_size() == 1 ):
 
-            # Mark the single cluster as the primary cluster
-            self.__cluster_info[ 0 ].is_primary_cluster = True
-
             # Update the primary cluster head node hostname, as the original
             # one may have been a worker node
-            original_primary_host = self.primary_host
-            self.__primary_host = self.__cluster_info[ 0 ].head_rank_url.host
+            old_primary_url = self.options.primary_url
+            new_primary_url = self.__cluster_info[ 0 ].head_rank_url
+            self.__primary_host = new_primary_url.host
 
             # Also save it in the options for the future
-            self.options.primary_host = self.primary_host
+            self.options.primary_url = new_primary_url
             self.__log_debug( "Updated primary host name {} -> {} for single-cluster connection"
-                              "".format( original_primary_host, self.primary_host ) )
+                              "".format( old_primary_url, new_primary_url ) )
         else:
             # If the user has not given any primary host AND all the user
             # given URLs belong to a single cluster, set that as the primary
@@ -6217,13 +6274,14 @@ class GPUdb(object):
                     primary_index = cluster_index_for_user_given_urls[0]
 
                     # Save the hostname of the newly identified primary cluster
-                    original_primary_host = self.primary_host
-                    self.__primary_host = self.__cluster_info[ primary_index ].head_rank_url.host
+                    old_primary_url = self.options.primary_url
+                    new_primary_url = self.__cluster_info[ primary_index ].head_rank_url
+                    self.__primary_host = new_primary_url.host
 
                     # Also save it in the options
-                    self.options.primary_host = self.primary_host
+                    self.options.primary_url = new_primary_url
                     self.__log_debug( "Updated primary host name {} -> {} for multi-cluster connection"
-                                      "".format( original_primary_host, self.primary_host ) )
+                                      "".format( old_primary_url, new_primary_url ) )
                 else:
                     self.__log_debug( "Could not update primary host name for multi-cluster connection, as user-given URLs belong to different clusters" )
                 # end innermost if
@@ -7293,6 +7351,12 @@ class GPUdb(object):
         else:
             return url
     # end get_hm_url
+
+
+    def get_primary_url( self ):
+        if self.primary_host:
+            return self.__cluster_info[ 0 ].head_rank_url
+        return None
 
 
     def get_failover_urls( self ):
@@ -9483,8 +9547,7 @@ class GPUdb(object):
 
         # Invoke the fail-back poller here
         if self.__check_failback_conditions():
-            failback_options: FailbackOptions = FailbackOptions.default_options()
-            self.poller_service = _FailbackPollerService(self)
+            self.poller_service = _FailbackPollerService(self, self.options.failback_options)
             self.poller_service.start()
 
         # Haven't circled back to the old URL; so return the new one

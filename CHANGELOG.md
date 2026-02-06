@@ -3,6 +3,24 @@
 ## Version 7.2
 
 
+### Version 7.2.3.5 - 2026-02-05
+
+#### Added
+-   Connection parameter `primary_url` to replace `primary_host`
+-   Surfaced FailbackOptions class, accessible via gpudb.FailbackOptions
+-   Fail-back check to ensure database query planner is up & running
+-   New function to return primary cluster head node URL, for use by fail-back
+    poller; previously, poller would construct the URL from the hostname
+
+#### Changed
+-   Aligned fail-back poller logging level with main connection's logging level
+-   Changed retry mechanism to return error encountered instead of raising a new
+    exception
+
+#### Fixed
+-   Fail-back poller now invoked using user-specified fail-back options
+
+
 ### Version 7.2.3.4 - 2026-01-28
 
 #### Added

@@ -116,9 +116,7 @@ async def example_async(url, username, password, schema):
 
 
 async def main(url, username, password, schema):
-    print(f'{time.ctime()} Hello!')
     await example_async(url, username, password, schema)
-    print(f'{time.ctime()} Goodbye!')
 
 
 if __name__ == '__main__':

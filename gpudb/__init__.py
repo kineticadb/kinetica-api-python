@@ -28,6 +28,7 @@ if (sys.version_info[0] == 3):  # checking the major component
     from gpudb.gpudb import GPUdbTable
     from gpudb.gpudb import GPUdbTableIterator
     from gpudb.gpudb import GPUdbTableOptions
+    from gpudb.gpudb import FailbackOptions
 
     from gpudb.gpudb import AttrDict
     from gpudb.gpudb import _Util
