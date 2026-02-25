@@ -3,6 +3,20 @@
 ## Version 7.2
 
 
+### Version 7.2.3.6 - 2026-02-24
+
+#### Changed
+-   Reduced timeout for checking connectivity to server-known URLs that don't
+    match user-given ones
+-   Default HA fail-over mode is now sequential
+-   Streamlined connection sequence & logging
+-   Updated DBAPI `sqlparse` library to 0.5.4
+-   Updated DBAPI examples
+
+#### Notes
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes
+
+
 ### Version 7.2.3.5 - 2026-02-05
 
 #### Added

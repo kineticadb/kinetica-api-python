@@ -32,7 +32,7 @@ async def example_async(url, username, password, schema):
         },
     )
 
-    table_name = f'"{SCHEMA}"."async_dbapi_example"'
+    table_name = f'"{schema}"."async_dbapi_example"' if schema else "async_dbapi_example"
 
     create_table = f"""
     CREATE TABLE {table_name}

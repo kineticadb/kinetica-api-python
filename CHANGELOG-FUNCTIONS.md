@@ -1,5 +1,9 @@
 # Kinetica REST API Changelog
 
+## Version 7.2.3.9
+#### Added
+-   Added backup and restore support for resource groups.
+
 ## Version 7.2.3.6
 ##### Breaking Changes
 -   Removed ``/update/records/byseries`` endpoint

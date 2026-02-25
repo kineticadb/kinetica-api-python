@@ -3285,7 +3285,7 @@ class GPUdb(object):
             self.__disable_auto_discovery             = False
             self.__disable_failover                   = False
             self.__encoding                           = C._ENCODING_BINARY
-            self.__ha_failover_order                  = GPUdb.HAFailoverOrder.RANDOM
+            self.__ha_failover_order                  = GPUdb.HAFailoverOrder.SEQUENTIAL
             self.__host_manager_port                  = GPUdb._DEFAULT_HOST_MANAGER_PORT
             self.__hostname_regex                     = None
             self.__http_headers                       = {}
@@ -5333,6 +5333,10 @@ class GPUdb(object):
 
     _DEFAULT_SERVER_CONNECTION_TIMEOUT = 5  # in seconds
 
+    # Timeout (in seconds) used for quick connectivity checks (e.g.,
+    # verifying if a head node is reachable).
+    _FAST_CONNECTION_TIMEOUT = 2  # in seconds
+
     # The number of times that the API will attempt to submit a host
     # manager endpoint request.  We need this in case the user chose
     # a bad host manager port.  We don't want to go into an infinite
@@ -5353,7 +5357,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.3.5"
+    api_version = "7.2.3.6"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5646,14 +5650,27 @@ class GPUdb(object):
             pool_block=False,  # Don't block when pool is full, create new connection
         )
 
-        # Set headers
         self.__session.headers.update(self.__custom_http_headers)
 
-        # Mount adapter for both HTTP and HTTPS
         self.__session.mount("http://", self.__adapter)
         self.__session.mount("https://", self.__adapter)
 
         self.__session.verify = not self.skip_ssl_cert_verification
+
+        # Set up a separate HTTP session for fast connectivity checks,
+        # with no automatic retries.
+        self.__session_fast = requests.Session()
+        self.__adapter_fast = HTTPAdapter(
+            max_retries=0,
+            pool_block=False,
+        )
+
+        self.__session_fast.headers.update(self.__custom_http_headers)
+
+        self.__session_fast.mount("http://", self.__adapter_fast)
+        self.__session_fast.mount("https://", self.__adapter_fast)
+
+        self.__session_fast.verify = not self.skip_ssl_cert_verification
 
         logging.getLogger("requests").setLevel(logging.WARNING)
         logging.getLogger("urllib3").setLevel(logging.WARNING)
@@ -5671,6 +5688,9 @@ class GPUdb(object):
 
     def __get_current_http_connection(self):
         return self.__session
+
+    def __get_current_http_fast_connection(self):
+        return self.__session_fast
 
     def __create_authorization_header(self):
         """Set the authentication header for the connection with the following
@@ -6059,15 +6079,13 @@ class GPUdb(object):
             self.__primary_host = self.options.primary_url.host
         # end if
 
-        self.__log_debug( "Consolidated list of {} URLs to process: {}"
-                          "".format( len(url_deque),
-                                     [str(u) for u in list( url_deque )] ) )
+        self.__log_debug( "Consolidated list of {} URLs to process: {}".format( len(url_deque), [str(u) for u in list( url_deque )] ) )
 
         # We will store API-discovered URLs even if we cannot communicate with
         # any server at that address (it might be temporarily down)
         num_user_given_urls = len( url_deque )
         num_processed_urls  = 0
-        is_discovered_url   = False
+        is_user_given_url   = True
 
         # We need to keep track of whether all the user given URLs all belong to
         # the same cluster (for the purpose of primary choosing)
@@ -6077,31 +6095,32 @@ class GPUdb(object):
         while ( url_deque ):
             url     = url_deque.popleft()
             url_str = str( url )
-            self.__log_debug( "Processing URL: {}".format( url_str ) )
-            self.__log_debug( "Remaining {} URL(s): {}"
-                              "".format( len(url_deque),
-                                         [ str(u) for u in list( url_deque ) ] ) )
 
-            # Figure out if this URL is user given or discovered by the API
+            # Figure out if this URL is user-given or discovered by the API
             if (num_processed_urls >= num_user_given_urls):
-                self.__log_debug( "This URL is API-discovered" )
-                is_discovered_url = True
+                is_user_given_url = False
             # end if
             num_processed_urls += 1
+
+            self.__log_debug(
+                    "Processing {} URL: {}; remaining {} URL(s): {}".format(
+                    "user-given" if is_user_given_url else "server-known", url_str, len(url_deque), [ str(u) for u in list( url_deque ) ]
+            ))
 
             # Skip processing this URL if the hostname/IP address is used in
             # any of the known (already registered) clusters
             index_of_hostname_in_ring = self.__get_index_of_cluster_containing_node( url.host )
             if ( index_of_hostname_in_ring != -1 ):
 
-                # Save the fact that this user given URL belongs to an existing
-                # cluster
-                if not is_discovered_url:
-                    self.__log_debug("Skipping user-given URL {} (already found); adding index {} to user-given processed cluster list"
-                                     "".format(url_str, index_of_hostname_in_ring) )
+                # Save that this user given URL belongs to an existing cluster
+                if is_user_given_url:
+                    self.__log_debug(
+                            "Skipping URL {} (already found); adding index {} to user-given processed cluster list".format(
+                            url_str, index_of_hostname_in_ring
+                    ))
                     cluster_index_for_user_given_urls.append( index_of_hostname_in_ring )
                 else:
-                    self.__log_debug("Skipping discovered URL {} (already found)".format( url_str ) )
+                    self.__log_debug("Skipping URL {} (already found)".format( url_str ) )
                 # end if
 
                 continue
@@ -6110,64 +6129,60 @@ class GPUdb(object):
             # Skip auto-discovery of cluster information if the user says so
             if ( self.__disable_auto_discovery ):
 
-                if not is_discovered_url:
-                    self.__log_debug("Skipping connect verification of user-given URL {} (auto-discovery disabled); "
-                                     "adding index {} to user-given processed cluster list"
-                                     "".format(url_str, len(self.__cluster_info)) )
+                if is_user_given_url:
+                    self.__log_debug(
+                            "Skipping connect verification of user-given URL {} (auto-discovery disabled); adding index {} to user-given processed cluster list".format(
+                            url_str, len(self.__cluster_info)
+                    ))
 
                     # Mark this user-given URL as a valid cluster
                     cluster_index_for_user_given_urls.append( len(self.__cluster_info) )
                 else:
-                    self.__log_debug("Skipping connect verification of API-discovered URL {} (auto-discovery disabled)"
-                                     "".format( url_str ) )
+                    self.__log_debug("Skipping connect verification of API-discovered URL {} (auto-discovery disabled)".format( url_str ) )
                 # end if
 
                 # Create a cluster info object with just the given URL and the
                 # host manager port in the option
-                cluster_info = GPUdb.ClusterAddressInfo( url,
-                                                         host_manager_port = self.options.host_manager_port,
-                                                         logging_level = self.log.getEffectiveLevel() )
+                cluster_info = GPUdb.ClusterAddressInfo( url, host_manager_port = self.options.host_manager_port, logging_level = self.log.getEffectiveLevel() )
                 self.__cluster_info.append( cluster_info )
                 self.__log_debug( "Added cluster: {}".format( str(cluster_info) ) )
                 continue # skip to the next URL
             # end if
 
             # Skip processing this URL if Kinetica is not running at this address
-            if not self.__is_system_running( url = url ):
+            # but create the 'ClusterAddressInfo' instance for it. It is not known
+            # at this point in time whether it could come up later or not.
+            if not self.__is_system_running( url = url, quick_check = False ):
 
-                # If this URL has been discovered by the API, then add it to
-                # the cluster list anyway
-                if ( is_discovered_url ):
-                    # Create a cluster info object with just the given URL and the
-                    # host manager port in the option
-                    cluster_info = self.__create_cluster_address_info_with_hm_port( url,
-                                                                                    self.options.host_manager_port )
-                    self.__cluster_info.append( cluster_info )
-                    self.__log_debug( "Added non-running cluster with API-discovered URL: {}".format( str(cluster_info) ) )
-                else:
-                    self.__log_debug( "Skipping non-running user-given URL: {}".format( url_str ) )
-                # end if
+                # Whether this URL has been discovered by the API or given by
+                # the user, add it to the cluster list anyway
+                cluster_info = self.__create_cluster_address_info_with_hm_port( url, self.options.host_manager_port )
+                self.__cluster_info.append( cluster_info )
+
+                self.__log_debug( "Added non-running cluster with {} URL: {}".format( "user-given" if is_user_given_url else "server-known", url_str ) )
+
                 continue
             # end if
 
             # Get system properties of the cluster, if can't get it, skip
             # to the next one
+            sys_props = None
             try:
                 sys_props = self.__get_system_properties( url )
             except GPUdbException as ex:
 
                 # If this URL has been discovered by the API, then add it to
                 # the cluster list anyway
-                if ( is_discovered_url ):
+                if ( is_user_given_url ):
+                    self.__log_debug( "Skipping failed system properties lookup user-given URL: {}".format( url_str ) )
+                else:
                     # Create a cluster info object with just the given URL and the
                     # host manager port in the option
-                    cluster_info = self.__create_cluster_address_info_with_hm_port( url,
-                                                                                    self.options.host_manager_port )
+                    cluster_info = self.__create_cluster_address_info_with_hm_port( url, self.options.host_manager_port )
                     self.__cluster_info.append( cluster_info )
-                    self.__log_debug( "Added failed system properties lookup cluster with API-discovered URL: {}".format( str(cluster_info) ) )
-                else:
-                    self.__log_debug( "Skipping failed system properties lookup user-given URL: {}".format( url_str ) )
+                    self.__log_debug( "Added failed system properties lookup cluster with server-known URL: {}".format( str(cluster_info) ) )
                 # end if
+
                 continue
             # end try
 
@@ -6175,13 +6190,13 @@ class GPUdb(object):
             # (this could fail due to a host name regex mismatch)
             cluster_info = self.__create_cluster_address_info( url, sys_props )
 
-            # We need to evaluate if we should save the user-given addresses
-            if not is_discovered_url:
+            # If this is a user-given URL, verify connectivity to the cluster
+            # it connects to using that cluster's known head rank URL
+            if is_user_given_url:
 
-                # Check if the user-given URL is in the server's list of rank URLs;
-                # if not, the connection may need to be handled differently
-                if not cluster_info.does_cluster_contain_node( url.host ):
-                    self.__log_debug("Obtained cluster addresses do not contain user given URL: {}".format(url_str) )
+                cluster_head_node_url = cluster_info.head_rank_url
+
+                if url != cluster_head_node_url:
 
                     # Check if the server given head node address is reachable.
                     # If so, use that URL instead of the user-given one.
@@ -6190,86 +6205,90 @@ class GPUdb(object):
                     # reprocess the user-given URLs with auto-discovery
                     # disabled, so that the user can issue database commands,
                     # but where multi-head operations will not be available.
-                    if not self.__is_system_running( cluster_info.head_rank_url ):
+                    if not self.__is_system_running( cluster_head_node_url ):
 
-                        self.__log_warn("Disabling auto-discovery & multi-head operations--"
-                                        "cluster reachable with user-given URL <{}> but not with server-known URL <{}>"
-                                        "".format(url_str, cluster_info.head_rank_url))
+                        self.__log_warn(
+                                "Disabling auto-discovery & multi-head operations--cluster reachable with user-given URL <{}> but not with server-known URL <{}>".format(
+                                url_str, cluster_head_node_url
+                        ))
 
                         # Disable auto-discovery and throw exception to reprocess user-given URLs
                         self.__disable_auto_discovery = True
 
-                        raise GPUdbException( "Could not connect to server-known head node address: {} (user given URL: {})"
-                                              .format(cluster_info, url_str) )
+                        raise GPUdbException(
+                                "Could not connect to server-known head node address: {} (user given URL: {})".format(
+                                cluster_info, url_str
+                        ))
                     # end if
+                    
+                    self.__log_debug(
+                            "Verified connectivity with user-given URL {}; adding index {} to user-given processed cluster list".format(
+                            url_str, len(self.__cluster_info)
+                    ))
                 # end if
 
-                self.__log_debug( "Verified connectivity with user-given URL {}; adding index {} to user-given processed cluster list"
-                                  "".format( url_str, len( self.__cluster_info) ) )
                 cluster_index_for_user_given_urls.append( len(self.__cluster_info) )
             # end if
+
 
             self.__cluster_info.append( cluster_info )
 
             self.__log_debug( "Added URL {} -> cluster {}".format( url_str, str(cluster_info) ) )
-            self.__log_debug( "URLs queue after processing this URL (size {}): {}"
-                              "".format( len(url_deque),
-                                         [ str(u) for u in list(url_deque) ] ) )
 
             # Parse the HA ring head nodes in the properties and add them
             # to this queue (only if we haven't processed them already).
             # This could fail due to a hostname regex mismatch.
             ha_ring_head_node_urls = self.__get_ha_ring_head_node_urls( sys_props )
-            self.__log_debug( "Got HA ring head node URLs: {}"
-                              "".format( [ str(u)
-                                           for u in ha_ring_head_node_urls] ) )
+            self.__log_debug( "Got HA ring head node URLs: {}".format( [ str(u) for u in ha_ring_head_node_urls] ) )
             for ha_url in ha_ring_head_node_urls:
                 if ( self.__get_index_of_cluster_containing_node( ha_url.host ) == -1 ):
                     # We have not encountered this cluster yet; add it to the
                     # queue of URLs to process
-                    self.__log_debug( "HA ring head node URL {} not found in known clusters; "
-                                      "adding to queue to process".format(str(ha_url)))
-                    url_deque.append( ha_url )
+                    if ha_url not in url_deque:
+                        url_deque.append( ha_url )
+                        self.__log_debug( "HA ring head node URL {} not found in known clusters; adding to queue to process".format(str(ha_url)))
+                    # end if
                 else:
-                    self.__log_debug( "HA ring head node URL {} found in known clusters; "
-                                      "skipping".format(str(ha_url)))
+                    self.__log_debug( "HA ring head node URL {} found in known clusters; skipping".format(str(ha_url)))
                 # end if
             # end for
 
-            self.__log_debug( "URLs queue after processing this HA ring's head node URLs (size {}: {})"
-                              "".format( len(url_deque),
-                                         [ str(u) for u in list(url_deque) ] ) )
+            self.__log_debug(
+                    "URLs queue after processing this HA ring's head node URLs (size {}: {})".format(
+                    len(url_deque), [ str(u) for u in list(url_deque) ]
+            ))
         # end while
 
         # Check that we have got at least one working URL
         if ( self.__get_ha_ring_size() == 0 ):
-            self.__log_error( "No clusters found at user given URLs {}!"
-                              "".format( urls_str ) )
-            raise GPUdbException( "Could not connect to any working Kinetica server, given URLs: {}"
-                                  "".format( urls_str ) )
+            self.__log_error( "No clusters found at user given URLs {}!".format( urls_str ) )
+            raise GPUdbException( "Could not connect to any working Kinetica server, given URLs: {}".format( urls_str ) )
         # end if
 
         # Set the primary cluster & head node
         if ( self.__get_ha_ring_size() == 1 ):
 
-            # Update the primary cluster head node hostname, as the original
-            # one may have been a worker node
+            # Mark the single cluster as the primary cluster
+            self.__cluster_info[0].is_primary_cluster = True
+
+            # Update the primary cluster head node hostname
             old_primary_url = self.options.primary_url
             new_primary_url = self.__cluster_info[ 0 ].head_rank_url
             self.__primary_host = new_primary_url.host
 
             # Also save it in the options for the future
             self.options.primary_url = new_primary_url
-            self.__log_debug( "Updated primary host name {} -> {} for single-cluster connection"
-                              "".format( old_primary_url, new_primary_url ) )
+            self.__log_debug(
+                    "Updated primary URL {} -> {} for single-cluster connection".format(
+                    old_primary_url, new_primary_url
+            ))
         else:
             # If the user has not given any primary host AND all the user
             # given URLs belong to a single cluster, set that as the primary
             if (not self.primary_host):
 
-                all_urls_in_same_cluster = ( cluster_index_for_user_given_urls.count(
-                    cluster_index_for_user_given_urls[0] )
-                                             == len( cluster_index_for_user_given_urls ) )
+                all_urls_in_same_cluster = (len(cluster_index_for_user_given_urls) == len(set(cluster_index_for_user_given_urls)))
+
                 if all_urls_in_same_cluster:
                     primary_index = cluster_index_for_user_given_urls[0]
 
@@ -6280,8 +6299,10 @@ class GPUdb(object):
 
                     # Also save it in the options
                     self.options.primary_url = new_primary_url
-                    self.__log_debug( "Updated primary host name {} -> {} for multi-cluster connection"
-                                      "".format( old_primary_url, new_primary_url ) )
+                    self.__log_debug(
+                            "Updated primary host name {} -> {} for multi-cluster connection".format(
+                            old_primary_url, new_primary_url
+                    ))
                 else:
                     self.__log_debug( "Could not update primary host name for multi-cluster connection, as user-given URLs belong to different clusters" )
                 # end innermost if
@@ -6292,16 +6313,15 @@ class GPUdb(object):
         # host_addresses
         # ----------------------------------------------------------------------
         if self.primary_host:
+
             # Check if the primary host exists in the list of user given hosts
             primary_index = self.__get_index_of_cluster_containing_node( self.primary_host )
 
-            self.__log_debug( "Checking if the primary cluster is in the ring; index: {}"
-                              "".format( primary_index ) )
+            self.__log_debug( "Checking if the primary cluster is in the ring; index: {}".format(primary_index) )
             if ( primary_index != -1 ):
                 self.__log_debug( "Setting that cluster as primary" )
                 # There is a match; mark the respective cluster as the primary cluster
-                primary_cluster = self.__cluster_info[ primary_index ]
-                primary_cluster.is_primary_cluster = True
+                self.__cluster_info[ primary_index ].is_primary_cluster = True
 
                 if ( primary_index > 0 ):
                     self.__log_debug( "Moving primary cluster to the front of the list" )
@@ -6309,15 +6329,14 @@ class GPUdb(object):
                     #       logic and may end up getting duplicates of the primary URL
 
                     # Move the primary URL to the front of the list
-                    self.__cluster_info.remove( primary_cluster )
-                    self.__cluster_info.insert( 0, primary_cluster )
+                    self.__cluster_info.insert( 0, self.__cluster_info.pop( primary_index ) )
                 # end inner if
+
             else:
                 # Note that if no primary URL is specified by the user, then primary_index
                 # above would be -1; but we need not handle that case since it would be
                 # a no-op
-                self.__log_debug( "Designated primary cluster with host {} not found in cluster list"
-                                  "".format( self.primary_host ) )
+                self.__log_debug( "Designated primary cluster with host {} not found in cluster list".format( self.primary_host ) )
             # end if
         # end if
 
@@ -6410,12 +6429,18 @@ class GPUdb(object):
 
 
 
-    def __get_system_status_information( self, url ):
+    def __get_system_status_information( self, url, quick_check = True ):
         """Given a URL, return the system status information.
 
         Parameters:
             url (:class:`GPUdb.URL`)
                 The URL of the server to get information from.
+
+            quick_check (bool)
+                Whether to perform a shorter connectivity check or not.
+                When True, uses a fast connection timeout with no
+                automatic retries; when False, uses the configured
+                server connection timeout with normal retry handling.
 
         Returns:
             A dict containing the system status
@@ -6427,7 +6452,8 @@ class GPUdb(object):
                                                 {"options": {}},
                                                 url = url,
                                                 timeout = self.__server_connection_timeout,
-                                                convert_to_attr_dict = True )
+                                                convert_to_attr_dict = True,
+                                                quick_check = quick_check )
             if not sys_status.is_ok():
                 raise GPUdbException( "Could not obtain system status: {}"
                                       "".format( sys_status.get_error_msg() ) )
@@ -6464,12 +6490,21 @@ class GPUdb(object):
 
 
 
-    def __is_system_running( self, url = None, sys_status_info = None ):
+    def __is_system_running( self, url = None, sys_status_info = None, quick_check = True ):
         """Given a URL, return whether the server is running at that address.
 
         Parameters:
             url (:class:`GPUdb.URL`)
                 The URL of the server to get information from.
+
+            sys_status_info (dict)
+                Optional pre-fetched system status information.
+
+            quick_check (bool)
+                Whether to perform a shorter connectivity check or not.
+                When True, uses a fast connection timeout with no
+                automatic retries; when False, uses the configured
+                server connection timeout with normal retry handling.
 
         Returns:
             True if the server is running, False otherwise.
@@ -6494,7 +6529,7 @@ class GPUdb(object):
 
         try:
             if sys_status_info is None:
-                sys_status_info = self.__get_system_status_information( url )
+                sys_status_info = self.__get_system_status_information( url, quick_check )
             # end if
 
             # Then look for 'status' and see if it is 'running'
@@ -7991,9 +8026,12 @@ class GPUdb(object):
                              request_schema=None,
                              response_schema=None,
                              convert_to_attr_dict=False,
-                             return_raw_response_too=False):
+                             return_raw_response_too=False,
+                             quick_check=False):
         """Submits an arbitrary request to GPUdb via the specified URL and
-        decodes and returns response.  No failover is handled here.
+        decodes and returns response.
+
+        This function does not handle fail-over events.
 
         Parameters:
             url (GPUdb.URL)
@@ -8042,6 +8080,10 @@ class GPUdb(object):
                 Optional argument.  If True, then return the raw response
                 obtained from the server along with the decoded response.
                 Default is False.
+
+            quick_check (bool)
+                Optional argument.  If True, use the fast HTTP session for the
+                request.  Default is False.
 
         Returns:
             The decoded response object by itself if `return_raw_response_too`
@@ -8114,10 +8156,17 @@ class GPUdb(object):
         # Construct the full URL for the request
         full_url = f"{url.url}{endpoint}"
 
+        # Select the appropriate HTTP session: the fast session (no retries)
+        # for quick connectivity checks, or the normal session otherwise
+        if quick_check:
+            session = self.__get_current_http_fast_connection()
+            timeout = GPUdb._FAST_CONNECTION_TIMEOUT
+        else:
+            session = self.__get_current_http_connection()
+
         try:
-            # Create a client with the appropriate timeout
             # Send the POST request
-            response = self.__get_current_http_connection().post(full_url, headers=headers, data=body_data, timeout=self.timeout)
+            response = session.post(full_url, headers=headers, data=body_data, timeout=timeout)
 
             # Get the response time header if available
             response_time = response.headers.get('x-request-time-secs')
@@ -8239,19 +8288,20 @@ class GPUdb(object):
     def __submit_request_raw_json_without_body( self, url = None, endpoint = None,
                                   timeout = None,
                                   ):
-        """Submits an arbitrary request to GPUdb via the specified URL and
-        decodes and returns response.  This method is called from the `submit_request_json`
-        generally which handles the *HA Failover* and hence failover is not handled here.
-        The main purpose of this method is to execute a request over HTTP/S to a specific
-        URL and send the response back.
+        """Submits an HTTP POST request to the database with the given 'url' and
+        'endpoint' query path and returns the response.
 
+        This function does not handle fail-over events.
+
+        NOTE:  This function's primary use is in support of
+        'get_records_json()'.
+       
         Parameters:
             url (GPUdb.URL)
-                The URL to send the request to
+                The base URL to send the request to.
 
             endpoint (str)
-                The endpoint to use (needed for looking up the appropriate
-                request and response avro schema).
+                The endpoint query path to append to the base url.
 
             timeout (int)
                 Optional argument.  If given, then the positive integer would be
@@ -8260,8 +8310,9 @@ class GPUdb(object):
                 GPUdb object would be used instead.
 
         Returns:
-            The full JSON (str) response returned by the server. The part carrying relevant information
-            about the output of the operation is the 'data' object.
+            The full JSON (str) response returned by the server. The part
+            carrying relevant information about the output of the operation is
+            the 'data' object.
         """
         # Validate the input arguments
         if not isinstance(url, GPUdb.URL):
@@ -8296,6 +8347,10 @@ class GPUdb(object):
                 self.__log_debug(msg)
                 raise GPUdbException(msg)
 
+        # Log the request and the endpoint at the trace level
+        if self.__is_log_level_trace_enabled():
+            self.__log_trace(f"Sending {endpoint} request to {url}")
+
         # Prepare headers
         headers = {
             C._HEADER_CONTENT_TYPE: "application/json",
@@ -8304,8 +8359,6 @@ class GPUdb(object):
         if self.auth:
             headers[C._HEADER_AUTHORIZATION] = self.auth
 
-        # Create the full URL
-        path = "{url_path}{endpoint}".format(url_path=url.path, endpoint=endpoint)
         # Construct the full URL for the request
         full_url = f"{url.url}{endpoint}"
 
@@ -8392,19 +8445,20 @@ class GPUdb(object):
                                   request_body = None,
                                   timeout = None,
                                   ):
-        """Submits an arbitrary request to GPUdb via the specified URL and
-        decodes and returns response.  This method is called from the `submit_request_json`
-        generally which handles the *HA Failover* and hence failover is not handled here.
-        The main purpose of this method is to execute a request over HTTP/S to a specific
-        URL and send the response back.
+        """Submits an HTTP POST request to the database with the given 'url' and
+        'endpoint' query path and returns the response.
 
+        This function does not handle fail-over events.
+
+        NOTE:  This function's primary use is in support of
+        'insert_records_json()'.
+       
         Parameters:
             url (GPUdb.URL)
-                The URL to send the request to
+                The base URL to send the request to.
 
             endpoint (str)
-                The endpoint to use (needed for looking up the appropriate
-                request and response avro schema).
+                The endpoint query path to append to the base url.
 
             request_body (str)
                 The request body that is either a single JSON record or an array of JSON records
@@ -8416,8 +8470,9 @@ class GPUdb(object):
                 GPUdb object would be used instead.
 
         Returns:
-            The full JSON (str) response returned by the server. The part carrying relevant information
-            about the output of the operation is the 'data' object.
+            The full JSON (str) response returned by the server. The part
+            carrying relevant information about the output of the operation is
+            the 'data' object.
         """
         # Validate the input arguments
         if not isinstance(url, GPUdb.URL):
@@ -8560,7 +8615,8 @@ class GPUdb(object):
                           request_schema  = None,
                           response_schema = None,
                           convert_to_attr_dict    = False,
-                          return_raw_response_too = False ):
+                          return_raw_response_too = False,
+                          quick_check = False ):
         """Submits an arbitrary request to the database server and returns
         the response.  If a failover trigger is encountered, then either an
         HA failover occurs (if an HA ring has been set up), or in the case
@@ -8619,6 +8675,10 @@ class GPUdb(object):
                 Optional argument.  If True, then return the raw response
                 obtained from the server along with the decoded response.
                 Default is False.
+
+            quick_check (bool)
+                Optional argument.  If True, use the fast HTTP session that
+                has no automatic retries.  Default is False.
 
         Returns:
             The decoded response object by itself if `return_raw_response_too`
@@ -8683,7 +8743,8 @@ class GPUdb(object):
                                                   request_schema  = request_schema,
                                                   response_schema = response_schema,
                                                   convert_to_attr_dict    = convert_to_attr_dict,
-                                                  return_raw_response_too = return_raw_response_too )
+                                                  return_raw_response_too = return_raw_response_too,
+                                                  quick_check  = quick_check )
             return response
         # end if
 
@@ -8767,18 +8828,24 @@ class GPUdb(object):
                           url = None,
                           timeout = None,
                           ):
-        """Submits an arbitrary request to the database server and returns
-        the response.  If a failover trigger is encountered, then either an
-        HA failover occurs (if an HA ring has been set up), or in the case
-        of a stand-alone cluster, a failover recovery is attempted (which
-        may continue indefinitely, based on relevant options set the by the
-        user).  In the case of a successful failover, the internally cached
-        URL will be updated to point to the new URL being used.
+        """Submits an HTTP POST request to the database with the given
+        'endpoint' query path and returns the response.
+        
+        By default, the path will be appended to the active head node URL and
+        sent to the database; if a fail-over event is triggered, this function
+        will handle failing over to a secondary cluster.
+        
+        If a 'url' is given, the path will be appended to that URL instead and
+        sent to the database; if a fail-over event is triggered, and exception
+        will be raised and it will be the responsibility of the caller to handle
+        any potential failing over to a secondary cluster.
 
+        NOTE:  This function's primary use is in support of
+        'get_records_json()'.
+       
         Parameters:
             endpoint (str)
-                The GPUdb endpoint to send the request to; must be a string.
-                Must be provided.
+                The endpoint query path to send to the database.
 
             url (GPUdb.URL)
                 Optional argument.  If given, this URL would be used to connect
@@ -8793,8 +8860,9 @@ class GPUdb(object):
                 GPUdb object would be used instead.
 
         Returns:
-            The full JSON (str) response returned by the server. The part carrying relevant information
-            about the output of the operation is the 'data' object.
+            The full JSON (str) response returned by the server. The part
+            carrying relevant information about the output of the operation is
+            the 'data' object.
         """
         # Validate input arguments
         if not isinstance( endpoint, str ):
@@ -8921,13 +8989,20 @@ class GPUdb(object):
                           url = None,
                           timeout = None,
                           ):
-        """Submits an arbitrary request to the database server and returns
-        the response.  If a failover trigger is encountered, then either an
-        HA failover occurs (if an HA ring has been set up), or in the case
-        of a stand-alone cluster, a failover recovery is attempted (which
-        may continue indefinitely, based on relevant options set the by the
-        user).  In the case of a successful failover, the internally cached
-        URL will be updated to point to the new URL being used.
+        """Submits an HTTP POST request to the database with the given
+        'endpoint' query path and returns the response.
+        
+        By default, the path will be appended to the active head node URL and
+        sent to the database; if a fail-over event is triggered, this function
+        will handle failing over to a secondary cluster.
+        
+        If a 'url' is given, the path will be appended to that URL instead and
+        sent to the database; if a fail-over event is triggered, and exception
+        will be raised and it will be the responsibility of the caller to handle
+        any potential failing over to a secondary cluster.
+
+        NOTE:  This function's primary use is in support of
+        'insert_records_json()'.
 
         Parameters:
             endpoint (str)
@@ -8950,8 +9025,9 @@ class GPUdb(object):
                 GPUdb object would be used instead.
 
         Returns:
-            The full JSON (str) response returned by the server. The part carrying relevant information
-            about the output of the operation is the 'data' object.
+            The full JSON (str) response returned by the server. The part
+            carrying relevant information about the output of the operation is
+            the 'data' object.
         """
         # Validate input arguments
         if not isinstance( endpoint, str ):
@@ -10437,19 +10513,38 @@ class GPUdb(object):
     # end update
 
     def insert_records_from_json(self, json_records, table_name, json_options = None, create_table_options = None, options = None ):
-        """Method to insert a single JSON record or an array of JSON records passed in as a string.
+        return self.insert_records_json(json_records, table_name, json_options, create_table_options, options)
+
+    def insert_records_json(self, json_records, table_name, json_options = None, create_table_options = None, options = None ):
+        """ Inserts a single JSON record or an array of JSON records passed in
+        as a string.
+
+        If a fail-over event is triggered, this function will handle failing
+        over to a secondary cluster.
 
         Parameters:
-            json_records (str) : Either a single JSON record or an array of JSON records (as string). Mandatory.
+            json_records (str) : Either a single JSON record or an array of JSON
+                records (as string). Mandatory.
             table_name (str) : The name of the table to insert into.
-            json_options (dict) : Only valid option is *validate* which could be True or False
-            create_table_options (dict) : Same options as the *create_table_options* in :meth:`GPUdb.insert_records_from_payload` endpoint
-            options (dict) : Same options as *options* in :meth:`GPUdb.insert_records_from_payload` endpoint
+            json_options (dict) : Map of options--only valid one is *validate*,
+                which determines whether JSON validation is performed on all
+                records before inserting
+            create_table_options (dict) : Same options as the
+                *create_table_options* in the
+                :meth:`GPUdb.insert_records_from_payload` endpoint
+            options (dict) : Same options as *options* in the
+                :meth:`GPUdb.insert_records_from_payload` endpoint
+
+        Returns:
+            The response string (JSON)
+
+        Raises:
+            GPUdbException: On detecting invalid parameters or some other internal errors
 
         Example
         ::
 
-            response = gpudb.insert_records_from_json(records, "test_insert_records_json", json_options={'validate': True}, create_table_options={'truncate_table': 'true'})
+            response = gpudb.insert_records_json(records, "test_insert_records_json", json_options={'validate': True}, create_table_options={'truncate_table': 'true'})
             response_object = json.loads(response)
             print(response_object['data']['count_inserted'])
 
@@ -10488,15 +10583,18 @@ class GPUdb(object):
 
 
     def get_records_json(self, table_name, column_names = None, offset = 0, limit = -9999, expression = None, orderby_columns = None, having_clause = None):
-        """ This method is used to retrieve records from a Kinetica table in the form of
-        a JSON array (stringified). The only mandatory parameter is the 'tableName'.
+        """ Retrieves records from a table in the form of a JSON array
+        (stringified). The only mandatory parameter is the 'tableName'.
         The rest are all optional with suitable defaults wherever applicable.
 
+        If a fail-over event is triggered, this function will handle failing
+        over to a secondary cluster.
+
         Parameters:
-            table_name (str): Name of the table
-            column_names (list): the columns names to retrieve
-            offset (int): the offset to start from - default 0
-            limit (int): the maximum number of records - default GPUdb.END_OF_SET
+            table_name (str): Name of the table to query
+            column_names (list): the columns names to retrieve, or None for all
+            offset (int): the offset to start from; default 0
+            limit (int): the maximum number of records; default GPUdb.END_OF_SET
             expression (str): the filter expression
             orderby_columns (list): the list of columns to order by
             having_clause (str): the having clause
@@ -19491,7 +19589,7 @@ class GPUdb(object):
                 * **cancel_datasource_subscription** --
                   Permanently unsubscribe a data source that is loading
                   continuously as a stream. The data source can be Kafka / S3 /
-                  Azure.
+                  Azure / GCS.
 
                 * **drop_datasource_subscription** --
                   Permanently delete a cancelled data source subscription.
@@ -19499,11 +19597,11 @@ class GPUdb(object):
                 * **pause_datasource_subscription** --
                   Temporarily unsubscribe a data source that is loading
                   continuously as a stream. The data source can be Kafka / S3 /
-                  Azure.
+                  Azure / GCS.
 
                 * **resume_datasource_subscription** --
                   Resubscribe to a paused data source subscription. The data
-                  source can be Kafka / S3 / Azure.
+                  source can be Kafka / S3 / Azure / GCS.
 
                 * **change_owner** --
                   Change the owner resource group of the table.
@@ -20686,8 +20784,8 @@ class GPUdb(object):
 
     # begin create_backup
     def create_backup( self, backup_name = None, backup_type = None,
-                       backup_objects_map = None, datasink_name = None, options
-                       = {} ):
+                       backup_objects_map = {}, datasink_name = None, options =
+                       {} ):
         """Creates a database `backup
         <../../../../admin/backup_restore/#database-backup>`__, containing a
         snapshot of existing objects, at the remote file store accessible via
@@ -20760,15 +20858,11 @@ class GPUdb(object):
                   members (roles or users, recursively), and associated
                   permissions.
 
-                * **configuration** --
-                  If *true*, backup the database `configuration file
-                  <../../../../config/>`__.
-                  Allowed values are:
+                * **resource_group** --
+                  `Resource group(s)
+                  <../../../../rm/concepts/#resource-groups>`__.
 
-                  * true
-                  * false
-
-                  The default value is 'false'.
+                The default value is an empty dict ( {} ).
 
             datasink_name (str)
                 Data sink through which the backup will be stored.
@@ -21014,6 +21108,7 @@ class GPUdb(object):
                 * kafka
                 * nvidia_api_key
                 * openai_api_key
+                * rest
 
             identity (str)
                 User of the credential to be created.
@@ -35614,7 +35709,7 @@ class GPUdb(object):
                   <../../../../concepts/schemas/>`__.
 
                 * **table** --
-                  `Tables(s) <../../../../concepts/tables/>`__ and `SQL view(s)
+                  `Table(s) <../../../../concepts/tables/>`__ and `SQL view(s)
                   <../../../../sql/ddl/#create-view>`__.
 
                 * **credential** --
@@ -35647,15 +35742,9 @@ class GPUdb(object):
                   members (roles or users, recursively), and associated
                   permissions.
 
-                * **configuration** --
-                  If *true*, restore the database `configuration file
-                  <../../../../config/>`__.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
+                * **resource_group** --
+                  `Resource group(s)
+                  <../../../../rm/concepts/#resource-groups>`__.
 
             datasource_name (str)
                 Data source through which the backup will be restored.
@@ -35684,7 +35773,8 @@ class GPUdb(object):
                   * **rename** --
                     If an object to be restored already exists with the same
                     name, move that existing one to the schema specified by
-                    *renamed_objects_schema*.
+                    *renamed_objects_schema*. This policy does not apply to
+                    non-schema ojects.
 
                   The default value is 'none'.
 
@@ -42594,9 +42684,6 @@ class GPUdbTable( object ):
         This operation supports paging through the data via the input parameter
         *offset* and input parameter *limit* parameters.
 
-        Note that when using the Java API, it is not possible to retrieve
-        records from join tables using this operation.
-
         Parameters:
 
             offset (long)
@@ -45085,7 +45172,7 @@ class GPUdbTable( object ):
                 * **cancel_datasource_subscription** --
                   Permanently unsubscribe a data source that is loading
                   continuously as a stream. The data source can be Kafka / S3 /
-                  Azure.
+                  Azure / GCS.
 
                 * **drop_datasource_subscription** --
                   Permanently delete a cancelled data source subscription.
@@ -45093,11 +45180,11 @@ class GPUdbTable( object ):
                 * **pause_datasource_subscription** --
                   Temporarily unsubscribe a data source that is loading
                   continuously as a stream. The data source can be Kafka / S3 /
-                  Azure.
+                  Azure / GCS.
 
                 * **resume_datasource_subscription** --
                   Resubscribe to a paused data source subscription. The data
-                  source can be Kafka / S3 / Azure.
+                  source can be Kafka / S3 / Azure / GCS.
 
                 * **change_owner** --
                   Change the owner resource group of the table.

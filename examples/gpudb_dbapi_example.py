@@ -26,7 +26,7 @@ def example_sync(url, username, password, schema):
         },
     )
 
-    table_name = f'"{SCHEMA}"."dbapi_example"' if SCHEMA else "dbapi_example"
+    table_name = f'"{schema}"."dbapi_example"' if schema else "dbapi_example"
 
     create_table = f"""
     CREATE TABLE {table_name}
