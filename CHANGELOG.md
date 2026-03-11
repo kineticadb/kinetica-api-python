@@ -3,6 +3,12 @@
 ## Version 7.2
 
 
+### Version 7.2.3.7 - 2026-03-11
+
+#### Added
+-   Support for Python 3.14
+
+
 ### Version 7.2.3.6 - 2026-02-24
 
 #### Changed

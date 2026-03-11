@@ -5357,7 +5357,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.3.6"
+    api_version = "7.2.3.7"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -15435,9 +15435,7 @@ class GPUdb(object):
 
         Any column(s) can be grouped on, and all column types except
         unrestricted-length strings may be used for computing applicable
-        aggregates; columns marked as `store-only
-        <../../../../concepts/types/#data-handling>`__ are unable to be used in
-        grouping or aggregation.
+        aggregates.
 
         The results can be paged via the input parameter *offset* and input
         parameter *limit* parameters. For example, to get 10 groups with the
@@ -15828,9 +15826,7 @@ class GPUdb(object):
 
         Any column(s) can be grouped on, and all column types except
         unrestricted-length strings may be used for computing applicable
-        aggregates; columns marked as `store-only
-        <../../../../concepts/types/#data-handling>`__ are unable to be used in
-        grouping or aggregation.
+        aggregates.
 
         The results can be paged via the input parameter *offset* and input
         parameter *limit* parameters. For example, to get 10 groups with the
@@ -16904,14 +16900,8 @@ class GPUdb(object):
         *json_encoded_response*.  The results can be paged via input parameter
         *offset* and input parameter *limit* parameters.
 
-        Columns marked as `store-only
-        <../../../../concepts/types/#data-handling>`__ are unable to be used
-        with this function.
 
-        To get the first 10 unique values sorted in descending order input
-        parameter *options* would be::
-
-            {"limit":"10","sort_order":"descending"}
+        {"limit":"10","sort_order":"descending"}
 
         The response is returned as a dynamic schema. For details see: `dynamic
         schemas documentation <../../../../api/concepts/#dynamic-schemas>`__.
@@ -17174,14 +17164,8 @@ class GPUdb(object):
         *json_encoded_response*.  The results can be paged via input parameter
         *offset* and input parameter *limit* parameters.
 
-        Columns marked as `store-only
-        <../../../../concepts/types/#data-handling>`__ are unable to be used
-        with this function.
 
-        To get the first 10 unique values sorted in descending order input
-        parameter *options* would be::
-
-            {"limit":"10","sort_order":"descending"}
+        {"limit":"10","sort_order":"descending"}
 
         The response is returned as a dynamic schema. For details see: `dynamic
         schemas documentation <../../../../api/concepts/#dynamic-schemas>`__.
@@ -19976,16 +19960,7 @@ class GPUdb(object):
                   The default value is an empty dict ( {} ).
 
             options (dict of str to str)
-                Optional parameters.
-                Allowed keys are:
-
-                * **reason** --
-                  [Developer option] Additional information about this update
-
-                * **log_level** --
-                  [Developer option] Log level
-
-                The default value is an empty dict ( {} ).
+                Optional parameters. The default value is an empty dict ( {} ).
 
         Returns:
             A dict with the following entries--
@@ -20803,16 +20778,16 @@ class GPUdb(object):
                 Type of snapshot to create.
                 Allowed values are:
 
-                * **incremental** --
-                  Snapshot of changes in the database objects and data since
-                  the last snapshot of any kind.
-
                 * **differential** --
                   Snapshot of changes in the database objects and data since
                   the last full snapshot.
 
                 * **full** --
                   Snapshot of the given database objects and data.
+
+                * **incremental** --
+                  Snapshot of changes in the database objects and data since
+                  the last snapshot of any kind.
 
             backup_objects_map (dict of str to str)
                 Map of objects to be captured in the backup; must be specified
@@ -20821,19 +20796,15 @@ class GPUdb(object):
                 Allowed keys are:
 
                 * **all** --
-                  All object types and data contained in the given `schemas(s)
+                  All object types and data contained in the given `schema(s)
                   <../../../../concepts/schemas/>`__.
-
-                * **table** --
-                  `Tables(s) <../../../../concepts/tables/>`__ and `SQL view(s)
-                  <../../../../sql/ddl/#create-view>`__.
-
-                * **credential** --
-                  `Credential(s) <../../../../concepts/credentials/>`__.
 
                 * **context** --
                   `Context(s)
                   <../../../../sql-gpt/concepts/#sql-gpt-context>`__.
+
+                * **credential** --
+                  `Credential(s) <../../../../concepts/credentials/>`__.
 
                 * **datasink** --
                   `Data sink(s) <../../../../concepts/data_sinks/>`__.
@@ -20841,26 +20812,37 @@ class GPUdb(object):
                 * **datasource** --
                   `Data source(s) <../../../../concepts/data_sources/>`__.
 
-                * **stored_procedure** --
-                  `SQL procedure(s) <../../../../sql/procedure/>`__.
+                * **function_environment** --
+                  `Python UDF function environment(s)
+                  <../../../../udf/python/writing/#udf-python-func-env>`__.
 
                 * **monitor** --
                   `Table monitor(s) <../../../../concepts/table_monitors/>`__ /
                   `SQL stream(s) <../../../../sql/ddl/#create-stream>`__.
 
-                * **user** --
-                  `User(s)
-                  <../../../../security/sec_concepts/#security-concepts-users>`__
-                  (internal and external) and associated permissions.
+                * **resource_group** --
+                  `Resource group(s)
+                  <../../../../rm/concepts/#resource-groups>`__.
 
                 * **role** --
                   `Role(s) <../../../../security/sec_concepts/#roles>`__, role
                   members (roles or users, recursively), and associated
                   permissions.
 
-                * **resource_group** --
-                  `Resource group(s)
-                  <../../../../rm/concepts/#resource-groups>`__.
+                * **stored_procedure** --
+                  `SQL procedure(s) <../../../../sql/procedure/>`__.
+
+                * **table** --
+                  `Table(s) <../../../../concepts/tables/>`__ and `SQL view(s)
+                  <../../../../sql/ddl/#create-view>`__.
+
+                * **user** --
+                  `User(s)
+                  <../../../../security/sec_concepts/#security-concepts-users>`__
+                  (internal and external) and associated permissions.
+
+                * **user_defined_function** --
+                  `UDF(s) <../../../../udf_overview>`__.
 
                 The default value is an empty dict ( {} ).
 
@@ -20871,9 +20853,6 @@ class GPUdb(object):
                 Optional parameters.
                 Allowed keys are:
 
-                * **comment** --
-                  Comments to store with this backup.
-
                 * **checksum** --
                   Whether or not to calculate checksums for backup files.
                   Allowed values are:
@@ -20882,6 +20861,9 @@ class GPUdb(object):
                   * false
 
                   The default value is 'false'.
+
+                * **comment** --
+                  Comments to store with this backup.
 
                 * **ddl_only** --
                   Whether or not, for tables, to only backup DDL and not table
@@ -20896,10 +20878,6 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-                * **max_incremental_backups_to_keep** --
-                  Maximum number of incremental snapshots to keep. The default
-                  value is '-1'.
-
                 * **delete_intermediate_backups** --
                   Whether or not to delete any intermediate snapshots when the
                   input parameter *backup_type* is set to *differential*.
@@ -20910,9 +20888,8 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-                * **recreate** --
-                  Whether or not to replace an existing backup object with a
-                  new backup with a full snapshot, if one already exists.
+                * **dry_run** --
+                  Whether or not to perform a dry run of a backup operation.
                   Allowed values are:
 
                   * true
@@ -20920,8 +20897,13 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-                * **dry_run** --
-                  Whether or not to perform a dry run of a backup operation.
+                * **max_incremental_backups_to_keep** --
+                  Maximum number of incremental snapshots to keep. The default
+                  value is '-1'.
+
+                * **recreate** --
+                  Whether or not to replace an existing backup object with a
+                  new backup with a full snapshot, if one already exists.
                   Allowed values are:
 
                   * true
@@ -24256,8 +24238,8 @@ class GPUdb(object):
                   persisted in this table when the stream is resumed. The table
                   has the following columns: rank (long), job_id (long), uuid
                   (uuid), timestamp (timestamp), error_msg (string), payload
-                  (bytes). Leave the this option empty to disable persisting
-                  failed notification events.
+                  (bytes). Leave this option empty to disable persisting failed
+                  notification events.
 
                 * **destination** --
                   Destination for the output data in format
@@ -24880,27 +24862,18 @@ class GPUdb(object):
         The following merges are supported:
 
         UNION (DISTINCT/ALL) - For data set union details and examples, see
-        `Union <../../../../concepts/unions/>`__.  For limitations, see `Union
+        `Union <../../../../concepts/unions/>`__. For limitations, see `Union
         Limitations and Cautions
         <../../../../concepts/unions/#limitations-and-cautions>`__.
 
         INTERSECT (DISTINCT/ALL) - For data set intersection details and
-        examples, see `Intersect <../../../../concepts/intersect/>`__.  For
+        examples, see `Intersect <../../../../concepts/intersect/>`__. For
         limitations, see `Intersect Limitations
         <../../../../concepts/intersect/#limitations>`__.
 
         EXCEPT (DISTINCT/ALL) - For data set subtraction details and examples,
-        see `Except <../../../../concepts/except/>`__.  For limitations, see
+        see `Except <../../../../concepts/except/>`__. For limitations, see
         `Except Limitations <../../../../concepts/except/#limitations>`__.
-
-        MERGE VIEWS - For a given set of `filtered views
-        <../../../../concepts/filtered_views/>`__ on a single table, creates a
-        single filtered view containing all of the unique records across all of
-        the given filtered data sets.
-
-        Non-charN 'string' and 'bytes' column types cannot be merged, nor can
-        columns marked as `store-only
-        <../../../../concepts/types/#data-handling>`__.
 
         Parameters:
 
@@ -24988,11 +24961,6 @@ class GPUdb(object):
                     of the specified tables (only works on 2 tables).
 
                   The default value is 'union_all'.
-
-                * **long_hash** --
-                  When true use 128 bit hash for union-distinct, except,
-                  except_all, intersect and intersect_all modes. Otherwise use
-                  64 bit hash.
 
                 * **chunk_size** --
                   Indicates the number of records per chunk to be used for this
@@ -35705,19 +35673,15 @@ class GPUdb(object):
                 Allowed keys are:
 
                 * **all** --
-                  All object types and data contained in the given `schemas(s)
+                  All object types and data contained in the given `schema(s)
                   <../../../../concepts/schemas/>`__.
-
-                * **table** --
-                  `Table(s) <../../../../concepts/tables/>`__ and `SQL view(s)
-                  <../../../../sql/ddl/#create-view>`__.
-
-                * **credential** --
-                  `Credential(s) <../../../../concepts/credentials/>`__.
 
                 * **context** --
                   `Context(s)
                   <../../../../sql-gpt/concepts/#sql-gpt-context>`__.
+
+                * **credential** --
+                  `Credential(s) <../../../../concepts/credentials/>`__.
 
                 * **datasink** --
                   `Data sink(s) <../../../../concepts/data_sinks/>`__.
@@ -35725,26 +35689,37 @@ class GPUdb(object):
                 * **datasource** --
                   `Data source(s) <../../../../concepts/data_sources/>`__.
 
-                * **stored_procedure** --
-                  `SQL procedure(s) <../../../../sql/procedure/>`__.
+                * **function_environment** --
+                  `Python UDF function environment(s)
+                  <../../../../udf/python/writing/#udf-python-func-env>`__.
 
                 * **monitor** --
                   `Table monitor(s) <../../../../concepts/table_monitors/>`__ /
                   `SQL stream(s) <../../../../sql/ddl/#create-stream>`__.
 
-                * **user** --
-                  `User(s)
-                  <../../../../security/sec_concepts/#security-concepts-users>`__
-                  (internal and external) and associated permissions.
+                * **resource_group** --
+                  `Resource group(s)
+                  <../../../../rm/concepts/#resource-groups>`__.
 
                 * **role** --
                   `Role(s) <../../../../security/sec_concepts/#roles>`__, role
                   members (roles or users, recursively), and associated
                   permissions.
 
-                * **resource_group** --
-                  `Resource group(s)
-                  <../../../../rm/concepts/#resource-groups>`__.
+                * **stored_procedure** --
+                  `SQL procedure(s) <../../../../sql/procedure/>`__.
+
+                * **table** --
+                  `Table(s) <../../../../concepts/tables/>`__ and `SQL view(s)
+                  <../../../../sql/ddl/#create-view>`__.
+
+                * **user** --
+                  `User(s)
+                  <../../../../security/sec_concepts/#security-concepts-users>`__
+                  (internal and external) and associated permissions.
+
+                * **user_defined_function** --
+                  `UDF(s) <../../../../udf_overview>`__.
 
             datasource_name (str)
                 Data source through which the backup will be restored.
@@ -35756,6 +35731,72 @@ class GPUdb(object):
                 * **backup_id** --
                   ID of the snapshot to restore. Leave empty to restore the
                   most recent snapshot in the backup. The default value is ''.
+
+                * **checksum** --
+                  Whether or not to verify checksums for backup files when
+                  restoring.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **create_schema_if_not_exist** --
+                  Behavior to apply when the schema containing any database
+                  object to restore does not already exist.
+                  Allowed values are:
+
+                  * **true** --
+                    If the schema containing any restored object does not
+                    exist, create it automatically.
+
+                  * **false** --
+                    If the schema containing any restored object does not
+                    exist, return an error.
+
+                  The default value is 'true'.
+
+                * **ddl_only** --
+                  Behavior to apply when restoring tables.
+                  Allowed values are:
+
+                  * **true** --
+                    Restore table DDL, but do not restore data.
+
+                  * **false** --
+                    Restore tables and their data.
+
+                  The default value is 'false'.
+
+                * **dry_run** --
+                  Whether or not to perform a dry run of the restoration
+                  operation.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **reingest** --
+                  Behavior to apply when restoring table data.
+                  Allowed values are:
+
+                  * **true** --
+                    Restore table data by re-ingesting it.  This is the default
+                    behavior if the cluster topology differs from that of the
+                    contained backup.
+
+                  * **false** --
+                    Restore the persisted data files directly.
+
+                  The default value is 'false'.
+
+                * **renamed_objects_schema** --
+                  If the *restore_policy* is *rename*, use this schema for
+                  relocated existing objects instead of the default generated
+                  one. The default value is ''.
 
                 * **restore_policy** --
                   Behavior to apply when any database object to restore already
@@ -35774,75 +35815,9 @@ class GPUdb(object):
                     If an object to be restored already exists with the same
                     name, move that existing one to the schema specified by
                     *renamed_objects_schema*. This policy does not apply to
-                    non-schema ojects.
+                    non-schema objects.
 
                   The default value is 'none'.
-
-                * **renamed_objects_schema** --
-                  If the *restore_policy* is *rename*, use this schema for
-                  relocated existing objects instead of the default generated
-                  one. The default value is ''.
-
-                * **create_schema_if_not_exist** --
-                  Behavior to apply when the schema containing any database
-                  object to restore does not already exist.
-                  Allowed values are:
-
-                  * **true** --
-                    If the schema containing any restored object does not
-                    exist, create it automatically.
-
-                  * **false** --
-                    If the schema containing any restored object does not
-                    exist, return an error.
-
-                  The default value is 'true'.
-
-                * **reingest** --
-                  Behavior to apply when restoring table data.
-                  Allowed values are:
-
-                  * **true** --
-                    Restore table data by re-ingesting it.  This is the default
-                    behavior if the cluster topology differs from that of the
-                    contained backup.
-
-                  * **false** --
-                    Restore the persisted data files directly.
-
-                  The default value is 'false'.
-
-                * **ddl_only** --
-                  Behavior to apply when restoring tables.
-                  Allowed values are:
-
-                  * **true** --
-                    Restore table DDL, but do not restore data.
-
-                  * **false** --
-                    Restore tables and their data.
-
-                  The default value is 'false'.
-
-                * **checksum** --
-                  Whether or not to verify checksums for backup files when
-                  restoring.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
-                * **dry_run** --
-                  Whether or not to perform a dry run of the restoration
-                  operation.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
 
                 The default value is an empty dict ( {} ).
 
@@ -38003,7 +37978,8 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **referencing_materialized_views** --
-                  Include view dependents in the output.
+                  Include materialized views using this table as a source in
+                  the output.
                   Allowed values are:
 
                   * true
@@ -43130,27 +43106,18 @@ class GPUdbTable( object ):
         The following merges are supported:
 
         UNION (DISTINCT/ALL) - For data set union details and examples, see
-        `Union <../../../../concepts/unions/>`__.  For limitations, see `Union
+        `Union <../../../../concepts/unions/>`__. For limitations, see `Union
         Limitations and Cautions
         <../../../../concepts/unions/#limitations-and-cautions>`__.
 
         INTERSECT (DISTINCT/ALL) - For data set intersection details and
-        examples, see `Intersect <../../../../concepts/intersect/>`__.  For
+        examples, see `Intersect <../../../../concepts/intersect/>`__. For
         limitations, see `Intersect Limitations
         <../../../../concepts/intersect/#limitations>`__.
 
         EXCEPT (DISTINCT/ALL) - For data set subtraction details and examples,
-        see `Except <../../../../concepts/except/>`__.  For limitations, see
+        see `Except <../../../../concepts/except/>`__. For limitations, see
         `Except Limitations <../../../../concepts/except/#limitations>`__.
-
-        MERGE VIEWS - For a given set of `filtered views
-        <../../../../concepts/filtered_views/>`__ on a single table, creates a
-        single filtered view containing all of the unique records across all of
-        the given filtered data sets.
-
-        Non-charN 'string' and 'bytes' column types cannot be merged, nor can
-        columns marked as `store-only
-        <../../../../concepts/types/#data-handling>`__.
 
         Parameters:
 
@@ -43238,11 +43205,6 @@ class GPUdbTable( object ):
                     of the specified tables (only works on 2 tables).
 
                   The default value is 'union_all'.
-
-                * **long_hash** --
-                  When true use 128 bit hash for union-distinct, except,
-                  except_all, intersect and intersect_all modes. Otherwise use
-                  64 bit hash.
 
                 * **chunk_size** --
                   Indicates the number of records per chunk to be used for this
@@ -43411,9 +43373,7 @@ class GPUdbTable( object ):
 
         Any column(s) can be grouped on, and all column types except
         unrestricted-length strings may be used for computing applicable
-        aggregates; columns marked as `store-only
-        <../../../../concepts/types/#data-handling>`__ are unable to be used in
-        grouping or aggregation.
+        aggregates.
 
         The results can be paged via the input parameter *offset* and input
         parameter *limit* parameters. For example, to get 10 groups with the
@@ -44400,14 +44360,8 @@ class GPUdbTable( object ):
         *json_encoded_response*.  The results can be paged via input parameter
         *offset* and input parameter *limit* parameters.
 
-        Columns marked as `store-only
-        <../../../../concepts/types/#data-handling>`__ are unable to be used
-        with this function.
 
-        To get the first 10 unique values sorted in descending order input
-        parameter *options* would be::
-
-            {"limit":"10","sort_order":"descending"}
+        {"limit":"10","sort_order":"descending"}
 
         The response is returned as a dynamic schema. For details see: `dynamic
         schemas documentation <../../../../api/concepts/#dynamic-schemas>`__.
@@ -46105,8 +46059,8 @@ class GPUdbTable( object ):
                   persisted in this table when the stream is resumed. The table
                   has the following columns: rank (long), job_id (long), uuid
                   (uuid), timestamp (timestamp), error_msg (string), payload
-                  (bytes). Leave the this option empty to disable persisting
-                  failed notification events.
+                  (bytes). Leave this option empty to disable persisting failed
+                  notification events.
 
                 * **destination** --
                   Destination for the output data in format
@@ -47846,7 +47800,8 @@ class GPUdbTable( object ):
                   The default value is 'false'.
 
                 * **referencing_materialized_views** --
-                  Include view dependents in the output.
+                  Include materialized views using this table as a source in
+                  the output.
                   Allowed values are:
 
                   * true

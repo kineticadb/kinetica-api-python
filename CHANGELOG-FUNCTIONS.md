@@ -2,7 +2,7 @@
 
 ## Version 7.2.3.9
 #### Added
--   Added backup and restore support for resource groups.
+-   Added backup and restore support for resource groups, user defined functions and function environments.
 
 ## Version 7.2.3.6
 ##### Breaking Changes
