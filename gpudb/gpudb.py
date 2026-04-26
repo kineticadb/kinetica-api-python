@@ -3140,6 +3140,56 @@ class GPUdb(object):
         C._HEADER_HA_SYNC_MODE
     ]
 
+    # HTTP response codes that trigger failover
+    __http_response_triggering_failover = [
+        requests.codes.service_unavailable,    # 503 - most likely
+        requests.codes.internal_server_error,  # 500
+        requests.codes.gateway_timeout,        # 504
+        requests.codes.bad_gateway             # 502 - rank-0 killed with HTTPD gives this
+    ]
+
+    __endpoint_server_error_magic_strings = [
+        C._DB_EXITING_ERROR_MESSAGE,
+        C._DB_OFFLINE_ERROR_MESSAGE,
+        C._DB_SYSTEM_LIMITED_ERROR_MESSAGE,
+        C._DB_CONNECTION_REFUSED,
+        C._DB_CONNECTION_RESET
+    ]
+
+    # Default host manager port for http and httpd
+    _DEFAULT_HOST_MANAGER_PORT       = 9300
+    _DEFAULT_HTTPD_HOST_MANAGER_PORT = 8082
+    _DEFAULT_FAILBACK_POLLING_INTERVAL = 5
+    _HTTP_REQUEST_MAX_RETRY_ATTEMPTS = 5
+    _HTTP_CONNECTION_POOL_SIZE = 20
+    _HTTP_CONNECTION_POOL_TIMEOUT = 20
+
+    # The timeout (in seconds) used for checking the status of a node; we used
+    # to use a small timeout so that it does not take a long time to figure out
+    # that a rank is down, but connections over high-traffic networks or the
+    # cloud may encounter significant connection wait times.  Using 20 seconds.
+    # __DEFAULT_INTERNAL_ENDPOINT_CALL_TIMEOUT = 20
+
+    _DEFAULT_SERVER_CONNECTION_TIMEOUT = 5  # in seconds
+
+    # Timeout (in seconds) used for quick connectivity checks (e.g.,
+    # verifying if a head node is reachable).
+    _FAST_CONNECTION_TIMEOUT = 2  # in seconds
+
+    # The number of times that the API will attempt to submit a host
+    # manager endpoint request.  We need this in case the user chose
+    # a bad host manager port.  We don't want to go into an infinite
+    # loop
+    __HOST_MANAGER_SUBMIT_REQUEST_RETRY_COUNT = 3
+
+    __SSL_ERROR_MESSAGE_TEMPLATE = (
+        "<{}>.  "
+        "To fix, either:  "
+        "1) Add the server's certificate or a CA cert to the system CA certificates file, or "
+        "2) Skip the certificate check using the skip_ssl_cert_verification option.  "
+        "Note that we do not recommend skipping certificate validation for production systems."
+    )
+
     class HASynchronicityMode( enum.Enum ):
         """Inner enumeration class to represent the high-availability
         synchronicity override mode that is applied to each endpoint call.
@@ -3240,6 +3290,7 @@ class GPUdb(object):
         __username_str                           = "_Options__username"
         __oauth_token_str                        = "_Options__oauth_token"
         __failback_options_str                   = "_Options__failback_options"
+        __max_retries_str                        = "_Options__max_retries"
 
         _supported_options = [ __disable_auto_discovery_str,
                                __disable_failover_str,
@@ -3259,7 +3310,8 @@ class GPUdb(object):
                                __timeout_str,
                                __username_str,
                                __oauth_token_str,
-                               __failback_options_str
+                               __failback_options_str,
+                               __max_retries_str
         ]
 
 
@@ -3301,6 +3353,7 @@ class GPUdb(object):
             self.__username                           = None
             self.__oauth_token                        = None
             self.__failback_options                   = FailbackOptions.default_options()
+            self.__max_retries                        = GPUdb._HTTP_REQUEST_MAX_RETRY_ATTEMPTS
 
             if (options is None):
                 return # nothing to do
@@ -3367,6 +3420,7 @@ class GPUdb(object):
                     '_Options__timeout',
                     '_Options__username',
                     '_Options__failback_options',
+                    '_Options__max_retries',
                 ]
 
 
@@ -4238,6 +4292,33 @@ class GPUdb(object):
             if not isinstance(value, FailbackOptions):
                 raise GPUdbException(f"Property 'failback_options' must be of type {type(FailbackOptions)}")
             self.__failback_options = value
+
+
+        @property
+        def max_retries(self):
+            """Gets the maximum number of retry attempts for HTTP requests.
+            """
+            return self.__max_retries
+
+        @max_retries.setter
+        def max_retries(self, value):
+            """Sets the maximum number of retry attempts for HTTP requests.
+            Must be an integer value greater than or equal to zero.
+            """
+            try:
+                value = int( value )
+            except:
+                raise GPUdbException( "Property 'max_retries' must be numeric; "
+                                      "given '{}' type {}".format( value, str(type(value)) ) )
+
+            # Must be >= 0
+            if (value < 0):
+                raise GPUdbException( "Property 'max_retries' must be "
+                                      "greater than or equal to 0; given {}"
+                                      "".format( str(value) ) )
+
+            self.__max_retries = value
+        # end setter
 
     # end class Options
 
@@ -5302,54 +5383,6 @@ class GPUdb(object):
 
 
     # -------------------------  GPUdb Members --------------------------------
-    __http_response_triggering_failover = [
-        requests.codes.service_unavailable,    # 503 - most likely
-        requests.codes.internal_server_error,  # 500
-        requests.codes.gateway_timeout,        # 504
-        requests.codes.bad_gateway             # 502 - rank-0 killed with HTTPD gives this
-    ]
-
-    __endpoint_server_error_magic_strings = [
-        C._DB_EXITING_ERROR_MESSAGE,
-        C._DB_OFFLINE_ERROR_MESSAGE,
-        C._DB_SYSTEM_LIMITED_ERROR_MESSAGE,
-        C._DB_CONNECTION_REFUSED,
-        C._DB_CONNECTION_RESET
-    ]
-
-    # Default host manager port for http and httpd
-    _DEFAULT_HOST_MANAGER_PORT       = 9300
-    _DEFAULT_HTTPD_HOST_MANAGER_PORT = 8082
-    _DEFAULT_FAILBACK_POLLING_INTERVAL = 5
-    _HTTP_REQUEST_MAX_RETRY_ATTEMPTS = 5
-    _HTTP_CONNECTION_POOL_SIZE = 20
-    _HTTP_CONNECTION_POOL_TIMEOUT = 20
-
-    # The timeout (in seconds) used for checking the status of a node; we used
-    # to use a small timeout so that it does not take a long time to figure out
-    # that a rank is down, but connections over high-traffic networks or the
-    # cloud may encounter significant connection wait times.  Using 20 seconds.
-    # __DEFAULT_INTERNAL_ENDPOINT_CALL_TIMEOUT = 20
-
-    _DEFAULT_SERVER_CONNECTION_TIMEOUT = 5  # in seconds
-
-    # Timeout (in seconds) used for quick connectivity checks (e.g.,
-    # verifying if a head node is reachable).
-    _FAST_CONNECTION_TIMEOUT = 2  # in seconds
-
-    # The number of times that the API will attempt to submit a host
-    # manager endpoint request.  We need this in case the user chose
-    # a bad host manager port.  We don't want to go into an infinite
-    # loop
-    __HOST_MANAGER_SUBMIT_REQUEST_RETRY_COUNT = 3
-
-    __SSL_ERROR_MESSAGE_TEMPLATE = (
-        "<{}>.  "
-        "To fix, either:  "
-        "1) Add the server's certificate or a CA cert to the system CA certificates file, or "
-        "2) Skip the certificate check using the skip_ssl_cert_verification option.  "
-        "Examples:  https://docs.kinetica.com/7.2/api/concepts/#https-without-certificate-validation"
-    )
 
     END_OF_SET = -9999
     """(int) Used for indicating that all of the records (till the end of the
@@ -5357,7 +5390,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.3.7"
+    api_version = "7.2.3.8"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5421,6 +5454,11 @@ class GPUdb(object):
                 self.__session.close()
             except Exception as e:
                 pass
+        if hasattr(self, "_GPUdb__session_fast") and self.__session_fast is not None:
+            try:
+                self.__session_fast.close()
+            except Exception as e:
+                pass
 
     def __enter__(self):
         return self
@@ -5434,6 +5472,11 @@ class GPUdb(object):
         if hasattr(self, "_GPUdb__session") and self.__session is not None:
             try:
                 self.__session.close()
+            except Exception as e:
+                pass
+        if hasattr(self, "_GPUdb__session_fast") and self.__session_fast is not None:
+            try:
+                self.__session_fast.close()
             except Exception as e:
                 pass
 
@@ -5504,6 +5547,7 @@ class GPUdb(object):
         self.__ha_failover_order        = self.options.ha_failover_order
         self.__initial_connection_attempt_timeout = self.options.initial_connection_attempt_timeout
         self.__server_connection_timeout = self.options.server_connection_timeout
+        self.__max_retries = self.options.max_retries
 
         # Set the logging level (only if the user set something)
         if self.__logging_level is not None:
@@ -5637,8 +5681,8 @@ class GPUdb(object):
         # set up the HTTP client to be used later on
         self.__session = requests.Session()
         self.__retry_strategy = Retry(
-            total=5,
-            read=5,
+            total=self.__max_retries,
+            read=self.__max_retries,
             status_forcelist=[502, 503],
             allowed_methods=["GET", "POST", "PUT"],
             raise_on_status = False
@@ -11821,6 +11865,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/check/table"
+        REQ_SCHEMA_STR = """{"type":"record","name":"check_table_request","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"check_table_response","fields":[{"name":"table_names","type":{"type":"array","items":"string"}},{"name":"ids","type":{"type":"array","items":"string"}},{"name":"locations","type":{"type":"array","items":"string"}},{"name":"errors","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("table_names", "array", [("string")]), ("ids", "array", [("string")]), ("locations", "array", [("string")]), ("errors", "array", [("string")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/check/table"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/clear/statistics"
         REQ_SCHEMA_STR = """{"type":"record","name":"clear_statistics_request","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"clear_statistics_response","fields":[{"name":"table_name","type":"string"},{"name":"column_name","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -12632,6 +12687,17 @@ class GPUdb(object):
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("view_name", "string"), ("is_string", "boolean"), ("value", "double"), ("value_str", "string"), ("column_name", "string"), ("options", "map", [("string")])] )
         RSP_SCHEMA = Schema( "record", [("count", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/filter/byvalue"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
+        name = "/get/graph/entities"
+        REQ_SCHEMA_STR = """{"type":"record","name":"get_graph_entities_request","fields":[{"name":"graph_name","type":"string"},{"name":"offset","type":"long"},{"name":"limit","type":"long"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"get_graph_entities_response","fields":[{"name":"result","type":"boolean"},{"name":"entities_int","type":{"type":"array","items":"long"}},{"name":"entities_string","type":{"type":"array","items":"string"}},{"name":"labels","type":{"type":"array","items":"string"}},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("graph_name", "string"), ("offset", "long"), ("limit", "long"), ("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("result", "boolean"), ("entities_int", "array", [("long")]), ("entities_string", "array", [("string")]), ("labels", "array", [("string")]), ("info", "map", [("string")])] )
+        ENDPOINT = "/get/graph/entities"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
                                        "REQ_SCHEMA" : REQ_SCHEMA,
@@ -13680,6 +13746,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["alter_video"] = "/alter/video"
         self.gpudb_func_to_endpoint_map["alter_wal"] = "/alter/wal"
         self.gpudb_func_to_endpoint_map["append_records"] = "/append/records"
+        self.gpudb_func_to_endpoint_map["check_table"] = "/check/table"
         self.gpudb_func_to_endpoint_map["clear_statistics"] = "/clear/statistics"
         self.gpudb_func_to_endpoint_map["clear_table"] = "/clear/table"
         self.gpudb_func_to_endpoint_map["clear_table_monitor"] = "/clear/tablemonitor"
@@ -13754,6 +13821,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["filter_by_string"] = "/filter/bystring"
         self.gpudb_func_to_endpoint_map["filter_by_table"] = "/filter/bytable"
         self.gpudb_func_to_endpoint_map["filter_by_value"] = "/filter/byvalue"
+        self.gpudb_func_to_endpoint_map["get_graph_entities"] = "/get/graph/entities"
         self.gpudb_func_to_endpoint_map["get_job"] = "/get/job"
         self.gpudb_func_to_endpoint_map["get_records"] = "/get/records"
         self.gpudb_func_to_endpoint_map["get_records_by_column"] = "/get/records/bycolumn"
@@ -18278,6 +18346,21 @@ class GPUdb(object):
                 * **azure_oauth_token** --
                   Oauth token to access given storage container
 
+                * **azure_use_virtual_addressing** --
+                  Whether to use virtual addressing when referencing the Azure
+                  source.
+                  Allowed values are:
+
+                  * **true** --
+                    The requests URI should be specified in
+                    virtual-hosted-style format where the bucket name is part
+                    of the domain name in the URL.
+
+                  * **false** --
+                    Use path-style URI for requests.
+
+                  The default value is 'true'.
+
                 * **gcs_bucket_name** --
                   Name of the Google Cloud Storage bucket to use as the data
                   sink
@@ -18522,6 +18605,21 @@ class GPUdb(object):
 
                 * **azure_oauth_token** --
                   OAuth token to access given storage container
+
+                * **azure_use_virtual_addressing** --
+                  Whether to use virtual addressing when referencing the Azure
+                  source.
+                  Allowed values are:
+
+                  * **true** --
+                    The requests URI should be specified in
+                    virtual-hosted-style format where the bucket name is part
+                    of the domain name in the URL.
+
+                  * **false** --
+                    Use path-style URI for requests.
+
+                  The default value is 'true'.
 
                 * **gcs_bucket_name** --
                   Name of the Google Cloud Storage bucket to use as the data
@@ -20444,6 +20542,74 @@ class GPUdb(object):
         return response
     # end append_records
 
+    # begin check_table
+    def check_table( self, table_names = None, options = {} ):
+        """Scans the requested tables as specified in input parameter
+        *table_names* for integrity. Any table chunks which fail the check will
+        be marked as corrupt. By default the database will automatically repair
+        corrupt tables (via truncating). Note that since this reads every table
+        column from disk it may be a potentially long-running operation. The
+        option *local_only* can be used to skip any table files already written
+        to a remote storage. Returns table corruption results.
+
+        Parameters:
+
+            table_names (list of str)
+                List of tables to query. An asterisk returns all tables. The
+                user can provide a single element (which will be automatically
+                promoted to a list internally) or a list.
+
+            options (dict of str to str)
+                Optional parameters.
+                Allowed keys are:
+
+                * **local_only** --
+                  If *true* only locally persisted files will be checked.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **show_detail** --
+                  If *true* reports individual chunk errors.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
+                The default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            table_names (list of str)
+
+            ids (list of str)
+
+            locations (list of str)
+
+            errors (list of str)
+
+            info (dict of str to str)
+                Additional information. The default value is an empty dict ( {}
+                ).
+        """
+        table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
+        assert isinstance( options, (dict)), "check_table(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['table_names'] = table_names
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/check/table', obj, convert_to_attr_dict = True )
+
+        return response
+    # end check_table
+
     # begin clear_statistics
     def clear_statistics( self, table_name = '', column_name = '', options = {} ):
         """Clears statistics (cardinality, mean value, etc.) for a column in a
@@ -20815,6 +20981,10 @@ class GPUdb(object):
                 * **function_environment** --
                   `Python UDF function environment(s)
                   <../../../../udf/python/writing/#udf-python-func-env>`__.
+
+                * **graph** --
+                  `Graph(s)
+                  <../../../../graph_solver/network_graph_solver/>`__.
 
                 * **monitor** --
                   `Table monitor(s) <../../../../concepts/table_monitors/>`__ /
@@ -21247,6 +21417,21 @@ class GPUdb(object):
                 * **azure_oauth_token** --
                   Oauth token to access given storage container
 
+                * **azure_use_virtual_addressing** --
+                  Whether to use virtual addressing when referencing the Azure
+                  source.
+                  Allowed values are:
+
+                  * **true** --
+                    The requests URI should be specified in
+                    virtual-hosted-style format where the bucket name is part
+                    of the domain name in the URL.
+
+                  * **false** --
+                    Use path-style URI for requests.
+
+                  The default value is 'true'.
+
                 * **gcs_bucket_name** --
                   Name of the Google Cloud Storage bucket to use as the data
                   sink
@@ -21468,6 +21653,21 @@ class GPUdb(object):
 
                 * **azure_oauth_token** --
                   OAuth token to access given storage container
+
+                * **azure_use_virtual_addressing** --
+                  Whether to use virtual addressing when referencing the Azure
+                  source.
+                  Allowed values are:
+
+                  * **true** --
+                    The requests URI should be specified in
+                    virtual-hosted-style format where the bucket name is part
+                    of the domain name in the URL.
+
+                  * **false** --
+                    Use path-style URI for requests.
+
+                  The default value is 'true'.
 
                 * **gcs_bucket_name** --
                   Name of the Google Cloud Storage bucket to use as the data
@@ -29280,6 +29480,115 @@ class GPUdb(object):
         return response
     # end filter_by_value
 
+    # begin get_graph_entities
+    def get_graph_entities( self, graph_name = None, offset = 0, limit = 10000,
+                            options = {} ):
+        """Retrieves node or edge entities from an existing graph, with
+        pagination support via offset and limit. Use :meth:`GPUdb.show_graph`
+        to obtain the total number of nodes and edges.
+
+        Parameters:
+
+            graph_name (str)
+                Name of the graph from which to retrieve entities.
+
+            offset (long)
+                Starting index of the entities to retrieve (0-based). The
+                default value is 0.
+
+            limit (long)
+                Number of entities to retrieve starting from input parameter
+                *offset*. A value of -1 returns all entities from the offset to
+                the end. Note: the output parameter *entities_int* or output
+                parameter *entities_string* array size will be 2x this value
+                for nodes (stride 2) or 4x for edges (stride 4). The default
+                value is 10000.
+
+            options (dict of str to str)
+                Optional parameters.
+                Allowed keys are:
+
+                * **entity_type** --
+                  The type of entity to retrieve.
+                  Allowed values are:
+
+                  * **edge** --
+                    Retrieve edge entities (default).
+
+                  * **node** --
+                    Retrieve node entities.
+
+                  The default value is 'edge'.
+
+                * **server_id** --
+                  Indicates which graph server to send the request to. Required
+                  when the graph is distributed across multiple servers. The
+                  default value is '0'.
+
+                The default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            result (bool)
+                Indicates a successful retrieval.
+
+            entities_int (list of longs)
+                Flat array of entity data for integer-identifier graphs with a
+                repeating stride. For node entities (stride 2): [node_id,
+                label_index, ...]. For edge entities (stride 4): [edge_id,
+                node1_id, node2_id, label_index, ...]. Populated when the graph
+                uses integer identifiers; empty otherwise. The label_index is a
+                1-based index into the output parameter *labels* array; 0
+                indicates no label.
+
+            entities_string (list of str)
+                Flat array of entity data for name-identifier or WKT-identifier
+                (geo/XY) graphs with a repeating stride. For node entities
+                (stride 2): [node_name, label_index, ...] or [wkt_point,
+                label_index, ...]. For edge entities (stride 4): [edge_id,
+                node1_name, node2_name, label_index, ...] or [edge_id,
+                node1_wkt, node2_wkt, label_index, ...]. Populated when the
+                graph uses string/name identifiers or geo/XY coordinate
+                identifiers; empty otherwise. For geo/XY graphs, node
+                identifiers are formatted as 'POINT(x y)' WKT strings. The
+                label_index is a string representation of a 1-based index into
+                the output parameter *labels* array; '0' indicates no label.
+
+            labels (list of str)
+                Array of distinct label strings. The label_index values in
+                output parameter *entities_int* or output parameter
+                *entities_string* are 1-based indexes into this array; index 0
+                means no label.
+
+            info (dict of str to str)
+                Additional information map. Contains the following keys:
+                'identifier_type' — set to 'int' (integer node IDs in output
+                parameter *entities_int*), 'string' (name-based node IDs in
+                output parameter *entities_string*), or 'wkt' (geo/XY graph
+                with 'POINT(x y)' node identifiers in output parameter
+                *entities_string*). 'total_count' — total number of live
+                (non-deleted) entities available in the graph for the requested
+                entity_type, used for pagination. 'status_message' — set to
+                'Cancelled' if the request was cancelled mid-iteration (with
+                output parameter *result* set to false).
+        """
+        assert isinstance( graph_name, (basestring)), "get_graph_entities(): Argument 'graph_name' must be (one) of type(s) '(basestring)'; given %s" % type( graph_name ).__name__
+        assert isinstance( offset, (int, long, float)), "get_graph_entities(): Argument 'offset' must be (one) of type(s) '(int, long, float)'; given %s" % type( offset ).__name__
+        assert isinstance( limit, (int, long, float)), "get_graph_entities(): Argument 'limit' must be (one) of type(s) '(int, long, float)'; given %s" % type( limit ).__name__
+        assert isinstance( options, (dict)), "get_graph_entities(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['graph_name'] = graph_name
+        obj['offset'] = offset
+        obj['limit'] = limit
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/get/graph/entities', obj, convert_to_attr_dict = True )
+
+        return response
+    # end get_graph_entities
+
     # begin get_job
     def get_job( self, job_id = None, options = {} ):
         """Get the status and result of asynchronously running job.  See the
@@ -34587,6 +34896,10 @@ class GPUdb(object):
                 * **match_isochrone** --
                   Solves for isochrones for a set of input sources
 
+                * **match_route_detour** --
+                  Computes detour costs for nearby stations at a mark point
+                  along each source-target route.
+
                 The default value is 'markov_chain'.
 
             solution_table (str)
@@ -34963,6 +35276,29 @@ class GPUdb(object):
                 * **charging_penalty** --
                   For the *match_charging_stations* solver only. This is the
                   penalty for full charging. The default value is '30000.0'.
+
+                * **detour_mark_cost** --
+                  For the *match_route_detour* solver only. Cost along the
+                  route at which to search for nearby stations If zero, it
+                  solves along the trip sliding the 3 SSSP cycle kernel by
+                  radius amount. The default value is '3600.0'.
+
+                * **detour_reentry_factor** --
+                  For the *match_route_detour* solver only. Multiplier on
+                  detour_mark_cost to determine the reentry point on the route
+                  (default 1.2 means 20% further along). The default value is
+                  '1.2'.
+
+                * **detour_search_radius** --
+                  For the *match_route_detour* solver only. Search radius
+                  around the mark point for finding nearby prospective stations
+                  (e.g. cafes, pit stops, EV charging stations). The default
+                  value is '600.0'.
+
+                * **detour_search_limit** --
+                  For the *match_route_detour* solver only. Maximum number of
+                  nearby stations to consider within the search radius around
+                  the mark point. The default value is '10'.
 
                 * **max_hops** --
                   For the *match_similarity* and *match_embedding* solvers
@@ -35692,6 +36028,10 @@ class GPUdb(object):
                 * **function_environment** --
                   `Python UDF function environment(s)
                   <../../../../udf/python/writing/#udf-python-func-env>`__.
+
+                * **graph** --
+                  `Graph(s)
+                  <../../../../graph_solver/network_graph_solver/>`__.
 
                 * **monitor** --
                   `Table monitor(s) <../../../../concepts/table_monitors/>`__ /
@@ -36471,6 +36811,25 @@ class GPUdb(object):
                   from the most recent snapshot in the backup. The default
                   value is ''.
 
+                * **backup_type** --
+                  Show backups by type. This option is ignored if *backup_id*
+                  is non-empty.
+                  Allowed values are:
+
+                  * **all** --
+                    Show all backup types.
+
+                  * **full** --
+                    Show full backups only.
+
+                  * **incremental** --
+                    Show incremental backups only.
+
+                  * **differential** --
+                    Show differential backups only.
+
+                  The default value is 'all'.
+
                 * **show_contents** --
                   Show the contents of the backed-up snapshots.
                   Allowed values are:
@@ -36953,6 +37312,16 @@ class GPUdb(object):
                 * **server_id** --
                   Indicates which graph server(s) to send the request to.
                   Default is to send to get information about all the servers.
+
+                * **export_graph_schema** --
+                  If true, generates the graph ontology (schema) as a DOT
+                  format string in the response info field under the key 'dot'.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
 
                 The default value is an empty dict ( {} ).
 

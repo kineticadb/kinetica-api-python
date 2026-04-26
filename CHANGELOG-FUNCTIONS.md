@@ -1,5 +1,11 @@
 # Kinetica REST API Changelog
 
+## Version 7.2.3.13
+#### Added
+-   Added backup and restore support for graph definitions.
+-   Added ``/check/table`` endpoint
+-   Added new option ``azure_use_virtual_addressing`` to ``/alter/datasource``, ``/alter/datasink``, ``/create/datasink``, and ``/create/datasource`` request
+
 ## Version 7.2.3.9
 #### Added
 -   Added backup and restore support for resource groups, user defined functions and function environments.
