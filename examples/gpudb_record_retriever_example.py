@@ -19,9 +19,10 @@ TABLE_NAME = "example_mh_record_retriever_with_decimals"
 # Define decimal type specifications
 DECIMAL_SPECS = [
     # (precision, scale, description)
-    (10, 2, "Currency - fits 8 bytes"),           # decimal(10,2)
-    (18, 9, "High precision - fits 8 bytes"),     # decimal(18,9)
-    (27, 13, "Extended precision - needs 12 bytes"), # decimal(27,13)
+    # (10, 2, "Currency - fits 8 bytes"),           # decimal(10,2)
+    # (18, 9, "High precision - fits 8 bytes"),     # decimal(18,9)
+    (27, 13, "Extended precision - needs 12 bytes"),  # decimal(27,13)
+    (18, 4, "Standard precision - needs 8 bytes"),  # decimal(18,4)
 ]
 
 def generate_decimal_value(precision, scale, include_negative=True):
@@ -89,14 +90,18 @@ def run_record_retriever(db: gpudb.GPUdb):
     for i, (precision, scale, desc) in enumerate(DECIMAL_SPECS, 1):
         field_name = f"amount_{i}"
         decimal_field_names.append(field_name)
-        _type.append([
+        col_type = [
             field_name,
             "string",
             "shard_key",  # DECIMAL FIELD IS SHARD KEY
             "nullable",
-            f"decimal({precision},{scale})"
-        ])
+            f"decimal({precision},{scale})" if not (precision == 18 and scale == 4) else "decimal"
+        ]
+        print(f"Name -> {field_name} :: Type -> {col_type}")
+        _type.append(col_type)
         print(f"✓ {field_name} - decimal({precision},{scale}) - {desc} [SHARD KEY]")
+
+    print(f"TYPE =>{_type}\n")
 
     # Create table with multi-head I/O enabled
     from gpudb import GPUdbTable
@@ -386,15 +391,6 @@ def main(url, username, password):
 
     print("\n" + "="*80)
     print("Record Retriever Test Completed Successfully!")
-    print("="*80)
-    print("\nKey Demonstration Points:")
-    print("  ✓ Created table with 3 decimal fields as shard keys")
-    print("  ✓ decimal(10,2)  - fits in 8 bytes")
-    print("  ✓ decimal(18,9)  - fits in 8 bytes")
-    print("  ✓ decimal(27,13) - requires 12 bytes")
-    print("  ✓ Generated positive and negative decimal values")
-    print("  ✓ Retrieved records using regular API")
-    print("  ✓ Retrieved records using multi-head shard key (including decimals)")
     print("="*80)
 
 

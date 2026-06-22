@@ -3,6 +3,15 @@
 ## Version 7.2
 
 
+### Version 7.2.3.9 - 2026-06-22
+
+#### Added
+-   Passing of API/DBAPI name & version in HTTP headers.
+
+#### Notes
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes
+
+
 ### Version 7.2.3.8 - 2026-04-26
 
 #### Added
