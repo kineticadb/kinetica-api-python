@@ -3,6 +3,22 @@
 ## Version 7.2
 
 
+### Version 7.2.3.10 - 2026-07-09
+
+#### Added
+-   Checking of draining HA queue status on connection; fail over if so.
+
+#### Changed
+-   Fail-over/fail-back processing to handle query planner down state.
+
+#### Fixed
+-   Bug in inferring a primary URL from user specifying only one connection
+    cluster.
+
+#### Notes
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes
+
+
 ### Version 7.2.3.9 - 2026-06-22
 
 #### Added

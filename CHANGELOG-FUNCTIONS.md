@@ -3,6 +3,7 @@
 ## Version 7.2.3.18
 #### Added
 -   Added ``transformations`` option to ``/create/table/external``, ``/insert/records/fromfiles`` and ``/insert/records/frompayload``
+-   Added ``restore_all_permissions`` option to ``/restore/backup`` to override default-on behavior that scopes permissions to restored objects only.
 
 ## Version 7.2.3.15
 #### Added

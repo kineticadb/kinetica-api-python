@@ -26,7 +26,6 @@ from io import BytesIO
 
 import requests
 from requests.adapters import HTTPAdapter
-from typeguard import value
 from urllib3.util.retry import Retry
 
 from urllib.parse import urlencode
@@ -182,6 +181,7 @@ class C:
     _DB_EOF_FROM_SERVER_ERROR_MESSAGE = "Unexpected end of file from server"
     _DB_SHUTTING_DOWN_ERROR_MESSAGE   = "System shutting down"
     _DB_DRAINING_HAQ_ERROR_MESSAGE    = "Unavailable: Draining HA queue"
+    _DB_QUERY_PLANNER_DOWN_ERROR_MESSAGE = "Query planner is not running"
 
     # Some pre-fixes used in creating error messages
     _FAILED_CONNECTION_HAS_HA = "Connection failed; all clusters in the HA ring have been tried! Error encountered: "
@@ -212,6 +212,13 @@ class C:
     _SHOW_SYSTEM_STATUS_RESPONSE_STATUS  = "status"
     _SHOW_SYSTEM_STATUS_RESPONSE_RUNNING = "running"
     _SHOW_SYSTEM_STATUS_RESPONSE_TRUE       = "true"
+    # HA drain state, reported per cluster in the 'ha_status' block of the
+    # /show/system/status response.  A cluster that is 'running' but reports
+    # 'draining' is up (answers status endpoints) but NOT ready to serve
+    # queries/DML, so the client must not route to it.
+    _SHOW_SYSTEM_STATUS_RESPONSE_HA_STATUS  = "ha_status"
+    _SHOW_SYSTEM_STATUS_RESPONSE_DRAINED    = "drained"
+    _SHOW_SYSTEM_STATUS_RESPONSE_DRAINING   = "draining"
 
     _SYSTEM_PROPERTIES_RESPONSE_ENABLE_HTTPD    = "conf.enable_httpd_proxy"
     _SYSTEM_PROPERTIES_RESPONSE_NUM_HOSTS       = "conf.number_of_hosts"
@@ -2990,7 +2997,10 @@ class _FailbackPollerService:
         self.db.log_debug(f"Primary URL is {self.primary_url}")
         with self.lock:
             if self.is_running:
-                self.logger.info("Poller is already running.")
+                # Normal lifecycle event (e.g. another HA-aware client
+                # connecting while a failover is already in progress), not a
+                # problem -- keep it at debug level.
+                self.logger.debug("Poller is already running.")
                 return
 
             self.logger.debug("Starting the poller...")
@@ -3046,10 +3056,16 @@ class _FailbackPollerService:
                                     if ha_status == "draining":
                                         self.logger.debug(f"Kinetica running on primary cluster at [{self.primary_url}], but HA queues are still draining")
                                     else:
-                                        # Ensure query planner is up & running
+                                        # Ensure query planner is up & running.
+                                        # Run the readiness query against the
+                                        # PRIMARY via the direct connection
+                                        # ('conn'), not the active client
+                                        # ('self.db', currently on the backup),
+                                        # so we actually prove the primary can
+                                        # serve queries before failing back.
                                         try:
                                             ts = time.time_ns() // 1_000_000
-                                            resp_ts = self.db.query_one(f"SELECT {ts}")[0]
+                                            resp_ts = conn.query_one(f"SELECT {ts}")[0]
                                             
                                             if ts != resp_ts:
                                                 self.logger.warn(f"Kinetica running on primary cluster at [{self.primary_url}], but query check failed to return expected result--instead [{resp_ts}] != [{ts}]")
@@ -3081,10 +3097,32 @@ class _FailbackPollerService:
     def _handle_exception(self, e):
         self.logger.debug(f"Warning: Exception during polling: {e}")
 
-    def stop(self):
+    def stop(self, requester=None):
+        """Stop the shared (singleton) failback poller.
+
+        Because the poller is a process-wide singleton, EVERY HA-aware client's
+        teardown (__del__/__exit__) calls this.  To keep one client's teardown
+        from killing another client's in-progress failback, an external caller
+        may stop the poller only if it is the owning client (the one bound as
+        ``self.db``, i.e. the client that started this poller).  An internal
+        call (``requester is None`` -- e.g. the poller stopping itself after a
+        successful failback) always proceeds.
+
+        Args:
+            requester (GPUdb): the client requesting the stop, or None for an
+                internal/self-initiated stop.
+        """
         with self.lock:
+            if requester is not None and requester is not self.db:
+                # A non-owning client is being torn down; leave the shared
+                # poller running for the client that actually needs it.
+                self.logger.debug("Ignoring stop() request from a non-owning client.")
+                return
+
             if not self.is_running:
-                self.logger.warning("Poller is already stopped.")
+                # Normal lifecycle event (e.g. the owning client is torn down
+                # after failback already stopped the poller), not a problem.
+                self.logger.debug("Poller is already stopped.")
                 return
 
             self.logger.debug("Stopping the poller...")
@@ -3176,7 +3214,8 @@ class GPUdb(object):
         C._DB_OFFLINE_ERROR_MESSAGE,
         C._DB_SYSTEM_LIMITED_ERROR_MESSAGE,
         C._DB_CONNECTION_REFUSED,
-        C._DB_CONNECTION_RESET
+        C._DB_CONNECTION_RESET,
+        C._DB_QUERY_PLANNER_DOWN_ERROR_MESSAGE
     ]
 
     # Default host manager port for http and httpd
@@ -4907,6 +4946,7 @@ class GPUdb(object):
                       host_manager_port  = None,
                       is_primary_cluster = None,
                       server_version     = None,
+                      ha_status          = None,
                       logging_level      = None ):
             """Creates a :class:`ClusterAddressInfo` object with the given
             information.
@@ -4943,6 +4983,13 @@ class GPUdb(object):
                    will be parsed as a :class:`GPUdb.Version` object. Default
                    is None.
 
+                ha_status (str)
+                   Optional last-seen HA drain state for this cluster, as
+                   reported by the 'ha_status.drained' field of
+                   /show/system/status (e.g. "drained", "draining",
+                   "not_drained").  None if unknown or not applicable (e.g.
+                   a non-HA cluster).  Default is None.
+
                 logging_level (int)
                    Optional level at which logs should be output.  Default is
                    None.
@@ -4954,6 +5001,7 @@ class GPUdb(object):
                               host_manager_port,
                               is_primary_cluster,
                               server_version,
+                              ha_status,
                               logging_level )
         # end __init__
 
@@ -4966,6 +5014,7 @@ class GPUdb(object):
                          host_manager_port  = None,
                          is_primary_cluster = None,
                          server_version     = None,
+                         ha_status          = None,
                          logging_level      = None ):
             """Constructs a :class:`GPUdb.ClusterAddressInfo` object.
 
@@ -5001,6 +5050,13 @@ class GPUdb(object):
                    will be parsed as a :class:`GPUdb.Version` object. Default
                    is None.
 
+                ha_status (str)
+                   Optional last-seen HA drain state for this cluster, as
+                   reported by the 'ha_status.drained' field of
+                   /show/system/status (e.g. "drained", "draining",
+                   "not_drained").  None if unknown or not applicable (e.g.
+                   a non-HA cluster).  Default is None.
+
                 logging_level (int)
                    Optional level at which logs should be output.  Default is
                    None.
@@ -5032,6 +5088,7 @@ class GPUdb(object):
             self.__host_manager_url                  = None
             self.__is_primary_cluster                = False
             self.__server_version                    = None
+            self.__ha_status                         = None
 
 
             # Validate all the input arguments and save them.
@@ -5092,6 +5149,9 @@ class GPUdb(object):
                 self.is_primary_cluster = is_primary_cluster
             if server_version is not None:
                 self.server_version = server_version
+            # Note: ha_status is mutable state that is refreshed over the
+            # life of the cluster; accept None (unknown) as well as a string.
+            self.ha_status = ha_status
 
             # Save the protocol for use
             self.__protocol = self.head_rank_url.protocol
@@ -5135,13 +5195,15 @@ class GPUdb(object):
                     ", host_manager_url: {hm}"
                     ", is_primary_cluster: {primary}"
                     ", server_version: {version}"
+                    ", ha_status: {ha_status}"
                     " }}"
                     "".format( rank0     = self.head_rank_url,
                                workers   = [str(u) for u in self.worker_rank_urls],
                                hostnames = self.host_names,
                                hm        = self.host_manager_url,
                                primary   = self.is_primary_cluster,
-                               version   = str( self.server_version ) ) )
+                               version   = str( self.server_version ),
+                               ha_status = self.ha_status ) )
         # end __str__
 
 
@@ -5346,6 +5408,34 @@ class GPUdb(object):
         # end setter
 
 
+        @property
+        def ha_status( self ):
+            """Returns the last-seen HA drain state for this cluster (e.g.
+            "drained", "draining", "not_drained"), or None if unknown or not
+            applicable (e.g. a non-HA cluster).
+
+            A cluster that is running but reports "draining" is up but NOT
+            ready to serve queries/DML; the routing predicate
+            :meth:`GPUdb.__is_cluster_usable` treats such a cluster as
+            unusable.  This is mutable state, refreshed during discovery and
+            failover.
+            """
+            return self.__ha_status
+
+
+        @ha_status.setter
+        def ha_status( self, value ):
+            """Sets the last-seen HA drain state for this cluster.  Must be a
+            string or None.
+            """
+            if ( value is not None ) and ( not isinstance( value, str ) ):
+                raise GPUdbException( "Property 'ha_status' must be a string "
+                                      "or None; given '{}' type {}"
+                                      "".format( value, str(type(value)) ) )
+            self.__ha_status = value
+        # end setter
+
+
         # Internal Helper Methods
         # -----------------------
 
@@ -5465,7 +5555,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.3.9"
+    api_version = "7.2.3.10"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5521,7 +5611,10 @@ class GPUdb(object):
         """Destructor: Ensure the poller service is stopped when the object is deleted."""
         if hasattr(self, "poller_service") and self.poller_service is not None:
             try:
-                self.poller_service.stop()
+                # Only stops the shared poller if THIS client owns it, so a
+                # short-lived client's teardown can't abort another client's
+                # in-progress failback.
+                self.poller_service.stop(requester=self)
             except:
                 pass
         if hasattr(self, "_GPUdb__session") and self.__session is not None:
@@ -5541,7 +5634,10 @@ class GPUdb(object):
     def __exit__(self, type, value, traceback):
         if hasattr(self, "poller_service") and self.poller_service is not None:
             try:
-                self.poller_service.stop()
+                # Only stops the shared poller if THIS client owns it, so a
+                # short-lived client's teardown can't abort another client's
+                # in-progress failback.
+                self.poller_service.stop(requester=self)
             except:
                 pass
         if hasattr(self, "_GPUdb__session") and self.__session is not None:
@@ -5826,6 +5922,40 @@ class GPUdb(object):
         # Parse the user given URLs (will throw an error if no connection
         # can be established)
         self.__process_urls(hosts)
+
+        # Connect-time failover
+        # ---------------------
+        # For full HA-aware connections only: if the initially-selected cluster
+        # (the primary, if configured) is not usable -- down or draining -- fail
+        # over to a usable one using the SAME __switch_url() routine that runtime
+        # failover uses.  This must be an explicit usability check: a draining
+        # node answers the status/properties endpoints, so we cannot rely on a
+        # request failing to trigger connect-time failover.  Direct connections
+        # (failover or auto-discovery disabled) deliberately connect to the given
+        # URL as-is, so status probes and the failback poller can still read a
+        # draining primary.
+        # Use the quick status-check variant here (fast timeout, no retries),
+        # matching the acceptance test in the failover loop (__switch_url).  A
+        # healthy cluster answers /show/system/status well within the quick
+        # timeout; a down or slow-because-draining cluster is one we want to
+        # fail away from anyway, so probing it with the full timeout + retries
+        # only adds latency and log noise at connect time.
+        if ( (not self.__disable_failover)
+             and (not self.__disable_auto_discovery)
+             and not self.__is_cluster_usable( self.get_url( stringified = False ),
+                                               quick_check = True ) ):
+            self.__log_info( "Initially-selected cluster {} is not usable "
+                             "(down or draining); failing over during connect"
+                             "".format( self.get_url() ) )
+            # __switch_url walks the ring and stops on the first usable cluster;
+            # it also starts the failback poller when a primary is configured, so
+            # a client that connects to a backup because the primary was draining
+            # will automatically fail back once the primary drains.  This may
+            # raise GPUdbHAUnavailableException if no usable cluster exists, which
+            # correctly fails the connection.
+            self.__switch_url( self.get_url( stringified = False ),
+                               self.get_num_cluster_switches() )
+        # end if
 
         # Check version compatibility with the server
         # -------------------------------------------
@@ -6297,14 +6427,24 @@ class GPUdb(object):
                 continue # skip to the next URL
             # end if
 
+            # Get both the running status and the HA drain state in one call.
+            # Note: 'is_running' is drain-agnostic -- a running-but-draining
+            # cluster returns is_running=True and takes the FULL discovery path
+            # below so its properties get cached and its ha_status recorded.
+            # (Folding draining into "not running" would send the primary down
+            # the minimal path with empty properties and break drain detection
+            # at connect time.)
+            is_running, cluster_ha_status = self.__get_system_running_status( url, quick_check = False )
+
             # Skip processing this URL if Kinetica is not running at this address
             # but create the 'ClusterAddressInfo' instance for it. It is not known
             # at this point in time whether it could come up later or not.
-            if not self.__is_system_running( url = url, quick_check = False ):
+            if not is_running:
 
                 # Whether this URL has been discovered by the API or given by
                 # the user, add it to the cluster list anyway
                 cluster_info = self.__create_cluster_address_info_with_hm_port( url, self.options.host_manager_port )
+                cluster_info.ha_status = cluster_ha_status
                 self.__cluster_info.append( cluster_info )
 
                 self.__log_debug( "Added non-running cluster with {} URL: {}".format( "user-given" if is_user_given_url else "server-known", url_str ) )
@@ -6337,6 +6477,11 @@ class GPUdb(object):
             # Create an object to store all the information about this cluster
             # (this could fail due to a host name regex mismatch)
             cluster_info = self.__create_cluster_address_info( url, sys_props )
+
+            # Record the last-seen HA drain state for this cluster.  A
+            # running-but-draining cluster reaches this point (see above), so
+            # storing it here lets the routing predicate skip it later.
+            cluster_info.ha_status = cluster_ha_status
 
             # If this is a user-given URL, verify connectivity to the cluster
             # it connects to using that cluster's known head rank URL
@@ -6435,7 +6580,7 @@ class GPUdb(object):
             # given URLs belong to a single cluster, set that as the primary
             if (not self.primary_host):
 
-                all_urls_in_same_cluster = (len(cluster_index_for_user_given_urls) == len(set(cluster_index_for_user_given_urls)))
+                all_urls_in_same_cluster = (len(set(cluster_index_for_user_given_urls)) == 1)
 
                 if all_urls_in_same_cluster:
                     primary_index = cluster_index_for_user_given_urls[0]
@@ -6707,6 +6852,131 @@ class GPUdb(object):
 
         return is_running
     # end __is_system_running
+
+
+
+    def __get_system_running_status( self, url, quick_check = True ):
+        """Given a URL, return a tuple ``(is_running, ha_status)`` describing
+        the server via a single ``/show/system/status`` call.
+
+        This extracts BOTH facts the HA logic needs:
+
+        * ``is_running`` -- whether the process reports ``running``.  This is
+          drain-agnostic: a draining cluster is still ``running``.  Do NOT
+          fold draining into "not running"; the drain state is carried
+          separately in ``ha_status``.
+        * ``ha_status`` -- the value of the ``drained`` field in the
+          ``ha_status`` block ("drained"/"draining"/"not_drained"), or None
+          if the block is absent (e.g. a non-HA cluster).
+
+        Callers that need to route around draining consult ``ha_status`` (see
+        :meth:`__is_cluster_usable`).
+
+        Parameters:
+            url (:class:`GPUdb.URL`)
+                The URL of the server to get information from.
+
+            quick_check (bool)
+                Whether to perform a shorter connectivity check or not.  Use
+                the quick variant inside the failover loop to keep failover
+                fast.
+
+        Returns:
+            A tuple ``(is_running, ha_status)``.
+
+        Raises:
+            GPUdbUnauthorizedAccessException: on an authentication/permission
+                failure (propagated so it is not silently masked).  All other
+                errors are swallowed and reported as ``(False, None)``.
+        """
+        is_running = False
+        ha_status  = None
+
+        try:
+            sys_status = self.__submit_request( C._ENDPOINT_SHOW_SYSTEM_STATUS,
+                                                {"options": {}},
+                                                url = url,
+                                                timeout = self.__server_connection_timeout,
+                                                convert_to_attr_dict = True,
+                                                quick_check = quick_check )
+            if not sys_status.is_ok():
+                raise GPUdbException( "Could not obtain system status: {}"
+                                      "".format( sys_status.get_error_msg() ) )
+
+            status_map = sys_status.status_map
+
+            # Extract the running status from the 'system' block.  This is
+            # drain-agnostic: 'running' means the process is up, regardless of
+            # whether it is draining its HA queue.
+            if C._SHOW_SYSTEM_STATUS_RESPONSE_SYSTEM in status_map:
+                system_status = json.loads( status_map[ C._SHOW_SYSTEM_STATUS_RESPONSE_SYSTEM ] )
+                if ( system_status.get( C._SHOW_SYSTEM_STATUS_RESPONSE_STATUS )
+                     == C._SHOW_SYSTEM_STATUS_RESPONSE_RUNNING ):
+                    is_running = True
+                # end if
+            # end if
+
+            # Extract the HA drain state from the 'ha_status' block, if present.
+            # A non-HA cluster does not report this block, so ha_status stays
+            # None (which is treated as "not draining").
+            if C._SHOW_SYSTEM_STATUS_RESPONSE_HA_STATUS in status_map:
+                ha_status_map = json.loads( status_map[ C._SHOW_SYSTEM_STATUS_RESPONSE_HA_STATUS ] )
+                ha_status = ha_status_map.get( C._SHOW_SYSTEM_STATUS_RESPONSE_DRAINED )
+            # end if
+
+            self.__log_debug( "System running status for URL {}: is_running={}, ha_status={}"
+                              "".format( str(url), is_running, ha_status ) )
+        except GPUdbUnauthorizedAccessException:
+            # Any permission related problem should get propagated
+            raise
+        except Exception as ex:
+            # Any other error means we could not determine the status; report
+            # the cluster as not running (drain state unknown).
+            self.__log_warn( "Exception checking system running status of URL {} -- {}"
+                             "".format( str(url), str(ex) ) )
+        # end try
+
+        return (is_running, ha_status)
+    # end __get_system_running_status
+
+
+
+    def __is_cluster_usable( self, url, quick_check = True ):
+        """The single, shared routing predicate: may the client route requests
+        to the cluster at the given URL?
+
+        A cluster is usable if and only if it is reachable AND running AND not
+        draining its HA queue.  This SAME predicate is used by both the
+        initial connection selection and the runtime failover loop, so
+        draining and down clusters are skipped identically everywhere.
+
+        This never raises -- it is suitable for use directly as a loop
+        condition.  (As a consequence, an authentication failure is reported
+        as "not usable" rather than propagated; a fully misconfigured-auth
+        ring will therefore exhaust and surface as "HA unavailable".)
+
+        Parameters:
+            url (:class:`GPUdb.URL`)
+                The head rank URL of the cluster to test.
+
+            quick_check (bool)
+                Whether to use the fast status-check variant.  Use True inside
+                the failover loop to keep failover fast.
+
+        Returns:
+            True if the cluster is reachable, running, and not draining; False
+            otherwise (down, unreachable, draining, error, or auth failure).
+        """
+        try:
+            is_running, ha_status = self.__get_system_running_status( url, quick_check )
+            return ( is_running
+                     and (ha_status != C._SHOW_SYSTEM_STATUS_RESPONSE_DRAINING) )
+        except Exception as ex:
+            self.__log_warn( "Cluster {} not usable: {}"
+                             "".format( str(url), str(ex) ) )
+            return False
+        # end try
+    # end __is_cluster_usable
 
 
 
@@ -8367,7 +8637,8 @@ class GPUdb(object):
                         C._DB_CONNECTION_REFUSED in message or
                         C._DB_CONNECTION_RESET in message or
                         C._DB_SYSTEM_LIMITED_ERROR_MESSAGE in message or
-                        C._DB_OFFLINE_ERROR_MESSAGE in message
+                        C._DB_OFFLINE_ERROR_MESSAGE in message or
+                        C._DB_QUERY_PLANNER_DOWN_ERROR_MESSAGE in message
                 ):
                     self.__log_debug("Throwing EXIT exception from " + url.url + "; response_code: " + str(status_code) + "; message: " + message)
                     raise GPUdbExitException(message)
@@ -9748,7 +10019,13 @@ class GPUdb(object):
             return curr_url
         # end if
 
-        while not self.is_kinetica_running(curr_url):
+        # Advance until a USABLE cluster is found.  The acceptance test is the
+        # shared __is_cluster_usable predicate (running AND not draining) -- the
+        # same one used at initial connect -- NOT a bare liveness ping.  A ping
+        # alone passes on a draining node, which would let failover land on a
+        # cluster that then rejects queries/DML ("Unavailable: Draining HA
+        # queue") and thrash.  quick_check keeps the per-hop status call fast.
+        while not self.__is_cluster_usable( curr_url, quick_check = True ):
             # This thread is the first one here--select the next cluster to use
             # during this HA failover
             self.__select_next_cluster()
@@ -20919,13 +21196,17 @@ class GPUdb(object):
                 Name of a table, in [schema_name.]table_name format, using
                 standard `name resolution rules
                 <../../../../concepts/tables/#table-name-resolution>`__. Must
-                be an existing table. The default value is ''.
+                be an existing table.  A value of '*' clears statistics on
+                every user table the caller may read (excluding system schemas,
+                views, and temporary tables); when used, input parameter
+                *column_name* must be empty. The default value is ''.
 
             column_name (str)
                 Name of the column in input parameter *table_name* for which to
                 clear statistics. The column must be from an existing table. An
                 empty string clears statistics for all columns in the table.
-                The default value is ''.
+                Must be empty when input parameter *table_name* is '*'. The
+                default value is ''.
 
             options (dict of str to str)
                 Optional parameters. The default value is an empty dict ( {} ).
@@ -21183,16 +21464,16 @@ class GPUdb(object):
             table_name (str)
                 Name of a table, in [schema_name.]table_name format, using
                 standard `name resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__.  Must
-                be an existing table.  A value of *** collects statistics on
+                <../../../../concepts/tables/#table-name-resolution>`__. Must
+                be an existing table.  A value of '*' collects statistics on
                 every user table the caller may read (excluding system schemas,
                 views, and temporary tables); when used, input parameter
-                *column_names* must be *["*"]*.
+                *column_names* must be '*'.
 
             column_names (list of str)
                 List of one or more column names in input parameter
                 *table_name* for which to collect statistics (cardinality, mean
-                value, etc.).  A single entry of *** expands to every
+                value, etc.). A single entry of '*' expands to every
                 collectable column on the table (geometry, vector, JSON, and
                 array columns are skipped). The user can provide a single
                 element (which will be automatically promoted to a list
@@ -21285,13 +21566,17 @@ class GPUdb(object):
                 * **datasource** --
                   `Data source(s) <../../../../concepts/data_sources/>`__.
 
+                * **directory** --
+                  KiFS `File directory(ies) <../../../../tools/kifs/>`__.
+
                 * **function_environment** --
                   `Python UDF function environment(s)
                   <../../../../udf/python/writing/#udf-python-func-env>`__.
 
                 * **graph** --
-                  `Graph(s) <../../../../graph_solver/network_graph_solver/>`__
-                  definition.
+                  `Graph <../../../../graph_solver/network_graph_solver/>`__
+                  definition(s). Source table(s), if applicable, are required
+                  in order to restore graph objects.
 
                 * **monitor** --
                   `Table monitor(s) <../../../../concepts/table_monitors/>`__ /
@@ -27004,6 +27289,12 @@ class GPUdb(object):
 
             info (dict of str to str)
                 Additional information.
+                Allowed keys are:
+
+                * **deferred_tables** --
+                  <DEVELOPER>
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( proc_name, (basestring)), "execute_proc(): Argument 'proc_name' must be (one) of type(s) '(basestring)'; given %s" % type( proc_name ).__name__
         assert isinstance( params, (dict)), "execute_proc(): Argument 'params' must be (one) of type(s) '(dict)'; given %s" % type( params ).__name__
@@ -36685,13 +36976,17 @@ class GPUdb(object):
                 * **datasource** --
                   `Data source(s) <../../../../concepts/data_sources/>`__.
 
+                * **directory** --
+                  KiFS `File directory(ies) <../../../../tools/kifs/>`__.
+
                 * **function_environment** --
                   `Python UDF function environment(s)
                   <../../../../udf/python/writing/#udf-python-func-env>`__.
 
                 * **graph** --
-                  `Graph(s) <../../../../graph_solver/network_graph_solver/>`__
-                  definition.
+                  `Graph <../../../../graph_solver/network_graph_solver/>`__
+                  definition(s). Source table(s), if applicable, are required
+                  in order to restore graph objects.
 
                 * **monitor** --
                   `Table monitor(s) <../../../../concepts/table_monitors/>`__ /
@@ -36819,6 +37114,19 @@ class GPUdb(object):
                   If the *restore_policy* is *rename*, use this schema for
                   relocated existing objects instead of the default generated
                   one. The default value is ''.
+
+                * **restore_all_permissions** --
+                  Whether or not all permissions of restored principals should
+                  be restored or scoped to the restored objects.
+                  Allowed values are:
+
+                  * **true** --
+                    Restore all permissions.
+
+                  * **false** --
+                    Restore only permissions on restored objects.
+
+                  The default value is 'false'.
 
                 * **restore_policy** --
                   Behavior to apply when any database object to restore already
@@ -38751,9 +39059,9 @@ class GPUdb(object):
                 Names of tables whose metadata will be fetched, each in
                 [schema_name.]table_name format, using standard `name
                 resolution rules
-                <../../../../concepts/tables/#table-name-resolution>`__.  All
+                <../../../../concepts/tables/#table-name-resolution>`__. All
                 provided tables must exist, or an error is returned.  A single
-                entry of *** expands to every user table the caller may read
+                entry of '*' expands to every user table the caller may read
                 (excluding system schemas, views, and temporary tables); when
                 used it must be the only entry. The user can provide a single
                 element (which will be automatically promoted to a list
@@ -38768,28 +39076,6 @@ class GPUdb(object):
                   *table_names* does not exist, no error is returned. If
                   *false* and if the table names specified in input parameter
                   *table_names* does not exist, then an error is returned.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
-                * **column_names** --
-                  Columns, per table in input parameter *table_names*, to
-                  collect statistics for when @{input.key options.collect_now}
-                  is *true*; ignored otherwise.  Encoded as a ';'-separated
-                  parallel array aligned with input parameter *table_names*
-                  (e.g. *x,y;z* requests columns x,y for the first table and z
-                  for the second).  A value of *** expands to every collectable
-                  column on each table (geometry, vector, JSON, and array
-                  columns are skipped).  An explicit list may not be combined
-                  with a *** table_names wildcard. The default value is ''.
-
-                * **collect_now** --
-                  If *true*, the columns named by @{input.key
-                  options.column_names} are collected synchronously during this
-                  request and reflected in the response.  Default *false*.
                   Allowed values are:
 
                   * true
@@ -40487,6 +40773,20 @@ class GPUdb(object):
                   * false
 
                   The default value is 'true'.
+
+                * **enable_worker_oop_update** --
+                  For an out-of-place update (delete and insert), controls
+                  where the replacement records are reinserted. If set to
+                  *true*, the workers that own the data reinsert them directly,
+                  avoiding a round trip through the head node; a shard-key
+                  change reshards the replacements to their new owning workers.
+                  If set to *false*, the replacement records are reinserted
+                  from the head node. Overrides the
+                  {feature.enable_worker_oop_update}@ configuration default.
+                  Allowed values are:
+
+                  * true
+                  * false
 
                 * **truncate_strings** --
                   If set to *true*, any strings which are too long for their
@@ -46900,7 +47200,8 @@ class GPUdbTable( object ):
                 Name of the column in input parameter *table_name* for which to
                 clear statistics. The column must be from an existing table. An
                 empty string clears statistics for all columns in the table.
-                The default value is ''.
+                Must be empty when input parameter *table_name* is '*'. The
+                default value is ''.
 
             options (dict of str to str)
                 Optional parameters. The default value is an empty dict ( {} ).
@@ -46993,7 +47294,7 @@ class GPUdbTable( object ):
             column_names (list of str)
                 List of one or more column names in input parameter
                 *table_name* for which to collect statistics (cardinality, mean
-                value, etc.).  A single entry of *** expands to every
+                value, etc.). A single entry of '*' expands to every
                 collectable column on the table (geometry, vector, JSON, and
                 array columns are skipped). The user can provide a single
                 element (which will be automatically promoted to a list
@@ -49745,6 +50046,20 @@ class GPUdbTable( object ):
                   * false
 
                   The default value is 'true'.
+
+                * **enable_worker_oop_update** --
+                  For an out-of-place update (delete and insert), controls
+                  where the replacement records are reinserted. If set to
+                  *true*, the workers that own the data reinsert them directly,
+                  avoiding a round trip through the head node; a shard-key
+                  change reshards the replacements to their new owning workers.
+                  If set to *false*, the replacement records are reinserted
+                  from the head node. Overrides the
+                  {feature.enable_worker_oop_update}@ configuration default.
+                  Allowed values are:
+
+                  * true
+                  * false
 
                 * **truncate_strings** --
                   If set to *true*, any strings which are too long for their
