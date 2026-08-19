@@ -1,5 +1,17 @@
 # Kinetica REST API Changelog
 
+## Version 7.2.3.20
+#### Changed
+-   Deprecated the object-specific permission endpoints ``/grant/permission/credential``, ``/grant/permission/datasource``, ``/grant/permission/directory``, ``/grant/permission/proc``, ``/grant/permission/system``, ``/grant/permission/table`` and their ``/revoke/permission/...`` counterparts in favor of ``/grant/permission`` and ``/revoke/permission``.  The deprecated endpoints remain available and now delegate to the consolidated endpoints.
+
+## Version 7.2.3.19
+#### Added
+-   Added new options ``datalake_table_metadata_cache_enabled``, ``datalake_table_metadata_cache_size``, ``datalake_table_metadata_cache_ttl``, ``datalake_table_metadata_cache_snapshot_check``, ``datalake_catalog_connection_cache_size``, and ``iceberg_manifest_cache_enabled`` to ``/alter/system/properties`` request
+-   Added ``error_handling`` option to ``/insert/records``, ``/update/records`` and ``/append/records``
+-   ``error_handling`` options are now consistent, with ``permissive``, ``skip`` and ``abort`` values.
+-   Deprecated the ``ignore_bad_records`` value of ``error_handling`` in favor of ``skip`` on ``/create/table/external``, ``/insert/records/fromfiles``, ``/insert/records/fromquery`` and ``/insert/records/frompayload``
+-   Added ``pk_conflict_predicate_higher`` and ``pk_conflict_predicate_lower`` options to ``/update/records``, ``/create/table/external``, ``/insert/records/fromfiles``, ``/insert/records/fromquery`` and ``/insert/records/frompayload``
+
 ## Version 7.2.3.18
 #### Added
 -   Added ``transformations`` option to ``/create/table/external``, ``/insert/records/fromfiles`` and ``/insert/records/frompayload``

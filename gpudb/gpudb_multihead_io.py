@@ -19,11 +19,11 @@ from typing import Union, Optional, Dict, Tuple
 
 
 try:                   # Installed
-    from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbRecordColumn, GPUdbColumnProperty, RecordType, _Util, AttrDict
+    from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbRecordColumn, GPUdbColumnProperty, RecordType, _Util, AttrDict, _DEFAULT_COLUMN_VALUES_VERSION
     from gpudb.gpudb import GPUdbException, GPUdbConnectionException, GPUdbExitException, GPUdbFailoverDisabledException, GPUdbHAUnavailableException, GPUdbUnauthorizedAccessException
     from gpudb.protocol import Record
 except:                # Local
-    from gpudb       import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbRecordColumn, GPUdbColumnProperty, RecordType, _Util, AttrDict
+    from gpudb       import GPUdb, GPUdbRecord, GPUdbRecordType, GPUdbRecordColumn, GPUdbColumnProperty, RecordType, _Util, AttrDict, _DEFAULT_COLUMN_VALUES_VERSION
     from gpudb       import GPUdbException, GPUdbConnectionException, GPUdbExitException, GPUdbFailoverDisabledException, GPUdbHAUnavailableException, GPUdbUnauthorizedAccessException
     from protocol import Record
 
@@ -561,6 +561,12 @@ class _RecordKey:
         self._buffer_value = bytearray()
         self._is_valid = True
 
+        # Set only for values that cannot be parsed at all (as opposed to ones
+        # that are merely out of the server's supported range), so that a
+        # caller looking a key up can be told what was wrong with the value it
+        # supplied.  See _mark_invalid().
+        self._invalid_reason = None
+
         # The hash value for this record key (used internally in the python API)
         self._hash_code = 0
 
@@ -580,6 +586,30 @@ class _RecordKey:
         """Is the key valid?"""
         return self._is_valid
     # end is_valid
+
+    @property
+    def invalid_reason( self ):   # read-only
+        """Why the key is unusable, or None if it is usable or the reason is
+        not worth reporting."""
+        return self._invalid_reason
+    # end invalid_reason
+
+    def _mark_invalid( self, reason ):
+        """Flag the key as unusable, recording why.
+
+        When a record is being *ingested*, the value may be a deliberate
+        placeholder for a column that initializes itself server-side
+        ('init_with_now', 'init_with_uuid'), in which case there is nothing to
+        report and nothing to route on--the server assigns the real value and
+        shards on that.  When a key is being *looked up*, on the other hand, the
+        caller supplied the value directly and an unparseable one is simply an
+        error.  Recording the reason here lets the lookup path raise.
+        """
+        self._is_valid = False
+        # Keep the first reason; it is the one closest to the actual problem
+        if self._invalid_reason is None:
+            self._invalid_reason = reason
+    # end _mark_invalid
 
     @property
     def hash_code( self ):  # read-only
@@ -1227,6 +1257,8 @@ class _RecordKey:
 
     def add_timestamp( self, val ):
         """Add a long timestamp to the buffer (can be null)--eight bytes.
+        If the timestamp falls outside the supported year range of
+        [1000, 2900], the key is flagged invalid (see :meth:`is_valid`).
 
         Parameters:
             val (long)
@@ -1312,6 +1344,17 @@ class _RecordKey:
                + (YEARS_PER_CENTURY * century_of_quad_century) \
                + (YEARS_PER_QUAD_YEAR * quad_year_of_century) \
                + year_of_quad_year + 1
+
+        # The server supports years in the range [1000, 2900]; anything else
+        # is an invalid timestamp, which is exactly what a column with the
+        # 'init_with_now' property is given to make the server substitute
+        # NOW() at insertion time.  Bail out here the same way add_date()
+        # does for an out-of-range date.
+        if (year < self._MIN_SUPPORTED_YEAR) or (year > self._MAX_SUPPORTED_YEAR):
+            self._buffer_value += struct.pack( "=q", 0 )
+            self._is_valid = False
+            return
+        # end if
 
         # We also need this extracted value
         year_field = int(year - 1900)
@@ -1487,10 +1530,14 @@ class _RecordKey:
 
     def add_uuid( self, val ):
         """Add a UUID to the buffer (can be null)--16 bytes (128 bits).
-        Given value is a string; need to parse.  If not a valid UUID,
-        throw an exception.
+        Given value is a string; need to parse.  If not a valid UUID, the
+        key is flagged invalid (see :meth:`is_valid`).
 
-        @throws GPUdbException if the value cannot be parsed as a UUID
+        Note that a column with the 'init_with_uuid' property is given its
+        value by the server at insertion time, so the client only ever sees
+        a placeholder for it.  An unparseable value must therefore not be
+        treated as an error here; it simply yields no usable key, which
+        matches the behavior of :meth:`add_date`.
         """
         # Longs are eight bytes long
         self.__will_buffer_overflow( _ColumnTypeSize.UUID )
@@ -1511,9 +1558,14 @@ class _RecordKey:
         # UUID)
         parsed_uuid = _RecordKey.validate_uuid( val )
         if (parsed_uuid is False):
-            # The validating function returns False if it is an invalid UUID
-            raise GPUdbException( "Value '{}' could not be parsed as a UUID!"
-                                  "".format( val ) )
+            # The validating function returns False if it is an invalid UUID;
+            # add 16 0s and flag the key as unusable
+            for i in range( _ColumnTypeSize.UUID ):
+                self._buffer_value += struct.pack( "=b", 0 )
+            # end for
+            self._mark_invalid( "Value '{}' could not be parsed as a UUID!"
+                                "".format( val ) )
+            return
         # end if
 
         def convert_hex_to_int( hex_digit ):
@@ -1923,6 +1975,14 @@ class _RecordKeyBuilder:
                 self._column_type_add_functions[ col_type ]( record_key, value )
         # end loop
 
+        # Unlike build(), which is given a whole record to ingest and must
+        # tolerate placeholders for self-initializing columns, the values here
+        # were handed over by the caller expressly to be looked up.  Nothing
+        # will substitute a usable value for an unparseable one, so report it
+        # rather than routing the lookup on a garbage hash.
+        if record_key.invalid_reason:
+            raise GPUdbException( record_key.invalid_reason )
+
         # Compute the key hash and return the key
         record_key.compute_hashes()
         return record_key
@@ -2214,8 +2274,21 @@ class GPUdbIngestor:
                 The name of the table into which records will be ingested.
                 Must be an existing table.
             record_type (:class:`gpudb.GPUdbRecordType`)
-                The type for the records which will be ingested; must match
-                the type of the given table.
+                The type for the records which will be ingested.  Its columns
+                must be columns of the given table, but they need not be all
+                of them: any column of the table that this type leaves out is
+                populated by the server from that column's own default value
+                ('default', 'init_with_now' or 'init_with_uuid'), which is how
+                a record omits a column altogether.  Leaving a column out
+                requires a server of at least v7.2.3.18; against an older one
+                the type must cover every column of the table.
+
+                Note that the columns are fixed for the lifetime of this
+                object, so records that supply a column and records that leave
+                it to its default need separate ingestors.  Note also that
+                supplying the column with a null value is not the same as
+                leaving it out--a null is stored as a null, and does not bring
+                the default into play.
             batch_size (int)
                 The size of the queues; when any queue (one per worker rank of
                 the database server) attains the given size, the queued records
@@ -2310,9 +2383,25 @@ class GPUdbIngestor:
         self.table_name           = table_name
         self.record_type          = record_type
         self.batch_size           = batch_size
-        self.options              = options if options else {}
+        # Take a copy; the option added below must not leak back to the caller
+        self.options              = dict( options ) if options else {}
         self.is_table_replicated  = is_table_replicated
         self.worker_list          = workers
+
+        # Tell the server which columns the records being sent actually carry.
+        # Any column of the target table that is missing from this list gets
+        # populated from its own default value ('default', 'init_with_now' or
+        # 'init_with_uuid') rather than being rejected, which is what lets a
+        # record omit a column altogether.  Declaring it is harmless when the
+        # record type covers every column, which is the usual case.
+        #
+        # JSON records carry their own field names, so the server works the
+        # columns out from the payload and this option does not apply.
+        if ( (not self.json_ingestion)
+             and (self.record_type is not None)
+             and self.__is_defaults_supported() ):
+            self.options[ "request_schema_str" ] = self.record_type.base_definition
+        # end if
 
         # Keep track of the current head node being used
         self.__curr_head_node_url = self.gpudb.get_url( stringified = False )
@@ -2411,6 +2500,25 @@ class GPUdbIngestor:
         # end if
 
     # end GPUdbIngestor __init__
+
+
+    def __is_defaults_supported( self ):
+        """Whether the server is new enough to honor the 'request_schema_str'
+        insertion option, and so to populate a column that the records being
+        sent leave out from that column's default value.
+
+        Returns False if the server version is not known, so that an
+        insertion is never sent an option the server might not understand.
+        """
+        server_version = self.gpudb.server_version
+
+        if not isinstance( server_version, GPUdb.Version ):
+            return False
+
+        # Phrased as "the required version is not newer than the server's" to
+        # match the other APIs, and because Version defines '>' but not '>='
+        return not (_DEFAULT_COLUMN_VALUES_VERSION > server_version)
+    # end __is_defaults_supported
 
 
     def __force_failover( self, curr_url, curr_count_cluster_switches ):

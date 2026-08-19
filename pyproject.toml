@@ -1,6 +1,6 @@
 [project]
 name = "gpudb"
-version = "7.2.3.10"
+version = "7.2.3.11"
 dependencies = [
     'future',
     'pyzmq' ,

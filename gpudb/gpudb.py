@@ -2144,6 +2144,37 @@ class GPUdbRecordType(object):
 
 
     @property
+    def base_definition(self): # read-only base type definition
+        """The bare column definition for the record type, as the compact
+        JSON list of ``[name, type]`` pairs that the server's
+        *request_schema_str* insertion option expects; a column that is
+        nullable carries a third ``"nullable"`` entry.
+
+        Only the base (avro) type of each column is listed--any sub-type or
+        other property, such as 'timestamp' or 'char8', is left out, since
+        this describes the payload being sent rather than the table it is
+        being sent to.
+
+        Declaring this on an insertion tells the server which columns the
+        records actually carry.  A column of the target table that is absent
+        from the list is populated by the server from its own default value
+        ('default', 'init_with_now' or 'init_with_uuid'), which is how a
+        record can omit a column altogether.
+        """
+        columns = []
+        for column in self._columns:
+            definition = [ column.name, column.column_type ]
+            if column.is_nullable:
+                definition.append( "nullable" )
+            columns.append( definition )
+        # end for
+
+        # Compact separators, so that this matches the other APIs byte for byte
+        return json.dumps( columns, separators = (",", ":") )
+    # end base_definition
+
+
+    @property
     def record_schema(self): # read-only avro schema
         """The avro schema for the record type."""
         return self._record_schema
@@ -5555,7 +5586,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.3.10"
+    api_version = "7.2.3.11"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -12006,9 +12037,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/alter/backup"
         REQ_SCHEMA_STR = """{"type":"record","name":"alter_backup_request","fields":[{"name":"backup_name","type":"string"},{"name":"action","type":"string"},{"name":"value","type":"string"},{"name":"datasink_name","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"alter_backup_response","fields":[{"name":"backup_name","type":"string"},{"name":"backup_id","type":"long"},{"name":"total_bytes","type":"long"},{"name":"total_number_of_records","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"alter_backup_response","fields":[{"name":"backup_name","type":"string"},{"name":"backup_id","type":"long"},{"name":"total_bytes","type":"long"},{"name":"total_files","type":"long"},{"name":"total_number_of_records","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
         REQ_SCHEMA = Schema( "record", [("backup_name", "string"), ("action", "string"), ("value", "string"), ("datasink_name", "string"), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("backup_name", "string"), ("backup_id", "long"), ("total_bytes", "long"), ("total_number_of_records", "long"), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("backup_name", "string"), ("backup_id", "long"), ("total_bytes", "long"), ("total_files", "long"), ("total_number_of_records", "long"), ("info", "map", [("string")])] )
         ENDPOINT = "/alter/backup"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -13042,9 +13073,9 @@ class GPUdb(object):
                                        "ENDPOINT" : ENDPOINT }
         name = "/filter/bystring"
         REQ_SCHEMA_STR = """{"type":"record","name":"filter_by_string_request","fields":[{"name":"table_name","type":"string"},{"name":"view_name","type":"string"},{"name":"expression","type":"string"},{"name":"mode","type":"string"},{"name":"column_names","type":{"type":"array","items":"string"}},{"name":"options","type":{"type":"map","values":"string"}}]}"""
-        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_string_response","fields":[{"name":"count","type":"long"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"filter_by_string_response","fields":[{"name":"count","type":"long"},{"name":"info","type":{"type":"map","values":"string"}},{"name":"stats_data","type":"bytes"}]}"""
         REQ_SCHEMA = Schema( "record", [("table_name", "string"), ("view_name", "string"), ("expression", "string"), ("mode", "string"), ("column_names", "array", [("string")]), ("options", "map", [("string")])] )
-        RSP_SCHEMA = Schema( "record", [("count", "long"), ("info", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("count", "long"), ("info", "map", [("string")]), ("stats_data", "bytes")] )
         ENDPOINT = "/filter/bystring"
         self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
                                        "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
@@ -18654,6 +18685,9 @@ class GPUdb(object):
             total_bytes (long)
                 Total size of files affected by the alter operation.
 
+            total_files (long)
+                Total number of files affected by the alter operation.
+
             total_number_of_records (long)
                 Total number of records affected by the alter operation.
 
@@ -19779,6 +19813,27 @@ class GPUdb(object):
                   before ingestion. The default value is '30'. The minimum
                   allowed value is '1'. The maximum allowed value is '120'.
 
+                * **datalake_table_metadata_cache_enabled** --
+                  Enable caching of datalake table metadata.
+
+                * **datalake_table_metadata_cache_size** --
+                  Maximum number of datalake table metadata entries to cache.
+
+                * **datalake_table_metadata_cache_ttl** --
+                  Time-to-live (seconds) for cached datalake table metadata
+                  entries.
+
+                * **datalake_table_metadata_cache_snapshot_check** --
+                  When enabled, check the current datalake snapshot on cache
+                  hits and invalidate entries that have changed.
+
+                * **datalake_catalog_connection_cache_size** --
+                  Maximum number of cached datalake REST catalog connections.
+
+                * **iceberg_manifest_cache_enabled** --
+                  Enable caching of parsed Iceberg manifest and manifest-list
+                  files.
+
                 * **egress_parquet_compression** --
                   Parquet file compression type.
                   Allowed values are:
@@ -19816,6 +19871,11 @@ class GPUdb(object):
                   table data.  Multi-head inserts are not affected by this
                   limit. The minimum allowed value is '2'. The maximum allowed
                   value is '8192'.
+
+                * **remote_io_threads** --
+                  Size of the worker rank IO thread pool. This is used for
+                  blocking IO operations such as reads from object storage or
+                  external file systems.
 
                 * **background_worker_threads** --
                   Size of the worker rank background thread pool. This includes
@@ -20247,6 +20307,19 @@ class GPUdb(object):
                   description of 'build_materialized_view_policy' in
                   :meth:`GPUdb.create_materialized_view` for possible values
                   for input parameter *value*.
+
+                * **rebuild_text_search_index** --
+                  Drops and rebuilds the `text search
+                  <../../../../concepts/full_text_search/>`__ index for the
+                  table from current type metadata and chunk storage. Use this
+                  to repair a text-search index left incomplete by an
+                  interrupted or failed rebuild (for example, after a crash
+                  during an add-column that requested text search): re-running
+                  the original add_column will not work because the column
+                  already exists. This action is also dispatched automatically
+                  by :meth:`GPUdb.alter_table_columns` after add_column
+                  completions that require a full re-index. The input parameter
+                  *value* is ignored.
 
             value (str)
                 The value of the modification, depending on input parameter
@@ -20994,6 +21067,31 @@ class GPUdb(object):
                   *order_by* columns do not have to be present in input
                   parameter *field_map*. The default value is ''.
 
+                * **error_handling** --
+                  Specifies how record errors are handled while appending
+                  source table records into the target table.  Currently this
+                  governs primary-key collision behavior: *skip* and
+                  *permissive* drop the colliding source records and continue,
+                  while *abort* rejects the batch.  Explicit
+                  *update_on_existing_pk* or *ignore_existing_pk* take
+                  precedence over this option.
+                  Allowed values are:
+
+                  * **permissive** --
+                    Source records that cannot be appended (e.g. a primary-key
+                    collision) are skipped and reported; the rest of the batch
+                    is appended.
+
+                  * **skip** --
+                    Source records that cannot be appended are skipped and
+                    reported; the rest of the batch is appended.
+
+                  * **abort** --
+                    A source record that cannot be appended (e.g. a primary-key
+                    collision) raises an error.  This is the default.
+
+                  The default value is 'abort'.
+
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting source
                   table records (specified by input parameter
@@ -21616,6 +21714,21 @@ class GPUdb(object):
             options (dict of str to str)
                 Optional parameters.
                 Allowed keys are:
+
+                * **block_table_mutations** --
+                  Whether or not to block all mutations on target tables while
+                  they are being backed up.
+                  Allowed values are:
+
+                  * **true** --
+                    Block all mutations on target tables while they are being
+                    backed up.
+
+                  * **false** --
+                    Only block mutations on a target table at the point a disk
+                    eviction is necessary.
+
+                  The default value is 'false'.
 
                 * **checksum** --
                   Whether or not to calculate checksums for backup files.
@@ -24175,14 +24288,39 @@ class GPUdb(object):
                 of the table to be defined independently of the data source.
                 Allowed keys are:
 
-                * **type_id** --
-                  ID of a currently registered `type
-                  <../../../../concepts/types/>`__.
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for this table.
 
-                * **no_error_if_exists** --
-                  If *true*, prevents an error from occurring if the table
-                  already exists and is of the given type.  If a table with the
-                  same name but a different type exists, it is still an error.
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for this table.
+
+                * **chunk_size** --
+                  Indicates the number of records per chunk to be used for this
+                  table.
+
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for this
+                  table's columns.
+
+                * **foreign_keys** --
+                  Semicolon-separated list of `foreign keys
+                  <../../../../concepts/tables/#foreign-keys>`__, of the format
+                  '(source_column_name [, ...]) references
+                  target_table_name(primary_key_column_name [, ...]) [as
+                  foreign_key_name]'.
+
+                * **foreign_shard_key** --
+                  Foreign shard key of the format 'source_column references
+                  shard_by_column from target_table(primary_key_column)'.
+
+                * **is_automatic_partition** --
+                  If *true*, a new partition will be created for values which
+                  don't fall into an existing partition.  Currently, only
+                  supported for `list partitions
+                  <../../../../concepts/tables/#partitioning-by-list>`__.
                   Allowed values are:
 
                   * true
@@ -24210,16 +24348,49 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-                * **foreign_keys** --
-                  Semicolon-separated list of `foreign keys
-                  <../../../../concepts/tables/#foreign-keys>`__, of the format
-                  '(source_column_name [, ...]) references
-                  target_table_name(primary_key_column_name [, ...]) [as
-                  foreign_key_name]'.
+                * **is_result_table** --
+                  Indicates whether the table is a `memory-only table
+                  <../../../../concepts/tables_memory_only/>`__. A result table
+                  cannot contain columns with text_search `data-handling
+                  <../../../../concepts/types/#data-handling>`__, and it will
+                  not be retained if the server is restarted.
+                  Allowed values are:
 
-                * **foreign_shard_key** --
-                  Foreign shard key of the format 'source_column references
-                  shard_by_column from target_table(primary_key_column)'.
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **no_error_if_exists** --
+                  If *true*, prevents an error from occurring if the table
+                  already exists and is of the given type.  If a table with the
+                  same name but a different type exists, it is still an error.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **partition_definitions** --
+                  Comma-separated list of partition definitions, whose format
+                  depends on the choice of *partition_type*.  See `range
+                  partitioning
+                  <../../../../concepts/tables/#partitioning-by-range>`__,
+                  `interval partitioning
+                  <../../../../concepts/tables/#partitioning-by-interval>`__,
+                  `list partitioning
+                  <../../../../concepts/tables/#partitioning-by-list>`__, `hash
+                  partitioning
+                  <../../../../concepts/tables/#partitioning-by-hash>`__, or
+                  `series partitioning
+                  <../../../../concepts/tables/#partitioning-by-series>`__ for
+                  example formats.
+
+                * **partition_keys** --
+                  Comma-separated list of partition keys, which are the columns
+                  or column expressions by which records will be assigned to
+                  partitions defined by *partition_definitions*.
 
                 * **partition_type** --
                   `Partitioning <../../../../concepts/tables/#partitioning>`__
@@ -24246,76 +24417,18 @@ class GPUdb(object):
                     Use `series partitioning
                     <../../../../concepts/tables/#partitioning-by-series>`__.
 
-                * **partition_keys** --
-                  Comma-separated list of partition keys, which are the columns
-                  or column expressions by which records will be assigned to
-                  partitions defined by *partition_definitions*.
-
-                * **partition_definitions** --
-                  Comma-separated list of partition definitions, whose format
-                  depends on the choice of *partition_type*.  See `range
-                  partitioning
-                  <../../../../concepts/tables/#partitioning-by-range>`__,
-                  `interval partitioning
-                  <../../../../concepts/tables/#partitioning-by-interval>`__,
-                  `list partitioning
-                  <../../../../concepts/tables/#partitioning-by-list>`__, `hash
-                  partitioning
-                  <../../../../concepts/tables/#partitioning-by-hash>`__, or
-                  `series partitioning
-                  <../../../../concepts/tables/#partitioning-by-series>`__ for
-                  example formats.
-
-                * **is_automatic_partition** --
-                  If *true*, a new partition will be created for values which
-                  don't fall into an existing partition.  Currently, only
-                  supported for `list partitions
-                  <../../../../concepts/tables/#partitioning-by-list>`__.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
-                * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
-                  specified in input parameter *table_name*.
-
-                * **chunk_size** --
-                  Indicates the number of records per chunk to be used for this
-                  table.
-
-                * **chunk_column_max_memory** --
-                  Indicates the target maximum data size for each column in a
-                  chunk to be used for this table.
-
-                * **chunk_max_memory** --
-                  Indicates the target maximum data size for all columns in a
-                  chunk to be used for this table.
-
-                * **is_result_table** --
-                  Indicates whether the table is a `memory-only table
-                  <../../../../concepts/tables_memory_only/>`__. A result table
-                  cannot contain columns with text_search `data-handling
-                  <../../../../concepts/types/#data-handling>`__, and it will
-                  not be retained if the server is restarted.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
                 * **strategy_definition** --
                   The `tier strategy
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
 
-                * **compression_codec** --
-                  The default `compression codec
-                  <../../../../concepts/column_compression/>`__ for this
-                  table's columns.
+                * **ttl** --
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
+                  specified in input parameter *table_name*.
+
+                * **type_id** --
+                  ID of a currently registered `type
+                  <../../../../concepts/types/>`__.
 
                 The default value is an empty dict ( {} ).
 
@@ -24323,12 +24436,13 @@ class GPUdb(object):
                 Optional parameters.
                 Allowed keys are:
 
-                * **bad_record_table_name** --
-                  Name of a table to which records that were rejected are
-                  written. The bad-record-table has the following columns:
-                  line_number (long), line_rejected (string), error_message
-                  (string).  When *error_handling* is *abort*, bad records
-                  table is not populated.
+                * **avro_schema** --
+                  String representing the Avro schema, for data that includes
+                  only records (i.e. does not embed its own schema).
+
+                * **avro_schema_no_inference** --
+                  Create table solely from the Avro schema definition, when
+                  *avro_schema* exists; do not infer from data.
 
                 * **bad_record_table_limit** --
                   A positive integer indicating the maximum number of records
@@ -24341,6 +24455,13 @@ class GPUdb(object):
                   per file/payload. Default value will be
                   *bad_record_table_limit* and total size of the table per rank
                   is limited to *bad_record_table_limit*.
+
+                * **bad_record_table_name** --
+                  Name of a table to which records that were rejected are
+                  written. The bad-record-table has the following columns:
+                  line_number (long), line_rejected (string), error_message
+                  (string).  When *error_handling* is *abort*, bad records
+                  table is not populated.
 
                 * **batch_size** --
                   Number of records to insert per batch when inserting data.
@@ -24361,36 +24482,96 @@ class GPUdb(object):
                   See *default_column_formats* for valid format syntax.
 
                 * **columns_to_load** --
-                  Specifies a comma-delimited list of columns from the source
-                  data to load.  If more than one file is being loaded, this
-                  list applies to all files.
-
-                  Column numbers can be specified discretely or as a range.
-                  For example, a value of '5,7,1..3' will insert values from
-                  the fifth column in the source data into the first column in
-                  the target table, from the seventh column in the source data
-                  into the second column in the target table, and from the
-                  first through third columns in the source data into the third
-                  through fifth columns in the target table.
-
-                  If the source data contains a header, column names matching
-                  the file header names may be provided instead of column
-                  numbers.  If the target table doesn't exist, the table will
-                  be created with the columns in this order.  If the target
-                  table does exist with columns in a different order than the
-                  source data, this list can be used to match the order of the
-                  target table.  For example, a value of 'C, B, A' will create
-                  a three column table with column C, followed by column B,
-                  followed by column A; or will insert those fields in that
-                  order into a table created with columns in that order.  If
-                  the target table exists, the column names must match the
-                  source data field names for a name-mapping to be successful.
+                  Specifies a comma-delimited list of source-data columns that
+                  supply the target table's columns. If more than one file is
+                  being loaded, this list applies to all files.
 
                   Mutually exclusive with *columns_to_skip*.
 
+                  This list is a positional mapping onto the target table
+                  rather than a filter: the i-th entry identifies the source
+                  column that feeds the i-th column of the target table.
+
+                  Entries may be column numbers, column names, or empty.
+
+                  Column numbers are 1-based, specified discretely or as a
+                  range. For example, '5,7,,1..3' inserts the fifth source
+                  column into the first target column, the seventh into the
+                  second, null into the third, and the first through third into
+                  the fourth through sixth. A range may descend ('3..1') to
+                  reverse that group's order.  Zero is not a valid column
+                  number. Numbers are supported only for delimited-text and
+                  Avro sources.
+
+                  Column names are strings, matching the source-data field
+                  names -- either the file's header names or the names supplied
+                  by *name_columns_from_file*. Requires that the source data
+                  have column names. Names are matched case-sensitively, and a
+                  name not present in the source will fail.
+
+                  An empty entry, acting as a placeholder meaning that no
+                  source column feeds the corresponding target column.
+
+                  Numbers and names cannot be mixed: a single non-numeric entry
+                  causes the entire list to be interpreted as names.
+
+                  If the external table has no column definition, it is created
+                  with these columns in this order, and the list may name any
+                  subset of the source columns.
+
+                  If the external table has a column definition, the number of
+                  entries must equal the table's column count. Use empty
+                  entries to pad the list to the table's width. Because the
+                  mapping is positional, this option can also reorder source
+                  columns into the table's column order -- for example 'C, B,
+                  A' for an external table whose columns are C, B, A.
+
+                  Note: specifying *columns_to_load* disables server-side
+                  population of target columns that no source column feeds.
+                  Such columns receive NULL instead of their default value,
+                  'init_with_now', or 'init_with_uuid' value; if the column is
+                  non-nullable, the record is rejected. To have unfed target
+                  columns take their defaults, omit *columns_to_load* and rely
+                  on name-based matching, optionally with *columns_to_skip*.
+
                 * **columns_to_skip** --
-                  Specifies a comma-delimited list of columns from the source
-                  data to skip.  Mutually exclusive with *columns_to_load*.
+                  Specifies a comma-delimited list of source-data columns to
+                  exclude from the load. If more than one file is being loaded,
+                  this list applies to all files.
+
+                  Mutually exclusive with *columns_to_load*.
+
+                  Entries may be column names matching the source-data field
+                  names (the file's header names, or the names supplied by
+                  *name_columns_from_file*, matched case-sensitively), or
+                  1-based column numbers. Numbers are supported only for
+                  delimited-text sources. Name-based entries require the source
+                  data to have column names.
+
+                  If the external table has no column definition, the
+                  non-excluded source columns define the external table's
+                  columns, in source-data order.
+
+                  If the external table has a column definition, the
+                  non-excluded source columns are matched to its columns by
+                  name, case-insensitively — unlike *columns_to_load*, this
+                  option does not change how that matching is done. The order
+                  and number of source columns therefore need not correspond to
+                  the external table's columns, and source columns matching
+                  none of them need not be listed; they are ignored.
+
+                  Excluding a source column that corresponds to a target table
+                  column causes that target column to be populated from its
+                  default value, 'init_with_*' property, or null.  This makes
+                  *columns_to_skip* the means of preferring a target column's
+                  default over a value present in the source data.
+
+                  If the external table has a column definition and the source
+                  data has no column names (no header row and no
+                  *name_columns_from_file*), the non-excluded source columns
+                  are matched to its columns by position rather than by name;
+                  the source column count must then equal the external table's
+                  column count plus the number of columns skipped.
 
                 * **compression_type** --
                   Source data compression type.
@@ -24409,6 +24590,16 @@ class GPUdb(object):
                     bzip2 file compression.
 
                   The default value is 'auto'.
+
+                * **datalake_catalog** --
+                  Name of an existing datalake(iceberg) catalog used in loading
+                  files.
+
+                * **datalake_path** --
+                  Path of datalake(iceberg) object.
+
+                * **datalake_snapshot** --
+                  Snapshot ID of datalake(iceberg) object.
 
                 * **datasource_name** --
                   Name of an existing external data source from which data
@@ -24444,15 +24635,20 @@ class GPUdb(object):
                   requirements. For example, '{"datetime" : "%m/%d/%Y %H:%M:%S"
                   }' would be used to interpret text as "05/04/2000 12:12:11".
 
-                * **datalake_catalog** --
-                  Name of an existing datalake(iceberg) catalog used in loading
-                  files.
+                * **enable_inplace_updates** --
+                  Applies only when upserting (when update_on_existing_pk is
+                  true). If set to true (the default), an existing record
+                  matched by primary key is modified in place. If set to false,
+                  the matched record is updated by deleting it and inserting a
+                  replacement (delete and insert), which prevents the change
+                  from being reflected in dependent materialized views until
+                  they are refreshed.
+                  Allowed values are:
 
-                * **datalake_path** --
-                  Path of datalake(iceberg) object.
+                  * true
+                  * false
 
-                * **datalake_snapshot** --
-                  Snapshot ID of datalake(iceberg) object.
+                  The default value is 'true'.
 
                 * **error_handling** --
                   Specifies how errors should be handled upon insertion.
@@ -24462,8 +24658,11 @@ class GPUdb(object):
                     Records with missing columns are populated with nulls if
                     possible; otherwise, the malformed records are skipped.
 
-                  * **ignore_bad_records** --
+                  * **skip** --
                     Malformed records are skipped.
+
+                  * **ignore_bad_records** --
+                    Deprecated. Alias for *skip*.
 
                   * **abort** --
                     Stops current insertion and aborts entire operation when an
@@ -24670,6 +24869,10 @@ class GPUdb(object):
                 * **local_time_offset** --
                   Apply an offset to Avro local timestamp columns.
 
+                * **max_consecutive_invalid_schema_failure** --
+                  Max records to skip due to schema related errors, before
+                  failing.
+
                 * **max_records_to_load** --
                   Limit the number of records to load in this request: if this
                   number is larger than *batch_size*, then the number of
@@ -24678,19 +24881,42 @@ class GPUdb(object):
 
                 * **name_columns_from_file** --
                   Specifies a comma-delimited list of column names to be used
-                  as the source-data column names.  If the file has a header
-                  row (i.e., *text_has_header* is *true*), these names override
-                  the file's header names.  If the file has no header row,
-                  these names are used as the source-data column names. Either
-                  way, the i-th name in this list applies to the i-th column in
-                  the file, enabling name-based matching against the target
-                  table's columns (and use with *columns_to_load* /
-                  *columns_to_skip*).
+                  as the source-data column names. Supported for delimited-text
+                  sources only.
+
+                  The i-th name in this list applies to the i-th column in the
+                  file. If the file has a header row (i.e., *text_has_header*
+                  is *true*), these names override the file's header names. If
+                  the file has no header row, these names become the
+                  source-data column names.
+
+                  Naming the source columns enables name-based matching against
+                  the target table's columns, and permits name-based
+                  *columns_to_load* / *columns_to_skip*, which otherwise
+                  require a header row.
+
+                  Note: for a source with no header row, supplying this option
+                  changes how source columns are matched to target columns --
+                  from positional matching to matching by name. Target columns
+                  with no matching source column are then populated from their
+                  defaults or null rather than being filled positionally.
+
+                  The list is not validated against the file's actual column
+                  count. If it is shorter, the trailing source columns are left
+                  unnamed.
 
                 * **num_tasks_per_rank** --
                   Number of tasks for reading file per rank. Default will be
                   system configuration parameter,
                   external_file_reader_num_tasks.
+
+                * **pk_conflict_predicate_higher** --
+                  The record with higher value for the column resolves the
+                  primary-key insert conflict. The default value is ''.
+
+                * **pk_conflict_predicate_lower** --
+                  The record with lower value for the column resolves the
+                  primary-key insert conflict. The default value is ''.
 
                 * **poll_interval** --
                   If *true*, the number of seconds between attempts to load
@@ -24719,6 +24945,21 @@ class GPUdb(object):
 
                   The default value is 'manual'.
 
+                * **remote_query** --
+                  Remote SQL query from which data will be sourced.
+
+                * **remote_query_filter_column** --
+                  Name of column to be used for splitting *remote_query* into
+                  multiple sub-queries using the data distribution of given
+                  column.
+
+                * **remote_query_increasing_column** --
+                  Column on subscribed remote query result that will increase
+                  for new records (e.g., TIMESTAMP).
+
+                * **remote_query_partition_column** --
+                  Alias name for *remote_query_filter_column*.
+
                 * **schema_registry_connection_retries** --
                   Confluent Schema registry connection timeout (in secs).
 
@@ -24727,10 +24968,6 @@ class GPUdb(object):
 
                 * **schema_registry_max_consecutive_connection_failures** --
                   Max records to skip due to SR connection failures, before
-                  failing.
-
-                * **max_consecutive_invalid_schema_failure** --
-                  Max records to skip due to schema related errors, before
                   failing.
 
                 * **schema_registry_schema_name** --
@@ -24910,36 +25147,6 @@ class GPUdb(object):
                     that 'all' values will fit with minimum data scanned.
 
                   The default value is 'speed'.
-
-                * **remote_query** --
-                  Remote SQL query from which data will be sourced.
-
-                * **remote_query_filter_column** --
-                  Name of column to be used for splitting *remote_query* into
-                  multiple sub-queries using the data distribution of given
-                  column.
-
-                * **remote_query_increasing_column** --
-                  Column on subscribed remote query result that will increase
-                  for new records (e.g., TIMESTAMP).
-
-                * **remote_query_partition_column** --
-                  Alias name for *remote_query_filter_column*.
-
-                * **enable_inplace_updates** --
-                  Applies only when upserting (when update_on_existing_pk is
-                  true). If set to true (the default), an existing record
-                  matched by primary key is modified in place. If set to false,
-                  the matched record is updated by deleting it and inserting a
-                  replacement (delete and insert), which prevents the change
-                  from being reflected in dependent materialized views until
-                  they are refreshed.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
 
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting into a
@@ -29695,7 +29902,7 @@ class GPUdb(object):
                 standard `name resolution rules
                 <../../../../concepts/tables/#table-name-resolution>`__. Must
                 be a currently existing table with a `track
-                <../../../../geospatial/geo_objects/>`__ present.
+                <../../../../location_intelligence/geo_objects/>`__ present.
 
             view_name (str)
                 If provided, then this will be the name of the view containing
@@ -29860,6 +30067,16 @@ class GPUdb(object):
                   column is a string type (non-charN) and the number of records
                   is too large, it will return 0.
 
+                * **search_stats** --
+                  Cross-shard BM25 corpus statistics for one (column, query)
+                  pair. Returns the merged BM25 statistics (max_doc, doc_count,
+                  sum_total_term_freq, per-term doc_freq / total_term_freq)
+                  needed by callers that score documents themselves (e.g.
+                  text_match_bm25_global SQL function pre-pass). Requires
+                  *column_names* to contain exactly one column with text search
+                  enabled. The *view_name* field is ignored — this mode does
+                  not produce a result table.
+
             column_names (list of str)
                 List of columns on which to apply the filter. Ignored for
                 *search* mode. The user can provide a single element (which
@@ -29917,6 +30134,16 @@ class GPUdb(object):
                   schema).
 
                 The default value is an empty dict ( {} ).
+
+            stats_data (bytes)
+                Serialized cross-shard BM25 corpus statistics, populated for
+                *search_stats* mode and empty otherwise. Wire format matches
+                the merged BM25GlobalStats blob the BM25 stats worker produces
+                internally (max_doc, doc_count, sum_total_term_freq,
+                sum_doc_freq, num_terms, then per term: term, doc_freq,
+                total_term_freq). Clients that consume this perform their own
+                scoring; the gpudb client library will expose a parser as a
+                future convenience. The default value is ''.
         """
         assert isinstance( table_name, (basestring)), "filter_by_string(): Argument 'table_name' must be (one) of type(s) '(basestring)'; given %s" % type( table_name ).__name__
         assert isinstance( view_name, (basestring)), "filter_by_string(): Argument 'view_name' must be (one) of type(s) '(basestring)'; given %s" % type( view_name ).__name__
@@ -32060,7 +32287,8 @@ class GPUdb(object):
     # begin grant_permission_credential
     def grant_permission_credential( self, name = None, permission = None,
                                      credential_name = None, options = {} ):
-        """Grants a `credential-level permission
+        """[DEPRECATED--please use :meth:`GPUdb.grant_permission` instead]
+        Grants a `credential-level permission
         <../../../../security/sec_concepts/#security-concepts-permissions-credential>`__
         to a user or role.
 
@@ -32122,7 +32350,8 @@ class GPUdb(object):
     # begin grant_permission_datasource
     def grant_permission_datasource( self, name = None, permission = None,
                                      datasource_name = None, options = {} ):
-        """Grants a `data source <../../../../concepts/data_sources/>`__
+        """[DEPRECATED--please use :meth:`GPUdb.grant_permission` instead]
+        Grants a `data source <../../../../concepts/data_sources/>`__
         permission to a user or role.
 
         Parameters:
@@ -32183,8 +32412,9 @@ class GPUdb(object):
     # begin grant_permission_directory
     def grant_permission_directory( self, name = None, permission = None,
                                     directory_name = None, options = {} ):
-        """Grants a `KiFS <../../../../tools/kifs/>`__ directory-level
-        permission to a user or role.
+        """[DEPRECATED--please use :meth:`GPUdb.grant_permission` instead]
+        Grants a `KiFS <../../../../tools/kifs/>`__ directory-level permission
+        to a user or role.
 
         Parameters:
 
@@ -32247,7 +32477,8 @@ class GPUdb(object):
     # begin grant_permission_proc
     def grant_permission_proc( self, name = None, permission = None, proc_name =
                                None, options = {} ):
-        """Grants a proc-level permission to a user or role.
+        """[DEPRECATED--please use :meth:`GPUdb.grant_permission` instead]
+        Grants a proc-level permission to a user or role.
 
         Parameters:
 
@@ -32307,7 +32538,8 @@ class GPUdb(object):
     # begin grant_permission_system
     def grant_permission_system( self, name = None, permission = None, options =
                                  {} ):
-        """Grants a system-level permission to a user or role.
+        """[DEPRECATED--please use :meth:`GPUdb.grant_permission` instead]
+        Grants a system-level permission to a user or role.
 
         Parameters:
 
@@ -32367,7 +32599,8 @@ class GPUdb(object):
     # begin grant_permission_table
     def grant_permission_table( self, name = None, permission = None, table_name
                                 = None, filter_expression = '', options = {} ):
-        """Grants a table-level permission to a user or role.
+        """[DEPRECATED--please use :meth:`GPUdb.grant_permission` instead]
+        Grants a table-level permission to a user or role.
 
         Parameters:
 
@@ -33118,6 +33351,28 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **error_handling** --
+                  Specifies how errors should be handled upon insertion.  When
+                  set, this option is authoritative; supplying a contradictory
+                  *allow_partial_batch* is an error.
+                  Allowed values are:
+
+                  * **permissive** --
+                    Records with bad column values are kept when possible: the
+                    offending column is filled with its default value if one
+                    exists, otherwise with null if the column is nullable; if
+                    neither is possible the record is skipped and reported.
+
+                  * **skip** --
+                    Records with bad values are skipped and reported; the rest
+                    of the batch is inserted.
+
+                  * **abort** --
+                    Stops the insertion and rejects the remaining batch when
+                    any record is incorrect.
+
+                  The default value is 'abort'.
+
                 * **dry_run** --
                   If set to *true*, no data will be saved and any errors will
                   be returned.
@@ -33303,14 +33558,39 @@ class GPUdb(object):
                 when creating the target table.
                 Allowed keys are:
 
-                * **type_id** --
-                  ID of a currently registered `type
-                  <../../../../concepts/types/>`__.
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for this table.
 
-                * **no_error_if_exists** --
-                  If *true*, prevents an error from occurring if the table
-                  already exists and is of the given type.  If a table with the
-                  same name but a different type exists, it is still an error.
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for this table.
+
+                * **chunk_size** --
+                  Indicates the number of records per chunk to be used for this
+                  table.
+
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for this
+                  table's columns.
+
+                * **foreign_keys** --
+                  Semicolon-separated list of `foreign keys
+                  <../../../../concepts/tables/#foreign-keys>`__, of the format
+                  '(source_column_name [, ...]) references
+                  target_table_name(primary_key_column_name [, ...]) [as
+                  foreign_key_name]'.
+
+                * **foreign_shard_key** --
+                  Foreign shard key of the format 'source_column references
+                  shard_by_column from target_table(primary_key_column)'.
+
+                * **is_automatic_partition** --
+                  If *true*, a new partition will be created for values which
+                  don't fall into an existing partition.  Currently, only
+                  supported for `list partitions
+                  <../../../../concepts/tables/#partitioning-by-list>`__.
                   Allowed values are:
 
                   * true
@@ -33338,16 +33618,49 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-                * **foreign_keys** --
-                  Semicolon-separated list of `foreign keys
-                  <../../../../concepts/tables/#foreign-keys>`__, of the format
-                  '(source_column_name [, ...]) references
-                  target_table_name(primary_key_column_name [, ...]) [as
-                  foreign_key_name]'.
+                * **is_result_table** --
+                  Indicates whether the table is a `memory-only table
+                  <../../../../concepts/tables_memory_only/>`__. A result table
+                  cannot contain columns with text_search `data-handling
+                  <../../../../concepts/types/#data-handling>`__, and it will
+                  not be retained if the server is restarted.
+                  Allowed values are:
 
-                * **foreign_shard_key** --
-                  Foreign shard key of the format 'source_column references
-                  shard_by_column from target_table(primary_key_column)'.
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **no_error_if_exists** --
+                  If *true*, prevents an error from occurring if the table
+                  already exists and is of the given type.  If a table with the
+                  same name but a different type exists, it is still an error.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **partition_definitions** --
+                  Comma-separated list of partition definitions, whose format
+                  depends on the choice of *partition_type*.  See `range
+                  partitioning
+                  <../../../../concepts/tables/#partitioning-by-range>`__,
+                  `interval partitioning
+                  <../../../../concepts/tables/#partitioning-by-interval>`__,
+                  `list partitioning
+                  <../../../../concepts/tables/#partitioning-by-list>`__, `hash
+                  partitioning
+                  <../../../../concepts/tables/#partitioning-by-hash>`__, or
+                  `series partitioning
+                  <../../../../concepts/tables/#partitioning-by-series>`__ for
+                  example formats.
+
+                * **partition_keys** --
+                  Comma-separated list of partition keys, which are the columns
+                  or column expressions by which records will be assigned to
+                  partitions defined by *partition_definitions*.
 
                 * **partition_type** --
                   `Partitioning <../../../../concepts/tables/#partitioning>`__
@@ -33374,76 +33687,18 @@ class GPUdb(object):
                     Use `series partitioning
                     <../../../../concepts/tables/#partitioning-by-series>`__.
 
-                * **partition_keys** --
-                  Comma-separated list of partition keys, which are the columns
-                  or column expressions by which records will be assigned to
-                  partitions defined by *partition_definitions*.
-
-                * **partition_definitions** --
-                  Comma-separated list of partition definitions, whose format
-                  depends on the choice of *partition_type*.  See `range
-                  partitioning
-                  <../../../../concepts/tables/#partitioning-by-range>`__,
-                  `interval partitioning
-                  <../../../../concepts/tables/#partitioning-by-interval>`__,
-                  `list partitioning
-                  <../../../../concepts/tables/#partitioning-by-list>`__, `hash
-                  partitioning
-                  <../../../../concepts/tables/#partitioning-by-hash>`__, or
-                  `series partitioning
-                  <../../../../concepts/tables/#partitioning-by-series>`__ for
-                  example formats.
-
-                * **is_automatic_partition** --
-                  If *true*, a new partition will be created for values which
-                  don't fall into an existing partition.  Currently, only
-                  supported for `list partitions
-                  <../../../../concepts/tables/#partitioning-by-list>`__.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
-                * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
-                  specified in input parameter *table_name*.
-
-                * **chunk_size** --
-                  Indicates the number of records per chunk to be used for this
-                  table.
-
-                * **chunk_column_max_memory** --
-                  Indicates the target maximum data size for each column in a
-                  chunk to be used for this table.
-
-                * **chunk_max_memory** --
-                  Indicates the target maximum data size for all columns in a
-                  chunk to be used for this table.
-
-                * **is_result_table** --
-                  Indicates whether the table is a `memory-only table
-                  <../../../../concepts/tables_memory_only/>`__. A result table
-                  cannot contain columns with text_search `data-handling
-                  <../../../../concepts/types/#data-handling>`__, and it will
-                  not be retained if the server is restarted.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
                 * **strategy_definition** --
                   The `tier strategy
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
 
-                * **compression_codec** --
-                  The default `compression codec
-                  <../../../../concepts/column_compression/>`__ for this
-                  table's columns.
+                * **ttl** --
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
+                  specified in input parameter *table_name*.
+
+                * **type_id** --
+                  ID of a currently registered `type
+                  <../../../../concepts/types/>`__.
 
                 The default value is an empty dict ( {} ).
 
@@ -33451,12 +33706,13 @@ class GPUdb(object):
                 Optional parameters.
                 Allowed keys are:
 
-                * **bad_record_table_name** --
-                  Name of a table to which records that were rejected are
-                  written. The bad-record-table has the following columns:
-                  line_number (long), line_rejected (string), error_message
-                  (string).  When *error_handling* is *abort*, bad records
-                  table is not populated.
+                * **avro_schema** --
+                  String representing the Avro schema, for data that includes
+                  only records (i.e. does not embed its own schema).
+
+                * **avro_schema_no_inference** --
+                  Create table solely from the Avro schema definition, when
+                  *avro_schema* exists; do not infer from data.
 
                 * **bad_record_table_limit** --
                   A positive integer indicating the maximum number of records
@@ -33469,6 +33725,13 @@ class GPUdb(object):
                   per file/payload. Default value will be
                   *bad_record_table_limit* and total size of the table per rank
                   is limited to *bad_record_table_limit*.
+
+                * **bad_record_table_name** --
+                  Name of a table to which records that were rejected are
+                  written. The bad-record-table has the following columns:
+                  line_number (long), line_rejected (string), error_message
+                  (string).  When *error_handling* is *abort*, bad records
+                  table is not populated.
 
                 * **batch_size** --
                   Number of records to insert per batch when inserting data.
@@ -33489,36 +33752,96 @@ class GPUdb(object):
                   See *default_column_formats* for valid format syntax.
 
                 * **columns_to_load** --
-                  Specifies a comma-delimited list of columns from the source
-                  data to load.  If more than one file is being loaded, this
-                  list applies to all files.
-
-                  Column numbers can be specified discretely or as a range.
-                  For example, a value of '5,7,1..3' will insert values from
-                  the fifth column in the source data into the first column in
-                  the target table, from the seventh column in the source data
-                  into the second column in the target table, and from the
-                  first through third columns in the source data into the third
-                  through fifth columns in the target table.
-
-                  If the source data contains a header, column names matching
-                  the file header names may be provided instead of column
-                  numbers.  If the target table doesn't exist, the table will
-                  be created with the columns in this order.  If the target
-                  table does exist with columns in a different order than the
-                  source data, this list can be used to match the order of the
-                  target table.  For example, a value of 'C, B, A' will create
-                  a three column table with column C, followed by column B,
-                  followed by column A; or will insert those fields in that
-                  order into a table created with columns in that order.  If
-                  the target table exists, the column names must match the
-                  source data field names for a name-mapping to be successful.
+                  Specifies a comma-delimited list of source-data columns that
+                  supply the target table's columns. If more than one file is
+                  being loaded, this list applies to all files.
 
                   Mutually exclusive with *columns_to_skip*.
 
+                  This list is a positional mapping onto the target table
+                  rather than a filter: the i-th entry identifies the source
+                  column that feeds the i-th column of the target table.
+
+                  Entries may be column numbers, column names, or empty.
+
+                  Column numbers are 1-based, specified discretely or as a
+                  range. For example, '5,7,,1..3' inserts the fifth source
+                  column into the first target column, the seventh into the
+                  second, null into the third, and the first through third into
+                  the fourth through sixth. A range may descend ('3..1') to
+                  reverse that group's order.  Zero is not a valid column
+                  number. Numbers are supported only for delimited-text and
+                  Avro sources.
+
+                  Column names are strings, matching the source-data field
+                  names -- either the file's header names or the names supplied
+                  by *name_columns_from_file*. Requires that the source data
+                  have column names. Names are matched case-sensitively, and a
+                  name not present in the source will fail.
+
+                  An empty entry, acting as a placeholder meaning that no
+                  source column feeds the corresponding target column.
+
+                  Numbers and names cannot be mixed: a single non-numeric entry
+                  causes the entire list to be interpreted as names.
+
+                  If the target table does not exist, it is created with these
+                  columns in this order, and the list may name any subset of
+                  the source columns.
+
+                  If the target table already exists, the number of entries
+                  must equal the target table's column count. Use empty entries
+                  to pad the list to the target's width. Because the mapping is
+                  positional, this option can also reorder source columns into
+                  the target's column order -- for example 'C, B, A' for a
+                  target table whose columns are C, B, A.
+
+                  Note: specifying *columns_to_load* disables server-side
+                  population of target columns that no source column feeds.
+                  Such columns receive NULL instead of their default value,
+                  'init_with_now', or 'init_with_uuid' value; if the column is
+                  non-nullable, the record is rejected. To have unfed target
+                  columns take their defaults, omit *columns_to_load* and rely
+                  on name-based matching, optionally with *columns_to_skip*.
+
                 * **columns_to_skip** --
-                  Specifies a comma-delimited list of columns from the source
-                  data to skip.  Mutually exclusive with *columns_to_load*.
+                  Specifies a comma-delimited list of source-data columns to
+                  exclude from the load. If more than one file is being loaded,
+                  this list applies to all files.
+
+                  Mutually exclusive with *columns_to_load*.
+
+                  Entries may be column names matching the source-data field
+                  names (the file's header names, or the names supplied by
+                  *name_columns_from_file*, matched case-sensitively), or
+                  1-based column numbers. Numbers are supported only for
+                  delimited-text sources. Name-based entries require the source
+                  data to have column names.
+
+                  Unlike *columns_to_load*, this option does not change how the
+                  remaining source columns are matched to the target table.
+                  Matching remains by name and is case-insensitive, so the
+                  order and number of source columns need not correspond to the
+                  target table's columns.
+
+                  Excluding a source column that corresponds to a target table
+                  column causes that target column to be populated from its
+                  default value, 'init_with_*' property, or null.  This makes
+                  *columns_to_skip* the means of preferring a target column's
+                  default over a value present in the source data.
+
+                  Source columns that don't correspond to any target table
+                  column need not be listed; they are ignored.
+
+                  If the target table does not exist, the non-excluded source
+                  columns define the new table's columns, in source-data order.
+
+                  If the source data has no column names (no header row and no
+                  *name_columns_from_file*) and this option is given as
+                  numbers, the remaining source columns are matched to target
+                  columns by position; the source column count must then equal
+                  the target table's column count plus the number of columns
+                  skipped.
 
                 * **compression_type** --
                   Source data compression type.
@@ -33572,6 +33895,21 @@ class GPUdb(object):
                   requirements. For example, '{"datetime" : "%m/%d/%Y %H:%M:%S"
                   }' would be used to interpret text as "05/04/2000 12:12:11"
 
+                * **enable_inplace_updates** --
+                  Applies only when upserting (when update_on_existing_pk is
+                  true). If set to true (the default), an existing record
+                  matched by primary key is modified in place. If set to false,
+                  the matched record is updated by deleting it and inserting a
+                  replacement (delete and insert), which prevents the change
+                  from being reflected in dependent materialized views until
+                  they are refreshed.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
                 * **error_handling** --
                   Specifies how errors should be handled upon insertion.
                   Allowed values are:
@@ -33580,8 +33918,11 @@ class GPUdb(object):
                     Records with missing columns are populated with nulls if
                     possible; otherwise, the malformed records are skipped.
 
-                  * **ignore_bad_records** --
+                  * **skip** --
                     Malformed records are skipped.
+
+                  * **ignore_bad_records** --
+                    Deprecated. Alias for *skip*.
 
                   * **abort** --
                     Stops current insertion and aborts entire operation when an
@@ -33768,6 +34109,10 @@ class GPUdb(object):
                 * **local_time_offset** --
                   Apply an offset to Avro local timestamp columns.
 
+                * **max_consecutive_invalid_schema_failure** --
+                  Max records to skip due to schema related errors, before
+                  failing.
+
                 * **max_records_to_load** --
                   Limit the number of records to load in this request: if this
                   number is larger than *batch_size*, then the number of
@@ -33776,19 +34121,42 @@ class GPUdb(object):
 
                 * **name_columns_from_file** --
                   Specifies a comma-delimited list of column names to be used
-                  as the source-data column names.  If the file has a header
-                  row (i.e., *text_has_header* is *true*), these names override
-                  the file's header names.  If the file has no header row,
-                  these names are used as the source-data column names. Either
-                  way, the i-th name in this list applies to the i-th column in
-                  the file, enabling name-based matching against the target
-                  table's columns (and use with *columns_to_load* /
-                  *columns_to_skip*).
+                  as the source-data column names. Supported for delimited-text
+                  sources only.
+
+                  The i-th name in this list applies to the i-th column in the
+                  file. If the file has a header row (i.e., *text_has_header*
+                  is *true*), these names override the file's header names. If
+                  the file has no header row, these names become the
+                  source-data column names.
+
+                  Naming the source columns enables name-based matching against
+                  the target table's columns, and permits name-based
+                  *columns_to_load* / *columns_to_skip*, which otherwise
+                  require a header row.
+
+                  Note: for a source with no header row, supplying this option
+                  changes how source columns are matched to target columns --
+                  from positional matching to matching by name. Target columns
+                  with no matching source column are then populated from their
+                  defaults or null rather than being filled positionally.
+
+                  The list is not validated against the file's actual column
+                  count. If it is shorter, the trailing source columns are left
+                  unnamed.
 
                 * **num_tasks_per_rank** --
                   Number of tasks for reading file per rank. Default will be
                   system configuration parameter,
                   external_file_reader_num_tasks.
+
+                * **pk_conflict_predicate_higher** --
+                  The record with higher value for the column resolves the
+                  primary-key insert conflict. The default value is ''.
+
+                * **pk_conflict_predicate_lower** --
+                  The record with lower value for the column resolves the
+                  primary-key insert conflict. The default value is ''.
 
                 * **poll_interval** --
                   If *true*, the number of seconds between attempts to load
@@ -33809,10 +34177,6 @@ class GPUdb(object):
 
                 * **schema_registry_max_consecutive_connection_failures** --
                   Max records to skip due to SR connection failures, before
-                  failing.
-
-                * **max_consecutive_invalid_schema_failure** --
-                  Max records to skip due to schema related errors, before
                   failing.
 
                 * **schema_registry_schema_name** --
@@ -33938,6 +34302,15 @@ class GPUdb(object):
                   'text_search' property to. Used only when
                   *text_search_columns* has a value.
 
+                * **transformations** --
+                  Comma-separated expressions, one per target table column.
+                  Each expression is evaluated per record.  Empty entries (two
+                  consecutive commas) mean no transformation for that column --
+                  the value is resolved from the input record, table default,
+                  NULL, or an error. Expressions may reference input columns by
+                  name or by position ($1 for the first input column, $2 for
+                  the second, etc.). The default value is ''.
+
                 * **trim_space** --
                   If set to *true*, remove leading or trailing space from
                   fields.
@@ -33984,21 +34357,6 @@ class GPUdb(object):
 
                   The default value is 'accuracy'.
 
-                * **enable_inplace_updates** --
-                  Applies only when upserting (when update_on_existing_pk is
-                  true). If set to true (the default), an existing record
-                  matched by primary key is modified in place. If set to false,
-                  the matched record is updated by deleting it and inserting a
-                  replacement (delete and insert), which prevents the change
-                  from being reflected in dependent materialized views until
-                  they are refreshed.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting into a
                   table with a `primary key
@@ -34023,15 +34381,6 @@ class GPUdb(object):
                     records.
 
                   The default value is 'false'.
-
-                * **transformations** --
-                  Comma-separated expressions, one per target table column.
-                  Each expression is evaluated per record.  Empty entries (two
-                  consecutive commas) mean no transformation for that column --
-                  the value is resolved from the input record, table default,
-                  NULL, or an error. Expressions may reference input columns by
-                  name or by position ($1 for the first input column, $2 for
-                  the second, etc.). The default value is ''.
 
                 The default value is an empty dict ( {} ).
 
@@ -34130,14 +34479,39 @@ class GPUdb(object):
                 :meth:`GPUdb.create_table`.
                 Allowed keys are:
 
-                * **type_id** --
-                  ID of a currently registered `type
-                  <../../../../concepts/types/>`__. The default value is ''.
+                * **chunk_column_max_memory** --
+                  Indicates the target maximum data size for each column in a
+                  chunk to be used for this table.
 
-                * **no_error_if_exists** --
-                  If *true*, prevents an error from occurring if the table
-                  already exists and is of the given type.  If a table with the
-                  same ID but a different type exists, it is still an error.
+                * **chunk_max_memory** --
+                  Indicates the target maximum data size for all columns in a
+                  chunk to be used for this table.
+
+                * **chunk_size** --
+                  Indicates the number of records per chunk to be used for this
+                  table.
+
+                * **compression_codec** --
+                  The default `compression codec
+                  <../../../../concepts/column_compression/>`__ for this
+                  table's columns.
+
+                * **foreign_keys** --
+                  Semicolon-separated list of `foreign keys
+                  <../../../../concepts/tables/#foreign-keys>`__, of the format
+                  '(source_column_name [, ...]) references
+                  target_table_name(primary_key_column_name [, ...]) [as
+                  foreign_key_name]'.
+
+                * **foreign_shard_key** --
+                  Foreign shard key of the format 'source_column references
+                  shard_by_column from target_table(primary_key_column)'.
+
+                * **is_automatic_partition** --
+                  If *true*, a new partition will be created for values which
+                  don't fall into an existing partition.  Currently only
+                  supported for `list partitions
+                  <../../../../concepts/tables/#partitioning-by-list>`__.
                   Allowed values are:
 
                   * true
@@ -34165,16 +34539,49 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-                * **foreign_keys** --
-                  Semicolon-separated list of `foreign keys
-                  <../../../../concepts/tables/#foreign-keys>`__, of the format
-                  '(source_column_name [, ...]) references
-                  target_table_name(primary_key_column_name [, ...]) [as
-                  foreign_key_name]'.
+                * **is_result_table** --
+                  Indicates whether the table is a `memory-only table
+                  <../../../../concepts/tables_memory_only/>`__. A result table
+                  cannot contain columns with text_search `data-handling
+                  <../../../../concepts/types/#data-handling>`__, and it will
+                  not be retained if the server is restarted.
+                  Allowed values are:
 
-                * **foreign_shard_key** --
-                  Foreign shard key of the format 'source_column references
-                  shard_by_column from target_table(primary_key_column)'.
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **no_error_if_exists** --
+                  If *true*, prevents an error from occurring if the table
+                  already exists and is of the given type.  If a table with the
+                  same ID but a different type exists, it is still an error.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
+                * **partition_definitions** --
+                  Comma-separated list of partition definitions, whose format
+                  depends on the choice of *partition_type*.  See `range
+                  partitioning
+                  <../../../../concepts/tables/#partitioning-by-range>`__,
+                  `interval partitioning
+                  <../../../../concepts/tables/#partitioning-by-interval>`__,
+                  `list partitioning
+                  <../../../../concepts/tables/#partitioning-by-list>`__, `hash
+                  partitioning
+                  <../../../../concepts/tables/#partitioning-by-hash>`__, or
+                  `series partitioning
+                  <../../../../concepts/tables/#partitioning-by-series>`__ for
+                  example formats.
+
+                * **partition_keys** --
+                  Comma-separated list of partition keys, which are the columns
+                  or column expressions by which records will be assigned to
+                  partitions defined by *partition_definitions*.
 
                 * **partition_type** --
                   `Partitioning <../../../../concepts/tables/#partitioning>`__
@@ -34201,76 +34608,18 @@ class GPUdb(object):
                     Use `series partitioning
                     <../../../../concepts/tables/#partitioning-by-series>`__.
 
-                * **partition_keys** --
-                  Comma-separated list of partition keys, which are the columns
-                  or column expressions by which records will be assigned to
-                  partitions defined by *partition_definitions*.
-
-                * **partition_definitions** --
-                  Comma-separated list of partition definitions, whose format
-                  depends on the choice of *partition_type*.  See `range
-                  partitioning
-                  <../../../../concepts/tables/#partitioning-by-range>`__,
-                  `interval partitioning
-                  <../../../../concepts/tables/#partitioning-by-interval>`__,
-                  `list partitioning
-                  <../../../../concepts/tables/#partitioning-by-list>`__, `hash
-                  partitioning
-                  <../../../../concepts/tables/#partitioning-by-hash>`__, or
-                  `series partitioning
-                  <../../../../concepts/tables/#partitioning-by-series>`__ for
-                  example formats.
-
-                * **is_automatic_partition** --
-                  If *true*, a new partition will be created for values which
-                  don't fall into an existing partition.  Currently only
-                  supported for `list partitions
-                  <../../../../concepts/tables/#partitioning-by-list>`__.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
-                * **ttl** --
-                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
-                  specified in input parameter *table_name*.
-
-                * **chunk_size** --
-                  Indicates the number of records per chunk to be used for this
-                  table.
-
-                * **chunk_column_max_memory** --
-                  Indicates the target maximum data size for each column in a
-                  chunk to be used for this table.
-
-                * **chunk_max_memory** --
-                  Indicates the target maximum data size for all columns in a
-                  chunk to be used for this table.
-
-                * **is_result_table** --
-                  Indicates whether the table is a `memory-only table
-                  <../../../../concepts/tables_memory_only/>`__. A result table
-                  cannot contain columns with text_search `data-handling
-                  <../../../../concepts/types/#data-handling>`__, and it will
-                  not be retained if the server is restarted.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
                 * **strategy_definition** --
                   The `tier strategy
                   <../../../../rm/concepts/#tier-strategies>`__ for the table
                   and its columns.
 
-                * **compression_codec** --
-                  The default `compression codec
-                  <../../../../concepts/column_compression/>`__ for this
-                  table's columns.
+                * **ttl** --
+                  Sets the `TTL <../../../../concepts/ttl/>`__ of the table
+                  specified in input parameter *table_name*.
+
+                * **type_id** --
+                  ID of a currently registered `type
+                  <../../../../concepts/types/>`__. The default value is ''.
 
                 The default value is an empty dict ( {} ).
 
@@ -34278,11 +34627,13 @@ class GPUdb(object):
                 Optional parameters.
                 Allowed keys are:
 
-                * **bad_record_table_name** --
-                  Name of a table to which records that were rejected are
-                  written.  The bad-record-table has the following columns:
-                  line_number (long), line_rejected (string), error_message
-                  (string).
+                * **avro_schema** --
+                  String representing the Avro schema, for data that includes
+                  only records (i.e. does not embed its own schema).
+
+                * **avro_schema_no_inference** --
+                  Create table solely from the Avro schema definition, when
+                  *avro_schema* exists; do not infer from data.
 
                 * **bad_record_table_limit** --
                   A positive integer indicating the maximum number of records
@@ -34295,6 +34646,12 @@ class GPUdb(object):
                   per file/payload. Default value will be
                   'bad_record_table_limit' and total size of the table per rank
                   is limited to 'bad_record_table_limit'.
+
+                * **bad_record_table_name** --
+                  Name of a table to which records that were rejected are
+                  written.  The bad-record-table has the following columns:
+                  line_number (long), line_rejected (string), error_message
+                  (string).
 
                 * **batch_size** --
                   Internal tuning parameter--number of records per batch when
@@ -34315,36 +34672,96 @@ class GPUdb(object):
                   See *default_column_formats* for valid format syntax.
 
                 * **columns_to_load** --
-                  Specifies a comma-delimited list of columns from the source
-                  data to load.  If more than one file is being loaded, this
-                  list applies to all files.
-
-                  Column numbers can be specified discretely or as a range.
-                  For example, a value of '5,7,1..3' will insert values from
-                  the fifth column in the source data into the first column in
-                  the target table, from the seventh column in the source data
-                  into the second column in the target table, and from the
-                  first through third columns in the source data into the third
-                  through fifth columns in the target table.
-
-                  If the source data contains a header, column names matching
-                  the file header names may be provided instead of column
-                  numbers.  If the target table doesn't exist, the table will
-                  be created with the columns in this order.  If the target
-                  table does exist with columns in a different order than the
-                  source data, this list can be used to match the order of the
-                  target table.  For example, a value of 'C, B, A' will create
-                  a three column table with column C, followed by column B,
-                  followed by column A; or will insert those fields in that
-                  order into a table created with columns in that order.  If
-                  the target table exists, the column names must match the
-                  source data field names for a name-mapping to be successful.
+                  Specifies a comma-delimited list of source-data columns that
+                  supply the target table's columns. If more than one file is
+                  being loaded, this list applies to all files.
 
                   Mutually exclusive with *columns_to_skip*.
 
+                  This list is a positional mapping onto the target table
+                  rather than a filter: the i-th entry identifies the source
+                  column that feeds the i-th column of the target table.
+
+                  Entries may be column numbers, column names, or empty.
+
+                  Column numbers are 1-based, specified discretely or as a
+                  range. For example, '5,7,,1..3' inserts the fifth source
+                  column into the first target column, the seventh into the
+                  second, null into the third, and the first through third into
+                  the fourth through sixth. A range may descend ('3..1') to
+                  reverse that group's order.  Zero is not a valid column
+                  number. Numbers are supported only for delimited-text and
+                  Avro sources.
+
+                  Column names are strings, matching the source-data field
+                  names -- either the file's header names or the names supplied
+                  by *name_columns_from_file*. Requires that the source data
+                  have column names. Names are matched case-sensitively, and a
+                  name not present in the source will fail.
+
+                  An empty entry, acting as a placeholder meaning that no
+                  source column feeds the corresponding target column.
+
+                  Numbers and names cannot be mixed: a single non-numeric entry
+                  causes the entire list to be interpreted as names.
+
+                  If the target table does not exist, it is created with these
+                  columns in this order, and the list may name any subset of
+                  the source columns.
+
+                  If the target table already exists, the number of entries
+                  must equal the target table's column count. Use empty entries
+                  to pad the list to the target's width. Because the mapping is
+                  positional, this option can also reorder source columns into
+                  the target's column order -- for example 'C, B, A' for a
+                  target table whose columns are C, B, A.
+
+                  Note: specifying *columns_to_load* disables server-side
+                  population of target columns that no source column feeds.
+                  Such columns receive NULL instead of their default value,
+                  'init_with_now', or 'init_with_uuid' value; if the column is
+                  non-nullable, the record is rejected. To have unfed target
+                  columns take their defaults, omit *columns_to_load* and rely
+                  on name-based matching, optionally with *columns_to_skip*.
+
                 * **columns_to_skip** --
-                  Specifies a comma-delimited list of columns from the source
-                  data to skip.  Mutually exclusive with *columns_to_load*.
+                  Specifies a comma-delimited list of source-data columns to
+                  exclude from the load. If more than one file is being loaded,
+                  this list applies to all files.
+
+                  Mutually exclusive with *columns_to_load*.
+
+                  Entries may be column names matching the source-data field
+                  names (the file's header names, or the names supplied by
+                  *name_columns_from_file*, matched case-sensitively), or
+                  1-based column numbers. Numbers are supported only for
+                  delimited-text sources. Name-based entries require the source
+                  data to have column names.
+
+                  Unlike *columns_to_load*, this option does not change how the
+                  remaining source columns are matched to the target table.
+                  Matching remains by name and is case-insensitive, so the
+                  order and number of source columns need not correspond to the
+                  target table's columns.
+
+                  Excluding a source column that corresponds to a target table
+                  column causes that target column to be populated from its
+                  default value, 'init_with_*' property, or null.  This makes
+                  *columns_to_skip* the means of preferring a target column's
+                  default over a value present in the source data.
+
+                  Source columns that don't correspond to any target table
+                  column need not be listed; they are ignored.
+
+                  If the target table does not exist, the non-excluded source
+                  columns define the new table's columns, in source-data order.
+
+                  If the source data has no column names (no header row and no
+                  *name_columns_from_file*) and this option is given as
+                  numbers, the remaining source columns are matched to target
+                  columns by position; the source column count must then equal
+                  the target table's column count plus the number of columns
+                  skipped.
 
                 * **compression_type** --
                   Payload compression type.
@@ -34393,6 +34810,21 @@ class GPUdb(object):
                   requirements. For example, '{"datetime" : "%m/%d/%Y %H:%M:%S"
                   }' would be used to interpret text as "05/04/2000 12:12:11"
 
+                * **enable_inplace_updates** --
+                  Applies only when upserting (when update_on_existing_pk is
+                  true). If set to true (the default), an existing record
+                  matched by primary key is modified in place. If set to false,
+                  the matched record is updated by deleting it and inserting a
+                  replacement (delete and insert), which prevents the change
+                  from being reflected in dependent materialized views until
+                  they are refreshed.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
                 * **error_handling** --
                   Specifies how errors should be handled upon insertion.
                   Allowed values are:
@@ -34401,8 +34833,11 @@ class GPUdb(object):
                     Records with missing columns are populated with nulls if
                     possible; otherwise, the malformed records are skipped.
 
-                  * **ignore_bad_records** --
+                  * **skip** --
                     Malformed records are skipped.
+
+                  * **ignore_bad_records** --
+                    Deprecated. Alias for *skip*.
 
                   * **abort** --
                     Stops current insertion and aborts entire operation when an
@@ -34553,6 +34988,10 @@ class GPUdb(object):
                 * **local_time_offset** --
                   For Avro local timestamp columns.
 
+                * **max_consecutive_invalid_schema_failure** --
+                  Max records to skip due to schema related errors, before
+                  failing.
+
                 * **max_records_to_load** --
                   Limit the number of records to load in this request: If this
                   number is larger than a batch_size, then the number of
@@ -34561,18 +35000,41 @@ class GPUdb(object):
 
                 * **name_columns_from_file** --
                   Specifies a comma-delimited list of column names to be used
-                  as the source-data column names.  If the payload has a header
-                  row (i.e., *text_has_header* is *true*), these names override
-                  the payload's header names.  If the payload has no header
-                  row, these names are used as the source-data column names.
-                  Either way, the i-th name in this list applies to the i-th
-                  column in the payload, enabling name-based matching against
-                  the target table's columns (and use with *columns_to_load* /
-                  *columns_to_skip*).
+                  as the source-data column names. Supported for delimited-text
+                  sources only.
+
+                  The i-th name in this list applies to the i-th column in the
+                  file. If the file has a header row (i.e., *text_has_header*
+                  is *true*), these names override the file's header names. If
+                  the file has no header row, these names become the
+                  source-data column names.
+
+                  Naming the source columns enables name-based matching against
+                  the target table's columns, and permits name-based
+                  *columns_to_load* / *columns_to_skip*, which otherwise
+                  require a header row.
+
+                  Note: for a source with no header row, supplying this option
+                  changes how source columns are matched to target columns --
+                  from positional matching to matching by name. Target columns
+                  with no matching source column are then populated from their
+                  defaults or null rather than being filled positionally.
+
+                  The list is not validated against the file's actual column
+                  count. If it is shorter, the trailing source columns are left
+                  unnamed.
 
                 * **num_tasks_per_rank** --
                   Number of tasks for reading file per rank. Default will be
                   external_file_reader_num_tasks.
+
+                * **pk_conflict_predicate_higher** --
+                  The record with higher value for the column resolves the
+                  primary-key insert conflict. The default value is ''.
+
+                * **pk_conflict_predicate_lower** --
+                  The record with lower value for the column resolves the
+                  primary-key insert conflict. The default value is ''.
 
                 * **poll_interval** --
                   If *true*, the number of seconds between attempts to load
@@ -34593,10 +35055,6 @@ class GPUdb(object):
 
                 * **schema_registry_max_consecutive_connection_failures** --
                   Max records to skip due to SR connection failures, before
-                  failing.
-
-                * **max_consecutive_invalid_schema_failure** --
-                  Max records to skip due to schema related errors, before
                   failing.
 
                 * **schema_registry_schema_name** --
@@ -34714,6 +35172,15 @@ class GPUdb(object):
                   Set minimum column size. Used only when 'text_search_columns'
                   has a value.
 
+                * **transformations** --
+                  Comma-separated expressions, one per target table column.
+                  Each expression is evaluated per record.  Empty entries (two
+                  consecutive commas) mean no transformation for that column --
+                  the value is resolved from the input record, table default,
+                  NULL, or an error. Expressions may reference input columns by
+                  name or by position ($1 for the first input column, $2 for
+                  the second, etc.). The default value is ''.
+
                 * **trim_space** --
                   If set to *true*, remove leading or trailing space from
                   fields.
@@ -34760,21 +35227,6 @@ class GPUdb(object):
 
                   The default value is 'accuracy'.
 
-                * **enable_inplace_updates** --
-                  Applies only when upserting (when update_on_existing_pk is
-                  true). If set to true (the default), an existing record
-                  matched by primary key is modified in place. If set to false,
-                  the matched record is updated by deleting it and inserting a
-                  replacement (delete and insert), which prevents the change
-                  from being reflected in dependent materialized views until
-                  they are refreshed.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'true'.
-
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting into a
                   table with a `primary key
@@ -34799,15 +35251,6 @@ class GPUdb(object):
                     records.
 
                   The default value is 'false'.
-
-                * **transformations** --
-                  Comma-separated expressions, one per target table column.
-                  Each expression is evaluated per record.  Empty entries (two
-                  consecutive commas) mean no transformation for that column --
-                  the value is resolved from the input record, table default,
-                  NULL, or an error. Expressions may reference input columns by
-                  name or by position ($1 for the first input column, $2 for
-                  the second, etc.). The default value is ''.
 
                 The default value is an empty dict ( {} ).
 
@@ -35063,8 +35506,11 @@ class GPUdb(object):
                     Records with missing columns are populated with nulls if
                     possible; otherwise, the malformed records are skipped.
 
-                  * **ignore_bad_records** --
+                  * **skip** --
                     Malformed records are skipped.
+
+                  * **ignore_bad_records** --
+                    Deprecated. Alias for *skip*.
 
                   * **abort** --
                     Stops current insertion and aborts entire operation when an
@@ -35072,6 +35518,14 @@ class GPUdb(object):
                     considered abortable errors in this mode.
 
                   The default value is 'abort'.
+
+                * **pk_conflict_predicate_higher** --
+                  The record with higher value for the column resolves the
+                  primary-key insert conflict. The default value is ''.
+
+                * **pk_conflict_predicate_lower** --
+                  The record with lower value for the column resolves the
+                  primary-key insert conflict. The default value is ''.
 
                 * **ignore_existing_pk** --
                   Specifies the record collision error-suppression policy for
@@ -36963,6 +37417,9 @@ class GPUdb(object):
                   All object types and data contained in the given `schema(s)
                   <../../../../concepts/schemas/>`__.
 
+                * **catalog** --
+                  Data Lake catalog that is external to the database.
+
                 * **context** --
                   `Context(s)
                   <../../../../sql-gpt/concepts/#sql-gpt-context>`__.
@@ -37148,6 +37605,15 @@ class GPUdb(object):
                     non-schema objects.
 
                   The default value is 'none'.
+
+                * **target_schema_map** --
+                  Restore schema-based objects to alternate schema. Value is a
+                  comma delimitted list of key:value pairs mapping the original
+                  (source) schema name as it exists in the backup to a target
+                  (destination) schema namespace: "src: dst [, src: dst [,
+                  ...]]". Note that schema names are case sensitive and must
+                  adhere to the database schema `naming criteria
+                  <../../../../concepts/schemas/>`__. The default value is ''.
 
                 The default value is an empty dict ( {} ).
 
@@ -37350,7 +37816,8 @@ class GPUdb(object):
     # begin revoke_permission_credential
     def revoke_permission_credential( self, name = None, permission = None,
                                       credential_name = None, options = {} ):
-        """Revokes a `credential-level permission
+        """[DEPRECATED--please use :meth:`GPUdb.revoke_permission` instead]
+        Revokes a `credential-level permission
         <../../../../security/sec_concepts/#security-concepts-permissions-credential>`__
         from a user or role.
 
@@ -37412,7 +37879,8 @@ class GPUdb(object):
     # begin revoke_permission_datasource
     def revoke_permission_datasource( self, name = None, permission = None,
                                       datasource_name = None, options = {} ):
-        """Revokes a `data source <../../../../concepts/data_sources/>`__
+        """[DEPRECATED--please use :meth:`GPUdb.revoke_permission` instead]
+        Revokes a `data source <../../../../concepts/data_sources/>`__
         permission from a user or role.
 
         Parameters:
@@ -37473,8 +37941,9 @@ class GPUdb(object):
     # begin revoke_permission_directory
     def revoke_permission_directory( self, name = None, permission = None,
                                      directory_name = None, options = {} ):
-        """Revokes a `KiFS <../../../../tools/kifs/>`__ directory-level
-        permission from a user or role.
+        """[DEPRECATED--please use :meth:`GPUdb.revoke_permission` instead]
+        Revokes a `KiFS <../../../../tools/kifs/>`__ directory-level permission
+        from a user or role.
 
         Parameters:
 
@@ -37536,7 +38005,8 @@ class GPUdb(object):
     # begin revoke_permission_proc
     def revoke_permission_proc( self, name = None, permission = None, proc_name
                                 = None, options = {} ):
-        """Revokes a proc-level permission from a user or role.
+        """[DEPRECATED--please use :meth:`GPUdb.revoke_permission` instead]
+        Revokes a proc-level permission from a user or role.
 
         Parameters:
 
@@ -37596,7 +38066,8 @@ class GPUdb(object):
     # begin revoke_permission_system
     def revoke_permission_system( self, name = None, permission = None, options
                                   = {} ):
-        """Revokes a system-level permission from a user or role.
+        """[DEPRECATED--please use :meth:`GPUdb.revoke_permission` instead]
+        Revokes a system-level permission from a user or role.
 
         Parameters:
 
@@ -37656,7 +38127,8 @@ class GPUdb(object):
     # begin revoke_permission_table
     def revoke_permission_table( self, name = None, permission = None,
                                  table_name = None, options = {} ):
-        """Revokes a table-level permission from a user or role.
+        """[DEPRECATED--please use :meth:`GPUdb.revoke_permission` instead]
+        Revokes a table-level permission from a user or role.
 
         Parameters:
 
@@ -40679,6 +41151,31 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **error_handling** --
+                  Specifies how record errors are handled during the update's
+                  reinsert (including any alternate insert records supplied via
+                  input parameter *records_to_insert*).  When set, this option
+                  is authoritative for the reinsert.  Primary-key collision
+                  behavior is governed by *update_on_existing_pk* and
+                  *ignore_existing_pk*.
+                  Allowed values are:
+
+                  * **permissive** --
+                    Records with bad column values are kept when possible: the
+                    offending column is filled with its default value if one
+                    exists, otherwise with null if the column is nullable; if
+                    neither is possible the record is skipped and reported.
+
+                  * **skip** --
+                    Records with bad values are skipped and reported; the rest
+                    of the batch is applied.
+
+                  * **abort** --
+                    Stops the update and rejects the remaining batch when any
+                    record is incorrect.
+
+                  The default value is 'abort'.
+
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for updating a table
                   with a `primary key
@@ -40725,6 +41222,14 @@ class GPUdb(object):
                     the table
 
                   The default value is 'false'.
+
+                * **pk_conflict_predicate_higher** --
+                  The record with higher value for the column resolves the
+                  primary-key insert conflict. The default value is ''.
+
+                * **pk_conflict_predicate_lower** --
+                  The record with lower value for the column resolves the
+                  primary-key insert conflict. The default value is ''.
 
                 * **ignore_existing_pk** --
                   Specifies the record collision error-suppression policy for
@@ -42265,6 +42770,12 @@ class GPUdb(object):
 
 
 
+# The first server version that can populate a column left out of an insertion
+# from that column's own default value ('default', 'init_with_now' or
+# 'init_with_uuid').  Needs to be defined before gpudb_multihead_io import.
+_DEFAULT_COLUMN_VALUES_VERSION = GPUdb.Version( "7.2.3.18" )
+
+
 
 # ---------------------------------------------------------------------------
 # Import GPUdbIngestor; try from an installed package first, if not, try local
@@ -42308,7 +42819,8 @@ class GPUdbTable( object ):
                   use_multihead_ingest = False,
                   multihead_ingest_batch_size = 10000,
                   flush_multi_head_ingest_per_insertion = False,
-                  convert_special_types_on_retrieval = False):
+                  convert_special_types_on_retrieval = False,
+                  insert_type = None):
         """
         Parameters:
             _type (:class:`RecordType` or :class:`GPUdbRecordType` or list of lists of str)
@@ -42415,6 +42927,29 @@ class GPUdbTable( object ):
                 Convert array types to list and JSON types to dicts while
                 retrieval. Default False.
 
+            insert_type (:class:`RecordType` or :class:`GPUdbRecordType` or list of lists of str)
+                Optional parameter.  The type that records given to
+                :meth:`.insert_records` are encoded with, in any of the forms
+                accepted for *_type*.  Its columns must be columns of the
+                table, but they need not be all of them: any column of the
+                table that this type leaves out is populated by the server
+                from that column's own default value ('default',
+                'init_with_now' or 'init_with_uuid'), which is how a record
+                omits a column altogether.  Leaving a column out requires a
+                server of at least v7.2.3.18.
+
+                Only insertion is affected; records are still read back with
+                the table's own type.  Note that the columns are fixed for the
+                lifetime of this object, so records that supply a column and
+                records that leave it to its default need separate
+                :class:`.GPUdbTable` objects.  Note also that supplying the
+                column with a null value is not the same as leaving it
+                out--a null is stored as a null, and does not bring the
+                default into play.
+
+                Defaults to the table's own type, i.e. records carry every
+                column.
+
         Returns:
             A GPUdbTable object.
         """
@@ -42442,6 +42977,16 @@ class GPUdbTable( object ):
                                   "given %s" % str( type(db) ) )
         self.db = db
         self._convert_special_types_on_retrieval = convert_special_types_on_retrieval
+
+        # The type that records are encoded with.  Kept as the caller gave it
+        # so that it can be re-checked whenever the table's own type changes.
+        self._user_insert_type       = insert_type
+        self.insert_gpudbrecord_type = None
+        self.insert_record_type      = None
+        self._insert_type_is_subset  = False
+        # Set when the table's type changes into something the caller's
+        # insertion type no longer fits; see __save_table_type()
+        self._insert_type_error      = None
 
         # Save the options (maybe need to convert to a dict)
         if options:
@@ -42661,7 +43206,12 @@ class GPUdbTable( object ):
                                   "a bool; given '%s'"
                                   % str( type( use_multihead_ingest ) ) )
 
+        # The table's own type is settled by now, so the type that records
+        # get encoded with can be worked out from it
+        self.__resolve_insert_type()
+
         self._multihead_ingestor = None
+        self._multihead_ingest_base_options = {}
         if use_multihead_ingest or use_multihead_io:
             # Check multihead_ingest_batch_size
             if ( not isinstance( multihead_ingest_batch_size, int )
@@ -42671,9 +43221,15 @@ class GPUdbTable( object ):
                                       "given: " + multihead_ingest_batch_size )
 
             self._multihead_ingestor = GPUdbIngestor( self.db, self.qualified_name,
-                                                      self.gpudbrecord_type,
+                                                      self.insert_gpudbrecord_type,
                                                       multihead_ingest_batch_size,
                                                       is_table_replicated = self._is_replicated )
+
+            # The options the ingestor established for itself, such as
+            # 'request_schema_str'.  Kept aside so that the options given to a
+            # single insertion call can be layered over them instead of
+            # replacing them.
+            self._multihead_ingest_base_options = dict( self._multihead_ingestor.get_options() )
 
             # Save the per-insertion-call flushing setting
             self._flush_multi_head_ingest_per_insertion = flush_multi_head_ingest_per_insertion
@@ -42859,7 +43415,115 @@ class GPUdbTable( object ):
         # Save the RecordType C object
         self.record_type = RecordType.from_type_schema( "", type_schema_str,
                                                         properties )
+
+        # The insertion type follows the table's, unless the caller gave one
+        # of their own--which then has to be re-checked against the new type
+        # rather than silently dropped
+        try:
+            self.__resolve_insert_type()
+            self._insert_type_error = None
+        except GPUdbException as ex:
+            # Whatever re-read the table's type has already taken effect on
+            # the server by the time we get here, so failing it would report a
+            # change that succeeded as though it had not.  Hold the problem
+            # back for the next insertion instead, which is the operation that
+            # genuinely cannot go ahead.
+            self._insert_type_error = ex.message
+            self.__log_warn( "Table {} now has a type that the given "
+                             "'insert_type' does not fit; insertions will fail "
+                             "until it is corrected: {}"
+                             "".format( self.qualified_name,
+                                        self._insert_type_error ) )
+        # end try
     # end __save_table_type
+
+
+    def __resolve_insert_type( self ):
+        """Work out the type that records are encoded with.
+
+        It is the table's own type unless the caller gave a narrower one, in
+        which case that is checked against the table's columns.  Called again
+        whenever the table's type is re-read.
+        """
+        if self._user_insert_type is None:
+            self.insert_gpudbrecord_type = self.gpudbrecord_type
+            self.insert_record_type      = self.record_type
+            self._insert_type_is_subset  = False
+            return
+        # end if
+
+        if not self.gpudbrecord_type:
+            raise GPUdbException( "Cannot use argument 'insert_type' with table"
+                                  " '%s', whose own type is not known."
+                                  % self.qualified_name )
+        # end if
+
+        # Accept the same forms as the table's own type
+        insert_type = self._user_insert_type
+        if isinstance( insert_type, RecordType ):
+            type_info   = insert_type.to_type_schema()
+            insert_type = GPUdbRecordType( schema_string     = type_info["type_definition"],
+                                           column_properties = type_info["properties"] )
+        elif not isinstance( insert_type, GPUdbRecordType ):
+            insert_type = GPUdbRecordType( insert_type )
+        # end if
+
+        # Every column being sent has to be a column of the table; catching it
+        # here gives a clearer error than the server can
+        table_columns = dict( (column.name, column)
+                              for column in self.gpudbrecord_type.columns )
+        for column in insert_type.columns:
+            table_column = table_columns.get( column.name )
+            if table_column is None:
+                raise GPUdbException( "Argument 'insert_type' has column '{}', "
+                                      "which table '{}' does not have; the "
+                                      "table's columns are {}"
+                                      "".format( column.name,
+                                                 self.qualified_name,
+                                                 list( table_columns.keys() ) ) )
+            if (table_column.column_type != column.column_type):
+                raise GPUdbException( "Column '{}' of argument 'insert_type' is "
+                                      "of type '{}', but that column of table "
+                                      "'{}' is of type '{}'"
+                                      "".format( column.name,
+                                                 column.column_type,
+                                                 self.qualified_name,
+                                                 table_column.column_type ) )
+        # end for
+
+        self.insert_gpudbrecord_type = insert_type
+        self.insert_record_type      = insert_type.record_type
+        self._insert_type_is_subset  = ( len( insert_type.columns )
+                                         != len( table_columns ) )
+
+        # A column left out is only filled in by a server new enough to be
+        # told which columns are being sent
+        if self._insert_type_is_subset:
+            server_version = self.db.server_version
+            if ( not isinstance( server_version, GPUdb.Version )
+                 or (_DEFAULT_COLUMN_VALUES_VERSION > server_version) ):
+                raise GPUdbException( "Argument 'insert_type' leaves out "
+                                      "column(s) of table '{}', which needs a "
+                                      "server of at least v{}; the server is "
+                                      "v{}".format( self.qualified_name,
+                                                    _DEFAULT_COLUMN_VALUES_VERSION,
+                                                    server_version ) )
+            # end if
+        # end if
+    # end __resolve_insert_type
+
+
+    def get_insert_type( self ):
+        """Return the :class:`.GPUdbRecordType` that records given to
+        :meth:`.insert_records` are encoded with.
+
+        This is the table's own type unless a narrower *insert_type* was given
+        when this object was created, in which case any column of the table it
+        leaves out is populated by the server from that column's own default
+        value.
+        """
+        return self.insert_gpudbrecord_type
+    # end get_insert_type
 
 
     def __update_table_type( self):
@@ -43136,7 +43800,7 @@ class GPUdbTable( object ):
     # end __debug
 
     def __log_warn( self, message ):
-        self.log.warn( "[GPUdbTable] {}".format( message ) )
+        self.log.warning( "[GPUdbTable] {}".format( message ) )
     # end __warn
 
     def __log_info( self, message ):
@@ -43155,9 +43819,9 @@ class GPUdbTable( object ):
         encoding = self.db._GPUdb__client_to_object_encoding()
 
         if encoding == "binary":
-            encoded_record = GPUdbRecord( self.gpudbrecord_type, values ).binary_data
+            encoded_record = GPUdbRecord( self.insert_gpudbrecord_type, values ).binary_data
         else: # JSON encoding
-            encoded_record = GPUdbRecord( self.gpudbrecord_type, values ).json_data_string
+            encoded_record = GPUdbRecord( self.insert_gpudbrecord_type, values ).json_data_string
 
         return encoded_record
     # end __encode_data_for_insertion_avro
@@ -43173,7 +43837,7 @@ class GPUdbTable( object ):
         if encoding == "binary":  # No encoding is needed here
             encoded_record = values
         else: # JSON encoding
-            encoded_record = GPUdbRecord( self.gpudbrecord_type, values ).json_data_string
+            encoded_record = GPUdbRecord( self.insert_gpudbrecord_type, values ).json_data_string
 
         return encoded_record
     # end __encode_data_for_insertion_cext
@@ -43185,6 +43849,12 @@ class GPUdbTable( object ):
         Returns:
             The encoded data.
         """
+        # The table's type changed into something the insertion type no longer
+        # fits.  Reporting it was held back to here, since this is the
+        # operation that cannot go ahead.
+        if self._insert_type_error:
+            raise GPUdbException( self._insert_type_error )
+
         encoded_data = []
 
         # Process the input--single record or multiple records (or invalid syntax)?
@@ -43223,7 +43893,7 @@ class GPUdbTable( object ):
                 else:
                     # A list of lists/dicts--multiple records within a list
                     for record in args[0]:
-                        record = self.convert_special_type_values_in_insert_records(self.gpudbrecord_type, record)
+                        record = self.convert_special_type_values_in_insert_records(self.insert_gpudbrecord_type, record)
                         encoded_record = self._record_encoding_function( record )
                         encoded_data.append( encoded_record )
                     # end for
@@ -43239,7 +43909,7 @@ class GPUdbTable( object ):
         else:
             # All arguments are either lists or dicts, so multiple records given
             for col_vals in args:
-                col_vals = self.convert_special_type_values_in_insert_records(self.gpudbrecord_type, col_vals)
+                col_vals = self.convert_special_type_values_in_insert_records(self.insert_gpudbrecord_type, col_vals)
                 encoded_record = self._record_encoding_function( col_vals )
                 encoded_data.append( encoded_record )
             # end for
@@ -43371,8 +44041,16 @@ class GPUdbTable( object ):
         """
         # Make the insertion call-- either with the multi-head ingestor or the regular way
         if self._multihead_ingestor:
-            # Set the multi-head ingestor's options
-            self._multihead_ingestor.options = options
+            # Set the multi-head ingestor's options, layering this call's
+            # options over the ones the ingestor established for itself;
+            # assigning this call's options straight over the top would
+            # discard those (notably 'request_schema_str', which tells the
+            # server which columns the records carry).  Rebuilt from the base
+            # each time, so that one call's options do not linger into the
+            # next.
+            combined_options = dict( self._multihead_ingest_base_options )
+            combined_options.update( options )
+            self._multihead_ingestor.options = combined_options
 
             # Call the insertion function
             response = self._multihead_ingestor.insert_records( encoded_data,
@@ -43383,10 +44061,22 @@ class GPUdbTable( object ):
                 return self._multihead_ingestor.flush( is_data_encoded = True )
             return response
         else:
+            # Declare which columns the records carry when they are only some
+            # of the table's, so that the server fills in the rest from their
+            # default values.  The multi-head path above gets this from the
+            # ingestor; here it has to be set explicitly.  Left off when the
+            # records cover every column, so that the usual insertion goes out
+            # exactly as it always has.
+            if self._insert_type_is_subset:
+                options = dict( options )
+                options[ "request_schema_str" ] = \
+                    self.insert_gpudbrecord_type.base_definition
+            # end if
+
             # Call the insert function and check the status
             response = self.db.insert_records( self.qualified_name, encoded_data,
                                                options = options,
-                                               record_type = self.record_type )
+                                               record_type = self.insert_record_type )
             if not _Util.is_ok( response ):
                 raise GPUdbException( _Util.get_error_msg( response ) )
             return response
@@ -43447,6 +44137,57 @@ class GPUdbTable( object ):
             A :class:`.GPUdbTable` object with the insert_records()
             response fields converted to attributes and stored within.
         """
+        self.__insert_records_impl( *args, **kwargs )
+        return self
+    # end insert_records
+
+
+    def insert_records_response( self, *args, **kwargs ):
+        """Insert one or more records and return the endpoint response.
+
+        Identical to :meth:`.insert_records` -- same arguments, same encoding, same
+        statistics bookkeeping -- except for what it hands back.  Use this when the
+        caller needs fields off the response itself, e.g. ``response['info']``, rather
+        than the table.
+
+        Parameters:
+            args
+                As :meth:`.insert_records`.
+
+            kwargs
+                As :meth:`.insert_records`.
+
+        Returns:
+            The insert_records() response, or None if the insertion produced none.
+        """
+        return self.__insert_records_impl( *args, **kwargs )
+    # end insert_records_response
+
+
+    def __update_insert_stats( self, response ):
+        """Fold an insert_records() response into this table's latest and running
+        insert/update counts and durations.  No-op for an empty response."""
+        if not response:
+            return
+
+        self.__latest_insert_records_count = response.count_inserted
+        self.__latest_update_records_count = response.count_updated
+        self.__latest_duration = response.status_info['response_time']
+
+        self.__total_insert_records_count += response.count_inserted
+        self.__total_update_records_count += response.count_updated
+        self.__total_duration += response.status_info['response_time']
+    # end __update_insert_stats
+
+
+    def __insert_records_impl( self, *args, **kwargs ):
+        """Encode and insert records, updating this table's insert statistics.  The shared
+        implementation of :meth:`.insert_records` and :meth:`.insert_records_response`,
+        which differ only in what they return.
+
+        Returns:
+            The insert_records() response, or None if the insertion produced none.
+        """
         # Extract any options that the user may have provided
         options = kwargs.get( "options", None )
         if options is not None: # if given, remove from kwargs
@@ -43459,18 +44200,11 @@ class GPUdbTable( object ):
             raise GPUdbException( "No data given to insert!" )
         encoded_data = self.__encode_data_for_insertion( *args, **kwargs )
 
-        # self.__insert_encoded_records( encoded_data, options )
         try: # if the first attempt fails, we'll check if the table
             # type has been modified by any chance
             response = self.__insert_encoded_records( encoded_data, options )
-            if response:
-                self.__latest_insert_records_count = response.count_inserted
-                self.__latest_update_records_count = response.count_updated
-                self.__latest_duration = response.status_info['response_time']
-
-                self.__total_insert_records_count += response.count_inserted
-                self.__total_update_records_count += response.count_updated
-                self.__total_duration += response.status_info['response_time']
+            self.__update_insert_stats( response )
+            return response
         except GPUdbException as e:
             self.__log_debug( "Got exception when trying to insert records: "
                               "{}".format( str(e) ) )
@@ -43479,20 +44213,12 @@ class GPUdbTable( object ):
                 # with the current/new type
                 encoded_data = self.__encode_data_for_insertion( *args, **kwargs )
                 response = self.__insert_encoded_records( encoded_data, options )
-                if response:
-                    self.__latest_insert_records_count = response.count_inserted
-                    self.__latest_update_records_count = response.count_updated
-                    self.__latest_duration = response.status_info['response_time']
-
-                    self.__total_insert_records_count += response.count_inserted
-                    self.__total_update_records_count += response.count_updated
-                    self.__total_duration += response.status_info['response_time']
+                self.__update_insert_stats( response )
+                return response
             else:
                 raise
         # end try-catch
-
-        return self
-    # end insert_records
+    # end __insert_records_impl
 
 
     def insert_records_random( self, count = None, options = {} ):
@@ -43905,7 +44631,7 @@ class GPUdbTable( object ):
         calls (noncontiguous or overlap) based on the type of the update.
 
         The response is returned as a dynamic schema. For details see: `dynamic
-        schemas documentation <../../../../api/#dynamic-schemas>`_.
+        schemas documentation <../../../../api/concepts/#dynamic-schemas>`_.
 
         Parameters:
 
@@ -46747,6 +47473,19 @@ class GPUdbTable( object ):
                   :meth:`GPUdb.create_materialized_view` for possible values
                   for input parameter *value*.
 
+                * **rebuild_text_search_index** --
+                  Drops and rebuilds the `text search
+                  <../../../../concepts/full_text_search/>`__ index for the
+                  table from current type metadata and chunk storage. Use this
+                  to repair a text-search index left incomplete by an
+                  interrupted or failed rebuild (for example, after a crash
+                  during an add-column that requested text search): re-running
+                  the original add_column will not work because the column
+                  already exists. This action is also dispatched automatically
+                  by :meth:`GPUdbTable.alter_table_columns` after add_column
+                  completions that require a full re-index. The input parameter
+                  *value* is ignored.
+
             value (str)
                 The value of the modification, depending on input parameter
                 *action*. For example, if input parameter *action* is
@@ -47073,6 +47812,31 @@ class GPUdbTable( object ):
                   *source_table_name*), e.g., 'timestamp asc, x desc'. The
                   *order_by* columns do not have to be present in input
                   parameter *field_map*. The default value is ''.
+
+                * **error_handling** --
+                  Specifies how record errors are handled while appending
+                  source table records into the target table.  Currently this
+                  governs primary-key collision behavior: *skip* and
+                  *permissive* drop the colliding source records and continue,
+                  while *abort* rejects the batch.  Explicit
+                  *update_on_existing_pk* or *ignore_existing_pk* take
+                  precedence over this option.
+                  Allowed values are:
+
+                  * **permissive** --
+                    Source records that cannot be appended (e.g. a primary-key
+                    collision) are skipped and reported; the rest of the batch
+                    is appended.
+
+                  * **skip** --
+                    Source records that cannot be appended are skipped and
+                    reported; the rest of the batch is appended.
+
+                  * **abort** --
+                    A source record that cannot be appended (e.g. a primary-key
+                    collision) raises an error.  This is the default.
+
+                  The default value is 'abort'.
 
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for inserting source
@@ -48975,6 +49739,16 @@ class GPUdbTable( object ):
                   column is a string type (non-charN) and the number of records
                   is too large, it will return 0.
 
+                * **search_stats** --
+                  Cross-shard BM25 corpus statistics for one (column, query)
+                  pair. Returns the merged BM25 statistics (max_doc, doc_count,
+                  sum_total_term_freq, per-term doc_freq / total_term_freq)
+                  needed by callers that score documents themselves (e.g.
+                  text_match_bm25_global SQL function pre-pass). Requires
+                  *column_names* to contain exactly one column with text search
+                  enabled. The *view_name* field is ignored — this mode does
+                  not produce a result table.
+
             column_names (list of str)
                 List of columns on which to apply the filter. Ignored for
                 *search* mode. The user can provide a single element (which
@@ -49952,6 +50726,31 @@ class GPUdbTable( object ):
 
                   The default value is 'false'.
 
+                * **error_handling** --
+                  Specifies how record errors are handled during the update's
+                  reinsert (including any alternate insert records supplied via
+                  input parameter *records_to_insert*).  When set, this option
+                  is authoritative for the reinsert.  Primary-key collision
+                  behavior is governed by *update_on_existing_pk* and
+                  *ignore_existing_pk*.
+                  Allowed values are:
+
+                  * **permissive** --
+                    Records with bad column values are kept when possible: the
+                    offending column is filled with its default value if one
+                    exists, otherwise with null if the column is nullable; if
+                    neither is possible the record is skipped and reported.
+
+                  * **skip** --
+                    Records with bad values are skipped and reported; the rest
+                    of the batch is applied.
+
+                  * **abort** --
+                    Stops the update and rejects the remaining batch when any
+                    record is incorrect.
+
+                  The default value is 'abort'.
+
                 * **update_on_existing_pk** --
                   Specifies the record collision policy for updating a table
                   with a `primary key
@@ -49998,6 +50797,14 @@ class GPUdbTable( object ):
                     the table
 
                   The default value is 'false'.
+
+                * **pk_conflict_predicate_higher** --
+                  The record with higher value for the column resolves the
+                  primary-key insert conflict. The default value is ''.
+
+                * **pk_conflict_predicate_lower** --
+                  The record with lower value for the column resolves the
+                  primary-key insert conflict. The default value is ''.
 
                 * **ignore_existing_pk** --
                   Specifies the record collision error-suppression policy for

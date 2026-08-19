@@ -3,6 +3,41 @@
 ## Version 7.2
 
 
+### Version 7.2.3.11 - 2026-08-19
+
+#### Added
+-   Support for server-side default column values on insertion.  Records built
+    from a type covering only some of a table's columns now have the rest
+    populated by the server from their `default`, `init_with_now` or
+    `init_with_uuid` values, rather than being rejected.  This is done by
+    declaring the columns being sent via the *request_schema_str* insertion
+    option, and needs a server of at least v7.2.3.18.
+-   `GPUdbTable` argument *insert_type*, the type that records given to
+    `insert_records()` are encoded with; any column of the table that it
+    leaves out is populated by the server.  Records are still read back with
+    the table's own type.  Also `GPUdbTable.get_insert_type()`.
+-   `GPUdbIngestor` declares the columns it is sending, taken from the record
+    type it was constructed with.
+-   `GPUdbRecordType.base_definition`, the bare column definition that the
+    *request_schema_str* option takes.
+
+#### Changed
+-   An unparseable UUID or out-of-range timestamp is no longer rejected while
+    calculating a record's shard key; such a value in a record being inserted
+    is now reported by the server instead.
+-   `GPUdbIngestor` now keeps its own copy of the options it is given, so it
+    neither writes the options it adds back into the caller's dictionary nor
+    picks up changes made to that dictionary after construction.
+
+#### Fixed
+-   Multi-head ingestion into a sharded table whose shard key column supplies
+    its own value via `init_with_now` or `init_with_uuid`; the placeholder that
+    a record carries for such a column no longer raises an error.
+
+#### Notes
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes
+
+
 ### Version 7.2.3.10 - 2026-07-09
 
 #### Added
