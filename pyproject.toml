@@ -1,10 +1,10 @@
 [project]
 name = "gpudb"
-version = "7.2.3.11"
+version = "7.2.3.12"
 dependencies = [
     'future',
     'pyzmq' ,
-    'sqlparse',
+    'sqlparse~=0.6.0',
     'urllib3>=2.0.0',
     'requests',
 ]
@@ -18,7 +18,7 @@ maintainers = [
 description = "Python client for Kinetica DB"
 readme = "README.md"
 license = { text = "MIT License" }
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 classifiers = [
      "Programming Language :: Python :: 3",
      "Topic :: Database",

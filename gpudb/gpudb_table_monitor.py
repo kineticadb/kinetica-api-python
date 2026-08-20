@@ -1055,6 +1055,12 @@ class _BaseTask(threading.Thread):
         that run the specific monitors for insert, update and delete etc.
     """
 
+    # Upper bound, in milliseconds, on how long a single socket poll blocks.
+    # The inactivity timeout is accumulated across successive slices so that
+    # the run loop notices a stop() request within one slice, instead of the
+    # caller having to close this task's socket from another thread.
+    _POLL_SLICE_MS = 250
+
     def __init__(self,
                  db,
                  table_name,
@@ -1292,10 +1298,16 @@ class _BaseTask(threading.Thread):
         thread which subscribes to the server table monitor topic and receives
         messages from it.
 
+        Only the kill flag is set here.  The socket and the ZMQ context are
+        owned by the background thread and are torn down by it, in
+        :meth:`_disconnect_from_topic`, once the run loop exits; closing them
+        from the calling thread as well would terminate the same context
+        twice, which raises ``ZMQError: Bad address`` or wedges the background
+        thread inside ``zmq_ctx_term()``.  Follow this call with
+        :meth:`~threading.Thread.join` to wait for that teardown to finish.
+
         """
         self.kill = True
-        self.socket.close()
-        self.context.term()
 
     # End stop _BaseTask
 
@@ -1452,18 +1464,29 @@ class _BaseTask(threading.Thread):
             _process_message is once again overridden in the derived classes.
 
         """
-        ret = self.socket.poll(self._options.inactivity_timeout)
+        inactivity_timeout = self._options.inactivity_timeout
+        slice_ms = min(self._POLL_SLICE_MS, inactivity_timeout)
+        waited = 0
 
-        if ret != 0:
-            self._logger.debug("Received message .. ")
-            messages = self.socket.recv_multipart()
-            self._process_message(messages)
+        # Poll in slices rather than for the whole inactivity timeout at once,
+        # so that a stop() request -- which only sets self.kill -- is picked up
+        # promptly instead of after the timeout, which defaults to 20 minutes.
+        while not self.kill:
+            ret = self.socket.poll(slice_ms)
 
-        else:
-            # ret==0, meaning nothing received from socket.
-            # Process all the other cases here since there is no
-            # message to be processed.
-            self._check_state_on_inactivity_timeout_expiry()
+            if ret != 0:
+                self._logger.debug("Received message .. ")
+                messages = self.socket.recv_multipart()
+                self._process_message(messages)
+                return
+
+            waited += slice_ms
+            if waited >= inactivity_timeout:
+                # Nothing received from socket for the whole inactivity
+                # timeout.  Process all the other cases here since there is
+                # no message to be processed.
+                self._check_state_on_inactivity_timeout_expiry()
+                return
 
     # End _fetch_message _BaseTask
 

@@ -3,6 +3,21 @@
 ## Version 7.2
 
 
+### Version 7.2.3.12 - 2026-08-20
+
+#### Changed
+-   Updated DBAPI `sqlparse` library to 0.6.x, which addresses CVE-2026-71491,
+    CVE-2026-54284, CVE-2026-59893 & CVE-2026-59894.
+-   Minimum supported Python version is now 3.10.
+
+#### Fixed
+-   Table monitor shutdown terminating its ZMQ context from two threads at
+    once, which raised `ZMQError: Bad address` from the monitor thread or left
+    that thread wedged inside `zmq_ctx_term()`.  `stop()` now only signals the
+    monitor thread, which continues to own socket & context teardown; the
+    receive loop polls in short slices so shutdown stays prompt.
+
+
 ### Version 7.2.3.11 - 2026-08-19
 
 #### Added
