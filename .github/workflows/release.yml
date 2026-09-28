@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  push:
+    tags:
+      # Only the four-part release scheme, e.g. "v7.2.3.25".
+      - 'v[0-9]+.[0-9]+.[0-9]+.[0-9]+'
+
+# A re-pushed tag can start a second run while the first is still creating the
+# release.  Serialize per tag rather than cancelling, so an in-flight run is
+# never interrupted part way through.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pull this version's section out of CHANGELOG.md. The tag is "v7.2.3.5";
+      # the heading is "### Version 7.2.3.5 - 2026-07-20". Capture everything up
+      # to the next heading of level 3 or shallower.
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+          # Two guards in the heading match:
+          #   - gsub() escapes the dots.
+          #   - "([^0-9]|$)" stops 7.2.3.5 from also matching 7.2.3.50.
+          # The terminator accepts any heading of level 3 or shallower, not just
+          # "### Version".  "####" subsections belong to the section and still print.
+          awk -v ver="$version" '
+            BEGIN { gsub(/\./, "\\.", ver); re = "^### Version " ver "([^0-9]|$)" }
+            $0 ~ re                        { in_section = 1; next }
+            in_section && /^(# |## |### )/ { exit }
+            in_section                     { print }
+          ' CHANGELOG.md > notes.md
+
+          # Test for actual content, not merely a non-empty file.
+          if grep -q '[^[:space:]]' notes.md; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Release notes for ${version} (from CHANGELOG.md)"
+              echo
+              cat notes.md
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No usable '### Version ${version}' section in CHANGELOG.md. Creating a DRAFT release with auto-generated notes."
+            {
+              echo "### No release notes for ${version} in CHANGELOG.md"
+              echo
+              echo "A **draft** release was created with auto-generated notes."
+              echo "Add the \`### Version ${version}\` section, then edit the release and publish it."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Nothing is built here (PyPI packaging is a separate process), so nothing
+      # else would catch a tag that disagrees with the code.  Check every place
+      # the version is declared before touching the release.
+      - name: Verify declared versions match the tag
+        env:
+          VERSION: ${{ steps.notes.outputs.version }}
+        run: |
+          set -euo pipefail
+          mismatch=0
+
+          # check <file> <version declared in it>
+          check() {
+            if [ "$2" = "$VERSION" ]; then
+              printf '  %-32s %s\n' "$1" "$2"
+            else
+              echo "::error file=$1::$1 declares '${2:-<none found>}', but the tag is ${VERSION}."
+              mismatch=1
+            fi
+          }
+
+          # VERSION holds "MAJOR = 7" lines; join them as MAJOR.MINOR.REVISION.ABI_VERSION.
+          check VERSION "$(tr -d '\r' < VERSION | awk -F'[[:space:]]*=[[:space:]]*' '
+            { v[$1] = $2 }
+            END { print v["MAJOR"] "." v["MINOR"] "." v["REVISION"] "." v["ABI_VERSION"] }')"
+          check pyproject.toml "$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' pyproject.toml | head -n 1)"
+          check gpudb/gpudb.py "$(sed -n 's/^[[:space:]]*api_version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' gpudb/gpudb.py | head -n 1)"
+
+          [ "$mismatch" -eq 0 ]
+
+      # One step for both paths: the create-or-update logic is identical and
+      # only the source of the notes differs.
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FOUND: ${{ steps.notes.outputs.found }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "${GITHUB_REF_NAME}" > /dev/null 2>&1; then
+            # Re-run, or a deleted-and-re-pushed tag.  "gh release create" would
+            # fail here, so update in place rather than failing the run.
+            echo "Release ${GITHUB_REF_NAME} already exists; updating it."
+            if [ "$FOUND" = "true" ]; then
+              gh release edit "${GITHUB_REF_NAME}" --notes-file notes.md
+            else
+              echo "::warning::Leaving the existing release notes untouched; no CHANGELOG section to apply."
+            fi
+          elif [ "$FOUND" = "true" ]; then
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" \
+              --verify-tag \
+              --notes-file notes.md
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" \
+              --verify-tag \
+              --generate-notes \
+              --draft
+          fi
