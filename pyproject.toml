@@ -1,6 +1,6 @@
 [project]
 name = "gpudb"
-version = "7.2.3.12"
+version = "7.2.3.13"
 dependencies = [
     'future',
     'pyzmq' ,
@@ -38,9 +38,9 @@ dataframe = [
 [project.urls]
 Homepage = "https://www.kinetica.com"
 Documentation = "https://docs.kinetica.com/7.2/api/python/"
-# Repository = "https://github.com/me/spam.git"
-# Issues = "https://github.com/me/spam/issues"
-# Changelog = "https://github.com/me/spam/blob/master/CHANGELOG.md"
+Repository = "https://github.com/kineticadb/kinetica-api-python.git"
+Issues = "https://github.com/kineticadb/kinetica-api-python/issues"
+Changelog = "https://github.com/kineticadb/kinetica-api-python/blob/master/CHANGELOG.md"
 
 
 [tool.setuptools.packages.find]

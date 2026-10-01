@@ -1,5 +1,14 @@
 # Kinetica REST API Changelog
 
+## Version 7.2.3.22
+#### Added
+-   Added new option ``repair_replicated_tables`` to ``/admin/verifydb`` request, and ``repaired_replicated_tables`` to the ``info`` map of its response
+
+## Version 7.2.3.21
+#### Added
+-   Added new option ``allow_alternate_date_formats`` to ``/alter/system/properties`` request
+-   Added ``count`` to the ``info`` map of the ``/aggregate/groupby`` response, giving the number of records written to the ``result_table`` (post-limit/offset), when one was requested
+
 ## Version 7.2.3.20
 #### Changed
 -   Deprecated the object-specific permission endpoints ``/grant/permission/credential``, ``/grant/permission/datasource``, ``/grant/permission/directory``, ``/grant/permission/proc``, ``/grant/permission/system``, ``/grant/permission/table`` and their ``/revoke/permission/...`` counterparts in favor of ``/grant/permission`` and ``/revoke/permission``.  The deprecated endpoints remain available and now delegate to the consolidated endpoints.

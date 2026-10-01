@@ -3265,6 +3265,10 @@ class GPUdb(object):
 
     _DEFAULT_SERVER_CONNECTION_TIMEOUT = 5  # in seconds
 
+    # Used when the caller gives no host at all; documented on the `host`
+    # parameter and on Options.primary_url.
+    _DEFAULT_HOST_URL = "http://127.0.0.1:9191"
+
     # Timeout (in seconds) used for quick connectivity checks (e.g.,
     # verifying if a head node is reachable).
     _FAST_CONNECTION_TIMEOUT = 2  # in seconds
@@ -4044,13 +4048,13 @@ class GPUdb(object):
             try:
                 value = int( value )
             except:
-                raise GPUdbException( "Property 'initial_connection_attempt_timeout' "
+                raise GPUdbException( "Property 'server_connection_timeout' "
                                       "must be numeric; "
                                       "given {}".format( str(type(value)) ) )
 
             # Must be >= 0
             if (value < 0):
-                raise GPUdbException( "Property 'initial_connection_attempt_timeout' "
+                raise GPUdbException( "Property 'server_connection_timeout' "
                                       "must be greater than or equal to zero; "
                                       "given {}".format( value ) )
             self.__server_connection_timeout = value
@@ -4725,7 +4729,16 @@ class GPUdb(object):
                 * Password (if specified in the URL)
             """
 
-            parsed_url = '' if url is None else url.replace(" ", "")
+            # An absent or empty URL names nothing.  Substituting a default
+            # here would hand back the CLIENT's own address for input that was
+            # meant to identify some other host -- which reads as a valid URL
+            # to every caller, so the mistake surfaces far from its cause.
+            # Report it instead; callers that legitimately have no URL should
+            # not be calling this.
+            if (url is None) or (not str( url ).strip()):
+                return False, "No URL given"
+
+            parsed_url = url.replace(" ", "")
 
             if parsed_url.count('://') > 1:
                 # Malformed URL
@@ -5586,7 +5599,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.3.12"
+    api_version = "7.2.3.13"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5772,6 +5785,18 @@ class GPUdb(object):
         # Set the logging level (only if the user set something)
         if self.__logging_level is not None:
             self.set_client_logger_level( self.__logging_level )
+        # end if
+
+        # `None` here means "use the default", and is the one caller that
+        # legitimately has no URL.  validate_url deliberately rejects None and
+        # empty input, because its other callers parse worker addresses the
+        # SERVER supplied, where an absent value is malformed input rather
+        # than a request for the local default -- quietly substituting one
+        # there handed back the client's own address for a rank it knew
+        # nothing about.  So the default belongs here, at the caller that
+        # wants it, not inside the shared validator.
+        if (host is None) or (isinstance( host, str ) and not host.strip()):
+            host = GPUdb._DEFAULT_HOST_URL
         # end if
 
         self.__log_debug( "Host: {}".format( str(host) ) )
@@ -6258,8 +6283,14 @@ class GPUdb(object):
                 # how to handle new options effectively.
                 # If the user does not want us to retry, parse the URLs as is
                 if ( self.__initial_connection_attempt_timeout == 0 ):
-                    self.__log_debug( "Initial connection attempt timeout set to 0; "
-                                      "parse the given URLs without auto discovery." )
+                    # Report the demotion; multi-head is being given up
+                    # because discovery failed and no retry was budgeted.
+                    if ( not self.__disable_auto_discovery ):
+                        self.__log_warn( "Disabling auto-discovery & multi-head"
+                                         " operations for this connection (no"
+                                         " retry: the initial connection attempt"
+                                         " timeout is 0): {}".format( str(ex) ) )
+                    # end if
                     self.__disable_auto_discovery = True
                 else:
                     # Do we keep trying another time?  Has enough time passed?
@@ -7165,8 +7196,17 @@ class GPUdb(object):
                     try:
                         url = GPUdb.URL( url_str )
                     except Exception as ex:
-                        raise GPUdbException( "Unable to parse rank URL '{}' "
-                                              "".format( url_str) )
+                        # An unusable alternate is skipped, not fatal.  A rank may
+                        # advertise several addresses; one that cannot be parsed
+                        # must not mask a good one after it, and must not fail the
+                        # whole rank list -- which runs at connection time, so a
+                        # raise here would stop the client connecting at all.  If
+                        # none of a rank's alternates works, the checks below
+                        # report that rank.
+                        self.__log_debug( "Skipping unusable address '{}' for "
+                                          "rank {}: {}".format( url_str, i,
+                                                                str(ex) ) )
+                        continue
                     # end try
 
                     if hostname_regex is None:
@@ -15823,6 +15863,29 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
+                * **repair_replicated_tables** --
+                  When *true*, replicated tables whose record counts differ
+                  across the worker ranks and toms are repaired: the copy with
+                  the most records is kept, and every other copy is replaced
+                  with it. That copy may include records from a load that did
+                  not complete, or records that a delete did not remove. A
+                  table whose copies all have the same number of records is not
+                  detected, even if their contents differ. The output parameter
+                  *verified_ok* flag and output parameter *error_list* still
+                  report the inconsistencies found before the repair; run the
+                  verification again to confirm the repair. Only the tables
+                  selected by *table_includes* or *table_excludes* are
+                  repaired. Requires *concurrent_safe* to be *true*, and cannot
+                  be used with *verify_orphaned_tables_only*. The repaired
+                  tables are listed in the *repaired_replicated_tables* entry
+                  of the response output parameter *info* map.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'false'.
+
                 * **table_includes** --
                   Comma-separated list of table names to include when verifying
                   table consistency on wokers. Cannot be used simultaneously
@@ -15853,6 +15916,13 @@ class GPUdb(object):
 
             info (dict of str to str)
                 Additional information.
+                Allowed keys are:
+
+                * **repaired_replicated_tables** --
+                  If *repair_replicated_tables* is *true*, comma-separated list
+                  of the replicated tables that were repaired.
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( options, (dict)), "admin_verify_db(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -16324,6 +16394,13 @@ class GPUdb(object):
                 Additional information.
                 Allowed keys are:
 
+                * **count** --
+                  Number of records written to the result table.  Present only
+                  when *result_table* was given.  Unlike output parameter
+                  *total_number_of_records*, this is the post-limit/offset
+                  count, i.e. the number of records the result table actually
+                  holds.
+
                 * **qualified_result_table_name** --
                   The fully qualified name of the table (i.e. including the
                   schema) used to store the results.
@@ -16792,6 +16869,13 @@ class GPUdb(object):
             info (dict of str to str)
                 Additional information.
                 Allowed keys are:
+
+                * **count** --
+                  Number of records written to the result table.  Present only
+                  when *result_table* was given.  Unlike output parameter
+                  *total_number_of_records*, this is the post-limit/offset
+                  count, i.e. the number of records the result table actually
+                  holds.
 
                 * **qualified_result_table_name** --
                   The fully qualified name of the table (i.e. including the
@@ -19765,6 +19849,14 @@ class GPUdb(object):
                   minimum allowed value is '0'. The maximum allowed value is
                   '1000000'.
 
+                * **allow_alternate_date_formats** --
+                  Accept additional date formats when ingesting and casting
+                  strings to dates, datetimes, and timestamps: 'YYYYMMDD',
+                  'YYYY/MM/DD', and month-name forms like 'Aug 20 2026' or '20
+                  August 2026', each optionally followed by a time of day.
+                  Explicit formats given to TO_DATE(), etc. are unaffected. The
+                  default value is 'false'.
+
                 * **enable_audit** --
                   Enable or disable auditing.
 
@@ -19781,14 +19873,27 @@ class GPUdb(object):
                   Enable or disable auditing of response information.
 
                 * **shadow_agg_size** --
-                  Size of the shadow aggregate chunk cache in bytes. The
-                  default value is '10000000'. The minimum allowed value is
-                  '0'. The maximum allowed value is '2147483647'.
+                  [DEPRECATED--use *shadow_cube_size* instead] Size of the
+                  shadow aggregate chunk cache in bytes. The minimum allowed
+                  value is '0'. The maximum allowed value is '16000000000'.
 
                 * **shadow_filter_size** --
-                  Size of the shadow filter chunk cache in bytes. The default
-                  value is '10000000'. The minimum allowed value is '0'. The
-                  maximum allowed value is '2147483647'.
+                  [DEPRECATED--use *shadow_cube_size* instead] Size of the
+                  shadow filter chunk cache in bytes. The minimum allowed value
+                  is '0'. The maximum allowed value is '16000000000'.
+
+                * **shadow_cube_size** --
+                  Size of the shadow cube chunk cache in bytes, shared by
+                  aggregate and filter responses. Replaces the deprecated
+                  *shadow_agg_size* / *shadow_filter_size* options. The default
+                  value is '1000000000'. The minimum allowed value is '0'. The
+                  maximum allowed value is '32000000000'.
+
+                * **shadow_cube_probation_percent** --
+                  Shadow cube probation segment memory ceiling, as a percent of
+                  the protected byte budget; the probation entry cap is derived
+                  from it. The default value is '5'. The minimum allowed value
+                  is '1'. The maximum allowed value is '10'.
 
                 * **enable_overlapped_equi_join** --
                   Enable overlapped-equi-join filter. The default value is
@@ -19851,13 +19956,15 @@ class GPUdb(object):
                   allowed value is '200000'.
 
                 * **max_concurrent_kernels** --
-                  Sets the max_concurrent_kernels value of the conf. The
-                  minimum allowed value is '0'. The maximum allowed value is
-                  '256'.
+                  Sets the `max_concurrent_kernels
+                  <../../../../config/#config-main-general>`__ value of the
+                  conf. The minimum allowed value is '0'. The maximum allowed
+                  value is '256'.
 
                 * **system_metadata_retention_period** --
-                  Sets the system_metadata.retention_period value of the conf.
-                  The minimum allowed value is '1'.
+                  Sets the `system_metadata.retention_period
+                  <../../../../config/#config-main-external-files>`__ value of
+                  the conf. The minimum allowed value is '1'.
 
                 * **tcs_per_tom** --
                   Size of the worker rank data calculation thread pool.  This
@@ -19921,7 +20028,7 @@ class GPUdb(object):
                   Idle connection timeout in seconds.
 
                 * **postgres_proxy_keep_alive** --
-                  Enable postgres proxy keep alive. The default value is
+                  Enable PostgreSQL proxy keep alive. The default value is
                   'false'.
 
                 * **kifs_directory_data_limit** --
@@ -21349,8 +21456,10 @@ class GPUdb(object):
                 format, using standard `name resolution rules
                 <../../../../concepts/tables/#table-name-resolution>`__. Must
                 be an existing table. Empty string clears all available tables,
-                though this behavior is be prevented by default via gpudb.conf
-                parameter 'disable_clear_all'. The default value is ''.
+                though this behavior is prevented by default via system
+                configuration parameter `disable_clear_all
+                <../../../../config/#config-main-general>`__. The default value
+                is ''.
 
             authorization (str)
                 No longer used. User can pass an empty string. The default
@@ -21472,10 +21581,12 @@ class GPUdb(object):
                 format, using standard `name resolution rules
                 <../../../../concepts/tables/#table-name-resolution>`__. Must
                 be existing tables. Empty list clears all available tables,
-                though this behavior is be prevented by default via gpudb.conf
-                parameter 'disable_clear_all'. The default value is an empty
-                list ( [] ). The user can provide a single element (which will
-                be automatically promoted to a list internally) or a list.
+                though this behavior is prevented by default via system
+                configuration parameter `disable_clear_all
+                <../../../../config/#config-main-general>`__. The default value
+                is an empty list ( [] ). The user can provide a single element
+                (which will be automatically promoted to a list internally) or
+                a list.
 
             options (dict of str to str)
                 Optional parameters.
@@ -24443,6 +24554,10 @@ class GPUdb(object):
                 * **avro_schema_no_inference** --
                   Create table solely from the Avro schema definition, when
                   *avro_schema* exists; do not infer from data.
+                  Allowed values are:
+
+                  * true
+                  * false
 
                 * **bad_record_table_limit** --
                   A positive integer indicating the maximum number of records
@@ -24908,7 +25023,8 @@ class GPUdb(object):
                 * **num_tasks_per_rank** --
                   Number of tasks for reading file per rank. Default will be
                   system configuration parameter,
-                  external_file_reader_num_tasks.
+                  `external_file_reader_num_tasks
+                  <../../../../config/#config-main-external-files>`__.
 
                 * **pk_conflict_predicate_higher** --
                   The record with higher value for the column resolves the
@@ -33713,6 +33829,10 @@ class GPUdb(object):
                 * **avro_schema_no_inference** --
                   Create table solely from the Avro schema definition, when
                   *avro_schema* exists; do not infer from data.
+                  Allowed values are:
+
+                  * true
+                  * false
 
                 * **bad_record_table_limit** --
                   A positive integer indicating the maximum number of records
@@ -34148,7 +34268,8 @@ class GPUdb(object):
                 * **num_tasks_per_rank** --
                   Number of tasks for reading file per rank. Default will be
                   system configuration parameter,
-                  external_file_reader_num_tasks.
+                  `external_file_reader_num_tasks
+                  <../../../../config/#config-main-external-files>`__.
 
                 * **pk_conflict_predicate_higher** --
                   The record with higher value for the column resolves the
@@ -34634,6 +34755,10 @@ class GPUdb(object):
                 * **avro_schema_no_inference** --
                   Create table solely from the Avro schema definition, when
                   *avro_schema* exists; do not infer from data.
+                  Allowed values are:
+
+                  * true
+                  * false
 
                 * **bad_record_table_limit** --
                   A positive integer indicating the maximum number of records
@@ -35026,7 +35151,8 @@ class GPUdb(object):
 
                 * **num_tasks_per_rank** --
                   Number of tasks for reading file per rank. Default will be
-                  external_file_reader_num_tasks.
+                  `external_file_reader_num_tasks
+                  <../../../../config/#config-main-external-files>`__.
 
                 * **pk_conflict_predicate_higher** --
                   The record with higher value for the column resolves the
@@ -35585,11 +35711,14 @@ class GPUdb(object):
 
                 * **num_splits_per_rank** --
                   Number of splits for reading data per rank. Default will be
-                  external_file_reader_num_tasks. The default value is ''.
+                  `external_file_reader_num_tasks
+                  <../../../../config/#config-main-external-files>`__. The
+                  default value is ''.
 
                 * **num_tasks_per_rank** --
                   Number of tasks for reading data per rank. Default will be
-                  external_file_reader_num_tasks.
+                  `external_file_reader_num_tasks
+                  <../../../../config/#config-main-external-files>`__.
 
                 * **primary_keys** --
                   Comma separated list of column names, to set as primary keys,
@@ -37495,6 +37624,25 @@ class GPUdb(object):
 
                   * true
                   * false
+
+                  The default value is 'false'.
+
+                * **cascade_foreign_keys** --
+                  Whether to drop live foreign-key-referencing tables that are
+                  not themselves part of the backup, when the table they
+                  reference is being replaced. Only applies when
+                  *restore_policy* is *replace*.
+                  Allowed values are:
+
+                  * **true** --
+                    Drop any live table whose foreign key references a table
+                    being replaced, even when that table is not in the backup
+                    and therefore will not be restored.
+
+                  * **false** --
+                    Fail the restore of a table that is referenced by a live
+                    foreign-key table which is not part of the backup, rather
+                    than destroying data the backup cannot restore.
 
                   The default value is 'false'.
 
@@ -41278,20 +41426,6 @@ class GPUdb(object):
                   * false
 
                   The default value is 'true'.
-
-                * **enable_worker_oop_update** --
-                  For an out-of-place update (delete and insert), controls
-                  where the replacement records are reinserted. If set to
-                  *true*, the workers that own the data reinsert them directly,
-                  avoiding a round trip through the head node; a shard-key
-                  change reshards the replacements to their new owning workers.
-                  If set to *false*, the replacement records are reinserted
-                  from the head node. Overrides the
-                  {feature.enable_worker_oop_update}@ configuration default.
-                  Allowed values are:
-
-                  * true
-                  * false
 
                 * **truncate_strings** --
                   If set to *true*, any strings which are too long for their
@@ -46009,6 +46143,13 @@ class GPUdbTable( object ):
             info (dict of str to str)
                 Additional information.
                 Allowed keys are:
+
+                * **count** --
+                  Number of records written to the result table.  Present only
+                  when *result_table* was given.  Unlike output parameter
+                  *total_number_of_records*, this is the post-limit/offset
+                  count, i.e. the number of records the result table actually
+                  holds.
 
                 * **qualified_result_table_name** --
                   The fully qualified name of the table (i.e. including the
@@ -50853,20 +50994,6 @@ class GPUdbTable( object ):
                   * false
 
                   The default value is 'true'.
-
-                * **enable_worker_oop_update** --
-                  For an out-of-place update (delete and insert), controls
-                  where the replacement records are reinserted. If set to
-                  *true*, the workers that own the data reinsert them directly,
-                  avoiding a round trip through the head node; a shard-key
-                  change reshards the replacements to their new owning workers.
-                  If set to *false*, the replacement records are reinserted
-                  from the head node. Overrides the
-                  {feature.enable_worker_oop_update}@ configuration default.
-                  Allowed values are:
-
-                  * true
-                  * false
 
                 * **truncate_strings** --
                   If set to *true*, any strings which are too long for their

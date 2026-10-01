@@ -44,9 +44,9 @@ class DataFrameUtils:
     @typechecked
     def sql_to_df(cls, db: GPUdb,
                   sql: str,
-                  sql_params: list = [],
+                  sql_params: Optional[list] = None,
                   batch_size: int = BATCH_SIZE,
-                  sql_opts: dict = {},
+                  sql_opts: Optional[dict] = None,
                   show_progress: bool = False) -> Optional[pd.DataFrame]:
         """Create a :class:`pd.Dataframe` from the results of a SQL query.
 

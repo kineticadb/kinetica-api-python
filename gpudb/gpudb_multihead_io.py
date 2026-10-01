@@ -130,7 +130,7 @@ def mh_log_debug( message ):
 # end mh_log_debug
 
 def mh_log_warn( message ):
-    mh_io_log.warn( "[gpudb_multihead_io] {}".format( message ) )
+    mh_io_log.warning( "[gpudb_multihead_io] {}".format( message ) )
 # end mh_log_warn
 
 def mh_log_info( message ):
@@ -243,7 +243,13 @@ class GPUdbWorkerList:
                 The :class:`gpudb.GPUdb` client handle from which to obtain the
                 worker URLs.
             ip_regex (str)
-                Optional IP regular expression to match for the worker URLs.
+                Optional regular expression used to pick one address per worker
+                rank, where a rank advertises more than one.  Matching is
+                anchored at the START and NOT at the end, so a pattern selects
+                every address it is a prefix of: `10\\.0\\.0\\.1` selects
+                10.0.0.1, 10.0.0.10 and 10.0.0.123 alike.  End the pattern with
+                `$` to name one address exactly.  A rank with no matching
+                address is a hard failure, not a fallback.
             use_head_node_only (bool)
                 Optional boolean flag indicating that only head node should be
                 used (for whatever reason), instead of the workers utilizing the
@@ -285,120 +291,82 @@ class GPUdbWorkerList:
             self.worker_urls.append( gpudb.get_url() )
             return # nothing to do
 
-        # Get the worker URLs (per rank)
-        if C._worker_URLs in system_properties:
-            self.worker_URLs_per_rank = system_properties[ C._worker_URLs ].split( ";" )
+        # Get the worker URLs (per rank).
+        #
+        # The server emits all four worker-address properties together, under a
+        # single condition on whether worker HTTP servers are enabled -- so this
+        # key is present whenever multi-head is, and multi-head being disabled
+        # was already handled above.  There is no server configuration that
+        # supplies the IP and port properties while omitting this one.
+        #
+        # A separate branch used to parse conf.worker_http_server_ips and
+        # conf.worker_http_server_ports, for servers predating this property
+        # (added in the 5.2 era).  It was unreachable against any supported
+        # server and has been removed; the key's absence now means something
+        # unexpected rather than an old server, so report it instead of guessing.
+        if C._worker_URLs not in system_properties:
+            raise GPUdbException( "Missing value for %s" % C._worker_URLs )
 
-            # Process the URLs per worker rank (ignoring rank-0)
-            for i in range(1, len(self.worker_URLs_per_rank)):
-                urls_per_rank = self.worker_URLs_per_rank[ i ]
+        self.worker_URLs_per_rank = system_properties[ C._worker_URLs ].split( ";" )
 
-                # Check if this rank has been removed
-                if not urls_per_rank:
-                    # We need an empty slot to indicate removed ranks
-                    self.worker_urls.append( None )
+        # Process the URLs per worker rank (ignoring rank-0)
+        for i in range(1, len(self.worker_URLs_per_rank)):
+            urls_per_rank = self.worker_URLs_per_rank[ i ]
+
+            # Check if this rank has been removed
+            if not urls_per_rank:
+                # We need an empty slot to indicate removed ranks
+                self.worker_urls.append( None )
+                continue
+
+            url_addresses_for_this_rank = urls_per_rank.split( "," )
+            found = False
+
+            # Check each URL
+            for url_str in url_addresses_for_this_rank:
+                # Parse the URL.
+                #
+                # An unusable alternate is SKIPPED, not fatal.  This loop exists
+                # to find a usable address among the several a rank may
+                # advertise, so one bad entry must not mask a good one after it
+                # -- and it must not take the whole worker list with it, which a
+                # raise here would, including every other rank.  If none of a
+                # rank's alternates works, the `if not found` check below reports
+                # that rank by name, which is the honest failure.
+                #
+                # This matters because the server copies rankN.public_url into
+                # the property verbatim, and its config validation only checks
+                # that the value is non-empty -- so an operator can put an empty
+                # alternate here even though the server never generates one.
+                try:
+                    url = GPUdb.URL( url_str )
+                except Exception as ex:
+                    mh_log_debug( "Skipping unusable address '{}' for worker "
+                                  "rank {}: {}".format( url_str, i, str(ex) ) )
                     continue
 
-                url_addresses_for_this_rank = urls_per_rank.split( "," )
-                found = False
-
-                # Check each URL
-                for url_str in url_addresses_for_this_rank:
-                    # Parse the URL
-                    try:
-                        url = GPUdb.URL( url_str )
-                    except Exception as ex:
-                        raise GPUdbException("Malformed URL: '{}'".format( url_str ) )
-
-                    if not ip_regex: # no regex given
-                        # so, include all IP addresses
+                if not ip_regex: # no regex given
+                    # so, include all IP addresses
+                    self.worker_urls.append( url_str )
+                    found = True
+                    # skip the rest of IP addresses for this rank
+                    break
+                else: # check for matching regex
+                    match = re.match(ip_regex, url_str)
+                    if match: # match found
                         self.worker_urls.append( url_str )
                         found = True
                         # skip the rest of IP addresses for this rank
                         break
-                    else: # check for matching regex
-                        match = re.match(ip_regex, url_str)
-                        if match: # match found
-                            self.worker_urls.append( url_str )
-                            found = True
-                            # skip the rest of IP addresses for this rank
-                            break
-                        # end found match
-                    # end if-else
-                # end inner loop
-
-                # if no worker found for this rank, throw exception
-                if not found:
-                    raise GPUdbException("No matching URL found for worker"
-                                     "%d." % i)
+                    # end found match
+                # end if-else
             # end inner loop
-        else: # Need to process the separately given IP addresses and ports
 
-            # Get the worker IP addresses (per rank)
-            if C._worker_IPs not in system_properties:
-                raise GPUdbException( "Missing value for %s" % C._worker_IPs)
-
-            self.worker_IPs_per_rank = system_properties[ C._worker_IPs ].split( ";" )
-
-            # Get the worker ports
-            if C._worker_ports not in system_properties:
-                raise GPUdbException( "Missing value for %s" % C._worker_ports)
-
-            self.worker_ports = system_properties[ C._worker_ports ].split( ";" )
-
-            # Check that the IP and port list lengths match
-            if (len(self.worker_IPs_per_rank) != len(self.worker_ports)):
-                raise GPUdbException("Inconsistent number of values for %s and %s."
-                                 % (C._worker_IPs_per_rank, C._worker_ports) )
-
-            # Get the protocol used for the client (HTTP or HTTPS?)
-            protocol = "https://" if (gpudb.connection == "HTTPS") else "http://"
-
-            # Process the IP addresses per worker rank (ignoring rank-0)
-            for i in range(1, len(self.worker_IPs_per_rank)):
-                ips_per_rank = self.worker_IPs_per_rank[ i ]
-
-                # Check if this rank has been removed
-                if not ips_per_rank:
-                    # We need an empty slot to indicate removed ranks
-                    self.worker_urls.append( None )
-                    continue
-
-                ip_addresses_for_this_rank = ips_per_rank.split( "," )
-                found = False
-
-                # Check each IP address
-                for ip_address in ip_addresses_for_this_rank:
-                    # Validate the IP address's syntax
-                    if not self.validate_ip_address( ip_address ):
-                        raise GPUdbException( "Malformed IP address: %s" % ip_address )
-
-                    # Generate the URL using the IP address and the port
-                    url = (protocol + ip_address + ":" + self.worker_ports[i])
-
-                    if (ip_regex == ""): # no regex given
-                        # so, include all IP addresses
-                        self.worker_urls.append( url )
-                        found = True
-                        # skip the rest of IP addresses for this rank
-                        break
-                    else: # check for matching regex
-                        match = re.match(ip_regex, ip_address)
-                        if match: # match found
-                            self.worker_urls.append( url )
-                            found = True
-                            # skip the rest of IP addresses for this rank
-                            break
-                        # end found match
-                    # end if-else
-                # end inner loop
-
-                # if no worker found for this rank, throw exception
-                if not found:
-                    raise GPUdbException("No matching IP address found for worker"
-                                         "%d." % i)
-            # end inner loop
-        # end if-else
+            # if no worker found for this rank, throw exception
+            if not found:
+                raise GPUdbException("No matching URL found for worker"
+                                 "%d." % i)
+        # end inner loop
 
         # if no worker found, throw error
         if not self.worker_urls:
@@ -455,13 +423,35 @@ class GPUdbWorkerList:
 
 
     def get_worker_urls( self ):
-        """Returns a list of the URLs for the GPUdb workers."""
+        """Returns the list of URLs for the GPUdb worker ranks.
+
+        The list is indexed by worker rank, so that the worker indices produced
+        by the server's shard routing table line up with it directly.  `None`
+        signifies a rank that has been removed from the cluster -- it keeps its
+        slot instead of being dropped, because dropping it would shift every
+        later rank by one and misroute sharded records.
+
+        This list is meant to be handed to :class:`GPUdbIngestor` or
+        :class:`RecordRetriever`, which understand the placeholder convention;
+        anything that does walk it must skip the `None` entries rather than
+        assume every element is a live worker.
+
+        The list reflects the cluster's rank layout at the time this worker list
+        was built; re-read it after a topology change rather than caching it.
+        """
         return self.worker_urls
     # end get_worker_urls
 
 
     def is_multihead_enabled( self ):
-        """Returns whether multi-head I/O is enabled at the server."""
+        """Returns whether multi-head I/O is enabled at the server.
+
+        Note that this reports the SERVER's configuration, not this list's
+        shape.  A list built with *use_head_node_only* still reports True
+        against a multi-head-enabled server, because the server does offer
+        multi-head; that attribute carries the caller's own intent, and a
+        consumer routing records must honor both.
+        """
         return self._is_multihead_enabled
     # end is_multihead_enabled
 
@@ -541,6 +531,29 @@ class _ColumnTypeSize:
 
 # Internal Class _RecordKey
 # =========================
+_CANONICAL_QUIET_NAN = struct.unpack( "=d", struct.pack( "=Q", 0x7FF8000000000000 ) )[0]
+
+
+def _canonicalize_float_key( value ):
+    """Map every encoding of a floating point value to one representative.
+
+    -0.0 becomes +0.0 and every NaN becomes one quiet NaN, matching what the
+    server does when it builds a shard key.  The key's bytes are hashed to pick
+    a shard, so two values that compare equal have to produce the same bytes or
+    they are routed to different shards.  Infinities have a single encoding each
+    and are returned unchanged.
+    """
+    if value == 0:      # catches -0.0 and +0.0, returns the positive one
+        return 0.0
+    if value != value:  # only NaN is unequal to itself
+        # built from the bit pattern rather than float('nan'), whose sign is a
+        # CPython implementation detail, and the server's canonical NaN is the
+        # positive quiet one
+        return _CANONICAL_QUIET_NAN
+    return value
+# end _canonicalize_float_key
+
+
 class _RecordKey:
     """Represents a record key for ingestion jobs to GPUdb.  It will
     be used to check for uniqueness before sending the insertion job
@@ -772,7 +785,8 @@ class _RecordKey:
         # end if
 
         # Add the eight bytes of the double
-        self._buffer_value += struct.pack( "=d", float(val) )
+        self._buffer_value += struct.pack( "=d",
+                                          _canonicalize_float_key( float(val) ) )
     # end add_double
 
 
@@ -788,8 +802,13 @@ class _RecordKey:
             return
         # end if
 
-        # Add the four bytes of the float
-        self._buffer_value += struct.pack( "=f", float(val) )
+        # Narrow to single precision BEFORE canonicalizing: a tiny negative
+        # double such as -1e-46 is non-zero as a double, so it would pass the
+        # zero test untouched and only then narrow to -0.0, emitting the one
+        # encoding the server never hashes.
+        narrowed = struct.unpack( "=f", struct.pack( "=f", float(val) ) )[0]
+        self._buffer_value += struct.pack( "=f",
+                                          _canonicalize_float_key( narrowed ) )
     # end add_float
 
 
@@ -2447,11 +2466,46 @@ class GPUdbIngestor:
 
         self.worker_queues = []
 
+        # Whether the caller handed us the worker list.  A list built here is
+        # built knowing whether the head node is the one to be used; a
+        # caller-supplied one is not, which matters below.
+        worker_list_was_supplied = (self.worker_list is not None)
+
         # If no worker URLs are provided, get them from the server
         if not self.worker_list:
             # If the table is replicated, then we use only the head node
             self.worker_list = GPUdbWorkerList( self.gpudb,
                                                 use_head_node_only = (self.is_table_replicated or self.gpudb.disable_auto_discovery))
+
+        # Very important to know if multi-head I/O is actually enabled
+        # at the server
+        self.is_multihead_enabled = self.worker_list.is_multihead_enabled()
+
+        # Flag for whether to use sharding or not
+        # A caller-supplied list built with use_head_node_only is a deliberate
+        # request for head-node routing, and is honored as one.  It is not
+        # implied by is_multihead_enabled, which reports the SERVER's flag.
+        self.use_head_node = ( (not self.is_multihead_enabled)
+                               or self.worker_list.use_head_node_only
+                               or self.is_table_replicated
+                               or self.gpudb.disable_auto_discovery )
+
+        # A multi-head worker list holds the worker ranks *only* -- rank 0 is
+        # deliberately skipped while the list is built -- so its index 0 is
+        # rank 1, not the head node.  When the head node is the one to be used,
+        # the list must therefore be the head node's own single-entry list, or
+        # the worker index of 0 used for that case below would quietly send
+        # every such record to rank 1 instead.  A list built just above already
+        # honors this; one supplied by the caller was built without knowing
+        # this object's decision, so re-derive it.  Mirrors what the worker
+        # queue reconstruction already does.
+        if (self.use_head_node and worker_list_was_supplied):
+            self.__log_debug( "Head node is to be used; re-deriving the "
+                              "caller-supplied worker list as head-node-only" )
+            self.worker_list = GPUdbWorkerList( self.gpudb,
+                                                self.worker_list.get_ip_regex(),
+                                                use_head_node_only = True )
+        # end if
 
         # Create worker queues per worker URL
         for worker in self.worker_list.get_worker_urls():
@@ -2476,14 +2530,11 @@ class GPUdbIngestor:
         else:
             self.num_ranks = len( self.worker_list.get_worker_urls() )
 
-        # Very important to know if multi-head IO is actually enabled
-        # at the server
-        self.is_multihead_enabled = self.worker_list.is_multihead_enabled()
-
-        # Flag for whether to use sharding or not
-        self.use_head_node = ( (not self.is_multihead_enabled)
-                               or self.is_table_replicated
-                               or self.gpudb.disable_auto_discovery )
+        # Note that num_ranks above counts rank *slots*, not live workers: a
+        # removed rank keeps its slot so that routing-table indices stay
+        # aligned with the rank numbering.  Records that have no shard key to
+        # route on must therefore be spread over the live slots only.
+        self.live_worker_indices = self.__compute_live_worker_indices( self.worker_queues )
 
         # Set the routing table, iff multi-head I/O is turned on
         # AND the table is not replicated
@@ -2758,6 +2809,12 @@ class GPUdbIngestor:
         old_worker_queues  = self.worker_queues
         self.worker_queues = new_worker_queues
 
+        # Recompute which slots hold a live worker.  This has to happen from
+        # the *new* queues and after the swap above, because the records
+        # drained from the old queues are re-inserted below and will be routed
+        # using it.
+        self.live_worker_indices = self.__compute_live_worker_indices( self.worker_queues )
+
         # Re-queue any existing queued records
         for old_queue in old_worker_queues:
             if old_queue:
@@ -2767,6 +2824,70 @@ class GPUdbIngestor:
         self.__log_debug( "Worker list was updated, returning true" )
         return True # we did change the queues!
     # end __reconstruct_worker_queues_and_requeue_records
+
+
+    @staticmethod
+    def __compute_live_worker_indices( worker_queues ):
+        """Returns the indices of the slots of the given worker queue list
+        that hold a live worker.
+
+        A rank that has been removed from the cluster keeps its slot in the
+        worker list -- as `None` -- so that the worker indices produced by the
+        server's routing table stay aligned with the rank numbering.  Such a
+        slot holds no queue, so it must never be handed a record.
+        """
+        return [ i for i, queue in enumerate( worker_queues )
+                 if queue is not None ]
+    # end __compute_live_worker_indices
+
+
+    def __get_random_worker_index( self ):
+        """Returns the index of a randomly chosen *live* worker, for records
+        that carry no shard key to be routed on.
+
+        Raises:
+            :class:`GPUdbException`
+                If no rank slot holds a live worker.
+        """
+        if not self.live_worker_indices:
+            raise GPUdbException( "No live worker rank is available for "
+                                  "insertion; all {} worker rank slot(s) are "
+                                  "empty (removed ranks)"
+                                  "".format( len( self.worker_queues ) ) )
+
+        return random.choice( self.live_worker_indices )
+    # end __get_random_worker_index
+
+
+    def __get_worker_queue( self, worker_index ):
+        """Returns the worker queue at the given index.
+
+        Validates both ends of the contract: an index past the end of the
+        worker list, and an index naming the empty slot that a removed rank
+        leaves behind so that routing-table indices stay aligned with the rank
+        numbering.
+
+        Raises:
+            :class:`GPUdbException`
+                If the index does not name a live worker.
+        """
+        if (worker_index >= len( self.worker_queues )):
+            raise GPUdbException( "Sharded worker index is out of bound: {} "
+                                  "(# worker ranks {})"
+                                  "".format( worker_index,
+                                             len( self.worker_queues ) ) )
+
+        worker_queue = self.worker_queues[ worker_index ]
+
+        if worker_queue is None:
+            raise GPUdbException( "Worker rank with index {} has been removed "
+                                  "from the cluster; it cannot accept records "
+                                  "(# worker ranks {})"
+                                  "".format( worker_index,
+                                             len( self.worker_queues ) ) )
+
+        return worker_queue
+    # end __get_worker_queue
 
 
     def __is_log_level_trace_enabled( self ):
@@ -2820,7 +2941,7 @@ class GPUdbIngestor:
     # end __log_trace
 
     def __log_warn( self, message ):
-        self.log.warn( "[GPUdbIngestor] {}".format( message ) )
+        self.log.warning( "[GPUdbIngestor] {}".format( message ) )
     # end __log_warn
 
     def __log_info( self, message ):
@@ -3016,14 +3137,89 @@ class GPUdbIngestor:
                 shard_key = self.shard_key_builder.build( record )
         # end if not self.json_ingestion
 
-        # Get the index of the worker to be used
+        # Get the index of the worker to be used.  Note that the random picks
+        # must choose among the live ranks only; num_ranks includes the empty
+        # slots kept for removed ranks.
         if self.json_ingestion:
-            worker_index = random.randint( 0, (self.num_ranks - 1) )
+            worker_index = self.__get_random_worker_index()
         else:
             if self.use_head_node:
+                # The worker list is the head node's own single-entry list in
+                # this case; see the note where use_head_node is set
                 worker_index = 0
             elif (not shard_key):
-                worker_index = random.randint( 0, (self.num_ranks - 1) )
+                worker_index = self.__get_random_worker_index()
+            elif (self.routing_table is None):
+                # No shard mapping, and the client never reached the database:
+                # the worker queue update returns False rather than raising on a
+                # connection failure, so None means the request did not get
+                # through.  That is an ENVIRONMENTAL fault.  Try once more --
+                # the database may have come back since this ingestor was
+                # constructed -- then fall back rather than fail.
+                self.__update_worker_queues( self.num_cluster_switches )
+
+                if self.routing_table:
+                    worker_index = shard_key.route( self.routing_table )
+                elif (self.routing_table is not None):
+                    # The database ANSWERED and supplied an empty shard map.  That
+                    # is not the environmental case above: routing asked the
+                    # database for what it needs and the database had nothing to
+                    # give.  Falling back here would hide a server failure behind
+                    # inserts that appear to work, so report it instead.
+                    raise GPUdbException( "The database supplied an empty shard "
+                                          "mapping for table '{}'; cannot route "
+                                          "by shard key"
+                                          "".format( self.table_name ) )
+                else:
+                    # Still nothing.  Multi-head is an optimization, not a
+                    # requirement: the head node accepts records for any shard
+                    # and distributes them itself.  Fall back to it rather than
+                    # failing the insert outright, and rather than routing
+                    # blind to worker index 0 -- which in a multi-head worker
+                    # list is the first worker rank, not the head node, so
+                    # every record would quietly pile onto one rank.  The Java
+                    # API demotes to the head rank in the same situation.
+                    self.__log_warn( "No shard mapping is available for table "
+                                     "'{}'; falling back to the head node for "
+                                     "this ingestor".format( self.table_name ) )
+                    # ORDER IS LOAD-BEARING: set the flag BEFORE rebuilding.
+                    # The rebuild both (a) reads use_head_node to decide which
+                    # worker list to construct, and (b) drains the per-rank
+                    # queues and re-inserts those records through
+                    # insert_records(), re-entering this method while we are
+                    # still inside it.  With the flag already set, those records
+                    # take the head-node branch above; set it afterwards and they
+                    # would recurse straight back into this one.
+                    self.use_head_node = True
+                    self.__reconstruct_worker_queues_and_requeue_records()
+                    # Post-condition, asserted rather than assumed.  The rebuild
+                    # no-ops and returns False when the new worker list compares
+                    # equal to the old one, which is safe here only because that
+                    # can mean the list was ALREADY head-node-only.  If it were
+                    # ever reached with the multi-head list still in place,
+                    # worker index 0 would be the first worker rank -- the exact
+                    # misroute this branch exists to prevent, and it would be
+                    # silent, since that rank is a live worker the guard would
+                    # happily hand back.
+                    if ( (len( self.worker_queues ) != 1)
+                         or (self.worker_queues[0] is None) ):
+                        raise GPUdbException( "Could not fall back to the head "
+                                              "node for table '{}': the worker "
+                                              "queues are still the multi-head "
+                                              "list ({} slots)"
+                                              "".format( self.table_name,
+                                                         len( self.worker_queues ) ) )
+                    worker_index = 0
+            elif (not self.routing_table):
+                # The database ANSWERED and supplied an empty shard map.  That
+                # is not the environmental case above: routing asked the
+                # database for what it needs and the database had nothing to
+                # give.  Falling back here would hide a server failure behind
+                # inserts that appear to work, so report it instead.
+                raise GPUdbException( "The database supplied an empty shard "
+                                      "mapping for table '{}'; cannot route "
+                                      "by shard key"
+                                      "".format( self.table_name ) )
             else:
                 # Use the routing table and the shard key to find the right worker
                 worker_index = shard_key.route( self.routing_table )
@@ -3038,14 +3234,9 @@ class GPUdbIngestor:
                               "".format( str(record), worker_index ) )
         # end if
 
-        # Check that the index is within bounds
-        if (worker_index >= len(self.worker_queues)):
-            raise GPUdbException( "Sharded worker index is out of bound: {} "
-                                  "(# worker ranks {})"
-                                  "".format( worker_index, len(self.worker_queues) ) )
-
-        # Get the worker
-        worker_queue = self.worker_queues[ worker_index ]
+        # Get the worker; this validates the index against both the end of the
+        # worker list and the empty slots left behind by removed ranks
+        worker_queue = self.__get_worker_queue( worker_index )
 
         # Insert the record for the worker queue
         queue = worker_queue.insert( record, primary_key )
@@ -3631,10 +3822,46 @@ class RecordRetriever:
         # Set up the worker queues
         # ------------------------
 
+
+        # Whether the caller handed us the worker list.  A list built here is
+        # built knowing whether the head node is the one to be used; a
+        # caller-supplied one is not, which matters below.
+        worker_list_was_supplied = (self.worker_list is not None)
+
         # If no worker URLs are provided, get them from the server
         if not self.worker_list:
             self.worker_list = GPUdbWorkerList( self.gpudb,
                                                 use_head_node_only = (self.is_table_replicated or self.gpudb.disable_auto_discovery))
+
+        # Very important to know if multi-head IO is actually enabled
+        # at the server
+        self.is_multihead_enabled = self.worker_list.is_multihead_enabled()
+
+        # Flag for whether to use sharding or not
+        # A caller-supplied list built with use_head_node_only is a deliberate
+        # request for head-node routing, and is honored as one.  It is not
+        # implied by is_multihead_enabled, which reports the SERVER's flag.
+        self.use_head_node = ( (not self.is_multihead_enabled)
+                               or self.worker_list.use_head_node_only
+                               or self.is_table_replicated
+                               or self.gpudb.disable_auto_discovery )
+
+        # A multi-head worker list holds the worker ranks *only* -- rank 0 is
+        # deliberately skipped while the list is built -- so its index 0 is
+        # rank 1, not the head node.  When the head node is the one to be used,
+        # the list must therefore be the head node's own single-entry list, or
+        # the worker index of 0 used for that case below would quietly send
+        # every such record to rank 1 instead.  A list built just above already
+        # honors this; one supplied by the caller was built without knowing
+        # this object's decision, so re-derive it.  Mirrors what the worker
+        # queue reconstruction already does.
+        if (self.use_head_node and worker_list_was_supplied):
+            self.__log_debug( "Head node is to be used; re-deriving the "
+                              "caller-supplied worker list as head-node-only" )
+            self.worker_list = GPUdbWorkerList( self.gpudb,
+                                                self.worker_list.get_ip_regex(),
+                                                use_head_node_only = True )
+        # end if
 
         # Create worker queues per worker URL
         self.worker_queues = []
@@ -3657,15 +3884,6 @@ class RecordRetriever:
             self.num_ranks = 1
         else:
             self.num_ranks = len( self.worker_list.get_worker_urls() )
-
-        # Very important to know if multi-head IO is actually enabled
-        # at the server
-        self.is_multihead_enabled = self.worker_list.is_multihead_enabled()
-
-        # Flag for whether to use sharding or not
-        self.use_head_node = ( (not self.is_multihead_enabled)
-                               or self.is_table_replicated
-                               or self.gpudb.disable_auto_discovery )
 
         self.routing_table = None
         self._shard_version = None
@@ -3732,7 +3950,7 @@ class RecordRetriever:
     # end __log_trace
 
     def __log_warn( self, message ):
-        self.log.warn( "[RecordRetriever] {}".format( message ) )
+        self.log.warning( "[RecordRetriever] {}".format( message ) )
     # end __log_warn
 
     def __log_info( self, message ):
@@ -4089,7 +4307,59 @@ class RecordRetriever:
         try:
             # Get the appropriate worker
             if self.use_head_node: # multi-head is turned off or it's a replicated table
+                # The worker list is the head node's own single-entry list in
+                # this case; see the note where use_head_node is set
                 worker_index = 0
+            elif (self.routing_table is None):
+                # No shard mapping was ever obtained; try once more, then fall
+                # back to the head node rather than failing the lookup or
+                # sending every one to worker index 0 (the first worker rank,
+                # not the head node).  See the matching note in
+                # GPUdbIngestor.insert_record().
+                self.__update_worker_queues( self.num_cluster_switches )
+
+                if self.routing_table:
+                    shard_key = self.shard_key_builder.build_key_with_shard_values_only( key_values )
+                    worker_index = shard_key.route( self.routing_table )
+                else:
+                    self.__log_warn( "No shard mapping is available for table "
+                                     "'{}'; falling back to the head node for "
+                                     "this retriever".format( self.table_name ) )
+                    # ORDER IS LOAD-BEARING: the rebuild reads use_head_node
+                    # to decide which worker list to construct, so the flag must
+                    # be set first.  (Unlike the ingestor's, this rebuild does
+                    # not re-queue records, so there is no re-entrancy here --
+                    # but the same rule applies for the same first reason.)
+                    self.use_head_node = True
+                    self.__reconstruct_worker_queues()
+                    # Post-condition, asserted rather than assumed.  The rebuild
+                    # no-ops and returns False when the new worker list compares
+                    # equal to the old one, which is safe here only because that
+                    # can mean the list was ALREADY head-node-only.  If it were
+                    # ever reached with the multi-head list still in place,
+                    # worker index 0 would be the first worker rank -- the exact
+                    # misroute this branch exists to prevent, and it would be
+                    # silent, since that rank is a live worker the guard would
+                    # happily hand back.
+                    if ( (len( self.worker_queues ) != 1)
+                         or (self.worker_queues[0] is None) ):
+                        raise GPUdbException( "Could not fall back to the head "
+                                              "node for table '{}': the worker "
+                                              "queues are still the multi-head "
+                                              "list ({} slots)"
+                                              "".format( self.table_name,
+                                                         len( self.worker_queues ) ) )
+                    worker_index = 0
+            elif (not self.routing_table):
+                # The database ANSWERED and supplied an empty shard map.
+                # Routing asked the database for what it needs and the
+                # database had nothing to give -- not the environmental
+                # case above.  Falling back would hide a server failure
+                # behind lookups that appear to work, so report it.
+                raise GPUdbException( "The database supplied an empty shard "
+                                      "mapping for table '{}'; cannot route "
+                                      "by shard key"
+                                      "".format( self.table_name ) )
             else: # use sharding to find the appropriate worker
                 # Build the shard key
                 shard_key = self.shard_key_builder.build_key_with_shard_values_only( key_values )
@@ -4104,6 +4374,15 @@ class RecordRetriever:
                                       "".format( worker_index, len(self.worker_queues) ) )
             # Get the worker
             worker_queue = self.worker_queues[ worker_index ]
+
+            # Guard against a removed rank; its slot is kept as None so that
+            # the routing table's indices stay aligned with the rank numbering
+            if worker_queue is None:
+                raise GPUdbException( "Worker rank with index {} has been "
+                                      "removed from the cluster; it cannot "
+                                      "serve records (# worker ranks {})"
+                                      "".format( worker_index,
+                                                 len(self.worker_queues) ) )
 
             # Find which worker to send the query to
             url = GPUdb.URL( worker_queue.get_url() )

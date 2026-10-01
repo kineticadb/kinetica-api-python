@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 import uuid
 from enum import Enum
-from typing import Tuple
+from typing import Optional, Tuple
 
 import gpudb
 from gpudb import GPUdb
@@ -164,8 +164,13 @@ class GPUdbFileHandler(object):
             self.__upload_multi_part_complete(kifs_file_name, upload_id)
                 
 
-    def __upload_multi_part_init(self, file_name: str, options: dict = {}) -> uuid.uuid4:
+    def __upload_multi_part_init(self, file_name: str, options: Optional[dict] = None) -> uuid.uuid4:
         upload_id: uuid.uuid4 = uuid.uuid4()
+        # Copy; never alias.  These write operation keys into the mapping, and
+        # the mutable default they used to carry was shared by every call.
+        # Benign while calls are sequential and every key is rewritten, but two
+        # concurrent uploads would interleave writes into one dict.
+        options = dict(options) if options else {}
         options["multipart_upload_uuid"] = upload_id
         options["multipart_operation"] = MultipartOperation.INIT.value
         resp = self._db.upload_files([file_name], [], options)
@@ -179,7 +184,12 @@ class GPUdbFileHandler(object):
         return upload_id
 
     
-    def __upload_multi_part_part(self, file_name: str, id: uuid.uuid4, part_number: int, data: bytes, options: dict = {}) -> None:
+    def __upload_multi_part_part(self, file_name: str, id: uuid.uuid4, part_number: int, data: bytes, options: Optional[dict] = None) -> None:
+        # Copy; never alias.  These write operation keys into the mapping, and
+        # the mutable default they used to carry was shared by every call.
+        # Benign while calls are sequential and every key is rewritten, but two
+        # concurrent uploads would interleave writes into one dict.
+        options = dict(options) if options else {}
         options["multipart_upload_uuid"] = id
         options["multipart_upload_part_number"] = part_number
         options["multipart_operation"] = MultipartOperation.UPLOAD_PART.value
@@ -194,7 +204,12 @@ class GPUdbFileHandler(object):
             raise gpudb.GPUdbException(status_message)
 
 
-    def __upload_multi_part_complete(self, file_name: str, id: uuid.uuid4, options: dict = {}) -> None:
+    def __upload_multi_part_complete(self, file_name: str, id: uuid.uuid4, options: Optional[dict] = None) -> None:
+        # Copy; never alias.  These write operation keys into the mapping, and
+        # the mutable default they used to carry was shared by every call.
+        # Benign while calls are sequential and every key is rewritten, but two
+        # concurrent uploads would interleave writes into one dict.
+        options = dict(options) if options else {}
         options["multipart_upload_uuid"] = id
         options["multipart_operation"] = MultipartOperation.COMPLETE.value
         resp = self._db.upload_files([file_name], [], options)
@@ -206,7 +221,12 @@ class GPUdbFileHandler(object):
             raise gpudb.GPUdbException(status_message)
 
     
-    def __upload_multi_part_cancel(self, file_name: str, id: uuid.uuid4, options: dict = {}) -> None:
+    def __upload_multi_part_cancel(self, file_name: str, id: uuid.uuid4, options: Optional[dict] = None) -> None:
+        # Copy; never alias.  These write operation keys into the mapping, and
+        # the mutable default they used to carry was shared by every call.
+        # Benign while calls are sequential and every key is rewritten, but two
+        # concurrent uploads would interleave writes into one dict.
+        options = dict(options) if options else {}
         options["multipart_upload_uuid"] = id
         options["multipart_operation"] = MultipartOperation.CANCEL.value
         self._db.upload_files([file_name], None, options)

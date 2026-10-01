@@ -7,6 +7,7 @@
 
 import logging
 import json
+from typing import Optional
 
 from . import GPUdb
 from . import GPUdbTable
@@ -42,14 +43,14 @@ class GPUdbSqlIterator():
                  db: GPUdb,
                  sql: str,
                  batch_size: int = 5000,
-                 sql_params=[],
-                 sql_opts: dict = {}):
+                 sql_params: Optional[list] = None,
+                 sql_opts: Optional[dict] = None):
 
-        self.sql_params = sql_params
+        self.sql_params = list(sql_params) if sql_params else []
+        self.sql_opts = dict(sql_opts) if sql_opts else {}
         self.sql = sql
         self.db = db
         self.batch_size = batch_size
-        self.sql_opts = sql_opts
 
         # member vars
         self.type_map = None
@@ -60,7 +61,7 @@ class GPUdbSqlIterator():
         self.paging_tables = []
 
         paging_table_name = GPUdbTable.random_name()
-        GPUdb._set_sql_params(sql_opts, sql_params)
+        GPUdb._set_sql_params(self.sql_opts, self.sql_params)
         self.sql_opts["paging_table"] = paging_table_name
 
     def open(self):
@@ -74,13 +75,13 @@ class GPUdbSqlIterator():
     def reset(self,
               sql: str,
               batch_size: int = 5000,
-              sql_params=[],
-              sql_opts: dict = {}
+              sql_params: Optional[list] = None,
+              sql_opts: Optional[dict] = None
               ):
         self.sql = sql
         self.batch_size = batch_size
-        self.sql_params = sql_params
-        self.sql_opts = sql_opts
+        self.sql_params = list(sql_params) if sql_params else []
+        self.sql_opts = dict(sql_opts) if sql_opts else {}
         # member vars
         self.type_map = None
         self.records = None
@@ -90,7 +91,7 @@ class GPUdbSqlIterator():
         self.paging_tables = []
 
         paging_table_name = GPUdbTable.random_name()
-        GPUdb._set_sql_params(sql_opts, sql_params)
+        GPUdb._set_sql_params(self.sql_opts, self.sql_params)
         self.sql_opts["paging_table"] = paging_table_name
 
     def __enter__(self):

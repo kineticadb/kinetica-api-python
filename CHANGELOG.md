@@ -3,6 +3,45 @@
 ## Version 7.2
 
 
+### Version 7.2.3.13 - 2026-09-30
+
+#### Changed
+-   Multi-head being turned off because cluster discovery failed is now
+    reported as a warning; it was previously recorded only at debug level.
+    Disabling auto-discovery deliberately is not a demotion and stays quiet.
+
+#### Fixed
+-   `GPUdbSqlIterator` and `DataFrameUtils.sql_to_df` sharing one server-side
+    paging table when built from a single options mapping.  Used at the same
+    time, the two raced to create it and one failed; where they did not overlap,
+    either could return the other's rows instead of its own or fail with an
+    index-out of-range error, and closing either dropped the table the other
+    was still reading.  Both now copy the options mapping and parameter list
+    they are given.  A result read in a single page was unaffected.
+-   One malformed address among those a worker rank advertises degrading the
+    whole connection to head-node only, or failing it outright when a hostname
+    regex was in use.  The rank's other addresses are now tried, and the
+    connection degrades only if none of them is usable.
+-   Multi-head ingestion sending records to a rank that had been removed from
+    the cluster, which failed with an `AttributeError`.  Ingestion and record
+    retrieval now raise a `GPUdbException` naming the rank.
+-   Multi-head ingestion and retrieval sending records to the first worker rank
+    instead of the head node, when a worker list was supplied and the head node
+    was the one to be used--a replicated table, or auto-discovery turned off.
+-   A worker list built with `use_head_node_only` being routed as though it
+    were a multi-head list, which failed a sharded insert or lookup with
+    `Sharded worker index is out of bound`.  The request is now honored.
+-   A record whose shard key held a negative zero or a NaN being sent to a
+    different rank than the one the database assigns it.
+-   Sharded insertion and lookup sending every record to the first worker
+    rank when no shard mapping was available.  Records now go through the head
+    node when the database cannot be reached, and the operation fails with an
+    error naming the table when the database returns an empty mapping.
+
+#### Notes
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes
+
+
 ### Version 7.2.3.12 - 2026-08-20
 
 #### Changed
