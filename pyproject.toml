@@ -1,6 +1,6 @@
 [project]
 name = "gpudb"
-version = "7.2.3.13"
+version = "7.2.3.14"
 dependencies = [
     'future',
     'pyzmq' ,
@@ -32,6 +32,14 @@ dataframe = [
     "pandas",
     "tqdm",
     "typeguard",
+]
+
+# `pip install .[test]` provides everything test/run_tests.sh needs to run the
+# pytest suite.  It pulls in the dataframe extra because test_pt_dataframe_*
+# exercises it.
+test = [
+    "pytest",
+    "gpudb[dataframe]",
 ]
 
 
@@ -68,5 +76,9 @@ testpaths = [
 ]
 log_cli = true
 log_cli_level = "INFO"
-#log_format ="%(levelname)s [%(name)s] %(message)s"
-log_cli_format = "%(levelname)s [%(name)s] %(message)s"
+log_cli_format = "[%(levelname)s] %(name)s (%(filename)s:%(lineno)s) %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"
+filterwarnings = [
+    "ignore:the imp module is deprecated:DeprecationWarning",
+    "ignore::pytest.PytestAssertRewriteWarning",
+]

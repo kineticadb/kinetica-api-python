@@ -348,13 +348,20 @@ class DataFrameUtils:
 
             if isinstance(ref_val, pd.Timestamp):
                 if (GPUdbColumnProperty.TIMESTAMP in col_properties[col_name]):
-                    col_data = col_data.astype(np.int64) // int(1e6)
+                    # Convert to milliseconds in a pandas 2 & 3 compatible way.
+                    # Casting to datetime64[ms] first makes the unit explicit.
+                    col_data = col_data.astype('datetime64[ms]').astype(np.int64)
                 elif (GPUdbColumnProperty.DATETIME in col_properties[col_name]):
                     col_data = col_data.astype(str)
                 else:
                     raise GPUdbException(f"Can't convert {col_name} timestamp field to the target column type")
             elif isinstance(ref_val, list) or isinstance(ref_val, np.ndarray):
                 col_data = col_data.map(cls.vec_to_bytes)
+            elif isinstance(ref_val, str) and col_data.isnull().any():
+                # pandas 3.0 gives a string column the 'str' dtype, whose
+                # missing value is NaN rather than None -- convert to object
+                # first and then replace with None.  No-op for pandas 2.
+                col_data = col_data.astype(object).where( col_data.notna(), None )
             data_list.append(col_data)
 
         return pd.concat(data_list, axis=1)
@@ -366,6 +373,13 @@ class DataFrameUtils:
         'int8':            [_COL_TYPE.INT, GPUdbColumnProperty.INT8],
         'float64':         [_COL_TYPE.DOUBLE],
         'float32':         [_COL_TYPE.FLOAT],
+        # pandas 3.0 made microseconds the default datetime resolution, so a
+        # column that was 'datetime64[ns]' under pandas 2 now arrives as
+        # 'datetime64[us]'.  All four resolutions map to the same Kinetica
+        # type; the resolution is handled when the VALUES are converted.
+        'datetime64[s]':   [_COL_TYPE.LONG, GPUdbColumnProperty.TIMESTAMP],
+        'datetime64[ms]':  [_COL_TYPE.LONG, GPUdbColumnProperty.TIMESTAMP],
+        'datetime64[us]':  [_COL_TYPE.LONG, GPUdbColumnProperty.TIMESTAMP],
         'datetime64[ns]':  [_COL_TYPE.LONG, GPUdbColumnProperty.TIMESTAMP],
         'uint64':          [_COL_TYPE.STRING, GPUdbColumnProperty.ULONG],
         'bool':            [_COL_TYPE.INT, GPUdbColumnProperty.BOOLEAN],
@@ -398,7 +412,11 @@ class DataFrameUtils:
 
                 if isinstance(ref_val, str):
                     col_type_base = cls._COL_TYPE.STRING
-                    max_len = col_data.map(lambda x: len(x) if x is not None else 0).max()
+                    # pandas 3.0 gives a nullable string column the 'str' dtype,
+                    # whose missing value is NaN, so pd.isna; for pandas 2 the
+                    # column is object type, so use len().
+                    max_len = col_data.map(
+                            lambda x: 0 if pd.isna(x) else len(x) ).max()
                     max_len = max(max_len,2)
                     spow = 2 ** ceil(log2(max_len))
                     if(spow <= 256):

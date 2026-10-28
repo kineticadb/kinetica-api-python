@@ -3,6 +3,22 @@
 ## Version 7.2
 
 
+### Version 7.2.3.14 - 2026-10-28
+
+#### Added
+-   Support for pandas 3.
+-   Per-connection sessions for SQL `#name` temp tables.  Each `GPUdb` is now
+    its own session, so two `GPUdb` objects for the same user no longer share
+    one `#name`, and the temp tables a session creates are dropped when its
+    `GPUdb` is closed with the new `GPUdb.close()` or by leaving its `with`
+    block.  One that is never closed has them dropped when it is deleted, on a
+    best-effort basis.  Closing a DB-API connection closes its `GPUdb`.
+    Several `GPUdb` objects can share one session by giving its ID in the new
+    `GPUdb.Options.session_id`; such a session is not dropped on close, and is
+    left to the caller to drop.  A `GPUdb`'s session ID is available from the
+    new `GPUdb.session_id`.
+
+
 ### Version 7.2.3.13 - 2026-09-30
 
 #### Changed

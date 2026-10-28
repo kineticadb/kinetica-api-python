@@ -94,6 +94,7 @@ class AsyncKineticaConnection(aiopep249.AsyncCursorExecuteMixin, aiopep249.Async
             return
 
         self._closed = True
+        await to_thread(self._connection.close)
 
     async def cursor(self) -> AsyncCursor:
         return AsyncCursor(self, Cursor(self))

@@ -192,6 +192,7 @@ class C:
     _HEADER_AUTHORIZATION = "Authorization"
     _HEADER_CONTENT_TYPE  = "Content-type"
     _HEADER_HA_SYNC_MODE  = "X-Kinetica-Group"
+    _HEADER_SESSION       = "X-Kinetica-Session"
 
     # Internally used header values
     _REQUEST_ENCODING_JSON   = "application/json"
@@ -3229,7 +3230,8 @@ class GPUdb(object):
         C._HEADER_ACCEPT,
         C._HEADER_AUTHORIZATION,
         C._HEADER_CONTENT_TYPE,
-        C._HEADER_HA_SYNC_MODE
+        C._HEADER_HA_SYNC_MODE,
+        C._HEADER_SESSION
     ]
 
     # HTTP response codes that trigger failover
@@ -3272,6 +3274,9 @@ class GPUdb(object):
     # Timeout (in seconds) used for quick connectivity checks (e.g.,
     # verifying if a head node is reachable).
     _FAST_CONNECTION_TIMEOUT = 2  # in seconds
+
+    # Response info key set once a request's session owns objects
+    _SESSION_ID_USED = "session_id_used"
 
     # The number of times that the API will attempt to submit a host
     # manager endpoint request.  We need this in case the user chose
@@ -3390,6 +3395,7 @@ class GPUdb(object):
         __max_retries_str                        = "_Options__max_retries"
         __client_name_str                        = "_Options__client_name"
         __client_version_str                     = "_Options__client_version"
+        __session_id_str                         = "_Options__session_id"
 
         _supported_options = [ __disable_auto_discovery_str,
                                __disable_failover_str,
@@ -3412,7 +3418,8 @@ class GPUdb(object):
                                __failback_options_str,
                                __max_retries_str,
                                __client_name_str,
-                               __client_version_str
+                               __client_version_str,
+                               __session_id_str
         ]
 
 
@@ -3457,6 +3464,7 @@ class GPUdb(object):
             self.__max_retries                        = GPUdb._HTTP_REQUEST_MAX_RETRY_ATTEMPTS
             self.__client_name                        = None
             self.__client_version                     = None
+            self.__session_id                         = None
 
             if (options is None):
                 return # nothing to do
@@ -3526,6 +3534,7 @@ class GPUdb(object):
                     '_Options__max_retries',
                     '_Options__client_name',
                     '_Options__client_version',
+                    '_Options__session_id',
                 ]
 
 
@@ -3872,6 +3881,7 @@ class GPUdb(object):
             * "Authorization"
             * "Content-type"
             * "X-Kinetica-Group"
+            * "X-Kinetica-Session"
 
             Parameters:
                 value (dict of str to str)
@@ -3926,6 +3936,7 @@ class GPUdb(object):
             * "Authorization"
             * "Content-type"
             * "X-Kinetica-Group"
+            * "X-Kinetica-Session"
 
             Parameters:
                 header (str)
@@ -4467,6 +4478,33 @@ class GPUdb(object):
                                       "None; given '{}' type {}"
                                       "".format( value, str(type(value)) ) )
             self.__client_version = value
+        # end setter
+
+
+        @property
+        def session_id(self):
+            """Gets the session ID for SQL #name temp tables, or None if none
+            has been set.
+            """
+            return self.__session_id
+
+        @session_id.setter
+        def session_id(self, value):
+            """Sets the session ID for SQL #name temp tables, so that several
+            :class:`GPUdb` objects can share one session's temp tables.  The
+            caller must drop that session, by calling
+            :meth:`GPUdb.drop_session` on a :class:`GPUdb` object given the
+            same session ID; :meth:`GPUdb.close` does not.  If None or empty
+            (the default), each :class:`GPUdb` object has its own session,
+            which its :meth:`GPUdb.close` drops.  Must be a string or None; a
+            session ID may contain only letters, digits and '-', as a UUID
+            does, and the server refuses any other.
+            """
+            if not isinstance( value, (str, type(None)) ):
+                raise GPUdbException( "Property 'session_id' must be a string or "
+                                      "None; given '{}' type {}"
+                                      "".format( value, str(type(value)) ) )
+            self.__session_id = value
         # end setter
 
     # end class Options
@@ -5599,7 +5637,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.3.13"
+    api_version = "7.2.3.14"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5652,30 +5690,49 @@ class GPUdb(object):
     # end __init__
 
     def __del__(self):
-        """Destructor: Ensure the poller service is stopped when the object is deleted."""
-        if hasattr(self, "poller_service") and self.poller_service is not None:
-            try:
-                # Only stops the shared poller if THIS client owns it, so a
-                # short-lived client's teardown can't abort another client's
-                # in-progress failback.
-                self.poller_service.stop(requester=self)
-            except:
-                pass
-        if hasattr(self, "_GPUdb__session") and self.__session is not None:
-            try:
-                self.__session.close()
-            except Exception as e:
-                pass
-        if hasattr(self, "_GPUdb__session_fast") and self.__session_fast is not None:
-            try:
-                self.__session_fast.close()
-            except Exception as e:
-                pass
+        """Destructor: drops this object's SQL #name temp tables, on a
+        best-effort basis, and stops the poller service."""
+        self.__close( no_retry = True )
 
     def __enter__(self):
         return self
 
     def __exit__(self, type, value, traceback):
+        self.close()
+
+    def close(self):
+        """Closes this object: drops the SQL #name temp tables it created, if
+        any, and releases its HTTP connections.  A session ID given by
+        :attr:`GPUdb.Options.session_id` is not dropped: the caller drops it
+        with :meth:`drop_session`.
+
+        An object that is never closed still has its temp tables dropped when
+        it is deleted, on a best-effort basis; failing that, the server
+        reclaims them on its own.  Closing it is what makes the drop prompt.
+        """
+        self.__close( no_retry = False )
+
+    def __close(self, no_retry):
+        # Drop the session first, while the HTTP connections are still open
+        if getattr(self, "_GPUdb__session_used", False):
+            self.__session_used = False
+            try:
+                if no_retry:
+                    # No failover or retries, and a short timeout, so deletion
+                    # can't block
+                    self.__submit_request( '/drop/session', {'options': {}},
+                                           url = self.get_url( stringified = False ),
+                                           quick_check = True )
+                else:
+                    self.drop_session()
+            except Exception as ex:
+                try:
+                    self.__log_warn( "Unable to drop session <{}>: {}"
+                                     "".format( self.__session_id,
+                                                GPUdbException.stringify_exception( ex ) ) )
+                except:
+                    pass
+
         if hasattr(self, "poller_service") and self.poller_service is not None:
             try:
                 # Only stops the shared poller if THIS client owns it, so a
@@ -5694,7 +5751,26 @@ class GPUdb(object):
                 self.__session_fast.close()
             except Exception as e:
                 pass
-            
+
+    def __note_session_used(self, response):
+        """Notes whether a response reports this object's session as used, in
+        which case :meth:`close` (or deletion) must drop it.  Once set, it
+        stays set: a spurious drop costs one round trip, a missed one strands
+        tables until the server reclaims them.
+        """
+        if not self.__owns_session or self.__session_used:
+            return
+        info = response.get( 'info' ) if isinstance( response, dict ) else None
+        if isinstance( info, dict ) and info.get( GPUdb._SESSION_ID_USED ) == "true":
+            self.__session_used = True
+
+    @property
+    def session_id(self):
+        """Gets the session ID sent with each request, under which the SQL
+        #name temp tables this object creates are kept."""
+        return self.__session_id
+
+
     def __sanitize_ua_token(self, value):
         # Allow alphanumeric, dots, hyphens, spaces, and slashes
         # (for chained product identifiers like "app1/1.0.0 app2/2.0.0")
@@ -5781,6 +5857,13 @@ class GPUdb(object):
         self.__initial_connection_attempt_timeout = self.options.initial_connection_attempt_timeout
         self.__server_connection_timeout = self.options.server_connection_timeout
         self.__max_retries = self.options.max_retries
+
+        # The session for SQL #name temp tables: a caller-given one is the
+        # caller's to drop; otherwise this object owns a new one
+        self.__owns_session = not self.options.session_id
+        self.__session_id   = (str( uuid.uuid4() ) if self.__owns_session
+                               else self.options.session_id)
+        self.__session_used = False
 
         # Set the logging level (only if the user set something)
         if self.__logging_level is not None:
@@ -5948,6 +6031,7 @@ class GPUdb(object):
         )
 
         self.__session.headers.update(self.__custom_http_headers)
+        self.__session.headers[C._HEADER_SESSION] = self.__session_id
         self.__session.headers["User-Agent"] = self.__build_user_agent_string()
         
         self.__session.mount("http://", self.__adapter)
@@ -5966,6 +6050,7 @@ class GPUdb(object):
         )
 
         self.__session_fast.headers.update(self.__custom_http_headers)
+        self.__session_fast.headers[C._HEADER_SESSION] = self.__session_id
 
         self.__session_fast.mount("http://", self.__adapter_fast)
         self.__session_fast.mount("https://", self.__adapter_fast)
@@ -8213,6 +8298,7 @@ class GPUdb(object):
         *  ``Accept``
         *  ``Authorization``
         *  ``X-Kinetica-Group``
+        *  ``X-Kinetica-Session``
         *  ``Content-type``
         """
         # Validate input
@@ -8243,6 +8329,7 @@ class GPUdb(object):
         *  ``Accept``
         *  ``Authorization``
         *  ``X-Kinetica-Group``
+        *  ``X-Kinetica-Session``
         *  ``Content-type``
         """
         # Ensure that the given header is not a protected header
@@ -8686,6 +8773,7 @@ class GPUdb(object):
             decoded_response = self.__read_datum_cext(response_schema,
                                                       response_data,
                                                       None, response_time)
+            self.__note_session_used( decoded_response )
 
             status: str = decoded_response['status_info']['status']
             message: str = decoded_response['status_info']['message']
@@ -12922,6 +13010,17 @@ class GPUdb(object):
                                        "REQ_SCHEMA" : REQ_SCHEMA,
                                        "RSP_SCHEMA" : RSP_SCHEMA,
                                        "ENDPOINT" : ENDPOINT }
+        name = "/drop/session"
+        REQ_SCHEMA_STR = """{"type":"record","name":"drop_session_request","fields":[{"name":"options","type":{"type":"map","values":"string"}}]}"""
+        RSP_SCHEMA_STR = """{"type":"record","name":"drop_session_response","fields":[{"name":"session_id","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
+        REQ_SCHEMA = Schema( "record", [("options", "map", [("string")])] )
+        RSP_SCHEMA = Schema( "record", [("session_id", "string"), ("info", "map", [("string")])] )
+        ENDPOINT = "/drop/session"
+        self.gpudb_schemas[ name ] = { "REQ_SCHEMA_STR" : REQ_SCHEMA_STR,
+                                       "RSP_SCHEMA_STR" : RSP_SCHEMA_STR,
+                                       "REQ_SCHEMA" : REQ_SCHEMA,
+                                       "RSP_SCHEMA" : RSP_SCHEMA,
+                                       "ENDPOINT" : ENDPOINT }
         name = "/evaluate/model"
         REQ_SCHEMA_STR = """{"type":"record","name":"evaluate_model_request","fields":[{"name":"model_name","type":"string"},{"name":"replicas","type":"int"},{"name":"deployment_mode","type":"string"},{"name":"source_table","type":"string"},{"name":"destination_table","type":"string"},{"name":"options","type":{"type":"map","values":"string"}}]}"""
         RSP_SCHEMA_STR = """{"type":"record","name":"evaluate_model_response","fields":[{"name":"model_name","type":"string"},{"name":"destination_table","type":"string"},{"name":"info","type":{"type":"map","values":"string"}}]}"""
@@ -14264,6 +14363,7 @@ class GPUdb(object):
         self.gpudb_func_to_endpoint_map["drop_environment"] = "/drop/environment"
         self.gpudb_func_to_endpoint_map["drop_model"] = "/drop/model"
         self.gpudb_func_to_endpoint_map["drop_schema"] = "/drop/schema"
+        self.gpudb_func_to_endpoint_map["drop_session"] = "/drop/session"
         self.gpudb_func_to_endpoint_map["evaluate_model"] = "/evaluate/model"
         self.gpudb_func_to_endpoint_map["execute_proc"] = "/execute/proc"
         self.gpudb_func_to_endpoint_map["execute_sql"] = "/execute/sql"
@@ -15192,6 +15292,21 @@ class GPUdb(object):
                   * **alter_table** --
                     Reset columns modification after incomplete alter column.
 
+                  * **resync_replicas** --
+                    Repairs replicated tables whose record counts differ across
+                    the worker ranks and toms: the copy with the most records
+                    is kept, and every other copy is replaced with it. That
+                    copy may include records from a load that did not complete,
+                    or records that a delete did not remove. A table whose
+                    copies all have the same number of records is not repaired,
+                    even if their contents differ. Views cannot be named in
+                    input parameter *table_names*; a named table that is not
+                    replicated is reported in output parameter *repair_status*.
+                    An asterisk selects every replicated table. The repair runs
+                    only while no other requests are running. The repaired
+                    tables are listed in the *repaired_replicated_tables* entry
+                    of the response output parameter *info* map.
+
                 * **verify_all** --
                   If *false* only table chunk data already known to be
                   corrupted will be repaired. Otherwise the database will
@@ -15216,6 +15331,13 @@ class GPUdb(object):
 
             info (dict of str to str)
                 Additional information.
+                Allowed keys are:
+
+                * **repaired_replicated_tables** --
+                  If *repair_policy* is *resync_replicas*, comma-separated list
+                  of the replicated tables that were repaired.
+
+                The default value is an empty dict ( {} ).
         """
         table_names = table_names if isinstance( table_names, list ) else ( [] if (table_names is None) else [ table_names ] )
         assert isinstance( table_types, (dict)), "admin_repair_table(): Argument 'table_types' must be (one) of type(s) '(dict)'; given %s" % type( table_types ).__name__
@@ -15820,9 +15942,8 @@ class GPUdb(object):
                   The default value is 'false'.
 
                 * **concurrent_safe** --
-                  When *true*, allows this endpoint to be run safely with other
-                  concurrent database operations. Other operations may be
-                  slower while this is running.
+                  When *true*, halts other jobs while the verify operation
+                  runs.
                   Allowed values are:
 
                   * true
@@ -15863,37 +15984,14 @@ class GPUdb(object):
 
                   The default value is 'false'.
 
-                * **repair_replicated_tables** --
-                  When *true*, replicated tables whose record counts differ
-                  across the worker ranks and toms are repaired: the copy with
-                  the most records is kept, and every other copy is replaced
-                  with it. That copy may include records from a load that did
-                  not complete, or records that a delete did not remove. A
-                  table whose copies all have the same number of records is not
-                  detected, even if their contents differ. The output parameter
-                  *verified_ok* flag and output parameter *error_list* still
-                  report the inconsistencies found before the repair; run the
-                  verification again to confirm the repair. Only the tables
-                  selected by *table_includes* or *table_excludes* are
-                  repaired. Requires *concurrent_safe* to be *true*, and cannot
-                  be used with *verify_orphaned_tables_only*. The repaired
-                  tables are listed in the *repaired_replicated_tables* entry
-                  of the response output parameter *info* map.
-                  Allowed values are:
-
-                  * true
-                  * false
-
-                  The default value is 'false'.
-
                 * **table_includes** --
                   Comma-separated list of table names to include when verifying
-                  table consistency on wokers. Cannot be used simultaneously
+                  table consistency on workers. Cannot be used simultaneously
                   with *table_excludes*.
 
                 * **table_excludes** --
                   Comma-separated list of table names to exclude when verifying
-                  table consistency on wokers. Cannot be used simultaneously
+                  table consistency on workers. Cannot be used simultaneously
                   with *table_includes*.
 
                 The default value is an empty dict ( {} ).
@@ -15915,14 +16013,8 @@ class GPUdb(object):
                 in bytes of all orphaned tables found.  Otherwise, -1.
 
             info (dict of str to str)
-                Additional information.
-                Allowed keys are:
-
-                * **repaired_replicated_tables** --
-                  If *repair_replicated_tables* is *true*, comma-separated list
-                  of the replicated tables that were repaired.
-
-                The default value is an empty dict ( {} ).
+                Additional information. The default value is an empty dict ( {}
+                ).
         """
         assert isinstance( options, (dict)), "admin_verify_db(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
 
@@ -16101,6 +16193,11 @@ class GPUdb(object):
 
                 * **json** --
                   Indicates that the returned records should be JSON-encoded.
+
+                * **arrow** --
+                  Indicates that the returned records should be encoded as an
+                  Arrow IPC stream, returned in output parameter
+                  *binary_encoded_response*.
 
                 The default value is 'binary'.
 
@@ -16557,6 +16654,11 @@ class GPUdb(object):
 
                 * **json** --
                   Indicates that the returned records should be JSON-encoded.
+
+                * **arrow** --
+                  Indicates that the returned records should be encoded as an
+                  Arrow IPC stream, returned in output parameter
+                  *binary_encoded_response*.
 
                 The default value is 'binary'.
 
@@ -17332,7 +17434,9 @@ class GPUdb(object):
 
         A second, comma-separated value can be added to the *percentile*
         statistic to calculate percentile resolution, e.g., a 50th percentile
-        with 200 resolution would be 'percentile(50,200)'.
+        with 200 resolution would be 'percentile(50,200)'. The allowable range
+        of the percentile resolution is 10 to 10000, with a default value of
+        100.
 
         The weighted average statistic requires a weight column to be specified
         in *weight_column_name*.  The weighted average is then defined as the
@@ -17412,13 +17516,17 @@ class GPUdb(object):
                   Estimate (via t-digest) of the given percentile of the
                   column(s) (percentile(50.0) will be an approximation of the
                   median). Add a second, comma-separated value to calculate
-                  percentile resolution, e.g., 'percentile(75,150)'.
+                  percentile resolution, e.g., 'percentile(75,150)'. The
+                  resolution must be between 10 and 10000; the default is 100.
 
                 * **percentile_rank** --
                   Estimate (via t-digest) of the percentile rank of the given
                   value in the column(s) (if the given value is the median of
                   the column(s), percentile_rank(<median>) will return
-                  approximately 50.0).
+                  approximately 50.0). Add a second, comma-separated value to
+                  calculate percentile resolution, e.g.,
+                  'percentile_rank(1234.56,150)'. The resolution must be
+                  between 10 and 10000; the default is 100.
 
             options (dict of str to str)
                 Optional parameters.
@@ -17664,6 +17772,11 @@ class GPUdb(object):
 
                 * **json** --
                   Indicates that the returned records should be JSON-encoded.
+
+                * **arrow** --
+                  Indicates that the returned records should be encoded as an
+                  Arrow IPC stream, returned in output parameter
+                  *binary_encoded_response*.
 
                 The default value is 'binary'.
 
@@ -17928,6 +18041,11 @@ class GPUdb(object):
 
                 * **json** --
                   Indicates that the returned records should be JSON-encoded.
+
+                * **arrow** --
+                  Indicates that the returned records should be encoded as an
+                  Arrow IPC stream, returned in output parameter
+                  *binary_encoded_response*.
 
                 The default value is 'binary'.
 
@@ -18218,6 +18336,11 @@ class GPUdb(object):
                 * **json** --
                   Indicates that the returned records should be JSON-encoded.
 
+                * **arrow** --
+                  Indicates that the returned records should be encoded as an
+                  Arrow IPC stream, returned in output parameter
+                  *binary_encoded_response*.
+
                 The default value is 'binary'.
 
             options (dict of str to str)
@@ -18464,6 +18587,11 @@ class GPUdb(object):
 
                 * **json** --
                   Indicates that the returned records should be JSON-encoded.
+
+                * **arrow** --
+                  Indicates that the returned records should be encoded as an
+                  Arrow IPC stream, returned in output parameter
+                  *binary_encoded_response*.
 
                 The default value is 'binary'.
 
@@ -18939,7 +19067,10 @@ class GPUdb(object):
 
                 * **s3_aws_role_arn** --
                   Amazon IAM Role ARN which has required S3 permissions that
-                  can be assumed for the given S3 IAM user.
+                  can be assumed for the given S3 IAM user. Assuming the role
+                  requires access keys, from the *credential*, or
+                  *use_managed_credentials* set to true; with neither,
+                  connecting to the bucket fails.
 
                 * **s3_encryption_customer_algorithm** --
                   Customer encryption algorithm used encrypting data.
@@ -19205,7 +19336,10 @@ class GPUdb(object):
 
                 * **s3_aws_role_arn** --
                   Amazon IAM Role ARN which has required S3 permissions that
-                  can be assumed for the given S3 IAM user.
+                  can be assumed for the given S3 IAM user. Assuming the role
+                  requires access keys, from the *credential* or the
+                  *user_name* and *password*, or *use_managed_credentials* set
+                  to true; with neither, connecting to the bucket fails.
 
                 * **s3_encryption_customer_algorithm** --
                   Customer encryption algorithm used encrypting data.
@@ -19849,6 +19983,14 @@ class GPUdb(object):
                   minimum allowed value is '0'. The maximum allowed value is
                   '1000000'.
 
+                * **sql_session_idle_timeout** --
+                  Number of minutes after its last request that a client
+                  session is automatically dropped, along with its session temp
+                  tables (tables named #name in SQL).  Use 0 to keep sessions
+                  until they are explicitly dropped with
+                  :meth:`GPUdb.drop_session`. The default value is '60'. The
+                  minimum allowed value is '0'.
+
                 * **allow_alternate_date_formats** --
                   Accept additional date formats when ingesting and casting
                   strings to dates, datetimes, and timestamps: 'YYYYMMDD',
@@ -20030,6 +20172,13 @@ class GPUdb(object):
                 * **postgres_proxy_keep_alive** --
                   Enable PostgreSQL proxy keep alive. The default value is
                   'false'.
+
+                * **postgres_proxy_max_queued_connections** --
+                  Maximum number of PostgreSQL proxy connections queued while
+                  waiting for a server thread; connections arriving while the
+                  queue is full are refused.  Takes effect immediately for new
+                  connections. The default value is '64'. The minimum allowed
+                  value is '1'.
 
                 * **kifs_directory_data_limit** --
                   The default maximum capacity to apply when creating a KiFS
@@ -21028,7 +21177,7 @@ class GPUdb(object):
                   Must be at least two.
 
                 * **sync_policy** --
-                  Maximum size of an individual segment file.
+                  How write-ahead log entries are synchronized to disk.
                   Allowed values are:
 
                   * **none** --
@@ -22188,7 +22337,10 @@ class GPUdb(object):
 
                 * **s3_aws_role_arn** --
                   Amazon IAM Role ARN which has required S3 permissions that
-                  can be assumed for the given S3 IAM user.
+                  can be assumed for the given S3 IAM user. Assuming the role
+                  requires access keys, from the *credential*, or
+                  *use_managed_credentials* set to true; with neither,
+                  connecting to the bucket fails.
 
                 * **s3_encryption_customer_algorithm** --
                   Customer encryption algorithm used encrypting data.
@@ -22431,7 +22583,10 @@ class GPUdb(object):
 
                 * **s3_aws_role_arn** --
                   Amazon IAM Role ARN which has required S3 permissions that
-                  can be assumed for the given S3 IAM user.
+                  can be assumed for the given S3 IAM user. Assuming the role
+                  requires access keys, from the *credential* or the user name
+                  and password, or *use_managed_credentials* set to true; with
+                  neither, connecting to the bucket fails.
 
                 * **s3_encryption_customer_algorithm** --
                   Customer encryption algorithm used encrypting data.
@@ -27465,6 +27620,46 @@ class GPUdb(object):
         return response
     # end drop_schema
 
+    # begin drop_session
+    def drop_session( self, options = {} ):
+        """Ends the client session named by the X-Kinetica-Session HTTP header
+        of this request, dropping every session temp table (a table created in
+        SQL as #name) that belongs to it.  Objects outside the session that
+        depend on those tables are invalidated, not dropped.
+
+        A client sends its session ID in the X-Kinetica-Session HTTP header to
+        every endpoint (e.g., /execute/sql), and needs to call this endpoint
+        only when a response's info map has carried session_id_used set to
+        true.
+
+        Only the user that owns the session, or a system administrator, may
+        drop it.  Dropping an unknown session is a no-op.
+
+        Parameters:
+
+            options (dict of str to str)
+                Optional parameters. The default value is an empty dict ( {} ).
+
+        Returns:
+            A dict with the following entries--
+
+            session_id (str)
+                ID of the session dropped, from the X-Kinetica-Session HTTP
+                header.
+
+            info (dict of str to str)
+                Additional information.
+        """
+        assert isinstance( options, (dict)), "drop_session(): Argument 'options' must be (one) of type(s) '(dict)'; given %s" % type( options ).__name__
+
+        obj = {}
+        obj['options'] = self.__sanitize_dicts( options )
+
+        response = self.__submit_request( '/drop/session', obj, convert_to_attr_dict = True )
+
+        return response
+    # end drop_session
+
     # begin evaluate_model
     def evaluate_model( self, model_name = None, replicas = None,
                         deployment_mode = None, source_table = None,
@@ -27689,12 +27884,17 @@ class GPUdb(object):
                 subsequent pages of results. The default value is -9999.
 
             encoding (str)
-                Specifies the encoding for returned records; either 'binary' or
-                'json'.
+                Specifies the encoding for returned records; one of 'binary',
+                'json' or 'arrow'.
                 Allowed values are:
 
                 * binary
                 * json
+
+                * **arrow** --
+                  Indicates that the returned records should be encoded as an
+                  Arrow IPC stream, returned in output parameter
+                  *binary_encoded_response*.
 
                 The default value is 'binary'.
 
@@ -28067,12 +28267,17 @@ class GPUdb(object):
                 subsequent pages of results. The default value is -9999.
 
             encoding (str)
-                Specifies the encoding for returned records; either 'binary' or
-                'json'.
+                Specifies the encoding for returned records; one of 'binary',
+                'json' or 'arrow'.
                 Allowed values are:
 
                 * binary
                 * json
+
+                * **arrow** --
+                  Indicates that the returned records should be encoded as an
+                  Arrow IPC stream, returned in output parameter
+                  *binary_encoded_response*.
 
                 The default value is 'binary'.
 
@@ -31281,12 +31486,17 @@ class GPUdb(object):
                 subsequent pages of results. The default value is -9999.
 
             encoding (str)
-                Specifies the encoding for returned records; either *binary* or
-                *json*.
+                Specifies the encoding for returned records; one of *binary*,
+                *json* or *arrow*.
                 Allowed values are:
 
                 * binary
                 * json
+
+                * **arrow** --
+                  Indicates that the returned records should be encoded as an
+                  Arrow IPC stream, returned in output parameter
+                  *binary_encoded_response*.
 
                 The default value is 'binary'.
 
@@ -31468,12 +31678,17 @@ class GPUdb(object):
                 subsequent pages of results. The default value is -9999.
 
             encoding (str)
-                Specifies the encoding for returned records; either *binary* or
-                *json*.
+                Specifies the encoding for returned records; one of *binary*,
+                *json* or *arrow*.
                 Allowed values are:
 
                 * binary
                 * json
+
+                * **arrow** --
+                  Indicates that the returned records should be encoded as an
+                  Arrow IPC stream, returned in output parameter
+                  *binary_encoded_response*.
 
                 The default value is 'binary'.
 
@@ -33981,6 +34196,18 @@ class GPUdb(object):
 
                   The default value is 'auto'.
 
+                * **create_table_if_not_exists** --
+                  If set to *true*, creates the table specified by input
+                  parameter *table_name* if it does not already exist.  If set
+                  to *false*, returns an error if the table does not already
+                  exist.  Not supported with *table_per_file*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
+
                 * **datasource_name** --
                   Name of an existing external data source from which data
                   file(s) specified in input parameter *filepaths* will be
@@ -34905,6 +35132,18 @@ class GPUdb(object):
                     bzip2 file compression.
 
                   The default value is 'auto'.
+
+                * **create_table_if_not_exists** --
+                  If set to *true*, creates the table specified by input
+                  parameter *table_name* if it does not already exist.  If set
+                  to *false*, returns an error if the table does not already
+                  exist.  Not supported with *table_per_file*.
+                  Allowed values are:
+
+                  * true
+                  * false
+
+                  The default value is 'true'.
 
                 * **default_column_formats** --
                   Specifies the default format to be applied to source data
@@ -37675,7 +37914,11 @@ class GPUdb(object):
 
                 * **dry_run** --
                   Whether or not to perform a dry run of the restoration
-                  operation.
+                  operation. With a *restore_policy* of *clean* or *clean_all*,
+                  a dry run lists the objects the clean would drop in the
+                  *clean_dropped_objects* entry of the response output
+                  parameter *info* map and drops nothing, and fails as the
+                  restore would if the clean is refused.
                   Allowed values are:
 
                   * true
@@ -37722,7 +37965,11 @@ class GPUdb(object):
 
                 * **restore_all_permissions** --
                   Whether or not all permissions of restored principals should
-                  be restored or scoped to the restored objects.
+                  be restored or scoped to the restored objects. When
+                  *restore_policy* is *clean* or *clean_all*, the default is
+                  *true*: the clean drops each principal in scope along with
+                  all of its permissions, including those on objects it does
+                  not drop.
                   Allowed values are:
 
                   * **true** --
@@ -37744,13 +37991,61 @@ class GPUdb(object):
 
                   * **replace** --
                     If an object to be restored already exists with the same
-                    name, replace it with the backup version.
+                    name, replace it with the backup version. Only objects in
+                    the backup are dropped; existing objects that are not in
+                    the backup are kept, so the result is a merge of the backup
+                    into the database. To drop those as well, use *clean*.
 
                   * **rename** --
                     If an object to be restored already exists with the same
                     name, move that existing one to the schema specified by
                     *renamed_objects_schema*. This policy does not apply to
                     non-schema objects.
+
+                  * **clean** --
+                    Before restoring, drop every existing object of each object
+                    type being restored, whether or not that object is in the
+                    backup, including objects that are not persisted; object
+                    types not being restored are left untouched, and schemas
+                    are not dropped. Unlike *replace*, the clean is scoped by
+                    object type, not by name: restoring a single table drops
+                    every table in the database first, and the response warns
+                    when the objects to restore name specific objects of a type
+                    rather than all of them. Use *dry_run* to list the objects
+                    that would be dropped. The restore is refused, before
+                    anything is dropped, if an object that would be dropped is
+                    still used by an object of a type that is not being
+                    restored, or cannot be dropped, such as a table locked by a
+                    backup in progress. As graphs, contexts, table monitors and
+                    stored procedures all depend on tables, restoring tables
+                    requires restoring each of those types of which any objects
+                    exist. A data sink generated for a monitor is dropped along
+                    with the monitor, and a home directory only along with its
+                    user. Objects created by other sessions while the restore
+                    runs are not dropped. If the restore fails after the clean,
+                    the dropped objects are not put back. System objects, the
+                    data source being restored from and its credential, the
+                    calling user and admin, with their default schemas, home
+                    directories and resource groups, and the calling user's
+                    roles are never dropped, nor are the schemas holding any of
+                    these. Requires system administrator permission.
+
+                  * **clean_all** --
+                    Before restoring, drop every existing object in the
+                    database, regardless of which objects are being restored,
+                    including users, roles, non-system schemas and objects that
+                    are not persisted. The restore is refused, before anything
+                    is dropped, if an object cannot be dropped, such as a table
+                    locked by a backup in progress, or is still used by an
+                    object the clean keeps, such as a resource group a system
+                    user is in; it also requires *create_schema_if_not_exist*
+                    to be *true*. If the restore fails after the clean, the
+                    dropped objects are not put back. System objects, the data
+                    source being restored from and its credential, the calling
+                    user and admin, with their default schemas, home
+                    directories and resource groups, and the calling user's
+                    roles are never dropped, nor are the schemas holding any of
+                    these. Requires system administrator permission.
 
                   The default value is 'none'.
 
@@ -37797,6 +38092,23 @@ class GPUdb(object):
 
             info (dict of str to str)
                 Additional information.
+                Allowed keys are:
+
+                * **clean_dropped_objects** --
+                  If *restore_policy* is *clean* or *clean_all*, the objects
+                  the clean dropped before restoring, grouped by type, e.g.
+                  'table: s.a, s.b; user: u1; schema: s'. When *dry_run* is
+                  *true*, the objects it would drop. A long list ends with the
+                  number of objects left out.
+
+                * **clean_kept_objects** --
+                  If *restore_policy* is *clean* or *clean_all*,
+                  comma-separated list of objects in the backup that the clean
+                  kept on the target, such as the calling user, and that the
+                  restore therefore left as they were instead of restoring
+                  them, e.g. user 'u1', directory '~u1'.
+
+                The default value is an empty dict ( {} ).
         """
         assert isinstance( backup_name, (basestring)), "restore_backup(): Argument 'backup_name' must be (one) of type(s) '(basestring)'; given %s" % type( backup_name ).__name__
         assert isinstance( restore_objects_map, (dict)), "restore_backup(): Argument 'restore_objects_map' must be (one) of type(s) '(dict)'; given %s" % type( restore_objects_map ).__name__
@@ -45836,6 +46148,11 @@ class GPUdbTable( object ):
                 * **json** --
                   Indicates that the returned records should be JSON-encoded.
 
+                * **arrow** --
+                  Indicates that the returned records should be encoded as an
+                  Arrow IPC stream, returned in output parameter
+                  *binary_encoded_response*.
+
                 The default value is 'binary'.
 
             options (dict of str to str)
@@ -46552,7 +46869,9 @@ class GPUdbTable( object ):
 
         A second, comma-separated value can be added to the *percentile*
         statistic to calculate percentile resolution, e.g., a 50th percentile
-        with 200 resolution would be 'percentile(50,200)'.
+        with 200 resolution would be 'percentile(50,200)'. The allowable range
+        of the percentile resolution is 10 to 10000, with a default value of
+        100.
 
         The weighted average statistic requires a weight column to be specified
         in *weight_column_name*.  The weighted average is then defined as the
@@ -46626,13 +46945,17 @@ class GPUdbTable( object ):
                   Estimate (via t-digest) of the given percentile of the
                   column(s) (percentile(50.0) will be an approximation of the
                   median). Add a second, comma-separated value to calculate
-                  percentile resolution, e.g., 'percentile(75,150)'.
+                  percentile resolution, e.g., 'percentile(75,150)'. The
+                  resolution must be between 10 and 10000; the default is 100.
 
                 * **percentile_rank** --
                   Estimate (via t-digest) of the percentile rank of the given
                   value in the column(s) (if the given value is the median of
                   the column(s), percentile_rank(<median>) will return
-                  approximately 50.0).
+                  approximately 50.0). Add a second, comma-separated value to
+                  calculate percentile resolution, e.g.,
+                  'percentile_rank(1234.56,150)'. The resolution must be
+                  between 10 and 10000; the default is 100.
 
             options (dict of str to str)
                 Optional parameters.
@@ -46855,6 +47178,11 @@ class GPUdbTable( object ):
 
                 * **json** --
                   Indicates that the returned records should be JSON-encoded.
+
+                * **arrow** --
+                  Indicates that the returned records should be encoded as an
+                  Arrow IPC stream, returned in output parameter
+                  *binary_encoded_response*.
 
                 The default value is 'binary'.
 
@@ -47110,6 +47438,11 @@ class GPUdbTable( object ):
 
                 * **json** --
                   Indicates that the returned records should be JSON-encoded.
+
+                * **arrow** --
+                  Indicates that the returned records should be encoded as an
+                  Arrow IPC stream, returned in output parameter
+                  *binary_encoded_response*.
 
                 The default value is 'binary'.
 

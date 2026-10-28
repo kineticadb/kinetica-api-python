@@ -114,6 +114,7 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
             return
 
         self._closed = True
+        self._connection.close()
 
     @raise_if_closed
     @convert_runtime_errors
