@@ -3,6 +3,412 @@
 ## Version 7.2
 
 
+### Version 7.2.3.15 - 2026-11-18
+
+#### Added
+-   Multi-head ingest and key lookups reach each worker rank at any of the
+    addresses the server reports for it, configured public addresses first,
+    rather than only the first advertised one, so that they work for a
+    cluster behind NAT, in a container or in Kubernetes.  A rank that answers
+    at none of them makes the client use the head node alone.
+    `GPUdb.Options.hostname_regex` restricts which addresses are tried.
+-   Creating a `GPUdbTable` with multi-head I/O, a `GPUdbIngestor`, a
+    `RecordRetriever` or a `GPUdbWorkerList` no longer checks every worker
+    rank's address each time.  The connection checks them once when it
+    connects to a cluster, fails over or fails back, and every object built
+    on it uses that result.
+-   `GPUdb.Options` for the HTTP transport:
+    -   `tcp_keep_alive` (on by default; see Changed), with `tcp_keep_idle`,
+        `tcp_keep_interval` and `tcp_keep_count` (0, the default, for the
+        operating system's own).
+    -   `trust_store_file_path`, a PEM file or c_rehash directory of CA
+        certificates to verify HTTPS servers with; it used to take the
+        `REQUESTS_CA_BUNDLE` environment variable.
+    -   `max_connections_per_host`, the connections kept open for reuse per
+        head or worker rank; it was fixed at 256, still the default.
+-   `GPUdb.Options.use_snappy` and `GPUdb.use_snappy`, whether inserts and
+    updates are compressed (see Changed).
+-   The `fast` extra (`pip install gpudb[fast]`): `mmh3`, a C hash that
+    halves the time to queue records for multi-head ingest, and
+    `python-snappy`.  Without them, hashing is done in Python and nothing is
+    compressed.
+-   `GPUdb.ping()` with no URL pings the current cluster and fails over to the
+    next if it cannot be reached or answers 500, 502, 503 or 504, raising a
+    `GPUdbException` once every cluster has been tried.  A `timeout`
+    argument, in seconds, bounds the wait.
+-   Read-only accessors on `GPUdb`: `user_agent`, the User-Agent header this
+    client sends with each request; `client_name` and `client_version`, as
+    given in `GPUdb.Options`; `max_retries`, the number of times a failed
+    request is retried; and `get_system_properties()`, the system properties
+    of the cluster the client is using, as read when it connected.
+-   `GPUdb.Version` keeps a fifth, `build`, component (a server's is a
+    timestamp, as in 7.2.3.21.20260922210644); `full_version` gives all five,
+    and `compare_to()`, `is_newer_than()`, `is_older_than()` and
+    `is_equal_to()` compare with it.  The comparison operators compare the
+    first four, as before.  `major`, `minor`, `revision` and `abi_version`
+    read the components.
+-   `get_errors()` and `get_warnings()` on `GPUdbIngestor` and `GPUdbTable`,
+    which accumulate the record errors and warnings the server reports under
+    the `return_individual_errors` insert option until called, at which point
+    the notifications are returned and the respective list reset.
+    `GPUdbTable.insert_records_response()` returns each call's response,
+    errors included, without accumulating them.
+-   `InsertionException.url` and `get_url()`, the URL the records were being
+    sent to when the insertion failed, and `message`, the error message.
+-   `GPUdbIngestor` options `json_options` (`validate` checks each JSON record
+    as it is queued; off by default) and `check_permissions` (see Changed).
+-   `GPUdbIngestor.close()`, and the ingestor as a context manager: closing
+    flushes every queue, even after one fails, and the closed ingestor refuses
+    records and flushes.  `closed` says whether it is closed.
+-   `TypeObjectMap`, mapping a type to a Python class: `from_class()` makes the
+    type from a dataclass's fields (`TypeObjectMap.column()` gives a field's
+    column name, type and properties), and `from_type()` maps an existing
+    type's columns to a class's attributes of the same name.  `to_object()`,
+    `to_objects()` and `to_dict()` convert between records and objects,
+    converting `bool`, `Decimal`, `datetime` (sent in UTC, converted from its
+    time zone if it has one; decoded naive, in UTC), `date` and `time`
+    values.  `create_type()` creates the type and registers the map.
+-   `GPUdb.add_known_type()`, `add_known_type_from_table()`,
+    `add_known_type_object_map()` and `get_known_type_object_map()`.  Records
+    of a type registered with a `TypeObjectMap`, or a class, decode into
+    objects in the `*_and_decode` methods, and `GPUdbTable.insert_records()`
+    and `GPUdbIngestor` take objects of a class with a registered map, or of
+    any dataclass whose fields are named as the columns.
+-   `GPUdb.known_types`, the known types as a dict of type ID to type: the
+    same dict as `get_known_types`, which stays the property it has been.
+-   `get_records_by_key()`, on `RecordRetriever` and `GPUdbTable`, no longer
+    requires key values: it takes key values, an expression, both, or neither
+    to fetch the whole table; and an `offset`, to page through the result.
+-   `get_columns_by_key()`, on `RecordRetriever` and `GPUdbTable`, fetches
+    only the columns named, with the same arguments as
+    `get_records_by_key()`.
+-   `RecordRetriever` takes `options` that apply to every lookup it makes;
+    options given to a lookup override them.
+-   `named_rows` on `GPUdb.query()`, `query_one()` and `GPUdbSqlIterator`
+    gives each row as a `GPUdbSqlRow`: the list of its values, also readable
+    by column name (`row["city"]`, `get()`, `keys()`, `items()`,
+    `as_dict()`).  Rows are plain lists by default, as before.
+-   Query parameters as their JSON, in a string: an array of values, or of
+    arrays of them to insert several rows with one statement; and as a tuple,
+    in `to_df()` too.
+-   `GPUdbFileHandler.ingest()` uploads local files, directories or glob
+    patterns to a staging directory under the user's KIFS home, ingests them
+    into a table, creating it if need be, and deletes the staged copies
+    whether or not the ingest succeeded.  It returns an `IngestResult` and
+    raises a `GPUdbException` on failure.  `IngestOptions` and
+    `TableCreationOptions` give the ingest's options, with `FileType`,
+    `ErrorHandlingMode`, `TypeInferenceMode` and `PartitionType` for their
+    fixed values; any other option can be given with `put()`.
+-   KIFS transfers of many files:
+    -   `GPUdbFileHandler.upload_files()` takes directories (`recursive=True`
+        for their subdirectories) and glob patterns (`**` for any depth)
+        besides files, and uploads files under their paths from the directory
+        or pattern.  It and `upload_file()` take a `ttl`, in minutes.
+    -   `download_files()` takes KIFS directories and wildcard patterns
+        besides files, and saves files under their paths from the directory
+        or pattern; it and `download_file()` take `overwrite` (default True)
+        to keep local files that exist.  `download_dir()` downloads a KIFS
+        directory.
+    -   Both refuse, before transferring anything, names that match no file,
+        naming every one, and files that would be transferred as one.
+    -   A KIFS pattern's wildcards are `*` and `?`; a KIFS name with `[` in it
+        is a name.  A local name with `[` is a glob pattern unless a file of
+        that very name exists.
+    -   Many small files are sent in each request, both ways, and uploads
+        send several requests at once.  `GPUdbFileHandler.Options`
+        (`file_size_to_split`, 60 MB; `full_file_dispatcher_threadpool_size`,
+        5; `max_upload_bytes_in_flight`, 128 MB) set the limits.
+    -   A `callback` on every upload and download method receives a
+        `TransferResult` for each file, and each part of a file sent in parts.
+    -   `show_files()`, `show_directory()`, `show_directories()` and
+        `show_all_directories()`, giving `KifsFileInfo` (with creator, creation
+        time and info) and `KifsDirectoryInfo`; `create_directory()`,
+        `delete_directory()`, `delete_files()` and `delete_files_in_dir()`; and
+        `kifs_file_exists()`, `kifs_directory_exists()` and
+        `kifs_directories_exist()`.  All take `~` for the user's home directory.
+-   `gpudb.set_logging_level()` sets the log level of the whole API: every
+    `GPUdb`, table, ingestor, record retriever, table monitor and fail-back
+    poller, except an object given a level of its own.  It takes TRACE, DEBUG,
+    INFO, WARN or WARNING, ERROR, CRITICAL or OFF, in any case, or a level
+    number.  The `GPUDB_LOG_LEVEL` environment variable sets it at startup.
+
+#### Changed
+-   TCP keep-alive is on for connections to the database, so that a
+    long-running request behind a NAT, a firewall or a load balancer is not
+    dropped as idle; `tcp_keep_alive` turns it off.
+-   Every request has `server_connection_timeout` (5 seconds by default) to
+    connect, never longer than its `timeout`; 0 puts no limit.  A host that
+    did not answer used to hold a request for the operating system's connect
+    timeout at every retry, and `wms()`, `ping()`,
+    `get_server_debug_information()` and the JSON requests without a body had
+    no timeout at all.
+-   A pooled connection idle for more than 100 seconds is opened afresh rather
+    than reused, since a NAT or a firewall may have dropped it silently.
+-   Connecting keeps the URL it was given as the cluster's URL, and
+    `get_url()` returns it.  It used to be replaced by the address the server
+    advertises for itself, which may not be reachable from the client, or may
+    reach a different server.
+-   A cluster that cannot be reached at any address the server advertises for
+    it is used through the URL given for it, without multi-head I/O; the
+    other clusters of the HA ring are unaffected, and are still found through
+    it.  This used to turn off discovery, and so multi-head I/O and HA
+    failover, for the whole connection.
+-   A cluster's host manager address is taken from what that cluster
+    publishes, so that host manager requests to a cluster on another port, or
+    to one of several clusters behind httpd, no longer fail.
+    `GPUdb.Options.host_manager_port` applies only when set to other than the
+    default, 9300.
+-   A JSON request (`insert_records_json()`, `get_records_json()`, ...)
+    answered with an HTTP 400 saying the server is shutting down, or draining
+    its HA queue, fails over as a binary request does, rather than failing.
+-   `is_kinetica_running()` waits at most 5 seconds for an answer; it used to
+    wait the client's `timeout`, none by default, so a server that took the
+    connection but never answered hung the check.  Given `None`, it checks the
+    current cluster without failing over; it used to refuse `None`.
+-   `ping()` and `is_kinetica_running()` make one attempt; a host that was
+    down used to take six timeouts to report.
+-   An HTTP 403 response raises `GPUdbUnauthorizedAccessException`, as a 401
+    does; the client used to fail with a decoding error on the error page.
+-   The API's log messages go to the application's logging handlers: every
+    logger of the API is under the `gpudb` logger and passes its records on.
+    Until the application sets up a handler, the API still writes to stderr,
+    in its own format, as before; once it has, on any logger of the API or
+    above, nothing is written twice.
+-   The fail-back poller logs under its `GPUdb`'s logger and follows that
+    client's level; the table monitor logs under `gpudb.TableMonitor` at the
+    API's level, so its INFO messages are written only when that level is set
+    (`gpudb.set_logging_level("INFO")`, or the monitor's `logging_level`).
+-   The `requests` and `urllib3` loggers, which log every connection and
+    request at DEBUG, are set to WARNING once, when the API is imported; after
+    that, the application can set its own log level on each, by name.
+-   Multi-head ingest resends a batch that failed on a connection error to the
+    same cluster up to 3 times (`GPUdbIngestor.retry_count`, which was 1)
+    before failing over, so that a brief network problem no longer fails an
+    ingest on a cluster with no HA ring.  A batch the server refuses, as for a
+    bad record, fails at once rather than being resent to be refused again.
+-   With the `return_individual_errors` insert option and partial batches off
+    (`allow_partial_batch` not `true`, or `error_handling` `abort`), multi-head
+    ingest stops taking records at the first rejected batch, so that none
+    after it are inserted, and takes them again once `get_errors()` has
+    returned the error.  It used to go on inserting the batches after the
+    rejected one.
+-   Inserts and updates are compressed with Snappy by default where
+    `python-snappy` is installed (the `fast` extra); `use_snappy` turns it
+    off.  No other request is compressed, nor one in JSON, nor one over
+    1.7 GiB, which Snappy cannot compress (with a warning the first time).
+    The `SNAPPY` encoding, which compresses every request, is unchanged.
+-   `GPUdbIngestor` with `json_ingestion` sends JSON records to the worker
+    ranks directly, as it does binary ones; they all went to the head node.
+    A JSON record must now be a string, and is parsed to check it only with
+    the `validate` JSON option; the server refuses a batch holding an invalid
+    one.
+-   `GPUdbIngestor` checks, when it is made, that the user may insert into the
+    table, and update it with the `update_on_existing_pk` option, and finds
+    out whether the table is replicated where `is_table_replicated` is not
+    given (it now defaults to None; it was False).  It raises a
+    `GPUdbException` if the user may not, or if the table does not exist,
+    which used to surface at the first flush.  This costs two or three
+    requests when the ingestor is made; `check_permissions=False` leaves the
+    permission check out, and `is_table_replicated` the table lookup.  A
+    `GPUdbTable`'s own ingestor does not check.
+-   A `TypeObjectMap` registered for a type stays registered when the type is
+    met again, as by `show_table()`; it used to be replaced by the plain type.
+-   A client name given without a client version (`GPUdb.Options.client_name`)
+    is sent in the User-Agent header; it used to be dropped silently.
+-   `RecordRetriever` finds out whether its table is replicated where
+    `is_table_replicated` is not given (default None), and looks a replicated
+    table up on a worker rank, every page of one lookup from the same one; it
+    used to use the head node, and only if told the table was replicated.
+    The whole table, and a sorted lookup, still come from the head node.  A
+    lookup retried after a failure fetches the same page.
+-   With `convert_special_types_on_retrieval`, `GPUdbTable.get_records()`,
+    `get_records_by_key()` and row-major `get_records_by_column()` return the
+    records they convert as `GPUdbRecordDict`s: ordered dicts of column name
+    to value that also take a column's position as an index and carry their
+    `type`, as a `Record` does.  Iterating one yields the column names, as
+    iterating any dict does, where iterating a `Record` yields the values.
+    A `Record` cannot hold the list an array converts to, nor the dict a JSON
+    value converts to; such values used to come back as Python's repr text,
+    and vectors as text.
+-   `GPUdbWorkerList`'s `ip_regex` is ignored, with a warning; use
+    `GPUdb.Options.hostname_regex`, which applies to every worker list of the
+    connection.  A server reporting multi-head enabled but advertising no
+    worker addresses no longer fails building a worker list; the client warns
+    and uses the head node alone.
+-   `GPUdbFileHandler.upload_files()` and `download_files()` go on with the
+    other files when one fails, then raise a `GPUdbException` naming every
+    file that failed, also given as the error's `failures`, a dict of file
+    name to error message; they used to stop at the first.  A single name can
+    be given as a string.
+
+#### Fixed
+-   A request that failed on a cluster still reporting itself running and not
+    draining, as with an HTTP 500 from a broken rank, being resent to that
+    cluster forever instead of failing over.  Failover now moves on to the
+    next usable cluster, and raises an error once every cluster has been
+    tried.
+-   Several threads failing over at the same time could skip a cluster, or
+    adopt one another thread had switched to without checking it.  Failovers
+    and fail-backs no longer interleave, and an adopted cluster is checked
+    before use.
+-   One fail-back poller being shared by every `GPUdb` in the process: only
+    the first client to fail over was ever failed back, and closing it stopped
+    fail-back for all.  Each `GPUdb` now has its own.
+-   Multi-head ingest and key lookups going on using the backup cluster's
+    workers after the client failed back to its primary.  Both now follow the
+    client to whichever cluster it is on.
+-   A failed host manager request (`admin_add_host`, `admin_alter_host`,
+    `admin_remove_host`, `admin_show_alerts`, `admin_switchover`) being
+    replayed on the next cluster in the HA ring, where it could act on a
+    cluster the caller never named, and moving the database connection even
+    when that database was healthy.  It is now sent only to the current
+    cluster's host manager, and a failure is returned to the caller.
+-   A server certificate that failed verification being taken for a dead
+    server, so that the client failed over and the user saw an HA error such
+    as "Only one cluster in ring" instead of the certificate error.  It is now
+    raised at once as a `GPUdbUnauthorizedAccessException`, with a hint on
+    adding the certificate to the trust store or using
+    `skip_ssl_cert_verification`.
+-   Setting `GPUdb.Options.hostname_regex` making `GPUdb()` fail with a
+    `TypeError` whenever auto-discovery was on, which it is by default.
+-   A hostname regex matching none of the addresses the server advertises
+    failing the connection even when it matched a URL the user gave, as with
+    a server behind a port mapping.  The connection now uses the user-given
+    URLs the regex matches, without multi-head I/O, and fails only if it
+    matches none of them.
+-   A cluster being taken for another whose hostname starts with its own, as
+    `10.0.0.1` for `10.0.0.12`, which dropped it from the HA ring while
+    connecting and could resolve a primary URL to the wrong cluster.
+-   A cluster reached at a remote address that advertises this machine's own
+    address, such as `127.0.0.1`, for its ranks being connected to at that
+    address, so that requests went to whatever was listening locally.  Such an
+    address is never used where the server was reached elsewhere.  An
+    advertised address naming no host (`http://:9191`) is skipped rather than
+    taken for `127.0.0.1`.
+-   With SNAPPY encoding, `ping()`, `is_kinetica_running()`,
+    `get_server_debug_information()` and `wms()` failing before anything was
+    sent, so that a running server was reported down and a client was never
+    failed back to its primary.
+-   `remove_http_header()` not stopping a header given in
+    `GPUdb.Options.http_headers` from being sent, and JSON requests
+    (`insert_records_from_json()`, `get_records_json()`) not sending headers
+    added with `add_http_header()`, nor the header of a non-default
+    `ha_sync_mode`.
+-   A copy of `GPUdb.Options` (`GPUdb.Options( options )`) not equaling the
+    original, an unset `primary_url` and `primary_host` becoming `""`; and
+    `FailbackOptions` comparing by identity, so that the options of an
+    unpickled `GPUdb` did not equal the original's.
+-   The documentation of `GPUdb.Options.timeout`,
+    `initial_connection_attempt_timeout` and `server_connection_timeout`
+    giving them in milliseconds; all three are, and remain, in seconds.  A
+    `timeout` of `None`, the default, means no timeout, where it said 0 did;
+    0 makes every request fail.  The DB-API connection's message about
+    `timeout` likewise said milliseconds.
+-   Shard keys built differently from the database's for some values, so that
+    distributed ingest performed poorly and distributed key lookup failed:
+    -   UUIDs without hyphens, when they had a hexadecimal letter
+    -   `charN` strings with non-ASCII characters, now padded and cut to N
+        bytes instead of rejected
+    -   decimals given as numbers, in exponent form, or with more decimal
+        places than the scale (rounded half up)
+    -   booleans given as strings, or as numbers other than 0 and 1 (a NaN is
+        false and an infinity true)
+-   The records an `InsertionException` from `GPUdbIngestor.insert_records()`
+    returns repeating the one whose batch failed to flush, and others equal to
+    it, so that re-sending them inserted duplicates.
+-   An `InsertionException` not unpickling, as when passed back from a
+    `multiprocessing` worker.  It now pickles with its records and URL; a
+    record it holds as a `Record` goes as the dict of its values.
+-   A process forked after connecting, as `multiprocessing` with the `fork`
+    start method makes, sharing the connection's open sockets with the
+    parent and its sibling processes, so that requests sent at the same time
+    garbled one another; a batch of multi-head ingest from such a worker was
+    refused as unreadable.  A forked process now opens connections of its
+    own.
+-   `GPUdbIngestor.flush()` and `insert_records()` with `json_ingestion`
+    raising a `KeyError` once a second worker rank's queue was flushed, after
+    its records were inserted.  They now return the JSON response with every
+    queue's counts.
+-   `GPUdbTable.insert_records()` writing arrays as text joined by commas, so
+    that the server rejected any `array(string)` given as a list, and any
+    array holding a `None`.  Arrays are now sent as JSON.
+-   A `Decimal` being sent to a decimal column in exponent form for some
+    values, such as `1E+3`, whether given in a record or as an attribute of
+    an object that a `TypeObjectMap` maps.  It is now sent in plain notation.
+-   `RecordRetriever.get_records_by_key()` and `GPUdbTable.get_records_by_key()`
+    raising an `AttributeError` when given key values in a dict for a table
+    with neither a shard key nor a primary key.  Key values are now refused for
+    such a table whether listed or named, with a `GPUdbException`, as a list
+    already was: the table has no key columns to associate them with.  Such a
+    table is looked up by expression alone.
+-   `get_records_by_key()` building a filter that some key values broke: a
+    double quote in a string, a null given in a dict of key values (written
+    as `"None"`), a boolean (written as `True`) and an unsigned long (quoted).
+    The server rejected such a filter, could not route it, or matched
+    nothing.
+-   `get_records_by_key()` adding its key filter to the caller's options dict,
+    which then carried it into the caller's next request.
+-   With `convert_special_types_on_retrieval`, arrays being parsed with
+    `eval()`, which failed on any array holding a null and ran whatever
+    Python the text held; vectors being returned as text rather than a list
+    of floats; and empty arrays and JSON objects being returned unconverted.
+    A vector given to `insert_records()` as text was `eval()`'d too.  Both
+    are now parsed as JSON.
+-   Query parameters given as a string being split into characters, one
+    parameter each, by `GPUdb.query()`, `query_one()`, `execute()`, `to_df()`
+    and `GPUdbSqlIterator`; a string is now taken as the parameters' JSON.  A
+    string that is not a JSON array, and a dict, set or other value that is
+    not an ordered collection, are refused before the query is sent.
+    `to_df()` refused a tuple.
+-   `GPUdb.execute()` sending the query parameters of an earlier call again
+    with a later call that gave none, and turning vectors in the caller's
+    parameter list into strings in place.
+-   A statement that returns no rows, such as an `INSERT`, being sent to the
+    server twice by `GPUdb.query()` and `GPUdb.query_one()`, then failing with
+    an `IndexError`; `query_one()` instead reported "More than one result was
+    returned" when several rows were affected.  Such a statement now runs
+    once, and returns no rows.
+-   `GPUdbSqlIterator.close()` stopping at the first paging table it could not
+    drop, leaving the rest on the server, and, when leaving a `with` block,
+    replacing any exception raised inside it with that error.  Every table
+    that can be dropped now is, and a failure is logged.
+-   `GPUdbFileHandler` downloads that failed leaving a partial local file
+    behind, a short or empty part of a large file being skipped silently, and
+    an error from the server, as for a file not found, surfacing as a
+    `KeyError`.  A failed download now raises a `GPUdbException` and deletes
+    the local file.
+-   `GPUdbFileHandler` multipart uploads sending an empty part after the last,
+    and leaving the upload open on the server when a request raised or the
+    local file could not be read.  The upload is now cancelled whenever it
+    does not complete; a failure to cancel is logged.
+-   `GPUdbFileHandler` not uploading a zero-byte file, without an error.
+-   `GPUdbTableMonitor.Client()` hanging, at random, while checking that the
+    server's table monitor answers.  It now waits at most `wait_interval`
+    seconds (at least one) per try, gives up on an address that does not
+    answer after `max_retries` tries, and no longer leaks a socket and a
+    thread each time.
+-   An undecodable server response during multi-head ingest or a key lookup
+    surfacing as an `AttributeError` rather than a `GPUdbDecodingException`,
+    and a `GPUdbException` wrapping an exception with no message, such as
+    `TimeoutError()`, raising an `IndexError`.
+-   Each `GPUdb`, `GPUdbTable`, `GPUdbIngestor`, `RecordRetriever` and table
+    monitor object registering a logger with Python's `logging` module that
+    was never released, so that a long-running application grew with every
+    one.  Each still has its own logger, and its own level.
+
+#### Performance
+-   Multi-head ingest is faster.  Measured on 200,000 records, a flush takes
+    2.5 times less time than before, and queuing the records 1.6 times less
+    (3.1 times with the `fast` extra).
+-   KIFS transfers of many small files are batched.  Measured on a local
+    server, 2000 files of 10 KB upload in about 1 s (6.5 s before) and
+    download in under 1 s (7.9 s before); 200 files of 1 MB upload in 1.3 s
+    (2.1 s before).
+
+#### Notes
+-   Check CHANGELOG-FUNCTIONS.md for endpoint related changes
+
+
 ### Version 7.2.3.14 - 2026-10-28
 
 #### Added

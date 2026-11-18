@@ -84,7 +84,7 @@ class KineticaConnection(CursorExecuteMixin, ConcreteErrorMixin, Connection):
                     else:
                         setattr(options, key, value)
                         if key == 'timeout':
-                            print(f"Warning - The timeout setting supplied ({value} ms) does nothing unless in an async context")
+                            print(f"Note - The timeout setting supplied ({value}) is in seconds, and applies to each request to the server")
                 else:
                     raise ValueError(f"Unable to add '{key}' to options - not a standard key")
 

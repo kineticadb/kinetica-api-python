@@ -25,16 +25,17 @@ from decimal import Decimal
 from io import BytesIO
 
 import requests
-from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from urllib.parse import urlencode
 from urllib.parse import urlparse
 from gpudb.user_agent import USER_AGENT
+from gpudb import gpudb_http as _http
 
 import base64
 import copy
 import os
+import weakref
 import inspect
 import json
 import logging
@@ -45,6 +46,9 @@ import sys
 import time
 import traceback
 import uuid
+import dataclasses
+import datetime as _datetime
+import types as _types
 
 import collections
 from collections.abc import Iterator
@@ -96,7 +100,9 @@ except ImportError:
 HAVE_SNAPPY = False
 try:
     import snappy
-    HAVE_SNAPPY = True
+    # Another package installs a module named snappy too; only python-snappy
+    # compresses
+    HAVE_SNAPPY = callable( getattr( snappy, "compress", None ) )
 except ImportError:
     HAVE_SNAPPY = False
 
@@ -243,16 +249,20 @@ class GPUdbException( Exception ):
     def __init__( self, value, had_connection_failure = False ):
         self.value = value
         self.__had_connection_failure = had_connection_failure
-        if isinstance(value, str):
-            # We got a message only
-            self.message = value
-            self.traceback_msg = ""
-        elif isinstance(value, Exception):
-            # Preserve the message and also the stack trace
-            self.message = value.args[0]
+        if isinstance(value, Exception):
+            # Preserve the message and also the stack trace.  An exception
+            # need not have a message (TimeoutError() has none), and its first
+            # argument need not be text; the message must be text, for
+            # is_connection_failure() to search it.
+            self.message = ( str( value.args[0] ) if value.args
+                             else GPUdbException.stringify_exception( value ) )
             self.traceback_msg = "".join( traceback.format_exception( sys.exc_info()[0],
                                                                       sys.exc_info()[1],
                                                                       sys.exc_info()[2] ) )
+        else:
+            # We got a message only
+            self.message = value if isinstance(value, str) else str( value )
+            self.traceback_msg = ""
     # end __init__
 
     def __str__( self ):
@@ -322,14 +332,7 @@ class GPUdbException( Exception ):
 # ---------------------------------------------------------------------------
 class GPUdbConnectionException( GPUdbException ):
 
-    def __init__( self, value ):
-        self.value = value
-        self.message = value
-    # end __init__
-
-    def __str__( self ):
-        return repr( self.value )
-    # end __str__
+    pass
 
 # end class GPUdbConnectionException
 
@@ -339,14 +342,7 @@ class GPUdbConnectionException( GPUdbException ):
 # ---------------------------------------------------------------------------
 class GPUdbDecodingException( GPUdbException ):
 
-    def __init__( self, value ):
-        self.value = value
-        self.message = value
-    # end __init__
-
-    def __str__( self ):
-        return repr( self.value )
-    # end __str__
+    pass
 
 # end class GPUdbDecodingException
 
@@ -356,14 +352,7 @@ class GPUdbDecodingException( GPUdbException ):
 # ---------------------------------------------------------------------------
 class GPUdbExitException( GPUdbException ):
 
-    def __init__( self, value ):
-        self.value = value
-        self.message = value
-    # end __init__
-
-    def __str__( self ):
-        return repr( self.value )
-    # end __str__
+    pass
 
 # end class GPUdbExitException
 
@@ -374,14 +363,7 @@ class GPUdbExitException( GPUdbException ):
 # ---------------------------------------------------------------------------
 class GPUdbFailoverDisabledException( GPUdbException ):
 
-    def __init__( self, value ):
-        self.value = value
-        self.message = value
-    # end __init__
-
-    def __str__( self ):
-        return repr( self.value )
-    # end __str__
+    pass
 
 # end class GPUdbFailoverDisabledException
 
@@ -391,14 +373,7 @@ class GPUdbFailoverDisabledException( GPUdbException ):
 # ---------------------------------------------------------------------------
 class GPUdbHAUnavailableException( GPUdbException ):
 
-    def __init__( self, value ):
-        self.value = value
-        self.message = value
-    # end __init__
-
-    def __str__( self ):
-        return repr( self.value )
-    # end __str__
+    pass
 
 # end class GPUdbHAUnavailableException
 
@@ -409,14 +384,7 @@ class GPUdbHAUnavailableException( GPUdbException ):
 # ---------------------------------------------------------------------------
 class GPUdbHostnameRegexFailureException( GPUdbException ):
 
-    def __init__( self, value ):
-        self.value = value
-        self.message = value
-    # end __init__
-
-    def __str__( self ):
-        return repr( self.value )
-    # end __str__
+    pass
 
 # end class GPUdbHostnameRegexFailureException
 
@@ -429,16 +397,211 @@ class GPUdbUnauthorizedAccessException( GPUdbException ):
     given) or an SSL certificate verification failure occurred.
     """
 
-    def __init__( self, value ):
-        self.value = value
-        self.message = value
+# end class GPUdbUnauthorizedAccessException
+
+
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+# Every logger of this API is under the 'gpudb' logger, and passes its records
+# up to the application's handlers.  The only handler the API adds is the default
+# one below, which writes to stderr only while the application has set up no
+# logging of its own.
+
+_API_LOGGER_NAME = "gpudb"
+
+# The environment variable that sets the API's log level at startup
+_LOG_LEVEL_ENVIRONMENT_VARIABLE = "GPUDB_LOG_LEVEL"
+
+_LOG_FORMAT          = "%(asctime)s.%(msecs)03d %(levelname)-8s %(message)s"
+_LOG_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+class _DefaultHandler( logging.StreamHandler ):
+    """Writes the API's log records to stderr, in the API's format, as it has
+    always done -- but only while the application has set up no logging of
+    its own that receives the record.  Once there is a handler on the root
+    logger (logging.basicConfig() adds one, as do logging.config and pytest),
+    on the 'gpudb' logger, or on the record's own logger or one between (an
+    application's handler on 'gpudb.MultiHeadIO', say), the record goes to
+    that, and this handler writes nothing, so that none is written twice.
+    """
+
+    def __init__( self ):
+        super( _DefaultHandler, self ).__init__()
+        self.setFormatter( logging.Formatter( fmt = _LOG_FORMAT, datefmt = _LOG_DATETIME_FORMAT ) )
     # end __init__
 
-    def __str__( self ):
-        return repr( self.value )
-    # end __str__
+    def emit( self, record ):
+        # The record's logger and its ancestors up to the one this handler is
+        # on -- the record came up that chain, so a handler on any of them has
+        # received it -- and then the root
+        logger = logging.getLogger( record.name )
+        while logger is not None:
+            if any( handler is not self for handler in logger.handlers ):
+                return
+            if self in logger.handlers:
+                break
+            logger = logger.parent
+        # end while
+        if any( handler is not self for handler in logging.getLogger().handlers ):
+            return
+        super( _DefaultHandler, self ).emit( record )
+    # end emit
+# end class _DefaultHandler
 
-# end class GPUdbUnauthorizedAccessException
+
+def _install_default_handler():
+    api_logger = logging.getLogger( _API_LOGGER_NAME )
+    # Once, though the module be loaded again
+    if not any( type( handler ).__name__ == _DefaultHandler.__name__ for handler in api_logger.handlers ):
+        api_logger.addHandler( _DefaultHandler() )
+# end _install_default_handler
+
+_install_default_handler()
+
+
+# The HTTP client libraries' loggers, which log every connection and request
+# at DEBUG and need to have their levels reduced, by default.
+_HTTP_CLIENT_LOGGER_NAMES = ( "requests", "urllib3" )
+
+
+def _default_http_client_logger_levels():
+    """Sets the HTTP client libraries' loggers to WARNING if the
+    application has not set a level on them, to avoid excessive logging.
+    """
+    for name in _HTTP_CLIENT_LOGGER_NAMES:
+        logger = logging.getLogger( name )
+        if logger.level == logging.NOTSET:
+            logger.setLevel( logging.WARNING )
+# end _default_http_client_logger_levels
+
+_default_http_client_logger_levels()
+
+
+def _logging_level( level ):
+    """The logging module's level for `level`: a level number, or a level
+    name -- TRACE, DEBUG, INFO, WARN or WARNING, ERROR, CRITICAL, or OFF for
+    none at all -- in any case.  Raises a GPUdbException for anything else.
+    """
+    if isinstance( level, bool ):
+        pass # not a level, though an int
+    elif isinstance( level, int ):
+        return level
+    elif isinstance( level, str ):
+        name = level.strip().upper()
+        if name == "OFF":
+            return logging.CRITICAL + 1
+        if name == "WARN":
+            name = "WARNING"
+        if name == "TRACE":
+            return 9 # as gpudb_multihead_io registers it
+        number = logging.getLevelName( name )
+        if isinstance( number, int ):
+            return number
+    raise GPUdbException( "Invalid log level '{}'; expected one of TRACE, DEBUG, INFO, "
+                          "WARN, ERROR, CRITICAL or OFF, or a level number".format( level ) )
+# end _logging_level
+
+
+def set_logging_level( level ):
+    """Sets the log level of the whole API: every GPUdb, table, ingestor, record
+    retriever, table monitor and fail-back poller, and the rest of the API's
+    logging, except where an object was given a level of its own (through
+    GPUdb.Options.logging_level or its own setter).
+
+    It sets the level of the 'gpudb' logger, which the API's loggers are all
+    under; their records go to the application's handlers, or, where the
+    application has set up none, to stderr.  The GPUDB_LOG_LEVEL environment
+    variable sets it at startup.
+
+    Parameters:
+        level (str or int)
+            TRACE, DEBUG, INFO, WARN or WARNING, ERROR, CRITICAL, or OFF for
+            no logging at all, in any case; or a level number.  None unsets it,
+            so that the root logger's level applies, as it does by default.
+
+    Raises:
+        GPUdbException
+            If the level is not one of these.
+    """
+    api_logger = logging.getLogger( _API_LOGGER_NAME )
+    api_logger.setLevel( logging.NOTSET if (level is None) else _logging_level( level ) )
+# end set_logging_level
+
+
+def _set_logging_level_from_environment():
+    """Sets the API's log level from GPUDB_LOG_LEVEL, where it is set; a value
+    that is not a level is warned of, and ignored.
+    """
+    level = os.environ.get( _LOG_LEVEL_ENVIRONMENT_VARIABLE, "" ).strip()
+    if not level:
+        return
+    try:
+        set_logging_level( level )
+    except GPUdbException as ex:
+        logging.getLogger( _API_LOGGER_NAME ).warning(
+                "Ignoring the {} environment variable: {}".format(
+                        _LOG_LEVEL_ENVIRONMENT_VARIABLE, ex.message ) )
+# end _set_logging_level_from_environment
+
+
+class _ObjectLogger( logging.Logger ):
+    """A logger for one object, such as one GPUdb, with its own level, so that
+    setting one object's level leaves the others' alone; and which goes when
+    the object does.
+
+    logging.getLogger() keeps every logger it creates for the life of the
+    process, so registering a logger named for each new object's UUID grew a
+    long-running application by one logger per object.  This one is created
+    directly, which the logging module does not register.  Its parent is the
+    shared logger named `parent_name`, under 'gpudb', so that a level it does
+    not set comes from there, and its records go on to the application's
+    handlers (or the API's default one).
+    """
+
+    def __init__( self, name, parent_name = _API_LOGGER_NAME ):
+        super( _ObjectLogger, self ).__init__( name )
+        self.parent = logging.getLogger( parent_name )
+    # end __init__
+
+    def isEnabledFor( self, level ):
+        # Not cached, as Logger caches it: the logging module clears the caches
+        # only of the loggers it registered, so a cached answer would miss a
+        # later change to the level of the parent or the root
+        if self.disabled or (self.manager.disable >= level):
+            return False
+        return level >= self.getEffectiveLevel()
+    # end isEnabledFor
+
+# end class _ObjectLogger
+
+
+class _CallerPrefix( logging.Filter ):
+    """Puts where a message was logged from before it, in the given format
+    (with {filename}, {lineno} and {funcName}), for the loggers that used to
+    format it so with a handler of their own; their messages now go to the
+    application's handlers, or the API's default one, which have their own
+    formats.
+    """
+
+    def __init__( self, prefix_format ):
+        super( _CallerPrefix, self ).__init__()
+        self.__prefix_format = prefix_format
+    # end __init__
+
+    def filter( self, record ):
+        prefix = self.__prefix_format.format( filename = record.filename,
+                                              lineno = record.lineno,
+                                              funcName = record.funcName )
+        record.msg = prefix + str( record.msg )
+        return True
+    # end filter
+# end class _CallerPrefix
+
+
+_set_logging_level_from_environment()
 
 
 
@@ -622,16 +785,6 @@ class AttrDict(dict):
 class _Util(object):
 
     @staticmethod
-    def _is_heterogeneous_list(lst):
-        # Get the data type of the first element
-        first_type = type(lst[0])
-        # Check if any element has a different data type
-        for element in lst[1:]:
-            if type(element) != first_type:
-                return True
-        return False
-
-    @staticmethod
     def _float_to_string(
         value: Union[float, int, Decimal, List[Union[float, int, Decimal]]],
         precision: int = None,
@@ -742,36 +895,36 @@ class _Util(object):
             try:
                 converted_column_value = json.dumps(column_value)
             except TypeError:
-                raise GPUdbException("Invalid JSON value : " + column_value)
+                raise GPUdbException(f"Invalid JSON value : {column_value!r}")
         elif column.is_array():
-            if isinstance(column_value, list) and column.array_type != GPUdbColumnProperty.BOOLEAN:
-                if _Util._is_heterogeneous_list(column_value):
-                    converted_column_value = str(column_value).replace("'", "\"")
-                else:
-                    if all(isinstance(e, (int, float)) for e in column_value):
-                        converted_column_value = '[{}]'.format(','.join(str(e) for e in column_value))
-                    elif all(isinstance(e, str) for e in column_value):
-                        converted_column_value = "[{}]".format(','.join('{}'.format(str(e)) for e in column_value))
-            elif isinstance(column_value, list) and all((e in [True, False]) for e in column_value):
-                # Got an array of boolean values
-                converted_column_value = str(column_value).replace('True', 'true').replace('False', 'false')
+            # As JSON, as the server writes arrays: strings
+            # quoted and escaped, None as null, booleans as true and false.  A
+            # string is taken to be JSON already.
+            if isinstance(column_value, list):
+                try:
+                    converted_column_value = json.dumps(column_value, separators=(',', ':'))
+                except (TypeError, ValueError):
+                    raise GPUdbException(f"Invalid value for array column '{column.name}': {column_value!r}")
         elif column.is_vector():
             # pack as bytes only if the vector value is a list of floats
             if isinstance(column_value, str):
-                # convert stringified list of floats to Python list
-                column_value = eval(column_value)
+                column_value = _Util._parse_vector_text(column_value, column)
             if isinstance(column_value, list):
                 column_value = [float(num) if isinstance(num, int) else num for num in column_value]
             if all(isinstance(e, float) for e in column_value):
                 dims = column.vector_dimension
-                # pack as bytes
-                converted_column_value = struct.pack("%sf" % dims, *column_value)
+                # pack as bytes: little-endian float32s, as the server reads them
+                converted_column_value = struct.pack("<%sf" % dims, *column_value)
         else:
             if isinstance(column_value, float) and column.column_type == "string":
                 if column.is_time():
                     converted_column_value = datetime.fromtimestamp(column_value).strftime('%H:%M:%S')
                 elif column.is_decimal:
                     converted_column_value = _Util._float_to_string(column_value, precision=column.precision, scale=column.scale)
+            elif isinstance(column_value, Decimal) and column.is_decimal:
+                # In plain notation; str() writes some values
+                # in exponent form ('1E+3')
+                converted_column_value = format(column_value, 'f')
 
         if converted_column_value:
             column_value = converted_column_value
@@ -798,23 +951,35 @@ class _Util(object):
                 converted_column_value = json.loads(column_value)
         elif column.is_array():
             if isinstance(column_value, str):
-                if column.array_type != GPUdbColumnProperty.BOOLEAN:
-                    # convert to list
-                    converted_column_value = eval(column_value)
-                else:
-                    # Got a boolean array - string - convert to list of Pythonic booleans
-                    converted_column_value = eval(column_value.replace('true', 'True').replace('false', 'False'))
+                # The server writes arrays as JSON; parsed, never evaluated
+                try:
+                    converted_column_value = json.loads(column_value)
+                except ValueError:
+                    raise GPUdbException(f"Invalid value for array column '{column.name}': {column_value!r}")
         elif column.is_vector():
             if isinstance(column_value, bytes):
                 dims = column.vector_dimension
-                # convert to List[float] represented as bytes
-                converted_column_value = bytes(','.join(
-                    str(e) for e in [*struct.unpack("%sf" % dims, column_value)]), 'utf-8'
-                )
+                # Little-endian float32s, as the server stores a vector
+                converted_column_value = list(struct.unpack("<%sf" % dims, column_value))
 
-        if converted_column_value:
+        # An empty array or JSON object converts too
+        if converted_column_value is not None:
             column_value = converted_column_value
         return column_value
+
+    @staticmethod
+    def _parse_vector_text(text: str, column: GPUdbRecordColumn) -> list:
+        """Parse a vector given as text: a JSON list of numbers, or the numbers
+        alone, separated by commas.  Parsed, never evaluated.
+        """
+        text = text.strip()
+        if not text.startswith('['):
+            text = '[' + text + ']'
+        try:
+            values = json.loads(text)
+        except ValueError:
+            raise GPUdbException(f"Invalid value for vector column '{column.name}': {text!r}")
+        return values
 
     @staticmethod
     def is_ok( response_object ):
@@ -940,6 +1105,61 @@ class _Util(object):
 
 
     @staticmethod
+    def _record_from_values( record_type, obj, bytes_columns, required_columns ):
+        """Build a Record with the C constructor, straight from the values of a
+        list, a dict or a :class:`GPUdbRecord`.  A string given for a bytes
+        column is first encoded as :meth:`convert_binary_data_to_cext_records`
+        encodes it.
+
+        Return None, leaving the caller to convert the values column by column,
+        in two cases:
+
+        * The constructor does not take the values as they are: a list of
+          another length, a dict naming an unknown column, or a value it
+          rejects.
+        * The constructor would fill in a value: a dict that leaves out a
+          column that is not nullable.  The constructor would set that column
+          to its zero value, where the column-by-column conversion refuses the
+          record.
+
+        Parameters:
+            record_type (RecordType)
+                The type of the record.
+            obj (list, dict or GPUdbRecord)
+                The record's values.
+            bytes_columns (list of (int, str))
+                The index and name of each bytes column of the type.
+            required_columns (list of str)
+                The name of each column of the type that is not nullable.
+        """
+        if isinstance( obj, GPUdbRecord ):
+            obj = obj.data
+        if not isinstance( obj, (list, dict) ):
+            return None
+        if isinstance( obj, dict ) and any( (name not in obj) for name in required_columns ):
+            return None
+
+        try:
+            if bytes_columns:
+                if isinstance( obj, list ):
+                    obj = list( obj )
+                    for (index, _) in bytes_columns:
+                        if (index < len( obj )) and (obj[ index ] is not None):
+                            obj[ index ] = _Util.ensure_bytes( obj[ index ] )
+                else:
+                    obj = dict( obj )
+                    for (_, name) in bytes_columns:
+                        if obj.get( name ) is not None:
+                            obj[ name ] = _Util.ensure_bytes( obj[ name ] )
+            # end if
+
+            return Record( record_type, obj )
+        except Exception:
+            return None
+    # end _record_from_values
+
+
+    @staticmethod
     def convert_binary_data_to_cext_records( db, table_name, records, record_type = None ):
         """Given a list of objects, convert them to either bytes or Record objects.
         If the records are already of type Record, do nothing.  If not, then, if the record
@@ -990,6 +1210,12 @@ class _Util(object):
             raise GPUdbException( "Argument 'record_type' must be a RecordType object; "
                                   "given {}".format( str(type( record_type )) ) )
 
+        # The bytes columns, whose string values are encoded below, and the
+        # columns a dict record must name, so that none is filled in
+        bytes_columns = [ (index, column.name) for (index, column) in enumerate( record_type )
+                          if column.data_type.lower() == "bytes" ]
+        required_columns = [ column.name for column in record_type if not column.is_nullable ]
+
         # Now convert each record object into Record
         converted_records = []
         try:
@@ -1000,7 +1226,19 @@ class _Util(object):
                     # Already a Record
                     converted_records.append( obj )
                     continue # skip to the next object
-                elif isinstance( obj, GPUdbRecord ):
+                # end if
+
+                # Built by the C constructor straight from the values, several
+                # times faster than setting them one at a time as below; a
+                # record it does not take as is goes that way instead, so that
+                # the results and the errors are as they were
+                record = _Util._record_from_values( record_type, obj, bytes_columns, required_columns )
+                if record is not None:
+                    converted_records.append( record )
+                    continue
+                # end if
+
+                if isinstance( obj, GPUdbRecord ):
                     # A GPUdbRecord ; get the (column name, column value) pairs
                     obj = obj.data
                 elif isinstance( obj, list ):
@@ -1159,6 +1397,11 @@ class _Util(object):
 
         # If all the objects are OrderedDicts or GPUdbRecords, no conversion is necessary
         if isinstance( records[0], (GPUdbRecord, collections.OrderedDict) ):
+            return records
+
+        # Nor if none is a Record: objects that a TypeObjectMap decoded the
+        # records into, say
+        if not any( isinstance( r, Record ) for r in records ):
             return records
 
         # If a conversion is necessary, make sure that all objects are Records
@@ -2242,6 +2485,51 @@ class GPUdbRecordType(object):
     def vector_type_names_values(self) -> list:
         return list(self._vector_type_names.values())
 
+    def _insert_conversion_columns(self):
+        """The columns whose values :meth:`GPUdbTable.convert_special_type_values_in_insert_records`
+        converts -- array, JSON and vector columns, and string columns that are
+        times or decimals -- by index, for a list record, and by name, for a
+        dict record; and the set of column names.  Worked out once per type,
+        rather than for every column of every record.
+        """
+        try:
+            return self.__insert_conversion_columns
+        except AttributeError:
+            pass
+
+        by_index = {}
+        by_name = {}
+        named_special = ( set( self._array_type_names.values() )
+                          | set( self._json_type_names.values() )
+                          | set( self._vector_type_names.values() ) )
+
+        for index, column in enumerate( self.columns ):
+            is_string = (column.column_type == 'string')
+
+            # As a list record's values are tested: by index, against the
+            # column's own properties
+            if ( (index in self._array_type_names)
+                 or (index in self._json_type_names)
+                 or (index in self._vector_type_names)
+                 or ( is_string
+                      and ( (GPUdbColumnProperty.TIME in column.column_properties)
+                            or column.is_decimal ) ) ):
+                by_index[ index ] = column
+
+            # As a dict record's values are tested: by name, against the type's
+            # column properties
+            properties = self.column_properties.get( column.name, [] )
+            if ( (column.name in named_special)
+                 or ( is_string
+                      and ( (GPUdbColumnProperty.TIME in properties)
+                            or column.is_decimal ) ) ):
+                by_name[ column.name ] = column
+        # end for
+
+        self.__insert_conversion_columns = (by_index, by_name, set( self.column_names ))
+        return self.__insert_conversion_columns
+    # end _insert_conversion_columns
+
     def create_type( self, gpudb, options = None ):
         """Create the record type in GPUdb so that users can create
         tables using this type.
@@ -2947,6 +3235,490 @@ class GPUdbRecord( object ):
 # end class GPUdbRecord
 
 
+class GPUdbRecordDict( collections.OrderedDict ):
+    """A record as an ordered dict of column name to value: what
+    :meth:`GPUdbTable.get_records` and the other retrieval methods return
+    with *convert_special_types_on_retrieval*, where an array column's value
+    is a list, a JSON column's a dict and a vector's a list of floats, which a
+    :class:`Record` cannot hold.  A string key answers by column name, as in
+    any dict; beyond a dict's, an integer index answers by column position,
+    and the record carries its :attr:`type`, as a Record does.  Iterating it
+    yields the column names, as iterating any dict does, where iterating a
+    Record yields the values.
+    """
+
+    def __init__( self, items = (), record_type = None ):
+        """
+        Parameters:
+            items
+                The (column name, value) pairs, in column order.
+            record_type (:class:`GPUdbRecordType`)
+                The type of the record, kept as :attr:`type`; None if not
+                known.
+        """
+        super( GPUdbRecordDict, self ).__init__( items )
+        self.type = record_type
+    # end __init__
+
+
+    def __getitem__( self, key ):
+        """The value of the column named, or, for an integer, at that
+        position (negative from the end, as in a list).
+        """
+        if isinstance( key, int ) and not isinstance( key, bool ):
+            values = list( self.values() )
+            if not (-len( values ) <= key < len( values )):
+                raise IndexError( "Record index {} out of range for {} columns"
+                                  "".format( key, len( values ) ) )
+            return values[ key ]
+        return super( GPUdbRecordDict, self ).__getitem__( key )
+    # end __getitem__
+
+
+    def __setitem__( self, key, value ):
+        """Sets the value of the column named, or, for an integer, at that
+        position.
+        """
+        if isinstance( key, int ) and not isinstance( key, bool ):
+            key = list( self.keys() )[ key ]
+        super( GPUdbRecordDict, self ).__setitem__( key, value )
+    # end __setitem__
+
+
+    def copy( self ):
+        """A copy, with the same :attr:`type`."""
+        return GPUdbRecordDict( self.items(), self.type )
+    # end copy
+# end class GPUdbRecordDict
+
+
+
+class TypeObjectMap( object ):
+    """Maps a GPUdb record type to a Python class: records decode into
+    objects of the class, and objects of
+    the class encode into records.
+
+    Made from a dataclass (:meth:`from_class`), whose fields give the type's
+    columns, or from an existing type and a class (:meth:`from_type`), each
+    column going to the class's attribute of the same name.
+
+    Registered with a :class:`GPUdb` client--by :meth:`create_type`,
+    :meth:`GPUdb.add_known_type` or :meth:`GPUdb.add_known_type_from_table`--
+    it decodes the records of its type that the client's ``*_and_decode``
+    methods return into objects of its class, and the client's tables and
+    ingestors take objects of its class to insert.  Records got any other way
+    become objects through :meth:`to_objects`.
+
+    A field's type gives its column's: ``int`` a long, ``float`` a double,
+    ``str`` a string, ``bytes`` bytes, ``bool`` an int with the boolean
+    property, ``datetime.datetime``, ``datetime.date`` and ``datetime.time``
+    a string with the datetime, date or time property, and
+    ``decimal.Decimal`` a string with the decimal property; an
+    ``Optional`` one makes the column nullable.  :meth:`column` gives a
+    field its column's name, type or properties.  Values of those types
+    convert both ways (a datetime from a timestamp column's milliseconds, a
+    bool from an int, and so on); any other value is taken as it is.  A
+    datetime decoded from a timestamp or datetime column is naive, with the
+    server's UTC time, as the rest of the API returns them; one given to
+    insert is sent in UTC, converted from its time zone if it has one and
+    taken to be in UTC if it has none.
+
+    Example::
+
+        @dataclasses.dataclass
+        class Order:
+            order_id: int = TypeObjectMap.column( "primary_key", column_type = "int" )
+            customer: str = TypeObjectMap.column( "char32" )
+            placed: Optional[ datetime.datetime ] = None
+            amount: Optional[ Decimal ] = TypeObjectMap.column( "decimal(10,2)", default = None )
+
+        orders = TypeObjectMap.from_class( Order )
+        db.create_table( "orders", orders.create_type( db ) )
+        GPUdbTable( None, "orders", db = db ).insert_records( [ Order( 1, "acme", amount = Decimal( "9.99" ) ) ] )
+        db.get_records_and_decode( "orders" )[ "records" ]   # Order objects
+    """
+
+    # The key of a dataclass field's metadata that column() fills
+    _METADATA_KEY = "gpudb"
+
+    # A Python type's column type and properties
+    _COLUMNS_FOR_TYPES = {
+        int:                ( "long",   [] ),
+        float:              ( "double", [] ),
+        str:                ( "string", [] ),
+        bytes:              ( "bytes",  [] ),
+        bool:               ( "int",    [ "boolean" ] ),
+        _datetime.datetime: ( "string", [ "datetime" ] ),
+        _datetime.date:     ( "string", [ "date" ] ),
+        _datetime.time:     ( "string", [ "time" ] ),
+        Decimal:            ( "string", [ "decimal" ] ),
+    }
+
+    _EPOCH = _datetime.datetime( 1970, 1, 1 )
+
+
+    @staticmethod
+    def _naive_utc( value ):
+        """A datetime as the converters send it: naive, in UTC.  A
+        timezone-aware one is converted to UTC and its tzinfo dropped; a naive
+        one is taken to be in UTC already, as a decoded one is.
+        """
+        if value.tzinfo is not None:
+            value = value.astimezone( _datetime.timezone.utc ).replace( tzinfo = None )
+        return value
+    # end _naive_utc
+
+
+    @staticmethod
+    def column( *properties, name = None, column_type = None, **field_kwargs ):
+        """A dataclass field for a column, giving its properties, and if need
+        be its name and type.
+        Other keyword arguments, such as ``default``, go to
+        :func:`dataclasses.field`.
+
+        Parameters:
+            properties (str)
+                The column's properties, such as "primary_key" or "char16";
+                added to those its field's type gives.
+            name (str)
+                The column's name; the field's by default.
+            column_type (str)
+                The column's type, such as "int"; by default the one its
+                field's type gives, with that type's properties.
+        """
+        metadata = dict( field_kwargs.pop( "metadata", None ) or {} )
+        metadata[ TypeObjectMap._METADATA_KEY ] = { "name": name,
+                                                    "column_type": column_type,
+                                                    "properties": list( properties ) }
+        return dataclasses.field( metadata = metadata, **field_kwargs )
+    # end column
+
+
+    @classmethod
+    def from_class( cls, object_class, label = None, column_overrides = None ):
+        """A map for a dataclass, its type made from the class's fields, in
+        their order.
+
+        Parameters:
+            object_class (type)
+                The dataclass.
+            label (str)
+                The type's label; the class's name by default.
+            column_overrides (dict of str to :class:`GPUdbRecordColumn`)
+                The column to make for a field, by field name, in place of
+                the one its type and :meth:`column` give; None leaves the
+                field out of the type (it must then have a default).
+
+        Raises:
+            GPUdbException
+                If the class is not a dataclass, or a field's type maps to no
+                column type and is given none.
+        """
+        if not (isinstance( object_class, type ) and dataclasses.is_dataclass( object_class )):
+            raise GPUdbException( "'object_class' must be a dataclass; given {}".format( object_class ) )
+        if not isinstance( column_overrides, (dict, type( None )) ):
+            raise GPUdbException( "'column_overrides' must be a dict, if given; given {}"
+                                  "".format( type( column_overrides ) ) )
+
+        hints = cls.__type_hints( object_class )
+        columns = []
+        attributes = []
+        for field in dataclasses.fields( object_class ):
+            if column_overrides and (field.name in column_overrides):
+                column = column_overrides[ field.name ]
+                if column is None:
+                    continue   # left out
+                if not isinstance( column, GPUdbRecordColumn ):
+                    raise GPUdbException( "The override for field '{}' must be a GPUdbRecordColumn, "
+                                          "or None; given {}".format( field.name, type( column ) ) )
+            else:
+                column = cls.__column_for_field( object_class, field, hints.get( field.name ) )
+            columns.append( column )
+            attributes.append( field.name )
+        # end for
+
+        if not columns:
+            raise GPUdbException( "Class {} must have at least one column".format( object_class.__name__ ) )
+
+        record_type = GPUdbRecordType( columns, label = object_class.__name__ if (label is None) else label )
+        return cls( record_type, object_class, attributes )
+    # end from_class
+
+
+    @classmethod
+    def from_type( cls, record_type, object_class, column_overrides = None ):
+        """A map for an existing type and a class, each column going to the
+        class's attribute of the same name, matched regardless of case.
+
+        Parameters:
+            record_type (:class:`GPUdbRecordType`)
+                The type.
+            object_class (type)
+                A dataclass, or a class declaring its attributes with
+                annotations and made with no arguments.
+            column_overrides (dict of str to str)
+                The attribute to use for a column, by column name.
+
+        Raises:
+            GPUdbException
+                If a column has no attribute of the class, or a field of the
+                dataclass with no default has no column.
+        """
+        if not isinstance( record_type, GPUdbRecordType ):
+            raise GPUdbException( "'record_type' must be a GPUdbRecordType; given {}".format( type( record_type ) ) )
+        if not isinstance( object_class, type ):
+            raise GPUdbException( "'object_class' must be a class; given {}".format( object_class ) )
+        if not isinstance( column_overrides, (dict, type( None )) ):
+            raise GPUdbException( "'column_overrides' must be a dict, if given; given {}"
+                                  "".format( type( column_overrides ) ) )
+
+        if dataclasses.is_dataclass( object_class ):
+            names = [ field.name for field in dataclasses.fields( object_class ) ]
+        else:
+            names = list( cls.__type_hints( object_class ) )
+        if not names:
+            raise GPUdbException( "Class {} must be a dataclass, or declare its attributes with "
+                                  "annotations".format( object_class.__name__ ) )
+        by_lower_name = { name.lower(): name for name in names }
+
+        attributes = []
+        for column in record_type.columns:
+            wanted = column_overrides.get( column.name, column.name ) if column_overrides else column.name
+            attribute = by_lower_name.get( wanted.lower() )
+            if attribute is None:
+                raise GPUdbException( "Column {} has no match in {}".format( column.name, object_class.__name__ ) )
+            attributes.append( attribute )
+        # end for
+
+        return cls( record_type, object_class, attributes )
+    # end from_type
+
+
+    def __init__( self, record_type, object_class, attributes = None ):
+        """A map of the type's columns, in order, to the given attributes of
+        the class (by default, those named as the columns).  :meth:`from_class`
+        and :meth:`from_type` make one from a class.
+        """
+        if not isinstance( record_type, GPUdbRecordType ):
+            raise GPUdbException( "'record_type' must be a GPUdbRecordType; given {}".format( type( record_type ) ) )
+        if not isinstance( object_class, type ):
+            raise GPUdbException( "'object_class' must be a class; given {}".format( object_class ) )
+        columns = record_type.columns
+        attributes = [ column.name for column in columns ] if (attributes is None) else list( attributes )
+        if len( attributes ) != len( columns ):
+            raise GPUdbException( "{} attributes given for the {} columns of the type"
+                                  "".format( len( attributes ), len( columns ) ) )
+
+        self.__type = record_type
+        self.__object_class = object_class
+        self.__attributes = attributes
+        self.__is_dataclass = dataclasses.is_dataclass( object_class )
+
+        # Dataclass fields are given to the constructor, which builds the
+        # object, frozen or not; any it does not take, after
+        self.__in_constructor = set()
+        if self.__is_dataclass:
+            fields = { field.name: field for field in dataclasses.fields( object_class ) }
+            self.__in_constructor = { name for name in attributes if fields[ name ].init }
+            for field in fields.values():
+                if ( field.init and (field.name not in attributes)
+                     and (field.default is dataclasses.MISSING)
+                     and (field.default_factory is dataclasses.MISSING) ):
+                    raise GPUdbException( "Field '{}' of {} has no default and no column of the type"
+                                          "".format( field.name, object_class.__name__ ) )
+        # end if
+
+        # Each column's conversions to and from its attribute's type
+        hints = self.__type_hints( object_class )
+        self.__to_object = []
+        self.__to_column = []
+        for column, attribute in zip( columns, attributes ):
+            python_type, _ = self.__unwrap_optional( hints.get( attribute ) )
+            to_object, to_column = self.__converters( python_type, column )
+            self.__to_object.append( to_object )
+            self.__to_column.append( to_column )
+        # end for
+    # end __init__
+
+
+    @property
+    def type( self ):
+        """The record type (:class:`GPUdbRecordType`)."""
+        return self.__type
+
+    @property
+    def object_class( self ):
+        """The class records map to."""
+        return self.__object_class
+
+    @property
+    def attributes( self ):
+        """The attribute of the class each column goes to, by column name."""
+        return collections.OrderedDict( zip( self.__type.column_names, self.__attributes ) )
+
+
+    def to_object( self, record ):
+        """The object for a record: a :class:`Record`, an :class:`GPUdbRecord`,
+        a dict of column values by name, or a list of them in column order.
+        """
+        if isinstance( record, GPUdbRecord ):
+            record = record.column_values
+        if isinstance( record, (list, tuple) ):
+            values = record
+        else:
+            try:
+                values = [ record[ name ] for name in self.__type.column_names ]
+            except KeyError as ex:
+                raise GPUdbException( "Record has no value for column {}".format( ex ) )
+
+        given = {}
+        after = {}
+        for attribute, value, convert in zip( self.__attributes, values, self.__to_object ):
+            if (convert is not None) and (value is not None):
+                value = convert( value )
+            ( given if (attribute in self.__in_constructor) else after )[ attribute ] = value
+
+        if self.__is_dataclass:
+            obj = self.__object_class( **given )
+        else:
+            obj = self.__object_class()
+        for attribute, value in after.items():
+            object.__setattr__( obj, attribute, value )
+        return obj
+    # end to_object
+
+
+    def to_objects( self, records ):
+        """The objects for records, as :meth:`to_object` takes them."""
+        return [ self.to_object( record ) for record in records ]
+
+
+    def to_dict( self, obj ):
+        """A record for an object, as an OrderedDict of its column values by
+        column name, to insert.
+        """
+        if not isinstance( obj, self.__object_class ):
+            raise GPUdbException( "Object must be a {}; given {}".format( self.__object_class.__name__, type( obj ) ) )
+        record = collections.OrderedDict()
+        for name, attribute, convert in zip( self.__type.column_names, self.__attributes, self.__to_column ):
+            value = getattr( obj, attribute )
+            if (convert is not None) and (value is not None):
+                value = convert( value )
+            record[ name ] = value
+        return record
+    # end to_dict
+
+
+    def decode_records( self, *args ):
+        """Decodes binary records of the type into objects of the class; takes
+        what :meth:`RecordType.decode_records` does, so that a client's
+        ``*_and_decode`` methods decode records of a known type through it.
+        """
+        records = self.__type.record_type.decode_records( *args )
+        records = _Util.convert_cext_records_to_ordered_dicts( records )
+        return self.to_objects( records )
+    # end decode_records
+
+
+    def create_type( self, gpudb, options = None ):
+        """Creates the type in the database, and registers this map with the
+        client as the type's known type and the class's object map.
+
+        Returns:
+            The type ID.
+        """
+        type_id = self.__type.create_type( gpudb, options )
+        gpudb.add_known_type( type_id, self )
+        return type_id
+    # end create_type
+
+
+    def __repr__( self ):
+        return "TypeObjectMap({}, [{}])".format(
+                self.__object_class.__name__,
+                ", ".join( "{} {}".format( column.name, column.column_type ) for column in self.__type.columns ) )
+
+
+    @classmethod
+    def __column_for_field( cls, object_class, field, hint ):
+        """The column a dataclass field's type, and any column() spec, give."""
+        spec = field.metadata.get( cls._METADATA_KEY ) or {}
+        python_type, nullable = cls.__unwrap_optional( hint )
+        properties = list( spec.get( "properties" ) or [] )
+        column_type = spec.get( "column_type" )
+        if column_type is None:
+            if python_type not in cls._COLUMNS_FOR_TYPES:
+                raise GPUdbException( "Field '{}' of {} is of type {}, which maps to no column type; "
+                                      "give its column type with TypeObjectMap.column( column_type = ... ), "
+                                      "or leave the field out with a column override of None"
+                                      "".format( field.name, object_class.__name__, hint ) )
+            column_type, implied = cls._COLUMNS_FOR_TYPES[ python_type ]
+            # A property given in full, such as decimal(10,2), stands for the
+            # one the type implies
+            given = { p.split( "(" )[ 0 ].strip().lower() for p in properties }
+            properties = [ p for p in implied if p not in given ] + properties
+        return GPUdbRecordColumn( spec.get( "name" ) or field.name, column_type, properties,
+                                  is_nullable = nullable )
+    # end __column_for_field
+
+
+    @classmethod
+    def __converters( cls, python_type, column ):
+        """The conversions of a value of a column to and from the attribute's
+        type, or None where it is taken as it is.
+        """
+        is_integral = column.column_type in ( "int", "long" )
+        if python_type is bool:
+            return ( bool, int )
+        if python_type is Decimal:
+            # In plain notation, as the insert path sends a Decimal (see
+            # _Util._convert_value_on_insertion); str() writes some values in
+            # exponent form ('1E+3'), and the string would pass that path as
+            # it is
+            return ( lambda v: v if isinstance( v, Decimal ) else Decimal( str( v ) ),
+                     lambda v: format( v, 'f' ) if isinstance( v, Decimal ) else v )
+        if python_type is _datetime.datetime:
+            if is_integral:   # a timestamp, in milliseconds
+                return ( lambda v: v if isinstance( v, _datetime.datetime ) else cls._EPOCH + _datetime.timedelta( milliseconds = v ),
+                         lambda v: (cls._naive_utc( v ) - cls._EPOCH) // _datetime.timedelta( milliseconds = 1 ) if isinstance( v, _datetime.datetime ) else v )
+            return ( lambda v: v if isinstance( v, _datetime.datetime ) else _datetime.datetime.fromisoformat( v ),
+                     lambda v: cls._naive_utc( v ).strftime( "%Y-%m-%d %H:%M:%S.%f" )[ :-3 ] if isinstance( v, _datetime.datetime ) else v )
+        if python_type is _datetime.date:
+            return ( lambda v: v if isinstance( v, _datetime.date ) else _datetime.date.fromisoformat( v ),
+                     lambda v: v.isoformat() if isinstance( v, _datetime.date ) else v )
+        if python_type is _datetime.time:
+            return ( lambda v: v if isinstance( v, _datetime.time ) else _datetime.time.fromisoformat( v ),
+                     lambda v: v.strftime( "%H:%M:%S.%f" )[ :-3 ] if isinstance( v, _datetime.time ) else v )
+        return ( None, None )
+    # end __converters
+
+
+    @staticmethod
+    def __unwrap_optional( hint ):
+        """The type an Optional (or ``X | None``) hint is of, and whether it
+        was one.
+        """
+        if (typing.get_origin( hint ) is typing.Union) or isinstance( hint, _types.UnionType ):
+            args = typing.get_args( hint )
+            others = [ a for a in args if a is not type( None ) ]
+            if (len( others ) == 1) and (len( args ) == 2):
+                return others[ 0 ], True
+        return hint, False
+    # end __unwrap_optional
+
+
+    @staticmethod
+    def __type_hints( object_class ):
+        """The class's annotations, resolved where they can be."""
+        try:
+            return typing.get_type_hints( object_class )
+        except Exception:
+            return dict( getattr( object_class, "__annotations__", {} ) )
+    # end __type_hints
+
+# end class TypeObjectMap
+
+
 class FailbackOptions:
     POLLING_INTERVAL = DEFAULT_FAILBACK_POLLING_INTERVAL
 
@@ -2970,6 +3742,19 @@ class FailbackOptions:
         """
         return f"FailbackOptions [pollingInterval={self.polling_interval}]"
 
+    def __eq__(self, other):
+        """
+        Equal to other FailbackOptions with the same polling interval, so that
+        a copy of a set of options -- such as an unpickled client's -- equals
+        it, rather than only the same object doing so.
+        """
+        if not isinstance(other, FailbackOptions):
+            return NotImplemented
+        return self.polling_interval == other.polling_interval
+
+    def __hash__(self):
+        return hash(self.polling_interval)
+
     def get_polling_interval(self):
         """
         Returns the polling interval value.
@@ -2979,18 +3764,17 @@ class FailbackOptions:
 # end class FailbackOptions
 
 class _FailbackPollerService:
+    """Polls a client's primary cluster while the client is failed over, and
+    fails the client back once the primary can serve queries again.
+
+    Each client has its own poller, bound to that client and its primary.
+    It used to be a process-wide singleton: later clients that failed
+    over were handed the first client's poller, so they never failed back, and
+    closing the first client stopped fail-back for all of them.
+    """
 
     DEFAULT_START_DELAY = 0
     DEFAULT_TERMINATION_TIMEOUT = 5  # seconds
-
-    _instance_lock = threading.Lock()
-    _instance = None  # To enforce singleton behavior
-
-    def __new__(cls, *args, **kwargs):
-        with cls._instance_lock:
-            if cls._instance is None:
-                cls._instance = super(_FailbackPollerService, cls).__new__(cls)
-        return cls._instance
 
     def __init__(self,
                  db,
@@ -2998,40 +3782,31 @@ class _FailbackPollerService:
         """Constructor
 
         Args:
-            db (GPUdb): _description_
-            options (FailbackOptions, optional): _description_. Defaults to FailbackOptions.default_options().
+            db (GPUdb): the client to fail back
+            options (FailbackOptions, optional): the polling options. Defaults to FailbackOptions.default_options().
         """
 
-        if not hasattr(self, "initialized"):
-            # Set up the logger for this class
-            self.logger = logging.getLogger(self.__class__.__name__)
-            self.logger.setLevel(db.logging_level)
+        # Its own logger, under its client's, so that it follows the level of
+        # that client (and, through it, the API's); it was a top-level logger
+        # of its own, which neither reached, shared by every poller
+        self.logger = _ObjectLogger("gpudb.FailbackPoller_instance_" + db._id)
+        self.logger.parent = db.log
+        self.logger.addFilter(_CallerPrefix("[FailbackPollerService::{filename}::{lineno}::{funcName}] "))
 
-            if not self.logger.handlers:
-                handler = logging.StreamHandler()
-                formatter = logging.Formatter(
-                    fmt = GPUdb._LOG_MESSAGE_FORMAT.replace("%(message)s", "[FailbackPollerService::%(filename)s::%(lineno)d::%(funcName)s] %(message)s"),
-                    datefmt = GPUdb._LOG_DATETIME_FORMAT
-                )
-                handler.setFormatter(formatter)
-                self.logger.addHandler(handler)
-
-            self.db: GPUdb = db
-            self.primary_url = self.db.get_primary_url()
-            self.polling_interval = options.polling_interval
-            self.poller_thread = None
-            self.is_running = False
-            self.lock = threading.Lock()
-
-            self.initialized = True  # Ensure __init__ is only called once
+        self.db: GPUdb = db
+        self.primary_url = self.db.get_primary_url()
+        self.polling_interval = options.polling_interval
+        self.poller_thread = None
+        self.is_running = False
+        self.lock = threading.Lock()
 
     def start(self):
         self.db.log_debug(f"Primary URL is {self.primary_url}")
         with self.lock:
             if self.is_running:
-                # Normal lifecycle event (e.g. another HA-aware client
-                # connecting while a failover is already in progress), not a
-                # problem -- keep it at debug level.
+                # Normal lifecycle event (e.g. the client failing over again
+                # while its primary is still being polled), not a problem --
+                # keep it at debug level.
                 self.logger.debug("Poller is already running.")
                 return
 
@@ -3100,18 +3875,18 @@ class _FailbackPollerService:
                                             resp_ts = conn.query_one(f"SELECT {ts}")[0]
                                             
                                             if ts != resp_ts:
-                                                self.logger.warn(f"Kinetica running on primary cluster at [{self.primary_url}], but query check failed to return expected result--instead [{resp_ts}] != [{ts}]")
+                                                self.logger.warning(f"Kinetica running on primary cluster at [{self.primary_url}], but query check failed to return expected result--instead [{resp_ts}] != [{ts}]")
                                             else:
                                                 self.logger.info(f"Failback to primary cluster at [{self.primary_url}] succeeded")
                                                 kinetica_running = True
                                         except Exception as ex:
-                                            self.logger.warn(f"Kinetica running on primary cluster at [{self.primary_url}], but query check failed: [{ex.message}]")
+                                            self.logger.warning(f"Kinetica running on primary cluster at [{self.primary_url}], but query check failed: [{ex.message}]")
                                 else:
-                                    self.logger.warn(f"HA drained status not found in HA status map [{ha_status_map.keys()}] for URL: [{self.primary_url}]")
+                                    self.logger.warning(f"HA drained status not found in HA status map [{ha_status_map.keys()}] for URL: [{self.primary_url}]")
                             except Exception as ex:
-                                self.logger.warn(f"Could not parse system status block [{ha_status_map_str}] for URL [{self.primary_url}]: {ex.message}")
+                                self.logger.warning(f"Could not parse system status block [{ha_status_map_str}] for URL [{self.primary_url}]: {ex.message}")
                         else:
-                            self.logger.warn(f"HA status not found in system status map [{status_map.keys()}] for URL: [{self.primary_url}]")
+                            self.logger.warning(f"HA status not found in system status map [{status_map.keys()}] for URL: [{self.primary_url}]")
                     else:
                         self.logger.debug(f"Could not connect to Kinetica at [{self.primary_url}]")
 
@@ -3124,42 +3899,24 @@ class _FailbackPollerService:
         return kinetica_running
 
     def _reset_cluster_pointers(self):
-        self.db._set_curr_cluster_index_pointer(0)
+        self.db._fail_back_to_primary_cluster()
 
     def _handle_exception(self, e):
         self.logger.debug(f"Warning: Exception during polling: {e}")
 
-    def stop(self, requester=None):
-        """Stop the shared (singleton) failback poller.
-
-        Because the poller is a process-wide singleton, EVERY HA-aware client's
-        teardown (__del__/__exit__) calls this.  To keep one client's teardown
-        from killing another client's in-progress failback, an external caller
-        may stop the poller only if it is the owning client (the one bound as
-        ``self.db``, i.e. the client that started this poller).  An internal
-        call (``requester is None`` -- e.g. the poller stopping itself after a
-        successful failback) always proceeds.
-
-        Args:
-            requester (GPUdb): the client requesting the stop, or None for an
-                internal/self-initiated stop.
+    def stop(self):
+        """Stop the poller.  Called by the poller itself after a successful
+        failback, and by its client's teardown (close/__del__/__exit__).
         """
         with self.lock:
-            if requester is not None and requester is not self.db:
-                # A non-owning client is being torn down; leave the shared
-                # poller running for the client that actually needs it.
-                self.logger.debug("Ignoring stop() request from a non-owning client.")
-                return
-
             if not self.is_running:
-                # Normal lifecycle event (e.g. the owning client is torn down
-                # after failback already stopped the poller), not a problem.
+                # Normal lifecycle event (e.g. the client is torn down after
+                # failback already stopped the poller), not a problem.
                 self.logger.debug("Poller is already stopped.")
                 return
 
             self.logger.debug("Stopping the poller...")
             self.is_running = False
-            _FailbackPollerService._instance = None
 
 # end class FailbackPollerService
 
@@ -3267,6 +4024,17 @@ class GPUdb(object):
 
     _DEFAULT_SERVER_CONNECTION_TIMEOUT = 5  # in seconds
 
+    # Connections kept open per host (head or worker rank) for reuse
+    _DEFAULT_MAX_CONNECTIONS_PER_HOST = 256
+
+    # With use_snappy, the requests that are Snappy-compressed: those that
+    # carry records, which may be large
+    _SNAPPY_COMPRESSED_ENDPOINTS = frozenset( [ "/insert/records", "/update/records" ] )
+
+    # The largest request that is Snappy-compressed; a larger one is sent
+    # uncompressed
+    _MAX_SNAPPY_COMPRESSION_SIZE = 1840700241
+
     # Used when the caller gives no host at all; documented on the `host`
     # parameter and on Options.primary_url.
     _DEFAULT_HOST_URL = "http://127.0.0.1:9191"
@@ -3277,12 +4045,6 @@ class GPUdb(object):
 
     # Response info key set once a request's session owns objects
     _SESSION_ID_USED = "session_id_used"
-
-    # The number of times that the API will attempt to submit a host
-    # manager endpoint request.  We need this in case the user chose
-    # a bad host manager port.  We don't want to go into an infinite
-    # loop
-    __HOST_MANAGER_SUBMIT_REQUEST_RETRY_COUNT = 3
 
     __SSL_ERROR_MESSAGE_TEMPLATE = (
         "<{}>.  "
@@ -3396,6 +4158,13 @@ class GPUdb(object):
         __client_name_str                        = "_Options__client_name"
         __client_version_str                     = "_Options__client_version"
         __session_id_str                         = "_Options__session_id"
+        __tcp_keep_alive_str                     = "_Options__tcp_keep_alive"
+        __tcp_keep_idle_str                      = "_Options__tcp_keep_idle"
+        __tcp_keep_interval_str                  = "_Options__tcp_keep_interval"
+        __tcp_keep_count_str                     = "_Options__tcp_keep_count"
+        __trust_store_file_path_str              = "_Options__trust_store_file_path"
+        __max_connections_per_host_str           = "_Options__max_connections_per_host"
+        __use_snappy_str                         = "_Options__use_snappy"
 
         _supported_options = [ __disable_auto_discovery_str,
                                __disable_failover_str,
@@ -3419,7 +4188,14 @@ class GPUdb(object):
                                __max_retries_str,
                                __client_name_str,
                                __client_version_str,
-                               __session_id_str
+                               __session_id_str,
+                               __tcp_keep_alive_str,
+                               __tcp_keep_idle_str,
+                               __tcp_keep_interval_str,
+                               __tcp_keep_count_str,
+                               __trust_store_file_path_str,
+                               __max_connections_per_host_str,
+                               __use_snappy_str
         ]
 
 
@@ -3465,6 +4241,13 @@ class GPUdb(object):
             self.__client_name                        = None
             self.__client_version                     = None
             self.__session_id                         = None
+            self.__tcp_keep_alive                     = True
+            self.__tcp_keep_idle                      = 0
+            self.__tcp_keep_interval                  = 0
+            self.__tcp_keep_count                     = 0
+            self.__trust_store_file_path              = None
+            self.__max_connections_per_host           = GPUdb._DEFAULT_MAX_CONNECTIONS_PER_HOST
+            self.__use_snappy                         = True
 
             if (options is None):
                 return # nothing to do
@@ -3535,6 +4318,13 @@ class GPUdb(object):
                     '_Options__client_name',
                     '_Options__client_version',
                     '_Options__session_id',
+                    '_Options__tcp_keep_alive',
+                    '_Options__tcp_keep_idle',
+                    '_Options__tcp_keep_interval',
+                    '_Options__tcp_keep_count',
+                    '_Options__trust_store_file_path',
+                    '_Options__max_connections_per_host',
+                    '_Options__use_snappy',
                 ]
 
 
@@ -3707,7 +4497,9 @@ class GPUdb(object):
             """Gets the encoding used by the client.  Supported values are:
 
             * **binary**
-            * **snappy**
+            * **snappy** -- binary, with every request Snappy-compressed; to
+              compress only the requests that insert or update records, use
+              *binary* with :attr:`use_snappy`
             * **json**
             """
             return self.__encoding
@@ -3969,7 +4761,7 @@ class GPUdb(object):
         @property
         def initial_connection_attempt_timeout(self):
             """Gets the timeout used when trying to establish a connection to the
-            database at GPUdb initialization.  The value is given in milliseconds
+            database at GPUdb initialization.  The value is given in seconds
             and the default is 0.  0 indicates no retry will be done; instead,
             the user given URLs will be stored without farther discovery.
 
@@ -3981,7 +4773,8 @@ class GPUdb(object):
             will be doubled.  So, before the first retry (i.e. the second
             attempt), the API will sleep for one minute.  Before the second
             retry, the API will sleep for two minutes, the next sleep interval
-            would be four minutes, and onward.
+            would be four minutes, and onward.  The timeout is checked before
+            each sleep, so connecting can take longer than the timeout.
             """
             return self.__initial_connection_attempt_timeout
 
@@ -3989,7 +4782,7 @@ class GPUdb(object):
         @initial_connection_attempt_timeout.setter
         def initial_connection_attempt_timeout(self, value):
             """Sets the timeout used when trying to establish a connection to the
-            database at GPUdb initialization.  The value is given in milliseconds
+            database at GPUdb initialization.  The value is given in seconds
             and the default is 0.  0 indicates no retry will be done; instead,
             the user given URLs will be stored without farther discovery.
 
@@ -4001,7 +4794,8 @@ class GPUdb(object):
             will be doubled.  So, before the first retry (i.e. the second
             attempt), the API will sleep for one minute.  Before the second
             retry, the API will sleep for two minutes, the next sleep interval
-            would be four minutes, and onward.
+            would be four minutes, and onward.  The timeout is checked before
+            each sleep, so connecting can take longer than the timeout.
             """
             try:
                 value = int( value )
@@ -4021,40 +4815,38 @@ class GPUdb(object):
 
         @property
         def server_connection_timeout(self):
-            """Gets the timeout used when trying to establish a connection to the
-            database at GPUdb initialization.  The value is given in milliseconds
-            and the default is 0.  0 indicates no retry will be done; instead,
-            the user given URLs will be stored without farther discovery.
+            """Gets the timeout used for the full status checks
+            (/show/system/status) the API makes on each cluster while
+            connecting to the database.  The value is given in seconds and the
+            default is 5.  The quick checks made to decide whether a cluster is
+            usable, as when failing over, use a fixed timeout of two seconds
+            instead.
 
-            If multiple URLs are given by the user, then API will try all of them
-            once before retrying or giving up.  When this timeout is set
-            to a non-zero value, and the first attempt failed, then
-            the API will wait (sleep) for a certain amount of time and
-            try again.  Upon consecutive failures, the sleep amount
-            will be doubled.  So, before the first retry (i.e. the second
-            attempt), the API will sleep for one minute.  Before the second
-            retry, the API will sleep for two minutes, the next sleep interval
-            would be four minutes, and onward.
+            A value of 0 is not an unlimited wait: the checks then fail at
+            once.
+
+            It is also the time allowed to establish the connection for every
+            other request, though never more than
+            :attr:`timeout`; there, 0 means no limit.
             """
             return self.__server_connection_timeout
 
 
         @server_connection_timeout.setter
         def server_connection_timeout(self, value):
-            """Sets the timeout used when trying to establish a connection to the
-            database at GPUdb initialization.  The value is given in milliseconds
-            and the default is 0.  0 indicates no retry will be done; instead,
-            the user given URLs will be stored without farther discovery.
+            """Sets the timeout used for the full status checks
+            (/show/system/status) the API makes on each cluster while
+            connecting to the database.  The value is given in seconds and the
+            default is 5.  The quick checks made to decide whether a cluster is
+            usable, as when failing over, use a fixed timeout of two seconds
+            instead.
 
-            If multiple URLs are given by the user, then API will try all of them
-            once before retrying or giving up.  When this timeout is set
-            to a non-zero value, and the first attempt failed, then
-            the API will wait (sleep) for a certain amount of time and
-            try again.  Upon consecutive failures, the sleep amount
-            will be doubled.  So, before the first retry (i.e. the second
-            attempt), the API will sleep for one minute.  Before the second
-            retry, the API will sleep for two minutes, the next sleep interval
-            would be four minutes, and onward.
+            A value of 0 is not an unlimited wait: the checks then fail at
+            once.
+
+            It is also the time allowed to establish the connection for every
+            other request, though never more than
+            :attr:`timeout`; there, 0 means no limit.
             """
             try:
                 value = int( value )
@@ -4108,11 +4900,13 @@ class GPUdb(object):
 
         @property
         def logging_level(self):
-            """Gets the logging level that will be used by the API.  By default,
-            logging is set by the root logger (possibly set by the end user
-            application).  If the user sets the logging level explicitly via
-            this options class, then the programmatically set level will be used
-            instead.
+            """Gets the logging level that will be used by the :class:`GPUdb`
+            object.  By default, none: the level of the API applies (see
+            :func:`gpudb.set_logging_level`, and the GPUDB_LOG_LEVEL
+            environment variable), or, where that is not set either, the root
+            logger's (possibly set by the end user application).  If the user
+            sets the logging level explicitly via this options class, then the
+            programmatically set level will be used instead.
             """
             return self.__logging_level
 
@@ -4186,10 +4980,13 @@ class GPUdb(object):
             (by setting the URL).  Can be either a string or a
             :class:`GPUdb.URL` object.
             """
-            # Handle none or empty primary URLs
+            # Handle none or empty primary URLs.  None stays None, the default,
+            # so that a copy of these options (GPUdb.Options( options )) equals
+            # them; it used to become "".
             if not value:
-                self.__primary_url = ""
-                self.__primary_host = ""
+                empty = None if (value is None) else ""
+                self.__primary_url = empty
+                self.__primary_host = empty
                 return
             # end if
 
@@ -4239,10 +5036,12 @@ class GPUdb(object):
                 setting the primary host, the primary URL should be set using
                 `GPUdb.Options.primary_url` at `GPUdb` initialization.
             """
-            # Handle none or empty primary hosts
+            # Handle none or empty primary hosts; None stays None, as for
+            # primary_url
             if not value:
-                self.__primary_host = ""
-                self.__primary_url = ""
+                empty = None if (value is None) else ""
+                self.__primary_host = empty
+                self.__primary_url = empty
                 return
             # end if
 
@@ -4327,10 +5126,157 @@ class GPUdb(object):
 
 
         @property
+        def trust_store_file_path(self):
+            """Gets the path of the certificates trusted for HTTPS connections:
+            a file of CA certificates in PEM format, or a directory of them
+            prepared with OpenSSL's c_rehash, so that a server with a
+            self-signed certificate can be verified.  None, the default, uses
+            the default trust store, or the one the REQUESTS_CA_BUNDLE
+            environment variable names.  Ignored when
+            :attr:`skip_ssl_cert_verification` is True.  A PEM file has no
+            password.
+            """
+            return self.__trust_store_file_path
+
+        @trust_store_file_path.setter
+        def trust_store_file_path(self, value):
+            """Sets the path of the certificates trusted for HTTPS
+            connections; see the getter.
+            """
+            if (value is not None) and ( (not isinstance( value, str )) or (not value) ):
+                raise GPUdbException( "Property 'trust_store_file_path' must be "
+                                      "a non-empty string or None; given '{}' type {}"
+                                      "".format( value, str(type(value)) ) )
+            self.__trust_store_file_path = value
+        # end setter
+
+
+        @property
+        def tcp_keep_alive(self):
+            """Gets whether TCP keep-alive is on for the connections to the
+            database, so that a long-running request behind a NAT, a firewall
+            or a load balancer is not dropped as idle.  Default True.  How
+            soon and how often it probes is the operating
+            system's default (two hours, then every 75 seconds, 9 times, on
+            Linux) unless :attr:`tcp_keep_idle`, :attr:`tcp_keep_interval` and
+            :attr:`tcp_keep_count` say otherwise.  For a long-running request,
+            also set a :attr:`timeout`.
+            """
+            return self.__tcp_keep_alive
+
+        @tcp_keep_alive.setter
+        def tcp_keep_alive(self, value):
+            """Sets whether TCP keep-alive is on; see the getter."""
+            if not isinstance( value, bool ):
+                raise GPUdbException( "Property 'tcp_keep_alive' must be boolean; "
+                                      "given '{}' type {}".format( value, str(type(value)) ) )
+            self.__tcp_keep_alive = value
+        # end setter
+
+
+        def __non_negative_int( self, name, value ):
+            if isinstance( value, bool ) or not isinstance( value, int ) or (value < 0):
+                raise GPUdbException( "Property '{}' must be an integer greater than "
+                                      "or equal to zero; given '{}'".format( name, value ) )
+            return value
+
+
+        @property
+        def tcp_keep_idle(self):
+            """Gets the seconds a connection is idle before the first TCP
+            keep-alive probe; 0, the default, for the operating system's
+            default.  Ignored where the platform does not support it, or with
+            :attr:`tcp_keep_alive` off.
+            """
+            return self.__tcp_keep_idle
+
+        @tcp_keep_idle.setter
+        def tcp_keep_idle(self, value):
+            """Sets the seconds idle before the first TCP keep-alive probe."""
+            self.__tcp_keep_idle = self.__non_negative_int( "tcp_keep_idle", value )
+
+
+        @property
+        def tcp_keep_interval(self):
+            """Gets the seconds between TCP keep-alive probes; 0, the default,
+            for the operating system's default.  Ignored where the platform does
+            not support it, or with :attr:`tcp_keep_alive` off.
+            """
+            return self.__tcp_keep_interval
+
+        @tcp_keep_interval.setter
+        def tcp_keep_interval(self, value):
+            """Sets the seconds between TCP keep-alive probes."""
+            self.__tcp_keep_interval = self.__non_negative_int( "tcp_keep_interval", value )
+
+
+        @property
+        def tcp_keep_count(self):
+            """Gets the number of unanswered TCP keep-alive probes after which
+            a connection is taken for dead; 0, the default, for the operating
+            system's default.  Ignored where the platform does not support it,
+            or with :attr:`tcp_keep_alive` off.
+            """
+            return self.__tcp_keep_count
+
+        @tcp_keep_count.setter
+        def tcp_keep_count(self, value):
+            """Sets the number of TCP keep-alive probes before giving up."""
+            self.__tcp_keep_count = self.__non_negative_int( "tcp_keep_count", value )
+
+
+        @property
+        def max_connections_per_host(self):
+            """Gets the number of connections kept open for reuse per host
+            (head or worker rank); default 256.  Requests beyond it at the same
+            time are not held back: each opens a connection of its own, closed
+            once it is done.
+            """
+            return self.__max_connections_per_host
+
+        @max_connections_per_host.setter
+        def max_connections_per_host(self, value):
+            """Sets the number of connections kept open per host; at least 1."""
+            if isinstance( value, bool ) or not isinstance( value, int ) or (value < 1):
+                raise GPUdbException( "Property 'max_connections_per_host' must be an "
+                                      "integer greater than zero; given '{}'".format( value ) )
+            self.__max_connections_per_host = value
+        # end setter
+
+
+        @property
+        def use_snappy(self):
+            """Gets whether the requests that insert or update records
+            (/insert/records and /update/records, from a table, an ingestor or
+            the endpoint methods) are Snappy-compressed, which can cut the
+            time spent sending large batches.  Default True.  It takes
+            python-snappy, which the 'fast' extra installs
+            (pip install gpudb[fast]); without it, these requests are sent
+            uncompressed.  Requests in JSON, and those larger than Snappy can
+            compress (1.7 GiB), are never compressed.  (The 'SNAPPY'
+            :attr:`encoding` compresses every request instead.)
+            """
+            return self.__use_snappy
+
+        @use_snappy.setter
+        def use_snappy(self, value):
+            """Sets whether the requests that insert or update records are
+            Snappy-compressed; see the getter.
+            """
+            if not isinstance( value, bool ):
+                raise GPUdbException( "Property 'use_snappy' must be boolean; "
+                                      "given '{}' type {}".format( value, str(type(value)) ) )
+            self.__use_snappy = value
+        # end setter
+
+
+        @property
         def timeout(self):
-            """Gets the timeout value, in milliseconds, after which a lack of
+            """Gets the timeout value, in seconds, after which a lack of
             response from the GPUdb server will result in requests being aborted.
-            A timeout of zero is interpreted as an infinite timeout.  Note that
+            None, the default, means no timeout.  A timeout of zero is not
+            interpreted as an infinite timeout: it makes every request fail
+            before it is sent.  Note that
             this applies independently to various stages of communication, so
             overall a request may run for longer than this without being aborted.
             """
@@ -4339,12 +5285,13 @@ class GPUdb(object):
 
         @timeout.setter
         def timeout(self, value):
-            """Sets the timeout value, in milliseconds, after which a lack of
+            """Sets the timeout value, in seconds, after which a lack of
             response from the GPUdb server will result in requests being aborted.
-            A timeout of zero is interpreted as an infinite timeout.  Note that
+            None, the default, means no timeout.  A timeout of zero is not
+            interpreted as an infinite timeout: it makes every request fail
+            before it is sent.  Note that
             this applies independently to various stages of communication, so
             overall a request may run for longer than this without being aborted.
-            The default is zero.
             """
             # None is a valid value
             if value is None:
@@ -4523,8 +5470,10 @@ class GPUdb(object):
                 version_str (str)
                     A string containing the Kinetica version (client or
                     server).  Expect at least four components separated
-                    by a period (.). There may be additional parts after
-                    the fourth component that will be discarded.
+                    by a period (.).  A fifth, the build number (a server's
+                    is a timestamp, e.g. 7.2.3.21.20260922210644), is kept
+                    where it is an integer, and is 0 otherwise; anything after
+                    it is discarded.
             """
             # Handle a Version object
             if isinstance(version_str, self.__class__):
@@ -4532,6 +5481,7 @@ class GPUdb(object):
                 self.__second      = version_str.second
                 self.__third       = version_str.third
                 self.__fourth      = version_str.fourth
+                self.__build       = version_str.build
                 self.__version_str = version_str.__version_str
                 return
             # Parse the string into four components of the version
@@ -4574,11 +5524,20 @@ class GPUdb(object):
                                                  abi_version, str(type(abi_version)) ) )
             # end try
 
+            # The build number, where there is one; it used to be discarded
+            build = 0
+            if len( components ) > 4:
+                try:
+                    build = int( components[ 4 ] )
+                except ValueError:
+                    pass # not a build number
+
             # Save the components
             self.__first  = major
             self.__second = minor
             self.__third  = revision
             self.__fourth = abi_version
+            self.__build  = build
             self.__version_str = "{}.{}.{}.{}".format( major, minor, revision,
                                                        abi_version )
         # end __init__
@@ -4704,6 +5663,65 @@ class GPUdb(object):
         def fourth(self):
             """Read-only property--fourth component of the version."""
             return self.__fourth
+
+        @property
+        def build(self):
+            """Read-only property--the build number, the fifth component of
+            the version; 0 where the version had none.
+            """
+            return self.__build
+
+        # The components by name
+        major = first
+        minor = second
+        revision = third
+        abi_version = fourth
+
+        @property
+        def full_version(self):
+            """Read-only property--the five-component version,
+            major.minor.revision.abi_version.build; str() gives the first
+            four.
+            """
+            return "{}.{}".format( self.__version_str, self.__build )
+
+
+        def compare_to( self, other ):
+            """Compares this version with another, build number included.
+            (The comparison
+            operators, ==, < and >, compare the first four components only.)
+
+            Parameters:
+                other (:class:`GPUdb.Version` or str)
+                    The version to compare this one with.
+
+            Returns:
+                -1 if this version is older, 1 if it is newer, 0 if the two are
+                the same, build number included.
+            """
+            other = GPUdb.Version( other )
+            mine   = ( self.first, self.second, self.third, self.fourth, self.build )
+            theirs = ( other.first, other.second, other.third, other.fourth, other.build )
+            return (mine > theirs) - (mine < theirs)
+        # end compare_to
+
+        def is_newer_than( self, other ):
+            """Whether this version is newer than `other`, build number
+            included; see :meth:`compare_to`.
+            """
+            return self.compare_to( other ) > 0
+
+        def is_older_than( self, other ):
+            """Whether this version is older than `other`, build number
+            included; see :meth:`compare_to`.
+            """
+            return self.compare_to( other ) < 0
+
+        def is_equal_to( self, other ):
+            """Whether this version is the same as `other`, build number
+            included; see :meth:`compare_to`.
+            """
+            return self.compare_to( other ) == 0
 
 
         def is_version_compatible( self, other ):
@@ -5014,6 +6032,58 @@ class GPUdb(object):
 
     # end class URL
 
+    class MultiHeadSnapshot( object ):
+        """A cluster's worker rank addresses and whether multi-head operations
+        are usable there, as one value.
+
+        The connection's capability probe
+        (:meth:`GPUdb._probe_current_cluster_multihead`) publishes one per
+        probe, and every multi-head object reads the cluster's current one.
+        It is immutable: a multi-head object keeps the one it last built from
+        and compares by identity, so a new instance -- a different cluster, or
+        a fresh probe of the same one -- is its only rebuild signal.  For that
+        reason no instance is ever shared between clusters, not even an empty
+        one: each :class:`GPUdb.ClusterAddressInfo` makes its own.
+        """
+
+        def __init__( self, worker_rank_urls, multihead_available ):
+            """
+            Parameters:
+                worker_rank_urls (list of :class:`GPUdb.URL` or None)
+                    One address per worker rank slot, None for a rank removed
+                    from the cluster.
+                multihead_available (bool)
+                    Whether multi-head operations are usable on the cluster:
+                    enabled at the server, and every live rank answering at an
+                    address advertised for it.
+            """
+            self.__worker_rank_urls    = list( worker_rank_urls ) if worker_rank_urls else []
+            self.__multihead_available = bool( multihead_available )
+        # end __init__
+
+
+        @property
+        def worker_rank_urls( self ):
+            """The worker rank addresses, rank-indexed; None for a removed rank."""
+            return list( self.__worker_rank_urls )
+        # end worker_rank_urls
+
+
+        @property
+        def multihead_available( self ):
+            """Whether multi-head operations are usable on the cluster."""
+            return self.__multihead_available
+        # end multihead_available
+
+
+        def __repr__( self ):
+            return "MultiHeadSnapshot( worker_rank_urls = {}, multihead_available = {} )".format(
+                [ (None if url is None else str( url )) for url in self.__worker_rank_urls ],
+                self.__multihead_available )
+        # end __repr__
+    # end class MultiHeadSnapshot
+
+
     class ClusterAddressInfo( object ):
         """Inner class to keep track of all relevant information for a given
         Kinetica cluster.  It mostly keeps track of URLs and hostnames, with
@@ -5143,26 +6213,15 @@ class GPUdb(object):
                    Optional level at which logs should be output.  Default is
                    None.
             """
-            # Class level logger so that setting it for one instance doesn't
-            # set it for ALL instances after that change (even if it is
+            # This instance's own logger, so that setting it for one instance
+            # doesn't set it for ALL instances after that change (even if it is
             # outside of the scope of the first instance whose log level was
-            # changed
-            self.log = logging.getLogger( "gpudb.GPUdb.ClusterAddressInfo_instance_"
-                                          + str( uuid.uuid4() ) )
-
-            # Handlers need to be instantiated only ONCE for a given module
-            # (i.e. not per class instance)
-            handler   = logging.StreamHandler()
-            formatter = logging.Formatter( fmt     = GPUdb._LOG_MESSAGE_FORMAT,
-                                           datefmt = GPUdb._LOG_DATETIME_FORMAT )
-            handler.setFormatter( formatter )
-            self.log.addHandler( handler )
+            # changed); unregistered, so that it goes when the instance does
+            self.log = _ObjectLogger( "gpudb.GPUdb.ClusterAddressInfo_instance_"
+                                      + str( uuid.uuid4() ) )
 
             if logging_level:
                 self.log.setLevel(logging_level)
-
-            # Prevent logging statements from being duplicated
-            self.log.propagate = False
 
             # Set default values
             self.__worker_rank_urls                  = []
@@ -5171,6 +6230,17 @@ class GPUdb(object):
             self.__is_primary_cluster                = False
             self.__server_version                    = None
             self.__ha_status                         = None
+            self.__system_properties                 = {}
+            # The multi-head addresses and capability verdict, as one value;
+            # see GPUdb.MultiHeadSnapshot.  Made on first read from the worker
+            # rank URLs the record was given: available until proven otherwise
+            # where it has any, and not at all where it has none (a cluster
+            # down at discovery, or built with auto-discovery off).  Only the
+            # connection's capability probe replaces it.
+            self.__multihead_snapshot                = None
+            # Whether this cluster still owes a capability probe for the
+            # connection's current visit to it; see probe_owed
+            self.__probe_owed                        = True
 
 
             # Validate all the input arguments and save them.
@@ -5206,13 +6276,15 @@ class GPUdb(object):
                                           "got '{}'".format( port ) )
                 # end if
 
-                # Use this port to create a host manager URL (to be saved later)
-                head_url = self.head_rank_url
-                host_manager_url = ("{protocol}://{ip}:{port}{path}"
-                                    "".format( protocol = head_url.protocol.lower(),
-                                               ip       = head_url.host,
-                                               port     = host_manager_port,
-                                               path     = head_url.path ) )
+                # Use this port to create a host manager URL (to be saved
+                # later): through httpd -- on the head
+                # node's own port, beside it in the path -- where the head
+                # node's address has a path, and otherwise at this port with
+                # no path.  (The head node's path used to be kept with the
+                # host manager port, an address neither form answers at.)
+                host_manager_url = _address_resolution.build_host_manager_url(
+                        self.head_rank_url, bool( self.head_rank_url.path ), None,
+                        port, port )
 
                 self.__log_debug( "Created host manager URL: {}".format( host_manager_url ) )
             # end if
@@ -5363,6 +6435,65 @@ class GPUdb(object):
                 raise GPUdbException( "Unable to set property 'worker_rank_urls'"
                                       "; error: {}"
                                       "".format( GPUdbException.stringify_exception( ex ) ) )
+            # The current verdict carried onto a new snapshot, where one has
+            # been published.  The probe does not use this setter: it builds
+            # the pair and publishes it once.
+            if self.__multihead_snapshot is not None:
+                self.__multihead_snapshot = GPUdb.MultiHeadSnapshot(
+                    self.__worker_rank_urls, self.__multihead_snapshot.multihead_available )
+        # end setter
+
+
+        @property
+        def multihead_snapshot( self ):
+            """The multi-head addresses and capability verdict as one value, a
+            :class:`GPUdb.MultiHeadSnapshot`, for change detection by
+            identity.  Made on first read from the worker rank URLs the record
+            was given; replaced by the connection's capability probe.
+            """
+            if self.__multihead_snapshot is None:
+                self.__multihead_snapshot = GPUdb.MultiHeadSnapshot(
+                    self.__worker_rank_urls, bool( self.__worker_rank_urls ) )
+            return self.__multihead_snapshot
+        # end multihead_snapshot
+
+        @multihead_snapshot.setter
+        def multihead_snapshot( self, value ):
+            if not isinstance( value, GPUdb.MultiHeadSnapshot ):
+                raise GPUdbException( "Property 'multihead_snapshot' must be a "
+                                      "GPUdb.MultiHeadSnapshot; given {}"
+                                      "".format( str( type( value ) ) ) )
+            self.__multihead_snapshot = value
+        # end setter
+
+
+        @property
+        def is_multihead_available( self ):
+            """Whether multi-head operations are usable on this cluster, per
+            its :attr:`multihead_snapshot`.
+            """
+            return self.multihead_snapshot.multihead_available
+        # end is_multihead_available
+
+
+        @property
+        def probe_owed( self ):
+            """Whether this cluster still owes a capability probe for the
+            connection's current visit to it: set when the connection arrives
+            on the cluster, cleared by the probe that runs for that arrival.
+
+            It exists because the probe runs outside the URL lock -- it must,
+            or it would invert the lock order and deadlock -- so a thread that
+            piggybacked on another's switch can ask for addresses before that
+            switch's probe has published any.  The marker makes it wait for,
+            or perform, that probe.
+            """
+            return self.__probe_owed
+        # end probe_owed
+
+        @probe_owed.setter
+        def probe_owed( self, value ):
+            self.__probe_owed = bool( value )
         # end setter
 
 
@@ -5491,6 +6622,27 @@ class GPUdb(object):
 
 
         @property
+        def system_properties( self ):
+            """Returns the system properties this cluster reported when the
+            connection was made; empty where it reported none (it was down,
+            say), as for a cluster known by its address alone.
+            """
+            return self.__system_properties
+
+
+        @system_properties.setter
+        def system_properties( self, value ):
+            """Sets the system properties of this cluster: a dict, or None for
+            none.
+            """
+            if ( value is not None ) and ( not isinstance( value, dict ) ):
+                raise GPUdbException( "Property 'system_properties' must be a dict "
+                                      "or None; given '{}' type {}"
+                                      "".format( value, str(type(value)) ) )
+            self.__system_properties = dict( value or {} )
+
+
+        @property
         def ha_status( self ):
             """Returns the last-seen HA drain state for this cluster (e.g.
             "drained", "draining", "not_drained"), or None if unknown or not
@@ -5612,11 +6764,14 @@ class GPUdb(object):
                 return False
             # end if
 
+            # The hostnames carry the protocol as well as the hostname or IP
+            # address, so compare the host part alone, and exactly: a substring
+            # test took "10.0.0.1" for "http://10.0.0.12"
+            wanted = host_name.strip( "[]" ).lower()
             for host_name_ in self.host_names:
-                # We need to check for a string subset match since the
-                # hostnames contain the protocol as well as the actual hostname
-                # or IP address
-                if( host_name in host_name_ ):
+                host = urlparse( host_name_ if ("://" in host_name_)
+                                 else ("//" + host_name_) ).hostname
+                if ( host == wanted ):
                     self.__log_debug( "Found matching hostname in hostname list")
                     return True
             # end for
@@ -5637,7 +6792,7 @@ class GPUdb(object):
     """
 
     # The version of this API
-    api_version = "7.2.3.14"
+    api_version = "7.2.3.15"
 
     # -------------------------  GPUdb Methods --------------------------------
 
@@ -5735,10 +6890,8 @@ class GPUdb(object):
 
         if hasattr(self, "poller_service") and self.poller_service is not None:
             try:
-                # Only stops the shared poller if THIS client owns it, so a
-                # short-lived client's teardown can't abort another client's
-                # in-progress failback.
-                self.poller_service.stop(requester=self)
+                # The poller is this client's own; no other client shares it
+                self.poller_service.stop()
             except:
                 pass
         if hasattr(self, "_GPUdb__session") and self.__session is not None:
@@ -5780,13 +6933,18 @@ class GPUdb(object):
     def __build_user_agent_string(self):
         """Builds the user agent string sent in the HTTP header of each request.
 
-        Format: [<client_name>/<client_version> ]kinetica-api-python/<ver> (Python/...; OS/...; arch)
+        Format: [<client_name>[/<client_version>] ]kinetica-api-python/<ver> (Python/...; OS/...; arch)
+
+        A client name is sent with or without a version; it used to be
+        dropped, silently, without one.  A version without a
+        name is not sent.
         """
         client_token = ""
-        if self.options.client_name and self.options.client_version:
-            name = self.__sanitize_ua_token(self.options.client_name)
-            version = self.__sanitize_ua_token(self.options.client_version)
-            client_token = f"{name}/{version} "   # trailing space is the separator
+        if self.options.client_name:
+            client_token = self.__sanitize_ua_token(self.options.client_name)
+            if self.options.client_version:
+                client_token += "/" + self.__sanitize_ua_token(self.options.client_version)
+            client_token += " "   # trailing space is the separator
         return client_token + USER_AGENT
 
     def __construct( self, host = None, options = None, *args, **kwargs ):
@@ -5815,22 +6973,11 @@ class GPUdb(object):
         # Identification for this instance (useful in logging)
         self._id = str( uuid.uuid4() )
 
-        # Class level logger so that setting it for one GPUdb instance doesn't
-        # set it for ALL GPUdb instances after that change (even if it is
-        # outside of the scope of the first instance whose log level was
-        # changed
-        self.log = logging.getLogger( "gpudb.GPUdb_instance_" + self._id )
-
-        # Handlers need to be instantiated only ONCE for a given module
-        # (i.e. not per class instance)
-        handler   = logging.StreamHandler()
-        formatter = logging.Formatter( fmt     = GPUdb._LOG_MESSAGE_FORMAT,
-                                       datefmt = GPUdb._LOG_DATETIME_FORMAT )
-        handler.setFormatter( formatter )
-        self.log.addHandler( handler )
-
-        # Prevent logging statements from being duplicated
-        self.log.propagate = False
+        # This instance's own logger, so that setting it for one GPUdb instance
+        # doesn't set it for ALL GPUdb instances after that change (even if it
+        # is outside of the scope of the first instance whose log level was
+        # changed); unregistered, so that it goes when the instance does
+        self.log = _ObjectLogger( "gpudb.GPUdb_instance_" + self._id )
 
         # Keep track of this API's client version
         self.__client_version = GPUdb.Version( self.api_version )
@@ -5896,8 +7043,15 @@ class GPUdb(object):
             self.__log_warn('SNAPPY encoding specified but python-snappy is not installed; reverting to BINARY')
             self.__encoding = C._ENCODING_BINARY
 
-        # Set default values for some internal information
-        self.__use_httpd = False
+        # Snappy-compress inserts and updates where python-snappy is installed;
+        # without it, the default would warn on every connection, so this is
+        # only noted at debug level, as the documentation of the option says
+        self.__use_snappy = self.options.use_snappy and HAVE_SNAPPY
+        self.__did_snappy_size_warning = False
+        if self.options.use_snappy and not HAVE_SNAPPY:
+            self.__log_debug( "use_snappy is on but python-snappy is not installed "
+                              "(pip install gpudb[fast]); inserts and updates are "
+                              "sent uncompressed" )
 
         self.client_to_object_encoding_map = { \
                                                C._ENCODING_BINARY: "binary",
@@ -5917,8 +7071,9 @@ class GPUdb(object):
         # Load the mapping of function names to endpoints
         self.load_gpudb_func_to_endpoint_map()
 
-        # Initiate the type store
+        # Initiate the type store, and the classes' object maps
         self._known_types = {}
+        self._known_type_object_maps = {}
 
         # Keep a count of how many times a request has been tried
         self._num_retries = 0
@@ -6001,6 +7156,19 @@ class GPUdb(object):
         # to switch to a different HA ring head node (useful for multi-head I/O)
         self.__num_cluster_switches = 0 # For the new submit_request route
 
+        # Guards the current cluster pointer and the switch count: every
+        # move of the pointer -- a failover's walk of the
+        # ring, the fail-back to the primary -- is made under it, so that
+        # threads failing over together neither skip a cluster nor land on a
+        # dead one.  Re-entrant, since a walk sets the pointer through the same
+        # setter a fail-back does.
+        self.__url_lock = threading.RLock()
+        # One capability probe per connection at a time; see
+        # _probe_current_cluster_multihead().  Taken before the URL lock,
+        # never after it.  Re-entrant: the wait for an arrival's probe holds
+        # it while making that probe.
+        self.__probe_lock = threading.RLock()
+
         # Some defaults
         self.__cluster_info: List[GPUdb.ClusterAddressInfo] = []
         self.__cluster_indices = []
@@ -6023,42 +7191,70 @@ class GPUdb(object):
         # "Connection pool is full, discarding connection" warning on every
         # overflow.  Raise the pool size so concurrent clients don't trigger
         # that warning under normal high-parallelism workloads.
-        self.__adapter = HTTPAdapter(
+        # TCP keep-alive on each connection, and pooled connections not reused
+        # after a long idle spell (see gpudb_http)
+        if ( (not self.options.tcp_keep_alive)
+             and (self.options.tcp_keep_idle or self.options.tcp_keep_interval
+                  or self.options.tcp_keep_count) ):
+            self.__log_warn( "TCP keep-alive is off, so its idle, interval and count "
+                             "options are ignored" )
+        socket_options = _http.keep_alive_socket_options( self.options.tcp_keep_alive,
+                                                          self.options.tcp_keep_idle,
+                                                          self.options.tcp_keep_interval,
+                                                          self.options.tcp_keep_count )
+
+        self.__adapter = _http.TransportAdapter(
+            socket_options,
             max_retries=self.__retry_strategy,
             pool_connections=256,
-            pool_maxsize=256,
+            pool_maxsize=self.options.max_connections_per_host,
             pool_block=False,
         )
 
-        self.__session.headers.update(self.__custom_http_headers)
+        # Not the custom headers, which each request carries itself (see
+        # __create_common_headers), so that removing one stops it being sent
         self.__session.headers[C._HEADER_SESSION] = self.__session_id
         self.__session.headers["User-Agent"] = self.__build_user_agent_string()
         
         self.__session.mount("http://", self.__adapter)
         self.__session.mount("https://", self.__adapter)
 
-        self.__session.verify = not self.skip_ssl_cert_verification
+        self.__session.verify = self.__ssl_verification()
 
         # Set up a separate HTTP session for fast connectivity checks,
         # with no automatic retries.
         self.__session_fast = requests.Session()
-        self.__adapter_fast = HTTPAdapter(
+        self.__adapter_fast = _http.TransportAdapter(
+            socket_options,
             max_retries=0,
             pool_connections=256,
-            pool_maxsize=256,
+            pool_maxsize=self.options.max_connections_per_host,
             pool_block=False,
         )
 
-        self.__session_fast.headers.update(self.__custom_http_headers)
         self.__session_fast.headers[C._HEADER_SESSION] = self.__session_id
+        self.__session_fast.headers["User-Agent"] = self.__session.headers["User-Agent"]
 
         self.__session_fast.mount("http://", self.__adapter_fast)
         self.__session_fast.mount("https://", self.__adapter_fast)
 
-        self.__session_fast.verify = not self.skip_ssl_cert_verification
+        self.__session_fast.verify = self.__ssl_verification()
 
-        logging.getLogger("requests").setLevel(logging.WARNING)
-        logging.getLogger("urllib3").setLevel(logging.WARNING)
+        # A process forked from this one, as multiprocessing's "fork" start
+        # method makes, shares these sessions' open connections with it; two
+        # processes writing on one socket garble both their requests.  So a
+        # child drops the pooled connections as it starts and opens its own.
+        # By weak reference, so that the registration, which cannot be
+        # undone, does not keep this object alive.
+        if hasattr( os, "register_at_fork" ):
+            ref = weakref.ref( self )
+            def drop_in_child():
+                client = ref()
+                if client is not None:
+                    client.__drop_pooled_connections_in_child()
+            os.register_at_fork( after_in_child = drop_in_child )
+        # end if
+
 
         # Parse the user given URLs (will throw an error if no connection
         # can be established)
@@ -6107,6 +7303,29 @@ class GPUdb(object):
 
     def __get_current_http_connection(self):
         return self.__session
+
+    def __ssl_verification(self):
+        """What requests verifies an HTTPS server's certificate with: nothing,
+        when verification is skipped; the trust store given, if any; otherwise
+        the default one.
+        """
+        if self.skip_ssl_cert_verification:
+            return False
+
+        trust_store = self.options.trust_store_file_path
+        if trust_store is None:
+            return True
+        if not os.path.exists( trust_store ):
+            raise GPUdbException( "The trust store '{}' does not exist".format( trust_store ) )
+        return trust_store
+    # end __ssl_verification
+
+    def __request_timeout(self, read_timeout):
+        """The (connect, read) timeout of a request: the server connection
+        timeout to connect, and the given read timeout.
+        """
+        return _http.request_timeout( self.__server_connection_timeout, read_timeout )
+    # end __request_timeout
 
     def __get_current_http_fast_connection(self):
         return self.__session_fast
@@ -6353,11 +7572,40 @@ class GPUdb(object):
                 raise
             except GPUdbHostnameRegexFailureException as ex:
                 # There's no point in keep trying since the URLs aren't
-                # going to magically change
-                raise GPUdbException( "Could not connect to any working "
-                                      "Kinetica server due to hostname "
-                                      "regex mismatch (given  URLs: {}); {}"
-                                      "".format( urls_str, str(ex) ) )
+                # going to magically change.  But if the regex matches none
+                # of the addresses the server advertises and does match some
+                # of the user-given URLs, use those directly, head-node-only:
+                # the regex says which addresses the user can reach, and a
+                # matching URL of theirs has already answered.
+                # The match is on the host alone, as for the server's
+                # addresses.
+                hostname_regex = self.options.hostname_regex
+                accepted_urls = [ url for url in urls
+                                  if re.match( hostname_regex,
+                                               GPUdb.URL( str(url) ).host ) ]
+                if not accepted_urls:
+                    raise GPUdbException( "Could not connect to any working "
+                                          "Kinetica server due to hostname "
+                                          "regex mismatch (given URLs: {}): "
+                                          "the pattern <{}> matches no address "
+                                          "the server advertises and none of "
+                                          "the given URLs either; {}"
+                                          "".format( urls_str,
+                                                     hostname_regex.pattern,
+                                                     str(ex) ) )
+                # end if
+
+                self.__log_warn( "Disabling auto-discovery & multi-head "
+                                 "operations for this connection: the "
+                                 "hostname regex <{}> matches no address the "
+                                 "server advertises, but does match {}, which "
+                                 "will be used directly; {}"
+                                 "".format( hostname_regex.pattern,
+                                            [ str(url) for url in accepted_urls ],
+                                            str(ex) ) )
+                self.__disable_auto_discovery = True
+                self.__process_cluster_information_for_all_urls( accepted_urls )
+                return
             except GPUdbException as ex:
                 self.__log_debug( "Attempt at parsing URLs failed: {}"
                                   "".format( str(ex) ) )
@@ -6481,6 +7729,9 @@ class GPUdb(object):
 
         # Keep a stringified version to be used in logs
         urls_str = [str(u) for u in urls]
+
+        # Each parse starts with an empty cluster list.
+        self.__cluster_info = []
 
         # Convert the list of URLs to a set (to remove duplicates) and then
         # into a queue (so that we can add HA ring addresses as we get them
@@ -6638,32 +7889,72 @@ class GPUdb(object):
 
                 if url != cluster_head_node_url:
 
-                    # Check if the server given head node address is reachable.
-                    # If so, use that URL instead of the user-given one.
-                    # If not, the user will not be able to use the server-known
-                    # address for connecting normally.  The API will need to
-                    # reprocess the user-given URLs with auto-discovery
-                    # disabled, so that the user can issue database commands,
-                    # but where multi-head operations will not be available.
-                    if not self.__is_system_running( cluster_head_node_url ):
+                    # Whether the head rank answers at any of the addresses
+                    # advertised for it.  If not, this cluster is
+                    # used through the user-given URL alone, head-node-only;
+                    # the rest of the connection is unaffected.  (This used to
+                    # disable auto-discovery for the whole connection.)
+                    reachable_head_node_url = _address_resolution.resolve_reachable_head_node_url(
+                            sys_props,
+                            cluster_head_node_url,
+                            _address_resolution.is_local_address( url.host ),
+                            self.options.hostname_regex,
+                            self.__is_rank_reachable,
+                            self.__get_system_properties )
 
-                        self.__log_warn(
-                                "Disabling auto-discovery & multi-head operations--cluster reachable with user-given URL <{}> but not with server-known URL <{}>".format(
+                    if reachable_head_node_url is None:
+
+                        self.__log_debug(
+                                "Multi-head operations unavailable for the cluster reached via <{}>: reachable with the user-given URL but not with its server-known URL <{}>".format(
                                 url_str, cluster_head_node_url
                         ))
 
-                        # Disable auto-discovery and throw exception to reprocess user-given URLs
-                        self.__disable_auto_discovery = True
+                        # Record this cluster by the URL that works, with no
+                        # rank addresses, and carry on to the next URL
+                        degraded = self.__create_cluster_address_info_with_hm_port( url, self.options.host_manager_port )
+                        degraded.ha_status = cluster_ha_status
+                        # Known by every address it advertises, as well as
+                        # the URL that works, so that a peer naming it by an
+                        # advertised address is not taken for another cluster
+                        degraded.host_names = degraded.host_names + [ name for name in cluster_info.host_names
+                                                                      if name not in degraded.host_names ]
 
-                        raise GPUdbException(
-                                "Could not connect to server-known head node address: {} (user given URL: {})".format(
-                                cluster_info, url_str
+                        cluster_index_for_user_given_urls.append( len(self.__cluster_info) )
+                        self.__cluster_info.append( degraded )
+
+                        # Its HA ring peers are discovered from it all the
+                        # same: the properties came from the URL that works
+                        self.__queue_ha_ring_head_nodes( sys_props, url_deque )
+                        continue
+                    # end if
+
+                    if reachable_head_node_url != cluster_head_node_url:
+                        self.__log_debug(
+                                "Head rank did not answer at its preferred address <{}> but did at <{}>; multi-head stays enabled and the connection continues through the user-given URL <{}>".format(
+                                cluster_head_node_url, reachable_head_node_url, url_str
                         ))
                     # end if
-                    
+
+                    # A head rank answered, so the cluster's advertised
+                    # addresses are reachable and multi-head is viable.  But
+                    # answering is not being this cluster: an address the
+                    # server reports for itself can reach a different Kinetica
+                    # from here.  So the connection stays on the URL the
+                    # caller gave, through which the cluster's own properties
+                    # arrived.
+                    cluster_info.head_rank_url = url
+                    cluster_info.host_manager_url = self.__build_host_manager_url( url, sys_props )
+
+                    user_host_name = "{}://{}".format( url.protocol.lower(), url.host )
+                    if user_host_name not in cluster_info.host_names:
+                        cluster_info.host_names = cluster_info.host_names + [ user_host_name ]
+                    if ( self.primary_host
+                         and cluster_info.does_cluster_contain_node( self.primary_host ) ):
+                        cluster_info.is_primary_cluster = True
+
                     self.__log_debug(
-                            "Verified connectivity with user-given URL {}; adding index {} to user-given processed cluster list".format(
-                            url_str, len(self.__cluster_info)
+                            "Verified connectivity with user-given URL {} at server-known URL {}; adding index {} to user-given processed cluster list".format(
+                            url_str, reachable_head_node_url, len(self.__cluster_info)
                     ))
                 # end if
 
@@ -6675,28 +7966,7 @@ class GPUdb(object):
 
             self.__log_debug( "Added URL {} -> cluster {}".format( url_str, str(cluster_info) ) )
 
-            # Parse the HA ring head nodes in the properties and add them
-            # to this queue (only if we haven't processed them already).
-            # This could fail due to a hostname regex mismatch.
-            ha_ring_head_node_urls = self.__get_ha_ring_head_node_urls( sys_props )
-            self.__log_debug( "Got HA ring head node URLs: {}".format( [ str(u) for u in ha_ring_head_node_urls] ) )
-            for ha_url in ha_ring_head_node_urls:
-                if ( self.__get_index_of_cluster_containing_node( ha_url.host ) == -1 ):
-                    # We have not encountered this cluster yet; add it to the
-                    # queue of URLs to process
-                    if ha_url not in url_deque:
-                        url_deque.append( ha_url )
-                        self.__log_debug( "HA ring head node URL {} not found in known clusters; adding to queue to process".format(str(ha_url)))
-                    # end if
-                else:
-                    self.__log_debug( "HA ring head node URL {} found in known clusters; skipping".format(str(ha_url)))
-                # end if
-            # end for
-
-            self.__log_debug(
-                    "URLs queue after processing this HA ring's head node URLs (size {}: {})".format(
-                    len(url_deque), [ str(u) for u in list(url_deque) ]
-            ))
+            self.__queue_ha_ring_head_nodes( sys_props, url_deque )
         # end while
 
         # Check that we have got at least one working URL
@@ -7166,14 +8436,6 @@ class GPUdb(object):
         property_map = sys_prop_resp.property_map
         self.__log_debug( "Got system properties for URL: {}".format( str(url) ) )
 
-        # Is HTTPD being used (helps in figuring out the host manager URL)
-        if C._SYSTEM_PROPERTIES_RESPONSE_ENABLE_HTTPD in property_map:
-            if (property_map[ C._SYSTEM_PROPERTIES_RESPONSE_ENABLE_HTTPD ].lower() == C._SYSTEM_PROPERTIES_RESPONSE_TRUE):
-                self.__log_debug( "Setting use httpd to true for URL: {}".format( str(url) ) )
-                self.__use_httpd = True
-            # end inner if
-        # end if
-
         return property_map
     # end __get_system_properties
 
@@ -7217,6 +8479,12 @@ class GPUdb(object):
     def __get_rank_urls( self, sys_props, hostname_regex = None ):
         """Given system properties, extract the head- and worker rank URLs.
 
+        Each rank may advertise several addresses, and may also be reached at
+        a private address and ones built from its host's interface addresses;
+        configured ones are preferred to discovered ones.  The first that the
+        hostname regex keeps is selected.  A removed rank keeps its
+        slot, as None, so that index i stays rank i.
+
         Parameters:
             sys_props (dict)
                 A dictionary containing all relevant system properties.
@@ -7228,113 +8496,15 @@ class GPUdb(object):
 
         Returns:
             A list of :class:`GPUdb.URL` objects, where the first entry is the
-            rank-0 URL.
+            rank-0 URL; None for a removed rank.  Empty if multi-head is
+            disabled or no rank URLs are advertised.
+
+        Raises:
+            GPUdbHostnameRegexFailureException  if the regex matches none of a
+                rank's addresses
+            GPUdbException  if a rank advertises no usable address
         """
-        # Get the protocol being used (default is http)
-        protocol = "http"
-        if C._SYSTEM_PROPERTIES_RESPONSE_USE_HTTPS in sys_props:
-            if (sys_props[ C._SYSTEM_PROPERTIES_RESPONSE_USE_HTTPS ]
-                == C._SYSTEM_PROPERTIES_RESPONSE_TRUE):
-                protocol = "https"
-        # end if
-
-        rank_urls = []
-
-        # Get the rank URLs and process them
-        if ( (C._SYSTEM_PROPERTIES_RESPONSE_SERVER_URLS in sys_props)
-             and sys_props[ C._SYSTEM_PROPERTIES_RESPONSE_SERVER_URLS ] ):
-
-            server_urls = sys_props[ C._SYSTEM_PROPERTIES_RESPONSE_SERVER_URLS ]
-            self.__log_debug(
-                    "Known rank URLs <{}> from server: {}{}".format(
-                            C._SYSTEM_PROPERTIES_RESPONSE_SERVER_URLS,
-                            server_urls,
-                            "" if not hostname_regex else " vs. user-given regex: " + hostname_regex
-                    )
-            )
-
-            # Get the URL for each of the ranks
-            # ---------------------------------
-            url_lists = server_urls.split(";")
-
-            # Parse each entry (corresponds to a rank, could be an
-            # empty slot for a removed rank)
-            for i in range(len(url_lists)):
-                rank_url_str = url_lists[i]
-
-                # Handle removed ranks (corresponds to empty strings)
-                if ( not rank_url_str ):
-                    continue
-                # end if
-
-                # Each rank can have multiple URLs associated with it
-                urls = rank_url_str.split(",")
-                found = False
-
-                for url_str in urls:
-                    # If a regex is given, get a matching URL--if there isn't
-                    # a match, throw an error.  If no regex is given, take
-                    # the first URL.
-                    do_add = False
-
-                    # Ensure it's a valid URL
-                    try:
-                        url = GPUdb.URL( url_str )
-                    except Exception as ex:
-                        # An unusable alternate is skipped, not fatal.  A rank may
-                        # advertise several addresses; one that cannot be parsed
-                        # must not mask a good one after it, and must not fail the
-                        # whole rank list -- which runs at connection time, so a
-                        # raise here would stop the client connecting at all.  If
-                        # none of a rank's alternates works, the checks below
-                        # report that rank.
-                        self.__log_debug( "Skipping unusable address '{}' for "
-                                          "rank {}: {}".format( url_str, i,
-                                                                str(ex) ) )
-                        continue
-                    # end try
-
-                    if hostname_regex is None:
-                        # No regex is given, so we'll take the first one
-                        self.__log_debug( "Keeping rank URL: {}".format( url_str ) )
-                        do_add = True
-                    else:
-                        # Check if this URL matches the given regex
-                        do_add = re.match( hostname_regex, url.host )
-                        do_add = (do_add is not None)
-                        if do_add:
-                            self.__log_debug( "Keeping matching rank URL: {}".format( url_str ) )
-                        else:
-                            self.__log_debug( "Skipping non-matching rank URL: {}".format( url_str ) )
-                    # end if
-
-                    if do_add:
-                        # Found a match (whether a regex is given or not)
-                        rank_urls.append( url )
-                        found = True
-                        break
-                    # end if
-                # end for
-
-                if not found:
-                    # If there's no valid URL matching the regex throw a match error
-                    if (hostname_regex is not None):
-                        raise GPUdbHostnameRegexFailureException(
-                                "No valid matching IP/hostname found for worker: {}".format( i )
-                        )
-                    # end if
-
-                    # If there's no valid URL throw an error
-                    raise GPUdbException("No valid IP/hostname found for worker: {}".format( i ) )
-                # end if
-            # end for
-        else:
-            self.__log_debug( "No entry for <{}> in {} response".format(
-                              C._SYSTEM_PROPERTIES_RESPONSE_SERVER_URLS,
-                              C._ENDPOINT_SHOW_SYSTEM_PROPERTIES ))
-        # end if
-
-        return rank_urls
+        return _address_resolution.extract_rank_urls( sys_props, hostname_regex )
     # end __get_rank_urls
 
 
@@ -7361,7 +8531,7 @@ class GPUdb(object):
         """
 
         self.__log_debug( "Extracting server-known host names from system properties{}"
-                          "".format( "" if not hostname_regex else " using user-given regex: " + hostname_regex ) )
+                          "".format( "" if not hostname_regex else " using user-given regex: " + hostname_regex.pattern ) )
 
         # Get the total number of hosts/machines in the cluster
         if C._SYSTEM_PROPERTIES_RESPONSE_NUM_HOSTS not in sys_props:
@@ -7450,39 +8620,41 @@ class GPUdb(object):
 
 
 
-    def __create_host_manager_url( self, url, host_manager_port ):
-        """Given a :class:`GPUdb.URL` and a host manager port, create
-        another :class:`GPUdb.URL` object that represents the host manager
-        URL.  Return that.
+    def __is_rank_reachable( self, url ):
+        """Whether a rank answers at the given address, by a quick status
+        check; for probing the addresses advertised for a rank.
         """
-        # Create the host manager URL
+        return self.__is_system_running( url, quick_check = True )
+    # end __is_rank_reachable
+
+
+
+    def __build_host_manager_url( self, url, sys_props, host_manager_port = None ):
+        """The host manager URL for the cluster whose head node is reached at
+        `url`: the address the cluster publishes for
+        that host, or one derived from `url` -- through httpd where the
+        cluster reports it, or at the host manager port the cluster reports
+        (unless one other than the default was set).  `sys_props` is the
+        cluster's system properties, or None for a cluster with none (one that
+        was down, say), for which httpd is told from `url` having a path.
+        Each cluster's own properties decide; one cluster with httpd used to
+        make every cluster's host manager URL an httpd one.
+        """
+        if host_manager_port is None:
+            host_manager_port = self.options.host_manager_port
+
+        is_httpd_enabled = ( _address_resolution.get_is_httpd_enabled( sys_props )
+                             if (sys_props is not None) else bool( url.path ) )
         try:
-            # Create the host manager URL using the user given (or default) port
-            if ( ( self.__use_httpd == True )
-                 and ( len(url.path) > 0) ):
-                # We're using HTTPD, so use the appropriate URL
-                # (likely, http[s]://hostname_or_IP:port/gpudb-host-manager)
-                # We won't always have a port (e.g. for cloud instances).  So,
-                # just replace the last bit of the path, i.e. gpudb-X with
-                # gpudb-host-manager
-                url_split_on_slash = url.url.rsplit( '/' )
-                url_split_on_slash[ -1 ] = "gpudb-host-manager"
-                host_manager_url = '/'.join( url_split_on_slash )
-                host_manager_url = GPUdb.URL( host_manager_url )
-            else:
-                # The host manager URL shouldn't use any path and
-                # use the host manager port
-                host_manager_url = GPUdb.URL( "{protocol}://{host}:{port}"
-                                              "".format( protocol = url.protocol,
-                                                         host = url.host,
-                                                         port = host_manager_port ) )
-            # end if
+            host_manager_url = _address_resolution.build_host_manager_url(
+                    url, is_httpd_enabled, sys_props, host_manager_port,
+                    GPUdb._DEFAULT_HOST_MANAGER_PORT )
         except Exception as ex:
             raise GPUdbException( "Error creating the host manager URL: {}".format(GPUdbException.stringify_exception( ex )) )
 
         self.__log_debug( "Created host manager URL: {}".format( host_manager_url ) )
         return host_manager_url
-    # end __create_host_manager_url
+    # end __build_host_manager_url
 
 
 
@@ -7505,12 +8677,8 @@ class GPUdb(object):
         Returns:
             A :class:`GPUdb.ClusterAddressInfo` object.
         """
-        # Create the host manager URL
-        try:
-            host_manager_url = self.__create_host_manager_url( url,
-                                                               host_manager_port )
-        except Exception as ex:
-            raise GPUdbException( GPUdbException.stringify_exception( ex ) )
+        # Create the host manager URL; with no system properties to go by
+        host_manager_url = self.__build_host_manager_url( url, None, host_manager_port )
 
         # Create an object to store all the information about this cluster
         cluster_info = GPUdb.ClusterAddressInfo( url,
@@ -7557,14 +8725,32 @@ class GPUdb(object):
         self.__log_debug( "Establishing a cluster record associated with URL: {}"
                           "".format( str(url) ) )
 
-        # Get the rank URLs (head and worker ones)
-        rank_urls = self.__get_rank_urls( sys_props, self.options.hostname_regex )
+        # Whether the server reached is on this machine, decided from the URL it
+        # was reached at.  If it is not, an advertised address naming this
+        # machine cannot be it.
+        server_is_local = _address_resolution.is_local_address( url.host )
+
+        # Get the rank URLs (head and worker ones).  All or nothing: the list
+        # is rank-indexed, so one address naming this machine withdraws them
+        # all rather than shifting the rest.
+        rank_urls = _address_resolution.rank_urls_if_all_credible(
+            self.__get_rank_urls( sys_props, self.options.hostname_regex ),
+            server_is_local, "rank address" )
 
         # Get the head node URL and keep it separately
         if ( len(rank_urls) > 0 ):
             self.__log_debug( "Assigning head rank URL {} from server-known rank URLs: {}"
                               "".format( rank_urls[0], [str(u) for u in rank_urls] ) )
             head_rank_url = rank_urls.pop( 0 )
+
+            # Rank 0 cannot be removed, but should a blank slot be reported
+            # for it, use the given URL rather than none
+            if head_rank_url is None:
+                head_rank_url = url
+
+            # The cluster record lists the live workers; a removed rank's
+            # slot matters only to routing, which resolves its own list
+            rank_urls = [ rank_url for rank_url in rank_urls if rank_url is not None ]
         else:
             # No ranks were found from system properties; so just use the given
             # URL as the head rank URL
@@ -7578,11 +8764,7 @@ class GPUdb(object):
                                                                           self.options.hostname_regex )
 
         # Create the host manager URL
-        try:
-            host_manager_url = self.__create_host_manager_url( head_rank_url,
-                                                               self.options.host_manager_port )
-        except Exception as ex:
-            raise GPUdbException( GPUdbException.stringify_exception( ex ) )
+        host_manager_url = self.__build_host_manager_url( head_rank_url, sys_props )
 
         # Get the version of Kinetica run at this cluster (None if not found)
         server_version = self.__get_server_version( sys_props )
@@ -7596,6 +8778,9 @@ class GPUdb(object):
                                                  server_version = server_version,
                                                  logging_level = self.log.getEffectiveLevel() )
 
+        # Kept for get_system_properties()
+        cluster_info.system_properties = sys_props
+
         # Check if this cluster is the primary cluster
         if ( self.primary_host
              and cluster_info.does_cluster_contain_node( self.primary_host ) ):
@@ -7608,6 +8793,42 @@ class GPUdb(object):
     # end __create_cluster_address_info
 
 
+
+
+    def __queue_ha_ring_head_nodes( self, sys_props, url_deque ):
+        """Queue the head nodes of the HA ring a cluster's system properties
+        name, the ones not already known, for the cluster parse to process.
+        A cluster known by the user's URL alone, its advertised head address
+        answering nothing, names its peers all the same.  (This could fail due
+        to a hostname regex mismatch.)
+
+        Parameters:
+            sys_props (dict)
+                The cluster's system properties.
+            url_deque (collections.deque of GPUdb.URL)
+                The parse's queue of URLs still to process; the peers not yet
+                known are appended to it.
+        """
+        ha_ring_head_node_urls = self.__get_ha_ring_head_node_urls( sys_props )
+        self.__log_debug( "Got HA ring head node URLs: {}".format( [ str(u) for u in ha_ring_head_node_urls] ) )
+        for ha_url in ha_ring_head_node_urls:
+            if ( self.__get_index_of_cluster_containing_node( ha_url.host ) == -1 ):
+                # We have not encountered this cluster yet; add it to the
+                # queue of URLs to process
+                if ha_url not in url_deque:
+                    url_deque.append( ha_url )
+                    self.__log_debug( "HA ring head node URL {} not found in known clusters; adding to queue to process".format(str(ha_url)))
+                # end if
+            else:
+                self.__log_debug( "HA ring head node URL {} found in known clusters; skipping".format(str(ha_url)))
+            # end if
+        # end for
+
+        self.__log_debug(
+                "URLs queue after processing this HA ring's head node URLs (size {}: {})".format(
+                len(url_deque), [ str(u) for u in list(url_deque) ]
+        ))
+    # end __queue_ha_ring_head_nodes
 
 
     def __get_ha_ring_head_node_urls( self, sys_props ):
@@ -7626,7 +8847,7 @@ class GPUdb(object):
         hostname_regex = self.options.hostname_regex
 
         self.__log_debug( "Extracting server-known HA head node URLs from system properties{}"
-                          "".format( "" if not hostname_regex else " using user-given regex: " + hostname_regex ) )
+                          "".format( "" if not hostname_regex else " using user-given regex: " + hostname_regex.pattern ) )
 
         # If HA is no set up, just return an empty list
         if C._enable_ha not in sys_props:
@@ -7777,7 +8998,10 @@ class GPUdb(object):
             raise GPUdbException( msg )
         # end if
 
-        self.__curr_cluster_index_pointer = value
+        # Under the URL lock, so that a fail-back cannot interleave with a
+        # failover's reading and advancing of the pointer
+        with self.__url_lock:
+            self.__curr_cluster_index_pointer = value
     # end __set_curr_cluster_index_pointer
 
 
@@ -8173,8 +9397,65 @@ class GPUdb(object):
         return self.__encoding
 
     @property
+    def user_agent(self):
+        """Gets the User-Agent header sent with each request of this client:
+        the client name and version given in :class:`GPUdb.Options`, if any,
+        then this API's own.
+        """
+        return self.__session.headers[ "User-Agent" ]
+
+    @property
+    def client_name(self):
+        """Gets the client program name given in
+        :attr:`GPUdb.Options.client_name`, sent first in the User-Agent
+        header; None if none was given.
+        """
+        return self.options.client_name
+
+    @property
+    def client_version(self):
+        """Gets the client program version given in
+        :attr:`GPUdb.Options.client_version`, sent after the client name in
+        the User-Agent header; None if none was given.
+        """
+        return self.options.client_version
+
+    @property
+    def max_retries(self):
+        """Gets the number of times a failed HTTP request is retried, from
+        :attr:`GPUdb.Options.max_retries`.
+        """
+        return self.__max_retries
+
+    def get_system_properties(self):
+        """Gets the system properties of the cluster this client is using,
+        those the cluster
+        reported when the connection was made, or, where it reported none (it
+        was down then, say), those it reports now.
+
+        Returns:
+            A dict of the system properties, by name; a copy, which the caller
+            may change.
+        """
+        cluster_info = self.current_cluster_info
+        if not cluster_info.system_properties:
+            cluster_info.system_properties = self.__get_system_properties(
+                    self.get_url( stringified = False ) )
+        return dict( cluster_info.system_properties )
+    # end get_system_properties
+
+    @property
+    def use_snappy(self):
+        """Gets whether the requests that insert or update records are
+        Snappy-compressed: :attr:`GPUdb.Options.use_snappy`, where
+        python-snappy is installed.
+        """
+        return self.__use_snappy
+
+    @property
     def timeout(self):
-        """Gets the timeout used for http connections to GPUdb."""
+        """Gets the timeout, in seconds, used for http connections to GPUdb;
+        None means no timeout."""
         return self.__timeout
 
     @property
@@ -8212,16 +9493,30 @@ class GPUdb(object):
 
 
     def save_known_type(self, type_id, _type ):
-        self._known_types[ type_id ] = _type
+        """Saves the type of an ID, as the database describes it; a
+        :class:`TypeObjectMap` registered for the ID (:meth:`add_known_type`)
+        is kept.
+        """
+        if not isinstance( self._known_types.get( type_id ), TypeObjectMap ):
+            self._known_types[ type_id ] = _type
 
 
     @property
     def get_known_types(self):
-        """Return all known types; if
-        none, return None.
+        """All known types, as a dict of type ID to type; empty if there are
+        none.  A property, under the name it has always had;
+        :attr:`.known_types` is the same dict under a name that reads as one.
         """
         return self._known_types
     # end get_known_types
+
+    @property
+    def known_types(self):
+        """All known types, as a dict of type ID to type; empty if there are
+        none.  The same dict as :attr:`.get_known_types`.
+        """
+        return self._known_types
+    # end known_types
 
     def get_known_type(self, type_id, lookup_type = True ):
         """Given an type ID, return any associated known type; if
@@ -8238,8 +9533,9 @@ class GPUdb(object):
                 it for the future, and return it.
 
         Returns:
-            The associated RecordType, if found (or looked up).  None
-            otherwise.
+            The associated RecordType, if found (or looked up), or the
+            :class:`TypeObjectMap` registered for the type
+            (:meth:`add_known_type`).  None otherwise.
         """
         if type_id in self._known_types:
             return self._known_types[ type_id ]
@@ -8265,6 +9561,154 @@ class GPUdb(object):
 
         return None # none found
     # end get_known_type
+
+
+    def add_known_type( self, type_id, type_descriptor ):
+        """Sets what records of a type decode with, where no record type is
+        given: a :class:`RecordType` or
+        :class:`GPUdbRecordType` decodes them as records; a
+        :class:`TypeObjectMap`, or a class (mapped to the type by
+        :meth:`TypeObjectMap.from_type`, which looks the type up), into
+        objects.  A map, given or made, is also the class's object map
+        (:meth:`add_known_type_object_map`).
+
+        Parameters:
+            type_id (str)
+                The type's ID.
+            type_descriptor
+                As above, or None to forget the type, which is then looked up
+                when next met.
+        """
+        if not isinstance( type_id, basestring ):
+            raise GPUdbException( "'type_id' must be a string; given {}".format( type( type_id ) ) )
+
+        if type_descriptor is None:
+            self._known_types.pop( type_id, None )
+            return
+        if isinstance( type_descriptor, type ):
+            type_descriptor = TypeObjectMap.from_type( self.__known_record_type( type_id ), type_descriptor )
+        if isinstance( type_descriptor, GPUdbRecordType ):
+            type_descriptor = type_descriptor.record_type
+        if not isinstance( type_descriptor, (RecordType, TypeObjectMap) ):
+            raise GPUdbException( "'type_descriptor' must be a RecordType, GPUdbRecordType, TypeObjectMap or "
+                                  "class, or None; given {}".format( type( type_descriptor ) ) )
+
+        self._known_types[ type_id ] = type_descriptor
+        if isinstance( type_descriptor, TypeObjectMap ):
+            self.add_known_type_object_map( type_descriptor.object_class, type_descriptor )
+    # end add_known_type
+
+
+    def add_known_type_from_table( self, table_name, type_descriptor ):
+        """Sets what records of a table's type decode with, as
+        :meth:`add_known_type`, finding the type out from the table.  A class
+        is mapped to the table's
+        type; a :class:`TypeObjectMap` or :class:`GPUdbRecordType` must have
+        the table's columns, in its order and of its types.
+
+        Parameters:
+            table_name (str)
+                The table.
+            type_descriptor
+                As :meth:`add_known_type` takes it.
+
+        Returns:
+            The table's type ID.
+
+        Raises:
+            GPUdbException
+                If the table cannot be shown, holds records of more than one
+                type, or its type is not the one given.
+        """
+        response = self.show_table( table_name, options = {} )
+        if not _Util.is_ok( response ):
+            raise GPUdbException( "Could not show table '{}': {}"
+                                  "".format( table_name, _Util.get_error_msg( response ) ) )
+        type_ids = response[ "type_ids" ]
+        if not type_ids:
+            raise GPUdbException( "Table {} does not exist".format( table_name ) )
+        if any( (type_id != type_ids[ 0 ]) for type_id in type_ids ):
+            raise GPUdbException( "Table {} is not homogeneous".format( table_name ) )
+        type_id = type_ids[ 0 ]
+
+        table_type = GPUdbRecordType( schema_string = response[ "type_schemas" ][ 0 ],
+                                      column_properties = response[ "properties" ][ 0 ] )
+        if isinstance( type_descriptor, type ):
+            type_descriptor = TypeObjectMap.from_type( table_type, type_descriptor )
+
+        given = ( type_descriptor.type if isinstance( type_descriptor, TypeObjectMap ) else
+                  type_descriptor if isinstance( type_descriptor, GPUdbRecordType ) else None )
+        if (given is not None) and (self.__column_layout( given ) != self.__column_layout( table_type )):
+            raise GPUdbException( "The type given is not table {}'s: its columns are {}; the table's are {}"
+                                  "".format( table_name, self.__column_layout( given ),
+                                             self.__column_layout( table_type ) ) )
+
+        self.add_known_type( type_id, type_descriptor )
+        return type_id
+    # end add_known_type_from_table
+
+
+    def add_known_type_object_map( self, object_class, type_object_map ):
+        """Sets the :class:`TypeObjectMap` that objects of a class encode
+        with, when given to insert to a table (:class:`GPUdbTable`) or an
+        ingestor (:class:`GPUdbIngestor`).  A dataclass needs none if its
+        fields are
+        named as the columns.
+
+        Parameters:
+            object_class (type)
+                The class.
+            type_object_map (:class:`TypeObjectMap`)
+                Its map, or None to forget it.
+        """
+        if not isinstance( object_class, type ):
+            raise GPUdbException( "'object_class' must be a class; given {}".format( object_class ) )
+        if type_object_map is None:
+            self._known_type_object_maps.pop( object_class, None )
+        elif isinstance( type_object_map, TypeObjectMap ):
+            self._known_type_object_maps[ object_class ] = type_object_map
+        else:
+            raise GPUdbException( "'type_object_map' must be a TypeObjectMap, or None; given {}"
+                                  "".format( type( type_object_map ) ) )
+    # end add_known_type_object_map
+
+
+    def get_known_type_object_map( self, object_class ):
+        """The :class:`TypeObjectMap` registered for a class, or None."""
+        return self._known_type_object_maps.get( object_class )
+    # end get_known_type_object_map
+
+
+    def _type_object_map_for( self, object_class, record_type ):
+        """The map to encode objects of a class into records of a type with:
+        the one registered for the class, or for a dataclass, one mapping its
+        fields to the type's columns by name; None for any other class.
+        """
+        type_object_map = self._known_type_object_maps.get( object_class )
+        if (type_object_map is None) and dataclasses.is_dataclass( object_class ):
+            type_object_map = TypeObjectMap.from_type( record_type, object_class )
+        return type_object_map
+    # end _type_object_map_for
+
+
+    def __known_record_type( self, type_id ):
+        """The type of an ID, as a GPUdbRecordType, looked up."""
+        response = self.show_types( type_id = type_id, label = "", options = {} )
+        if not _Util.is_ok( response ) or not response[ "type_schemas" ]:
+            raise GPUdbException( "Unable to obtain type information for type {}: {}"
+                                  "".format( type_id, _Util.get_error_msg( response ) ) )
+        return GPUdbRecordType( schema_string = response[ "type_schemas" ][ 0 ],
+                                column_properties = response[ "properties" ][ 0 ] )
+    # end __known_record_type
+
+
+    @staticmethod
+    def __column_layout( record_type ):
+        """What decoding a type's records depends on: each column's name and
+        type, and whether it is nullable.
+        """
+        return [ ( column.name, column.column_type, column.is_nullable ) for column in record_type.columns ]
+    # end __column_layout
 
 
     def get_all_available_full_urls( self, stringified = True ):
@@ -8727,7 +10171,7 @@ class GPUdb(object):
         encoded_request = self.encode_datum_cext(request_schema, request_body)
 
         # Get the header and process the body data
-        (headers, body_data) = self.__create_header_and_process_body_data(encoded_request)
+        (headers, body_data) = self.__create_header_and_process_body_data( encoded_request, endpoint )
 
         # Construct the full URL for the request
         full_url = f"{url.url}{endpoint}"
@@ -8739,6 +10183,7 @@ class GPUdb(object):
             timeout = GPUdb._FAST_CONNECTION_TIMEOUT
         else:
             session = self.__get_current_http_connection()
+            timeout = self.__request_timeout( timeout )
 
         try:
             # Send the POST request
@@ -8754,7 +10199,7 @@ class GPUdb(object):
             # connections back into the pool
             response_data = response.content
 
-            if status_code == requests.codes.UNAUTHORIZED:
+            if status_code in (requests.codes.UNAUTHORIZED, requests.codes.FORBIDDEN):
                 msg = f"Unauthorized access: '{response.reason}'"
                 self.__log_debug(msg)
                 raise GPUdbUnauthorizedAccessException(msg)
@@ -8819,7 +10264,11 @@ class GPUdb(object):
                 # Simply return the decoded response
                 return decoded_response
 
-        except ssl.SSLError as ex:
+        except (ssl.SSLError, requests.exceptions.SSLError) as ex:
+            # requests reports a failed certificate check as its own SSLError,
+            # which is a ConnectionError and not an ssl.SSLError; caught here,
+            # ahead of ConnectionError, so that it reaches the user with the
+            # hint below rather than being taken for a dead server
             msg = f"Unable to execute SSL handshake with '{url.url}' due to: {GPUdbException.stringify_exception(ex)}"
             final_msg = self.__SSL_ERROR_MESSAGE_TEMPLATE.format(msg)
             self.__log_debug(final_msg)
@@ -8930,12 +10379,9 @@ class GPUdb(object):
             self.__log_trace(f"Sending {endpoint} request to {url}")
 
         # Prepare headers
-        headers = {
-            C._HEADER_CONTENT_TYPE: "application/json",
-            C._HEADER_ACCEPT: "text/plain"
-        }
-        if self.auth:
-            headers[C._HEADER_AUTHORIZATION] = self.auth
+        headers = self.__create_common_headers()
+        headers[C._HEADER_CONTENT_TYPE] = "application/json"
+        headers[C._HEADER_ACCEPT] = "text/plain"
 
         # Construct the full URL for the request
         full_url = f"{url.url}{endpoint}"
@@ -8943,7 +10389,8 @@ class GPUdb(object):
         try:
             # Create client with appropriate timeout and verification settings
             # Execute the request
-            response = self.__get_current_http_connection().post(full_url, headers=headers)
+            response = self.__get_current_http_connection().post(full_url, headers=headers,
+                                                                 timeout=self.__request_timeout(timeout))
 
             # Get response time if available
             response_time = response.headers.get('x-request-time-secs')
@@ -8956,7 +10403,7 @@ class GPUdb(object):
             # connections back into the pool
             response_data = response.text
 
-            if status_code == requests.codes.UNAUTHORIZED:  # UNAUTHORIZED
+            if status_code in (requests.codes.UNAUTHORIZED, requests.codes.FORBIDDEN):
                 msg = f"Unauthorized access: '{response_msg}'"
                 self.__log_debug(msg)
                 raise GPUdbUnauthorizedAccessException(msg)
@@ -8968,11 +10415,17 @@ class GPUdb(object):
                 msg = f"Endpoint not found ({url.url}) due to status code {status_code}: {response_msg}"
                 self.__log_debug(f"Throwing GPUdb exception; {msg}")
                 raise GPUdbException(msg)
+            elif status_code == requests.codes.BAD_REQUEST:
+                self.__raise_if_json_response_triggers_failover( url, response_data )
 
             # Return the response content
             return response_data
 
-        except ssl.SSLError as ex:
+        except (ssl.SSLError, requests.exceptions.SSLError) as ex:
+            # requests reports a failed certificate check as its own SSLError,
+            # which is a ConnectionError and not an ssl.SSLError; caught here,
+            # ahead of ConnectionError, so that it reaches the user with the
+            # hint below rather than being taken for a dead server
             msg = f"Unable to execute SSL handshake with '{url.url}' due to: {GPUdbException.stringify_exception(ex)}"
             final_msg = self.__SSL_ERROR_MESSAGE_TEMPLATE.format(msg)
             self.__log_debug(final_msg)
@@ -9017,6 +10470,31 @@ class GPUdb(object):
         # end try
 
     # end __submit_request_raw_json_without_body
+
+
+    def __raise_if_json_response_triggers_failover( self, url, response_data ):
+        """Raises a GPUdbExitException, which fails the request over, for an
+        HTTP 400 JSON response whose message says that the server is shutting
+        down, or that it is draining its HA queue, as a binary request
+        already did.  Such a response
+        used to be returned to the caller, to fail as an ordinary error.
+        """
+        try:
+            message = json.loads( response_data ).get( "message" )
+        except Exception:
+            return # not a JSON response; an ordinary error
+        if not isinstance( message, str ):
+            return
+
+        if C._DB_SHUTTING_DOWN_ERROR_MESSAGE in message:
+            exit_msg = "Kinetica shutting down"
+        elif C._DB_DRAINING_HAQ_ERROR_MESSAGE in message:
+            exit_msg = "Draining HA message queue"
+        else:
+            return
+        self.__log_debug( "Throwing EXIT exception from {}; message: {}".format( url.url, message ) )
+        raise GPUdbExitException( exit_msg )
+    # end __raise_if_json_response_triggers_failover
 
 
     def __submit_request_raw_json( self, url = None, endpoint = None,
@@ -9099,13 +10577,9 @@ class GPUdb(object):
             self.__log_trace(f"Sending {endpoint} request {request_body} to {url}")
 
         # Prepare headers
-        headers = {
-            C._HEADER_CONTENT_TYPE: "application/json",
-            C._HEADER_ACCEPT: "text/plain"
-        }
-
-        if self.auth:
-            headers[C._HEADER_AUTHORIZATION] = self.auth
+        headers = self.__create_common_headers()
+        headers[C._HEADER_CONTENT_TYPE] = "application/json"
+        headers[C._HEADER_ACCEPT] = "text/plain"
 
         # Construct the full URL for the request
         full_url = f"{url.url}{endpoint}"
@@ -9113,7 +10587,8 @@ class GPUdb(object):
         try:
             # Create a client with the appropriate timeout
             # Send the POST request with the request body
-            response = self.__get_current_http_connection().post(full_url, headers=headers, data=request_body, timeout=timeout)
+            response = self.__get_current_http_connection().post(full_url, headers=headers, data=request_body,
+                                                                 timeout=self.__request_timeout(timeout))
 
             # Check the HTTP status code and throw appropriate exceptions
             status_code = response.status_code
@@ -9122,7 +10597,7 @@ class GPUdb(object):
             # connections back into the pool
             response_data = response.content.decode("UTF-8")
 
-            if status_code == requests.codes.UNAUTHORIZED:  # UNAUTHORIZED
+            if status_code in (requests.codes.UNAUTHORIZED, requests.codes.FORBIDDEN):
                 msg = f"Unauthorized access: '{response.reason}'"
                 self.__log_debug(msg)
                 raise GPUdbUnauthorizedAccessException(msg)
@@ -9136,11 +10611,17 @@ class GPUdb(object):
                        f"code {status_code}: {response.reason}")
                 self.__log_debug(f"Throwing GPUdb exception; {msg}")
                 raise GPUdbException(msg)
+            elif status_code == requests.codes.BAD_REQUEST:
+                self.__raise_if_json_response_triggers_failover( url, response_data )
 
             # Return the response as a UTF-8 string
             return response_data
 
-        except ssl.SSLError as ex:
+        except (ssl.SSLError, requests.exceptions.SSLError) as ex:
+            # requests reports a failed certificate check as its own SSLError,
+            # which is a ConnectionError and not an ssl.SSLError; caught here,
+            # ahead of ConnectionError, so that it reaches the user with the
+            # hint below rather than being taken for a dead server
             msg = f"Unable to execute SSL handshake with '{url.url}' due to: {GPUdbException.stringify_exception(ex)}"
             final_msg = self.__SSL_ERROR_MESSAGE_TEMPLATE.format(msg)
             self.__log_debug(final_msg)
@@ -9746,13 +11227,10 @@ class GPUdb(object):
                                 get_rsp_cext = False,
                                 convert_to_attr_dict    = False,
                                 return_raw_response_too = False ):
-        """Submits an arbitrary request to the database server's host manager
-         and returns the response.  If a failover trigger is encountered, then
-        either an HA failover occurs (if an HA ring has been set up), or in the
-        case of a stand-alone cluster, a failover recovery is attempted (which
-        may continue indefinitely, based on relevant options set the by the
-        user).  In the case of a successful failover, the internally cached
-        URL will be updated to point to the new URL being used.
+        """Submits an arbitrary request to the current cluster's host manager
+        and returns the response.  No failover is attempted: a failure is
+        returned to the caller, and neither the host manager URL nor the
+        database URL in use changes.
 
         Should only be used for endpoints that are actually accepted by the
         host manager.
@@ -9767,9 +11245,8 @@ class GPUdb(object):
 
             url (GPUdb.URL)
                 Optional argument.  If given, this URL would be used to connect
-                to the database.  If none given, then the current URL cached
-                internally would be used instead.  If given, then **no failover
-                will be attempted**.
+                to the host manager.  If none given, then the current cluster's
+                host manager URL would be used instead.
 
             timeout (int)
                 Optional argument.  If given, then the positive integer would be
@@ -9836,203 +11313,62 @@ class GPUdb(object):
         # end if
 
 
-        # If any URL is given, then no failover would be attempted!  The easiest
-        # way to do this is to just call submit request raw, and propagate any
-        # exceptions that method may throw
-        if url is not None:
-            # First validate it
-            if not isinstance( url, GPUdb.URL ):
-                msg = ("Argument 'url' must be a GPUdb.URL object; given '{}'"
-                       "".format( str(type(url)) ) )
-                self.__log_debug( msg )
-                raise GPUdbException( msg )
-            # end inner if
-
-            response = self.__submit_request_raw( url = url, endpoint = endpoint,
-                                                  request_body = request_body,
-                                                  timeout = timeout,
-                                                  get_req_cext = get_req_cext,
-                                                  get_rsp_cext = get_rsp_cext,
-                                                  convert_to_attr_dict    = convert_to_attr_dict,
-                                                  return_raw_response_too = return_raw_response_too )
-            return response
+        # No failover, and no retry loop of its own.
+        #
+        # The host manager runs on the head node, is not health-checked, and is
+        # reached at an address derived from the head node's URL.  A host
+        # manager request that fails is therefore a failure of this cluster's
+        # host manager, and there is nowhere else it could correctly be sent:
+        # these endpoints name hosts and ranks *within* the cluster they are
+        # addressed to, and resolve those names against whichever cluster
+        # receives them.
+        #
+        # This method used to walk the HA ring on failure and replay the
+        # request against the next cluster's host manager.  That could apply a
+        # management operation -- /admin/remove/host among them -- to a cluster
+        # the caller never named, and report success; and the switch moved this
+        # object's database connection too, even when that database was
+        # healthy.  A host manager failure now goes back to the caller.
+        #
+        # Ordinary transport retries still apply, at the HTTP layer.
+        if url is None:
+            url = self.get_hm_url( stringified = False )
+        elif not isinstance( url, GPUdb.URL ):
+            msg = ("Argument 'url' must be a GPUdb.URL object; given '{}'"
+                   "".format( str(type(url)) ) )
+            self.__log_debug( msg )
+            raise GPUdbException( msg )
         # end if
 
-        # We need to send the request to the host manager
-        hm_url = self.get_hm_url( stringified = False )
-        original_hm_url = hm_url
-
-        # We want to capture the original exception
-        original_exception = None
-
-        for i in range(self.__HOST_MANAGER_SUBMIT_REQUEST_RETRY_COUNT):
-            # We need a snapshot of the current state re: HA failover.  When
-            # multiple threads work on this object, we'll need to know how
-            # many times we've switched clusters *before* attempting another
-            # request submission.
-            current_cluster_switch_count = self.get_num_cluster_switches()
-
-            try:
-                response = self.__submit_request( endpoint,
-                                                  request_body,
-                                                  url = hm_url,
-                                                  timeout = timeout,
-                                                  get_req_cext = get_req_cext,
-                                                  get_rsp_cext = get_rsp_cext,
-                                                  convert_to_attr_dict    = convert_to_attr_dict,
-                                                  return_raw_response_too = return_raw_response_too )
-
-
-                # Check that the host manager did not go down
-                if not response.is_ok():
-                    # Check for a special error message saying that the DB
-                    # is offline
-                    if (C._DB_HM_OFFLINE_ERROR_MESSAGE
-                        in response.get_error_msg() ):
-                        raise GPUdbException( response.get_error_msg() )
-                    # end inner if
-                # end if
-
-                return response
-            except GPUdbUnauthorizedAccessException as ex:
-                # Any permission related problem should get propagated
-                raise
-            except (GPUdbConnectionException, GPUdbExitException, GPUdbDecodingException) as ex:
-                # Save the original exception for later use
-                if original_exception is None:
-                    original_exception = GPUdbException( str(ex) )
-                # end if
-
-                self.__log_debug( "Got exit-level exception when trying endpoint {} at {}: {}; switch URL..."
-                                  "".format( endpoint, str(hm_url), str(ex ) ) )
-                # Handle our special exit exception
-                try:
-                    hm_url = self.__switch_hm_url( original_hm_url, current_cluster_switch_count )
-                    self.__log_debug( "Switched to {}".format( str( hm_url ) ) )
-                except GPUdbHAUnavailableException as ha_ex:
-                    # We've now tried all the HA clusters and circled back
-                    # Get the original cause to propagate to the user
-                    error_message  = ("{orig}; {new}".format( orig = str(ex),
-                                                              new  = str(ha_ex) ) )
-                    self.__log_debug( error_message )
-                    raise GPUdbException( error_message, True )
-                except GPUdbFailoverDisabledException as ha_ex:
-                    # Failover is disabled; return the original cause
-                    error_message  = ("{orig}; {new}".format( orig = str(ex),
-                                                              new  = str(ha_ex) ) )
-                    self.__log_debug( error_message )
-                    raise GPUdbException( error_message, True )
-                # end try
-            except GPUdbException as ex:
-                # Save the original exception for later use
-                if original_exception is None:
-                    original_exception = ex
-                # end if
-
-                # The host manager can still be going even if the database is down
-                if ( C._DB_HM_OFFLINE_ERROR_MESSAGE in str(ex) ):
-                    # Looks like the host manager is down
-                    try:
-                        hm_url = self.__switch_hm_url( original_hm_url, current_cluster_switch_count )
-                        self.__log_debug( "Switched to {}".format( str( hm_url ) ) )
-                    except GPUdbHAUnavailableException as ha_ex:
-                        # We've now tried all the HA clusters and circled back
-                        # Get the original cause to propagate to the user
-                        error_message  = ("{orig}; {new}".format( orig = str(ex),
-                                                                  new  = str(ha_ex) ) )
-                        self.__log_debug( error_message )
-                        raise GPUdbException( error_message, True )
-                    except GPUdbFailoverDisabledException as ha_ex:
-                        # Failover is disabled; return the original cause
-                        error_message  = ("{orig}; {new}".format( orig = str(ex),
-                                                                  new  = str(ha_ex) ) )
-                        self.__log_debug( error_message )
-                        raise GPUdbException( error_message, True )
-                    # end try
-                else:
-                    # Any other GPUdbException is a valid failure
-                    self.__log_debug( "Got GPUdbException, so propagating: {}"
-                                      "".format( str(ex) ) )
-                    raise
-                # end if
-            except Exception as ex:
-                # Save the original exception for later use
-                orig_ex_str = GPUdbException.stringify_exception( ex )
-                if original_exception is None:
-
-                    original_exception = GPUdbException( orig_ex_str )
-                # end if
-
-                self.__log_debug( "Got regular exception when trying endpoint {}"
-                                  " at {}: {}; switch URL..."
-                                  "".format( endpoint, str(hm_url), orig_ex_str ) )
-                # And other random exceptions probably are also connection errors
-                try:
-                    hm_url = self.__switch_hm_url( original_hm_url, current_cluster_switch_count )
-                    self.__log_debug( "Switched to {}".format( str(hm_url) ) )
-                except GPUdbHAUnavailableException as ha_ex:
-                    # We've now tried all the HA clusters and circled back
-                    # Get the original cause to propagate to the user
-                    error_message  = ("{orig}; {new}".format( orig = orig_ex_str,
-                                                              new  = str(ha_ex) ) )
-                    self.__log_debug( error_message )
-                    raise GPUdbException( error_message, True )
-                except GPUdbFailoverDisabledException as ha_ex:
-                    # Failover is disabled; return the original cause
-                    error_message  = ("{orig}; {new}".format( orig = orig_ex_str,
-                                                              new  = str(ha_ex) ) )
-                    self.__log_debug( error_message )
-                    raise GPUdbException( error_message, True )
-                # end try
-            # end try
-        # end for
-
-        # If we reach here, then something went wrong
-        self.__log_debug( "Failed to submit host manager endpoint {}; exceeded "
-                          "retry count {}; original exception: '{}'; please "
-                          "check if the host manager port is wrong: {}"
-                          "".format( endpoint,
-                                     self.__HOST_MANAGER_SUBMIT_REQUEST_RETRY_COUNT,
-                                     str( original_exception ),
-                                     str( hm_url ) ) )
-        raise original_exception
+        return self.__submit_request_raw( url = url, endpoint = endpoint,
+                                          request_body = request_body,
+                                          timeout = timeout,
+                                          get_req_cext = get_req_cext,
+                                          get_rsp_cext = get_rsp_cext,
+                                          convert_to_attr_dict    = convert_to_attr_dict,
+                                          return_raw_response_too = return_raw_response_too )
     # end __submit_request_to_hm
 
 
 
-    def __create_header_and_process_body_data( self, body_data ):
-        """Create an HTTP or HTTPS header, and compress the body data
-        if needed.
+    def __create_common_headers( self ):
+        """Create the headers every request carries, whatever its kind: the
+        user's custom headers, then the authorization and the HA synchronicity
+        mode, which they cannot override.  The session id and user agent are
+        the HTTP session's own defaults.
 
-        Parameters:
-            body_data
-                The body of the data, already avro or json encoded
+        Built afresh for each request, so that a header added or removed since
+        the last one is honored.  The custom headers used to be copied into the
+        HTTP session's defaults as well, so removing one did not stop it being
+        sent; and the JSON requests built their own headers, which left out the
+        custom headers added later and the synchronicity mode.
 
         Returns:
-            A tuple where the first element is the header and the second
-            element is the body data (either unprocessed or processed).
+            A dict of the headers.
         """
-        headers = {}
-
         # Set the user defined headers (do this first so that the required
         # headers are not overridden accidentally)
-        if self.__custom_http_headers:
-            for header, value in self.__custom_http_headers.items():
-                headers[ header ] = value
-            # end for
-        # end if
-
-        if self.encoding == C._ENCODING_BINARY:
-            headers[ C._HEADER_CONTENT_TYPE ] = C._REQUEST_ENCODING_OCTET
-            headers[ C._HEADER_ACCEPT       ] = C._REQUEST_ENCODING_OCTET
-        elif self.encoding == C._ENCODING_JSON:
-            headers[ C._HEADER_CONTENT_TYPE ] = C._REQUEST_ENCODING_JSON
-            headers[ C._HEADER_ACCEPT       ] = C._REQUEST_ENCODING_JSON
-        elif self.encoding == C._ENCODING_SNAPPY:
-            headers[ C._HEADER_CONTENT_TYPE ] = C._REQUEST_ENCODING_SNAPPY
-            headers[ C._HEADER_ACCEPT       ] = C._REQUEST_ENCODING_SNAPPY
-            body_data = snappy.compress(body_data)
-        # end if
+        headers = dict( self.__custom_http_headers )
 
         # Set the authentication header, if needed
         if self.auth:
@@ -10043,8 +11379,73 @@ class GPUdb(object):
         if (self.ha_sync_mode != GPUdb.HASynchronicityMode.DEFAULT):
             headers[ C._HEADER_HA_SYNC_MODE ] = self.ha_sync_mode.value
 
+        return headers
+    # end __create_common_headers
+
+
+    def __create_header_and_process_body_data( self, body_data, endpoint = None ):
+        """Create an HTTP or HTTPS header, and compress the body data
+        if needed.
+
+        Parameters:
+            body_data
+                The body of the data, already avro or json encoded
+
+            endpoint (str)
+                The endpoint the request is for; with :attr:`use_snappy`, a
+                binary request to insert or update records is compressed
+
+        Returns:
+            A tuple where the first element is the header and the second
+            element is the body data (either unprocessed or processed).
+        """
+        headers = self.__create_common_headers()
+
+        if self.encoding == C._ENCODING_BINARY:
+            # The response is not compressed, so only the content type changes
+            if self.__is_snappy_compressed( endpoint, body_data ):
+                headers[ C._HEADER_CONTENT_TYPE ] = C._REQUEST_ENCODING_SNAPPY
+                body_data = snappy.compress( body_data )
+            else:
+                headers[ C._HEADER_CONTENT_TYPE ] = C._REQUEST_ENCODING_OCTET
+            headers[ C._HEADER_ACCEPT       ] = C._REQUEST_ENCODING_OCTET
+        elif self.encoding == C._ENCODING_JSON:
+            headers[ C._HEADER_CONTENT_TYPE ] = C._REQUEST_ENCODING_JSON
+            headers[ C._HEADER_ACCEPT       ] = C._REQUEST_ENCODING_JSON
+        elif self.encoding == C._ENCODING_SNAPPY:
+            headers[ C._HEADER_CONTENT_TYPE ] = C._REQUEST_ENCODING_SNAPPY
+            headers[ C._HEADER_ACCEPT       ] = C._REQUEST_ENCODING_SNAPPY
+            if body_data is not None:
+                body_data = snappy.compress(body_data)
+        # end if
+
         return (headers, body_data)
     # end __create_header_and_process_body_data
+
+
+    def __is_snappy_compressed( self, endpoint, body_data ):
+        """Whether a binary request is Snappy-compressed:
+        with :attr:`use_snappy`, one that inserts or updates records, unless
+        it is larger than Snappy can compress -- which is warned of the first
+        time, and noted at debug level after.
+        """
+        if ( (not self.__use_snappy) or (not body_data)
+             or (endpoint not in GPUdb._SNAPPY_COMPRESSED_ENDPOINTS) ):
+            return False
+
+        size = len( body_data )
+        if size <= GPUdb._MAX_SNAPPY_COMPRESSION_SIZE:
+            return True
+
+        msg = ( "Snappy compression enabled, but data size <{}> exceeds compressible "
+                "limit <{}>.".format( size, GPUdb._MAX_SNAPPY_COMPRESSION_SIZE ) )
+        if not self.__did_snappy_size_warning:
+            self.__did_snappy_size_warning = True
+            self.__log_warn( msg + "  This and any future data above the limit will be sent uncompressed." )
+        else:
+            self.__log_debug( msg + "  This data will be sent uncompressed." )
+        return False
+    # end __is_snappy_compressed
 
 
     @deprecated
@@ -10107,13 +11508,281 @@ class GPUdb(object):
     # end __initialize_http_connection
 
 
+    def _probe_current_cluster_multihead( self ):
+        """Re-reads the current cluster's worker rank addresses from its own
+        system properties, probes them, and records whether multi-head
+        operations are usable there: the one writer of the cluster's
+        :class:`GPUdb.MultiHeadSnapshot`.
+
+        A capability probe, not a health check: a cluster whose head node is
+        up is usable whatever its workers are doing, and the answer here only
+        decides multi-head versus head-node-only.  A caller in the failover
+        path must not take False as a reason to reject the cluster.
+
+        It re-contacts the ranks rather than only re-reading their addresses:
+        addresses this client has never reached, adopted with multi-head left
+        on, would be worse than degrading.  It resolves with the connection's
+        hostname regex, never a caller's, since what it writes is
+        connection-scoped state that every multi-head object reads.
+
+        Returns:
+            Whether multi-head operations are available on the current
+            cluster.
+        """
+        # One probe per connection at a time: the addresses and the verdict
+        # are published together, and two probes interleaved would let a
+        # reader route on a mixture of them.  The probe lock is taken before
+        # the URL lock (through the current cluster record), never after.
+        with self.__probe_lock:
+            cluster = self.__get_current_cluster_info()
+            if cluster is None:
+                return False
+
+            # With auto-discovery off -- set by the user, or by the connection
+            # itself on failing to discover -- the cluster is used through its
+            # head node alone, and no rank is probed: resolving and reaching
+            # the ranks here would turn multi-head on behind that setting, on
+            # the first worker list, or on a failover or a fail-back.  The
+            # answer is published once per arrival, so that a multi-head
+            # object still notices the move.
+            if self.__disable_auto_discovery:
+                current = cluster.multihead_snapshot
+                if cluster.probe_owed or current.multihead_available or current.worker_rank_urls:
+                    cluster.multihead_snapshot = GPUdb.MultiHeadSnapshot( [], False )
+                cluster.probe_owed = False
+                return False
+            # end if
+
+            was_available = cluster.is_multihead_available
+            worker_urls   = []
+            # Whether the probe below decided reachability for itself.  A
+            # refresh that failed leaves the previous addresses in place, and
+            # those are still probed rather than inherited as good.
+            probe_decided = False
+            available     = False
+            try:
+                properties = self.__get_system_properties( cluster.head_rank_url )
+                worker_urls, available = _address_resolution.resolve_worker_rank_urls(
+                    properties,
+                    self.options.hostname_regex,
+                    cluster.head_rank_url,
+                    lambda url: self.__is_system_running( url, quick_check = True ),
+                    self.__get_system_properties )
+                probe_decided = True
+            except Exception as ex:
+                self.__log_debug( "Could not refresh worker addresses for cluster <{}>: {}"
+                                  "".format( str( cluster.head_rank_url ), str( ex ) ) )
+                worker_urls = cluster.multihead_snapshot.worker_rank_urls
+            # end try
+
+            # Why multi-head is not available, where it is not, for the warning
+            advertises_none = False
+            if not worker_urls:
+                available = False
+                enabled_at_server = ( probe_decided
+                                      and (properties.get( _address_resolution.ENABLE_MULTI_HEAD, "" ).upper() == "TRUE") )
+                if enabled_at_server:
+                    # Multi-head is on at the server, so the four worker
+                    # address properties should be there; their absence is
+                    # something unexpected, reported rather than worked around
+                    advertises_none = True
+                    reason = ( "it advertises no worker rank addresses although multi-head "
+                               "is enabled at the server (no {})".format( _address_resolution.SERVER_URLS ) )
+                else:
+                    reason = "multi-head is off at the server"
+            else:
+                if not probe_decided:
+                    # Fell back to the addresses already held, which carry no
+                    # candidates to search: probe them as they are
+                    available = all( self.__is_system_running( url, quick_check = True )
+                                     for url in worker_urls if url is not None )
+                reason = "its worker addresses are not reachable from this client"
+            # end if
+
+            # The single publication: a new instance carries the addresses
+            # and the verdict together, and its identity is what tells every
+            # multi-head object that this cluster's answer has been replaced
+            cluster.multihead_snapshot = GPUdb.MultiHeadSnapshot( worker_urls, available )
+            # This arrival's probe is done.  Cleared after the publication, so
+            # a thread that sees the marker clear sees the snapshot with it.
+            first_probe_of_arrival = cluster.probe_owed
+            cluster.probe_owed = False
+
+            # Announced once, with the reason: on the transition, as a
+            # cluster already known to be degraded is reported when a switch
+            # lands on it; and, for a server that says multi-head is on but
+            # advertises no addresses, on the arrival's first probe
+            if (not available) and (was_available or (advertises_none and first_probe_of_arrival)):
+                self.__log_warn( "Multi-head operations are not available on cluster <{}>: {}.  "
+                                 "Operations will use the head node only."
+                                 "".format( str( cluster.head_rank_url ), reason ) )
+            return available
+        # end with
+    # end _probe_current_cluster_multihead
+
+
+    def _get_current_multihead_snapshot( self ):
+        """The current cluster's :class:`GPUdb.MultiHeadSnapshot`, or None
+        where there is no current cluster.  A multi-head object holds the one
+        it
+        last built from and compares by identity: a new instance means the
+        cluster's answer has been replaced, by a different cluster or by a
+        fresh probe of the same one, and is the only rebuild signal it needs.
+        """
+        cluster = self.__get_current_cluster_info()
+        return None if cluster is None else cluster.multihead_snapshot
+    # end _get_current_multihead_snapshot
+
+
+    def _acquire_multihead_snapshot( self, topology_may_have_moved ):
+        """The current cluster's :class:`GPUdb.MultiHeadSnapshot`: its rank
+        addresses and whether multi-head is usable there, as one value.
+
+        The only way a multi-head object obtains rank addresses, and a
+        question rather than a command: the caller says what it observed, and
+        the connection decides what that costs.  Arriving at a cluster probes
+        it, in a failover or a fail-back, and every object that then asks gets
+        that same result rather than repeating the work.
+
+        Parameters:
+            topology_may_have_moved (bool)
+                True where the caller saw something that can move rank
+                addresses without moving the connection -- a change of shard
+                version, as a rebalance produces -- and the connection
+                re-probes before answering.  False otherwise, answered from
+                what the connection holds, unless this arrival's own probe is
+                still outstanding.
+
+        Returns:
+            The current cluster's snapshot, or None where there is no current
+            cluster.
+        """
+        if topology_may_have_moved:
+            self._probe_current_cluster_multihead()
+        else:
+            self.__await_arrival_probe()
+        return self._get_current_multihead_snapshot()
+    # end _acquire_multihead_snapshot
+
+
+    def __await_arrival_probe( self ):
+        """Ensures this arrival's capability probe has happened before the
+        caller reads addresses, without performing a second one.  The common
+        case is one read of the marker, cleared by the switching thread's
+        probe; otherwise the caller contends on the probe lock and re-checks,
+        so it either waits out that probe or, having got there first,
+        performs the one this arrival owed.
+        """
+        cluster = self.__get_current_cluster_info()
+        if (cluster is None) or (not cluster.probe_owed):
+            return
+        with self.__probe_lock:
+            cluster = self.__get_current_cluster_info()
+            if (cluster is not None) and cluster.probe_owed:
+                self._probe_current_cluster_multihead()
+    # end __await_arrival_probe
+
+
+    def __mark_arrival_owes_probe( self ):
+        """Marks the current cluster as owing a capability probe for this
+        arrival on it; see :attr:`GPUdb.ClusterAddressInfo.probe_owed`.
+        """
+        cluster = self.__get_current_cluster_info()
+        if cluster is not None:
+            cluster.probe_owed = True
+    # end __mark_arrival_owes_probe
+
+
+    def __get_current_cluster_info( self ):
+        """The current cluster's record, or None where none is registered.
+        Under the URL lock where the ring holds more than one cluster, as the
+        index may be moving.
+        """
+        if not self.__cluster_info:
+            return None
+        if len( self.__cluster_info ) == 1:
+            return self.__cluster_info[ 0 ]
+        with self.__url_lock:
+            return self.__cluster_info[ self.__get_curr_cluster_index() ]
+    # end __get_current_cluster_info
+
+
+    def _fail_back_to_primary_cluster( self ):
+        """Returns the connection to the primary cluster after a successful
+        fail-back poll, and re-establishes multi-head there.  The third way
+        the connection's cluster
+        changes, beside the first connection and a failover.
+
+        It does not touch the cluster switch count: that is the baseline for
+        a failover's per-caller arithmetic, and counting a fail-back there
+        would consume one of every in-flight caller's attempts.  Multi-head
+        objects notice a fail-back by the identity of the snapshot they last
+        built from, which the probe below replaces as it does for a failover.
+        """
+        with self.__url_lock:
+            # Index 0 is the primary: the indices are kept with the primary's
+            # first precisely so that circling back lands on it again
+            self._set_curr_cluster_index_pointer( 0 )
+            # An arrival, exactly as a failover is
+            self.__mark_arrival_owes_probe()
+        self.__log_info( "Failed back to the primary cluster; re-establishing multi-head" )
+        # Outside the URL lock, as a failover's probe is; see __switch_url()
+        self._probe_current_cluster_multihead()
+    # end _fail_back_to_primary_cluster
+
+
+    def __drop_pooled_connections_in_child( self ):
+        """Drops this client's pooled HTTP connections.  Run in a process
+        forked from this one: the child shares the parent's open connections,
+        and two processes writing on one socket garble both their requests
+        (a batch of multi-head ingest from a forked worker was refused as
+        unreadable).  Dropped, they are reopened at the child's next request,
+        its own; the parent's are untouched.
+        """
+        for session in ( self.__session, self.__session_fast ):
+            for adapter in list( session.adapters.values() ):
+                try:
+                    adapter.close()
+                except Exception as ex:
+                    self.__log_debug( "Could not drop a pooled connection in the forked "
+                                      "child: {}".format( ex ) )
+    # end __drop_pooled_connections_in_child
+
+
     def __switch_url( self, old_url, old_num_cluster_switches ):
+        """Switches the HA ring cluster, as :meth:`__select_failover_cluster`
+        does, and probes the cluster arrived at for multi-head.  Once per
+        switch rather than once per multi-head object, and for every switch,
+        one driven by an ordinary request too, so that an ingestor or a
+        retriever made later finds addresses already verified.  A thread that
+        adopted another thread's switch does not probe: that switch was
+        probed by whoever performed it.
+
+        The probe runs OUTSIDE the URL lock, deliberately.  It takes the probe
+        lock and then the URL lock, and probing under the URL lock would
+        invert that order against every other prober and deadlock, besides
+        holding the lock that guards the cluster index across a properties
+        query and a health check per rank.
+
+        Parameters and the return value are :meth:`__select_failover_cluster`'s.
+        """
+        switched_to, switched_here = self.__select_failover_cluster( old_url, old_num_cluster_switches )
+        if switched_here:
+            self._probe_current_cluster_multihead()
+        return switched_to
+    # end __switch_url
+
+
+    def __select_failover_cluster( self, old_url, old_num_cluster_switches ):
         """Switches the URL of the HA ring cluster.  Check if we've circled back to
         the old URL.  If we've circled back to it, then re-shuffle the list of
         indices so that the next time, we pick up HA clusters in a different random
         manner and throw an exception.
 
-        This is not a thread-safe method.
+        Thread-safe: the ring walk is made under the
+        URL lock, and a cluster another thread has already switched to is
+        re-checked before it is adopted.  So the cluster returned has been
+        found usable.
 
         Parameters:
             old_url (GPUdb.URL)
@@ -10126,7 +11795,9 @@ class GPUdb(object):
                 fail over to the next cluster and that this thread should stand
                 down
         Returns:
-            The next cluster head rank :class:`GPUdb.URL` to try
+            The next cluster head rank :class:`GPUdb.URL` to try, and whether
+            this thread performed the switch (False where it adopted one
+            another thread had already made)
         """
         self.__log_debug( "Attempting to switch URLs, from: {}; original failing URL: {}"
                           "".format( self.get_url(), str(old_url) ) )
@@ -10137,63 +11808,97 @@ class GPUdb(object):
             raise GPUdbFailoverDisabledException( "Failover is disabled!" )
         # end if
 
-        # If there is only one URL, then we can't switch URLs
-        if ( self.__get_ha_ring_size() == 1 ):
-            self.__log_debug( "Only one cluster in ring--no fail-over cluster available")
-            raise GPUdbHAUnavailableException("Only one cluster in ring; HA failover unavailable")
-        # end if
+        with self.__url_lock:
+            # If there is only one URL, then we can't switch URLs
+            if ( self.__get_ha_ring_size() == 1 ):
+                self.__log_debug( "Only one cluster in ring--no fail-over cluster available")
+                raise GPUdbHAUnavailableException("Only one cluster in ring; HA failover unavailable")
+            # end if
 
-        # Get how many more times other threads have switched clusters
-        # since the caller called this function.  If the situation is:
-        #
-        # count = 0             -> the calling thread is the first to get
-        #                          here; switch to the next cluster
-        # 0 < count < ring size -> another thread is either in the process
-        #                          of switching clusters or has switched to
-        #                          a working one; use the new current one
-        # count >= ring size    -> another thread has already tried all
-        #                          failover clusters; throw exception
-        count_cluster_switches_since_invocation = (self.get_num_cluster_switches()
-                                                   - old_num_cluster_switches)
+            # Get how many more times other threads have switched clusters
+            # since the caller called this function.  If the situation is:
+            #
+            # count = 0             -> the calling thread is the first to get
+            #                          here; switch to the next cluster
+            # 0 < count < ring size -> another thread is either in the process
+            #                          of switching clusters or has switched to
+            #                          a working one; use the new current one
+            # count >= ring size    -> another thread has already tried all
+            #                          failover clusters; throw exception
+            count_cluster_switches_since_invocation = (self.get_num_cluster_switches()
+                                                       - old_num_cluster_switches)
 
-        # Check if another thread has tried all the clusters in the HA ring
-        ha_ring_size = self.__get_ha_ring_size()
-        have_switched_clusters_across_the_ring = ( count_cluster_switches_since_invocation
-                                                   >= ha_ring_size )
-        self.__log_debug( "Cluster fail-over attempts across all threads vs. total clusters in ring: {} vs. {}"
-                          "".format( count_cluster_switches_since_invocation, ha_ring_size ) )
-        if ( have_switched_clusters_across_the_ring ):
-            all_head_rank_urls = [ str(cluster.head_rank_url) for cluster in self.all_cluster_info ]
-            raise GPUdbHAUnavailableException("Fail-over attempted as many times as clusters in the ring; URLs attempted: {}"
-                                              "".format( all_head_rank_urls ) )
-        # end if
+            # Check if another thread has tried all the clusters in the HA ring
+            ha_ring_size = self.__get_ha_ring_size()
+            have_switched_clusters_across_the_ring = ( count_cluster_switches_since_invocation
+                                                       >= ha_ring_size )
+            self.__log_debug( "Cluster fail-over attempts across all threads vs. total clusters in ring: {} vs. {}"
+                              "".format( count_cluster_switches_since_invocation, ha_ring_size ) )
+            if ( have_switched_clusters_across_the_ring ):
+                all_head_rank_urls = [ str(cluster.head_rank_url) for cluster in self.all_cluster_info ]
+                raise GPUdbHAUnavailableException("Fail-over attempted as many times as clusters in the ring; URLs attempted: {}"
+                                                  "".format( all_head_rank_urls ) )
+            # end if
 
-        # Check if another thread beat us to switching the URL
-        curr_url = self.get_url( stringified = False )
-        if ( (curr_url != old_url)
-             and (count_cluster_switches_since_invocation > 0) ):
-            self.__log_debug( "Already failed over to URL: {}".format( str(curr_url) ) )
-            # Another thread must have already switched the URL; use the new
-            # current URL
-            return curr_url
-        # end if
-
-        # Advance until a USABLE cluster is found.  The acceptance test is the
-        # shared __is_cluster_usable predicate (running AND not draining) -- the
-        # same one used at initial connect -- NOT a bare liveness ping.  A ping
-        # alone passes on a draining node, which would let failover land on a
-        # cluster that then rejects queries/DML ("Unavailable: Draining HA
-        # queue") and thrash.  quick_check keeps the per-hop status call fast.
-        while not self.__is_cluster_usable( curr_url, quick_check = True ):
-            # This thread is the first one here--select the next cluster to use
-            # during this HA failover
-            self.__select_next_cluster()
-
-            # If we've circled back, shuffle the indices again so that future
-            # requests go to a different randomly selected cluster, but also
-            # let the caller know that we've circled back
+            # Check if another thread beat us to switching the URL
             curr_url = self.get_url( stringified = False )
-            if ( curr_url == old_url ):
+            if ( (curr_url != old_url)
+                 and (count_cluster_switches_since_invocation > 0) ):
+                # Another thread must have already switched the URL; adopt the
+                # new current one -- but only once it is known to be usable.
+                # The other thread's check may be long past (this
+                # caller's baseline can be minutes old), and a walk that circled
+                # back leaves the pointer on a cluster just found unusable.  So
+                # it is checked again here, and if it fails, this thread walks
+                # on from it.
+                if self.__is_cluster_usable( curr_url, quick_check = True ):
+                    self.__log_debug( "Already failed over to URL: {}".format( str(curr_url) ) )
+                    return curr_url, False
+                # end if
+
+                self.__log_debug( "Already failed over to URL: {}, but it is not usable; "
+                                  "continuing to switch".format( str(curr_url) ) )
+            # end if
+
+            # Advance FIRST, then test, until a USABLE cluster is found.  The
+            # caller is here because the current cluster
+            # just failed, so it must not be kept merely because it passes the
+            # status check: a cluster can fail requests (an HTTP 500 from a broken
+            # rank, say) while reporting itself running and not draining.  Testing
+            # before advancing handed such a cluster straight back, with no switch
+            # counted, and the caller resent the request there forever.
+            #
+            # The acceptance test is the shared __is_cluster_usable predicate
+            # (running AND not draining) -- the same one used at initial connect --
+            # NOT a bare liveness ping.  A ping alone passes on a draining node,
+            # which would let failover land on a cluster that then rejects
+            # queries/DML ("Unavailable: Draining HA queue") and thrash.
+            # quick_check keeps the per-hop status call fast.
+            #
+            # The walk is at most one trip around the ring: it ends on circling
+            # back to the original URL, and the step limit ends it even should that
+            # URL no longer be in the ring.
+            found_usable_cluster = False
+            for _ in range( ha_ring_size ):
+                # This thread is the first one here--select the next cluster to use
+                # during this HA failover
+                self.__select_next_cluster()
+
+                curr_url = self.get_url( stringified = False )
+                if ( curr_url == old_url ):
+                    break
+                # end if
+
+                if self.__is_cluster_usable( curr_url, quick_check = True ):
+                    found_usable_cluster = True
+                    break
+                # end if
+            # end for
+
+            if not found_usable_cluster:
+                # We've circled back; shuffle the indices again so that future
+                # requests go to a different randomly selected cluster, but also
+                # let the caller know that we've circled back
                 self.__log_debug( "Current URL is the same as the original URL: {}; randomizing URLs and throwing exception"
                                   "".format( str(old_url)) )
                 # Re-shuffle and set the index counter to zero
@@ -10205,15 +11910,21 @@ class GPUdb(object):
                                                   "".format( all_head_rank_urls ) )
             # end if
 
-        # Invoke the fail-back poller here
-        if self.__check_failback_conditions():
-            self.poller_service = _FailbackPollerService(self, self.options.failback_options)
-            self.poller_service.start()
+            # Invoke the fail-back poller here: this client's own, created on its
+            # first failover; start() does nothing while it is already running
+            if self.__check_failback_conditions():
+                if self.poller_service is None:
+                    self.poller_service = _FailbackPollerService(self, self.options.failback_options)
+                self.poller_service.start()
 
-        # Haven't circled back to the old URL; so return the new one
-        self.__log_debug( "Switched to fail-over URL: {}".format( self.get_url() ) )
-        return self.get_url( stringified = False )
-    # end __switch_url
+            # Haven't circled back to the old URL; so return the new one
+            self.__log_debug( "Switched to fail-over URL: {}".format( self.get_url() ) )
+            # An arrival on this cluster: it owes the probe __switch_url()
+            # makes once the URL lock is released
+            self.__mark_arrival_owes_probe()
+            return self.get_url( stringified = False ), True
+        # end with
+    # end __select_failover_cluster
 
     def __check_failback_conditions(self):
         primary_host = self.get_primary_host()
@@ -10222,106 +11933,11 @@ class GPUdb(object):
         return primary_host is not None and len(primary_host) > 0 and ring_size > 1
 
 
-    def __switch_hm_url( self, old_url, old_num_cluster_switches ):
-        """Switches the host manager URL of the HA ring cluster.  Check if we've
-        circled back to the old URL.  If we've circled back to it, then
-        re-shuffle the list of indices so that the next time, we pick up HA
-        clusters in a different random manner and throw an exception.
-
-        This is not a thread-safe method.
-
-        Parameters:
-            old_url (GPUdb.URL)
-                The host manager :class:`GPUdb.URL` in use at the time of the
-                failover that initiated this switch
-            old_num_cluster_switches (int)
-                The total number of cluster switches that have occurred up to
-                the moment before this thread's switch was initiated; this will
-                be used to determine whether another thread is already trying to
-                fail over to the next cluster and that this thread should stand
-                down
-        Returns:
-            The next host manager :class:`GPUdb.URL` to try
-        """
-        self.__log_debug( "Attempting to switch Host Manager URLs, from: {}; original failing URL: {}"
-                          "".format( self.get_hm_url(), str(old_url) ) )
-
-        # The user may disable failover altogether
-        if self.__disable_failover:
-            self.__log_debug( "Failover is disabled; throwing exception" )
-            raise GPUdbFailoverDisabledException( "Failover is disabled!" )
-        # end if
-
-        # If there is only one URL, then we can't switch URLs
-        if ( self.__get_ha_ring_size() == 1 ):
-            self.__log_debug( "Only one cluster in ring--no fail-over cluster available")
-            raise GPUdbHAUnavailableException("Only one cluster in ring; HA failover unavailable")
-        # end if
-
-        # Get how many more times other threads have switched clusters
-        # since the caller called this function.  If the situation is:
-        #
-        # count = 0             -> the calling thread is the first to get
-        #                          here; switch to the next cluster
-        # 0 < count < ring size -> another thread is either in the process
-        #                          of switching clusters or has switched to
-        #                          a working one; use the new current one
-        # count >= ring size    -> another thread has already tried all
-        #                          failover clusters; throw exception
-        count_cluster_switches_since_invocation = (self.get_num_cluster_switches()
-                                                   - old_num_cluster_switches)
-        # Check if another thread has tried all the clusters in the HA ring
-        ha_ring_size = self.__get_ha_ring_size()
-        have_switched_clusters_across_the_ring = ( count_cluster_switches_since_invocation
-                                                   >= ha_ring_size )
-        self.__log_debug( "Host Manager cluster fail-over attempts across all threads vs. total clusters in ring: {} vs. {}"
-                          "".format( count_cluster_switches_since_invocation, ha_ring_size ) )
-        if ( have_switched_clusters_across_the_ring ):
-            all_hm_urls = [ str(cluster.host_manager_url) for cluster in self.__cluster_info ]
-            raise GPUdbHAUnavailableException("Host Manager fail-over attempted as many times as clusters in the ring; URLs attempted: {}"
-                                              "".format( all_hm_urls ) )
-        # end if
-
-        # Check if another thread beat us to switching the URL
-        curr_url = self.get_hm_url( stringified = False )
-        if ( (curr_url != old_url)
-             and (count_cluster_switches_since_invocation > 0) ):
-            self.__log_debug( "Already failed over to Host Manager URL: {}".format( str(curr_url) ) )
-            # Another thread must have already switched the URL; use the new
-            # current URL
-            return curr_url
-        # end if
-
-        # This thread is the first one here--select the next cluster to use
-        # during this HA failover
-        self.__select_next_cluster()
-
-        # If we've circled back, shuffle the indices again so that future
-        # requests go to a different randomly selected cluster, but also
-        # let the caller know that we've circled back
-        curr_url = self.get_hm_url( stringified = False )
-        if ( curr_url == old_url ):
-            self.__log_debug( "Current Host Manager URL is the same as the original URL: {}; randomizing URLs and throwing exception"
-                              "".format( str(old_url)) )
-            # Re-shuffle and set the index counter to zero
-            self.__randomize_clusters()
-
-            # Let the user know that we've circled back
-            all_hm_urls = [ str(cluster.host_manager_url) for cluster in self.__cluster_info ]
-            raise GPUdbHAUnavailableException("Circled back to original URL; no clusters available for Host Manager fail-over among these: {}"
-                                              "".format( all_hm_urls ) )
-        # end if
-
-        # Haven't circled back to the old URL; so return the new one
-        self.__log_debug( "Switched to Host Manager fail-over URL: {}".format( self.get_hm_url() ) )
-        return self.get_hm_url( stringified = False )
-    # end __switch_hm_url
-
-
 
     def __select_next_cluster( self ):
         """Select the next cluster based on the HA failover priority set by the
-        user.  This is not a thread-safe method.
+        user.  Not thread-safe on its own: called with the URL lock held, by
+        :meth:`__switch_url`.
         """
         curr_url_index_pointer = self.__get_curr_cluster_index_pointer()
 
@@ -10897,7 +12513,9 @@ class GPUdb(object):
 
 
     def set_client_logger_level( self, log_level ):
-        """Set the log level for the client GPUdb class.
+        """Set the log level for this GPUdb object alone (and its fail-back
+        poller).  To set the level of the whole API, use
+        :func:`gpudb.set_logging_level`.
 
         Parameters:
             log_level (int or str)
@@ -11374,9 +12992,12 @@ class GPUdb(object):
         try:
             # with self.__initialize_http_connection(url, self.timeout) as client:
             # Send the GET request
-            (headers, body_data) = self.__create_header_and_process_body_data(None)
+            # No body, so no body encoding: in particular none to compress
+            # under SNAPPY, which used to fail before the request was sent
+            headers = self.__create_common_headers()
             headers[C._HEADER_ACCEPT] = C._REQUEST_ENCODING_JSON
-            response = self.__get_current_http_connection().get(full_url, headers=headers)
+            response = self.__get_current_http_connection().get(full_url, headers=headers,
+                                                                timeout=self.__request_timeout(self.timeout))
 
             # Save the response
             result["data"] = response.content
@@ -11399,17 +13020,53 @@ class GPUdb(object):
 
 
 
-    def ping( self, url ):
-        """Pings the given URL and returns the response.  If no response,
-        returns an empty string.
+    def ping( self, url = None, timeout = None ):
+        """Pings the database.
+
+        Given a URL, pings it and returns the response, or an empty string if
+        it fails; there is no failover.
+
+        Given none, verifies that Kinetica is running at the current cluster,
+        failing over to the next cluster in the HA ring if it cannot be
+        reached, or answers with an HTTP status that fails a request over (as
+        a 503 from a stopped head rank behind httpd does), and returns its
+        response.  It raises a :class:`GPUdbException` once every cluster has
+        been tried, or failover is disabled, or if a cluster answers with
+        anything but "Kinetica is running!".
 
         Parameters:
-            url (GPUdb.URL)
-                The URL which we are supposed to ping.
+            url (GPUdb.URL or str)
+                Optional argument.  The URL to ping; if not given, the current
+                cluster is pinged, with failover.
+
+            timeout (int or float)
+                Optional argument.  The seconds to wait for a response from
+                each URL pinged; if not given, the :attr:`timeout` of this
+                object (none by default).  Connecting is bounded by
+                :attr:`GPUdb.Options.server_connection_timeout` as well.
 
         Returns:
-            The ping response, or an empty string if it fails.
+            The ping response: with a URL, an empty string if it fails.
+
+        Raises:
+            GPUdbException
+                Without a URL, if Kinetica could not be reached on any
+                cluster, or answered with an unexpected response.
         """
+        if (timeout is not None) and ( isinstance( timeout, bool )
+                                       or not isinstance( timeout, (int, float) )
+                                       or (timeout <= 0) ):
+            msg = ("Argument 'timeout' must be a positive number of seconds or "
+                   "None; given '{}'".format( timeout ))
+            self.__log_debug( msg )
+            raise GPUdbException( msg )
+
+        if timeout is None:
+            timeout = self.timeout
+
+        if url is None:
+            return self.__ping_with_failover( timeout )
+
         # Validate the input arguments
         if isinstance(url, str):
             try:
@@ -11425,49 +13082,108 @@ class GPUdb(object):
             raise GPUdbException(msg)
 
         try:
-            # Construct the full URL
-            full_url = f"{url.protocol}://{url.host}:{url.port}{url.path}"
-
-            # Use httpx client with context manager
-            # Execute GET request
-            (headers, body_data) = self.__create_header_and_process_body_data(None)
-            headers[C._HEADER_ACCEPT] = C._REQUEST_ENCODING_JSON
-            response = self.__get_current_http_connection().get(full_url, headers=headers)
-
-            # Get the response content
-            raw_data = response.content
-
-            # Decode the response if needed
-            if isinstance(raw_data, str):
-                # Got a string, no need to decode
-                return raw_data
-            elif isinstance(raw_data, bytes):
-                return raw_data.decode("utf-8")
-            else:
-                raise GPUdbException("Unhandled response {} with type {}"
-                                     "".format(raw_data,
-                                               str(type(raw_data))))
+            return self.__ping_url( url, timeout )[1]
         except Exception as ex:
             ex_str = GPUdbException.stringify_exception(ex)
             self.__log_debug("Got error while pinging: {}".format(ex_str))
             return ""
-    # end try
-    # end ping( url )
+    # end ping
+
+
+    def __ping_url( self, url, timeout ):
+        """GETs the given URL, with the given read timeout, and returns the
+        HTTP status code and the response text.  Raises an exception if the
+        URL cannot be reached, or does not answer in time.
+        """
+        self.__log_debug( "Pinging URL: {}".format( str( url ) ) )
+
+        # Construct the full URL
+        full_url = f"{url.protocol}://{url.host}:{url.port}{url.path}"
+
+        # No body, so no body encoding: in particular none to compress
+        # under SNAPPY, which used to fail before the request was sent
+        headers = self.__create_common_headers()
+        headers[C._HEADER_ACCEPT] = C._REQUEST_ENCODING_JSON
+        try:
+            # Through the session without retries: one attempt, so that a
+            # host that is down fails within the timeout rather
+            # than once per retry
+            response = self.__get_current_http_fast_connection().get(full_url, headers=headers,
+                                                                     timeout=self.__request_timeout(timeout))
+        except (ssl.SSLError, requests.exceptions.SSLError) as ex:
+            # A failed certificate check, not a dead server, as for requests
+            msg = f"Unable to execute SSL handshake with '{url.url}' due to: {GPUdbException.stringify_exception(ex)}"
+            raise GPUdbUnauthorizedAccessException(self.__SSL_ERROR_MESSAGE_TEMPLATE.format(msg))
+
+        # Get the response content, decoding it if needed
+        raw_data = response.content
+        if isinstance(raw_data, bytes):
+            raw_data = raw_data.decode("utf-8")
+        elif not isinstance(raw_data, str):
+            raise GPUdbException("Unhandled response {} with type {}"
+                                 "".format(raw_data,
+                                           str(type(raw_data))))
+        return ( response.status_code, raw_data )
+    # end __ping_url
+
+
+    def __ping_with_failover( self, timeout ):
+        """Pings the current cluster, failing over as a request does; see
+        :meth:`ping`.
+        """
+        url = self.get_url( stringified = False )
+        original_url = url
+
+        while True:
+            # The cluster switches so far, so that a switch another thread
+            # makes meanwhile is not taken for this one's
+            current_cluster_switch_count = self.get_num_cluster_switches()
+
+            try:
+                ( status_code, response ) = self.__ping_url( url, timeout )
+                if status_code in self.__http_response_triggering_failover:
+                    raise GPUdbExitException( "Could not ping the database at '{}' due "
+                                              "to status code {}".format( url.url, status_code ) )
+            except GPUdbUnauthorizedAccessException:
+                raise
+            except Exception as ex:
+                orig_ex_str = GPUdbException.stringify_exception( ex )
+                self.__log_debug( "Got exception when pinging {}: {}; switch URL..."
+                                  "".format( str(url), orig_ex_str ) )
+                try:
+                    url = self.__switch_url( original_url, current_cluster_switch_count )
+                    self.__log_debug( "Switched to {}".format( str(url) ) )
+                except (GPUdbHAUnavailableException, GPUdbFailoverDisabledException) as ha_ex:
+                    # Every cluster has been tried, or failover is disabled;
+                    # give the original cause too
+                    raise GPUdbException( "{}; {}".format( orig_ex_str, str( ha_ex ) ), True )
+                continue
+
+            if response != C._KINETICA_IS_RUNNING:
+                raise GPUdbException( "Server returned invalid response: {}".format( response ) )
+            return response
+        # end while
+    # end __ping_with_failover
 
 
     # @deprecated
     def is_kinetica_running( self, url ):
         """Verifies that GPUdb is running at the given URL (does not do any HA
-        failover).
+        failover).  Waits at most 5 seconds for an answer, so that a host
+        that is down, or a server that hangs, is not
+        waited on for long.
 
         Parameters:
-            url (GPUdb.URL)
-                The URL which we are supposed to ping.
+            url (GPUdb.URL or str)
+                The URL which we are supposed to ping; None for the current
+                cluster's.
 
         Returns:
             True if Kinetica is running at that URL, False otherwise.
         """
-        ping_response = self.ping( url )
+        if url is None:
+            url = self.get_url( stringified = False )
+        ping_response = self.ping( url, timeout = GPUdb._DEFAULT_SERVER_CONNECTION_TIMEOUT )
         self.__log_debug( "HTTP server @ {} responded with '{}'"
                           "".format( str(url), ping_response ) )
         if ( ping_response == C._KINETICA_IS_RUNNING ):
@@ -11516,9 +13232,12 @@ class GPUdb(object):
         try:
             # with self.__initialize_http_connection(url, debug_timeout) as client:
             # Execute GET request
-            (headers, body_data) = self.__create_header_and_process_body_data(None)
+            # No body, so no body encoding: in particular none to compress
+            # under SNAPPY, which used to fail before the request was sent
+            headers = self.__create_common_headers()
             headers[C._HEADER_ACCEPT] = C._REQUEST_ENCODING_JSON
-            response = self.__get_current_http_connection().get(full_url, headers=headers)
+            response = self.__get_current_http_connection().get(full_url, headers=headers,
+                                                                timeout=self.__request_timeout(self.timeout))
 
             # Return the response content as bytes
             return response.content
@@ -11543,8 +13262,11 @@ class GPUdb(object):
             sql (str)
                 The SQL query to run
 
-            sql_params (list)
-                The SQL parameters that will be substituted for tokens (e.g. $1 $2)
+            sql_params (list or tuple of native types, or str)
+                The SQL parameters that will be substituted for tokens (e.g.
+                $1 $2); or their JSON as a string--an
+                array of values, or of arrays of them to insert several
+                rows--sent as it is.
 
             batch_size (int)
                 The number of records to retrieve at a time from the database
@@ -11569,7 +13291,7 @@ class GPUdb(object):
     # end to_df
 
 
-    def query(self, sql, batch_size = 5000, sql_params = [], sql_opts = {}):
+    def query(self, sql, batch_size = 5000, sql_params = None, sql_opts = None, named_rows = False):
         """Execute a SQL query and return a GPUdbSqlIterator
 
         Parameters:
@@ -11579,12 +13301,20 @@ class GPUdb(object):
             batch_size(int)
                 The number of records to retrieve at a time from the database
 
-            sql_params(list of native types)
-                The SQL parameters that will be substituted for tokens (e.g. $1 $2)
+            sql_params (list or tuple of native types, or str)
+                The SQL parameters that will be substituted for tokens (e.g.
+                $1 $2); or their JSON as a string--an
+                array of values, or of arrays of them to insert several
+                rows--sent as it is.
 
             sql_opts(dict)
                 The options for SQL execution, matching the options passed to
                 :meth:`GPUdb.execute_sql`. Defaults to None.
+
+            named_rows (bool)
+                Whether the rows are :class:`GPUdbSqlRow` lists, whose values
+                can also be read by column name, rather than plain lists.
+                Defaults to False.
 
         Returns:
             An instance of GPUdbSqlIterator.
@@ -11595,25 +13325,33 @@ class GPUdb(object):
                 sql=sql,
                 batch_size=batch_size,
                 sql_params=sql_params,
-                sql_opts=sql_opts)
+                sql_opts=sql_opts,
+                named_rows=named_rows)
 
         return sql_iterator
     # end query
 
 
-    def query_one(self, sql, sql_params = [], sql_opts = {}):
+    def query_one(self, sql, sql_params = None, sql_opts = None, named_rows = False):
         """Execute a SQL query that returns only one row.
 
         Parameters:
             sql (str)
                 The SQL query to run
 
-            sql_params(list of native types)
-                The SQL parameters that will be substituted for tokens (e.g. $1 $2)
+            sql_params (list or tuple of native types, or str)
+                The SQL parameters that will be substituted for tokens (e.g.
+                $1 $2); or their JSON as a string--an
+                array of values, or of arrays of them to insert several
+                rows--sent as it is.
 
             sql_opts(dict)
                 The options for SQL execution, matching the options passed to
                 :meth:`GPUdb.execute_sql`. Defaults to None.
+
+            named_rows (bool)
+                Whether the row is a :class:`GPUdbSqlRow`, as :meth:`query`
+                gives it.  Defaults to False.
 
         Returns:
             The returned row or None.
@@ -11624,27 +13362,32 @@ class GPUdb(object):
                 sql=sql,
                 sql_params=sql_params,
                 batch_size=2,
-                sql_opts=sql_opts) as sql_iterator:
+                sql_opts=sql_opts,
+                named_rows=named_rows) as sql_iterator:
 
-            if(sql_iterator.total_count == 0):
-                return None
-            elif(sql_iterator.total_count > 1):
+            # Decided by the rows returned, not by total_count: for a statement
+            # that returns no rows (an INSERT, say), total_count is the number
+            # of rows it affected
+            row = next(sql_iterator, None)
+            if row is not None and next(sql_iterator, None) is not None:
                 raise GPUdbException("More than one result was returned")
 
-            row = sql_iterator.__next__()
             return row
     # end query_one
 
 
-    def execute(self, sql, sql_params = [], sql_opts = {}):
+    def execute(self, sql, sql_params = None, sql_opts = None):
         """Execute a SQL query and return the row count.
 
         Parameters:
             sql (str)
                 The SQL to execute
 
-            sql_params(list of native types)
-                The SQL parameters that will be substituted for tokens (e.g. $1 $2)
+            sql_params (list or tuple of native types, or str)
+                The SQL parameters that will be substituted for tokens (e.g.
+                $1 $2); or their JSON as a string--an
+                array of values, or of arrays of them to insert several
+                rows--sent as it is.
 
             sql_opts(dict)
                 The options for SQL execution, matching the options passed to
@@ -11654,6 +13397,9 @@ class GPUdb(object):
             Number of records affected
         """
 
+        # A copy, so that neither the caller's dict nor a default one keeps the
+        # query parameters added below for the next call
+        sql_opts = dict(sql_opts) if sql_opts else {}
         GPUdb._set_sql_params(sql_opts, sql_params)
         response = self.execute_sql(statement=sql, options=sql_opts)
         GPUdb._check_error(response)
@@ -11663,25 +13409,59 @@ class GPUdb(object):
 
 
     @classmethod
-    def _set_sql_params(cls, sql_opts: dict, sql_params: list) -> None:
-        """Convert SQL parameters to JSON and set as an option for execute_sql_and_decode()
+    def _set_sql_params(cls, sql_opts: dict, sql_params) -> None:
+        """Set SQL parameters as the query_parameters option of
+        execute_sql_and_decode(): a list or tuple of values, converted to
+        JSON; or a string of their JSON, sent as it is.
 
         Parameters:
             sql_opts (dict)
                 The parameter list that will be appended to.
 
-            sql_params (list of native types)
-                The SQL parameters that will be substituted for tokens (e.g. $1 $2)
+            sql_params (list or tuple of native types, or str)
+                The SQL parameters that will be substituted for tokens (e.g.
+                $1 $2), or their JSON: an array of values, or of arrays of
+                them to insert several rows.
+
+        Raises:
+            GPUdbException
+                If a string is not a JSON array, or the parameters are neither
+                a string nor an ordered collection of values.
         """
-        if (len(sql_params) == 0):
+        if sql_params is None:
             return
 
-        for idx, item in enumerate(sql_params):
-            if (isinstance(item, list)):
-                # assume that list type is vector
-                sql_params[idx] = str(item)
+        # Their JSON, sent as it is.  It was taken for a list of
+        # parameters, one for each of its characters.
+        if isinstance(sql_params, str):
+            if not sql_params.strip():
+                return
+            try:
+                is_array = isinstance(json.loads(sql_params), list)
+            except ValueError as ex:
+                raise GPUdbException("Query parameters given as a string must be "
+                                     "a JSON array; {}: {!r}".format(ex, sql_params))
+            if not is_array:
+                raise GPUdbException("Query parameters given as a string must be "
+                                     "a JSON array; given {!r}".format(sql_params))
+            sql_opts['query_parameters'] = sql_params
+            return
 
-        sql_opts['query_parameters'] = json.dumps(sql_params)
+        # An unordered or keyed collection cannot be positional parameters
+        if ( isinstance(sql_params, (dict, set, frozenset, bytes, bytearray))
+             or not hasattr(sql_params, "__iter__") ):
+            raise GPUdbException("Query parameters must be a list or tuple of values, "
+                                 "or a JSON array as a string; given {}"
+                                 "".format(type(sql_params).__name__))
+
+        # Assume that a list is a vector, sent in its string form.  Built as a
+        # new list, leaving the caller's as it was given.
+        params = [ (str(item) if isinstance(item, list) else item)
+                   for item in sql_params ]
+        if not params:
+            return
+
+        sql_opts['query_parameters'] = json.dumps(params)
 
 
     @staticmethod
@@ -20166,6 +21946,13 @@ class GPUdb(object):
                   Capture metrics for any query exceeding this duration in
                   seconds.
 
+                * **telm_max_meters_per_query** --
+                  Maximum number of telemetry meters a single query may hold
+                  per rank; once reached, the query's further workers run
+                  unmetered, so its metrics are incomplete. Use 0 for no limit.
+                  The default value is '100000'. The minimum allowed value is
+                  '0'.
+
                 * **postgres_proxy_idle_connection_timeout** --
                   Idle connection timeout in seconds.
 
@@ -24844,20 +26631,34 @@ class GPUdb(object):
                   column count plus the number of columns skipped.
 
                 * **compression_type** --
-                  Source data compression type.
+                  Source data compression type: which files are checked for
+                  compression. A checked file compressed as gzip, bzip2, zstd
+                  or lz4 is recognized by its format and decompressed; other
+                  files are read as is, so a load can mix compressed and
+                  uncompressed files. Compressed data that is corrupt or
+                  truncated fails the load. Only delimited_text and json files
+                  are decompressed; other file types accept only auto and none,
+                  and are read as is.
                   Allowed values are:
 
                   * **none** --
-                    No compression.
+                    No decompression: files are read as is.
 
                   * **auto** --
-                    Auto detect compression type.
+                    Decompress files whose names end in .gz, .bz2, .zst or
+                    .lz4.
 
                   * **gzip** --
-                    gzip file compression.
+                    Check every file, whatever its name. Named for gzip, but
+                    any supported format is decompressed.
 
                   * **bzip2** --
-                    bzip2 file compression.
+                    Check every file, whatever its name. Named for bzip2, but
+                    any supported format is decompressed.
+
+                  * **zstd** --
+                    Check every file, whatever its name. Named for zstd, but
+                    any supported format is decompressed.
 
                   The default value is 'auto'.
 
@@ -27806,13 +29607,8 @@ class GPUdb(object):
                 :meth:`GPUdb.kill_proc` to kill the proc instance.
 
             info (dict of str to str)
-                Additional information.
-                Allowed keys are:
-
-                * **deferred_tables** --
-                  <DEVELOPER>
-
-                The default value is an empty dict ( {} ).
+                Additional information. The default value is an empty dict ( {}
+                ).
         """
         assert isinstance( proc_name, (basestring)), "execute_proc(): Argument 'proc_name' must be (one) of type(s) '(basestring)'; given %s" % type( proc_name ).__name__
         assert isinstance( params, (dict)), "execute_proc(): Argument 'params' must be (one) of type(s) '(dict)'; given %s" % type( params ).__name__
@@ -34179,20 +35975,34 @@ class GPUdb(object):
                   skipped.
 
                 * **compression_type** --
-                  Source data compression type.
+                  Source data compression type: which files are checked for
+                  compression. A checked file compressed as gzip, bzip2, zstd
+                  or lz4 is recognized by its format and decompressed; other
+                  files are read as is, so a load can mix compressed and
+                  uncompressed files. Compressed data that is corrupt or
+                  truncated fails the load. Only delimited_text and json files
+                  are decompressed; other file types accept only auto and none,
+                  and are read as is.
                   Allowed values are:
 
                   * **none** --
-                    No compression.
+                    No decompression: files are read as is.
 
                   * **auto** --
-                    Auto detect compression type.
+                    Decompress files whose names end in .gz, .bz2, .zst or
+                    .lz4.
 
                   * **gzip** --
-                    gzip file compression.
+                    Check every file, whatever its name. Named for gzip, but
+                    any supported format is decompressed.
 
                   * **bzip2** --
-                    bzip2 file compression.
+                    Check every file, whatever its name. Named for bzip2, but
+                    any supported format is decompressed.
+
+                  * **zstd** --
+                    Check every file, whatever its name. Named for zstd, but
+                    any supported format is decompressed.
 
                   The default value is 'auto'.
 
@@ -35116,20 +36926,32 @@ class GPUdb(object):
                   skipped.
 
                 * **compression_type** --
-                  Payload compression type.
+                  Payload compression type. Unless it is none, a payload
+                  compressed as gzip, bzip2, zstd or lz4 is recognized by its
+                  format and decompressed; other payloads are read as is. A
+                  compressed payload that is corrupt or truncated fails the
+                  load. Only delimited_text and json payloads are decompressed;
+                  other file types accept only auto and none, and are read as
+                  is.
                   Allowed values are:
 
                   * **none** --
-                    Uncompressed.
+                    Uncompressed: the payload is read as is.
 
                   * **auto** --
-                    Default. Auto detect compression type.
+                    Default. Decompress the payload if it is compressed.
 
                   * **gzip** --
-                    gzip file compression.
+                    Same as auto. Named for gzip, but any supported format is
+                    decompressed.
 
                   * **bzip2** --
-                    bzip2 file compression.
+                    Same as auto. Named for bzip2, but any supported format is
+                    decompressed.
+
+                  * **zstd** --
+                    Same as auto. Named for zstd, but any supported format is
+                    decompressed.
 
                   The default value is 'auto'.
 
@@ -43224,11 +45046,21 @@ _DEFAULT_COLUMN_VALUES_VERSION = GPUdb.Version( "7.2.3.18" )
 
 
 # ---------------------------------------------------------------------------
+# Import the address resolution functions; try from an installed package first,
+# if not, try local.  After GPUdb is defined, which the module uses.
+try:                   # Installed
+    from gpudb import gpudb_address_resolution as _address_resolution
+except ImportError:    # Local
+    import gpudb_address_resolution as _address_resolution
+# done importing the address resolution functions
+
+
+# ---------------------------------------------------------------------------
 # Import GPUdbIngestor; try from an installed package first, if not, try local
 try:                   # Installed
-    from gpudb.gpudb_multihead_io import GPUdbIngestor, RecordRetriever
+    from gpudb.gpudb_multihead_io import GPUdbIngestor, RecordRetriever, _insert_errors_and_warnings
 except ImportError:    # Local
-    from gpudb_multihead_io import GPUdbIngestor, RecordRetriever
+    from gpudb_multihead_io import GPUdbIngestor, RecordRetriever, _insert_errors_and_warnings
 # done importing GPUdbIngestor
 
 
@@ -43370,8 +45202,10 @@ class GPUdbTable( object ):
                 :meth:`.flush_data_to_server`. Default False.
 
             convert_special_types_on_retrieval(bool)
-                Convert array types to list and JSON types to dicts while
-                retrieval. Default False.
+                Convert array values to lists, JSON values to dicts and
+                vector values to lists of floats on retrieval; the records
+                are then returned as OrderedDicts, since a :class:`Record`
+                cannot hold a list or a dict.  Default False.
 
             insert_type (:class:`RecordType` or :class:`GPUdbRecordType` or list of lists of str)
                 Optional parameter.  The type that records given to
@@ -43399,23 +45233,12 @@ class GPUdbTable( object ):
         Returns:
             A GPUdbTable object.
         """
-        # Class level logger so that setting it for one GPUdbTabl instance
-        # doesn't set it for ALL GPUdbTable instances after that change (even
-        # if it is outside of the scope of the first instance whose log level
-        # was changed
-        self.log = logging.getLogger( "gpudb.GPUdbTable_instance_"
-                                      + str( uuid.uuid4() ) )
-
-        # Handlers need to be instantiated only ONCE for a given module
-        # (i.e. not per class instance)
-        handler   = logging.StreamHandler()
-        formatter = logging.Formatter( fmt     = GPUdb._LOG_MESSAGE_FORMAT,
-                                       datefmt = GPUdb._LOG_DATETIME_FORMAT )
-        handler.setFormatter( formatter )
-        self.log.addHandler( handler )
-
-        # Prevent logging statements from being duplicated
-        self.log.propagate = False
+        # This instance's own logger, so that setting it for one GPUdbTable
+        # instance doesn't set it for ALL GPUdbTable instances after that
+        # change (even if it is outside of the scope of the first instance
+        # whose log level was changed); unregistered, so that it goes when the
+        # instance does
+        self.log = _ObjectLogger( "gpudb.GPUdbTable_instance_" + str( uuid.uuid4() ) )
 
         # The given DB handle must be a GPUdb instance
         if not isinstance( db, GPUdb ):
@@ -43658,6 +45481,13 @@ class GPUdbTable( object ):
 
         self._multihead_ingestor = None
         self._multihead_ingest_base_options = {}
+
+        # The record errors and warnings of insertions made without the
+        # multi-head ingestor, which keeps its own, until get_errors() and
+        # get_warnings() collect them
+        self._insert_errors = []
+        self._insert_warnings = []
+
         if use_multihead_ingest or use_multihead_io:
             # Check multihead_ingest_batch_size
             if ( not isinstance( multihead_ingest_batch_size, int )
@@ -43669,7 +45499,8 @@ class GPUdbTable( object ):
             self._multihead_ingestor = GPUdbIngestor( self.db, self.qualified_name,
                                                       self.insert_gpudbrecord_type,
                                                       multihead_ingest_batch_size,
-                                                      is_table_replicated = self._is_replicated )
+                                                      is_table_replicated = self._is_replicated,
+                                                      check_permissions = False )
 
             # The options the ingestor established for itself, such as
             # 'request_schema_str'.  Kept aside so that the options given to a
@@ -43891,6 +45722,9 @@ class GPUdbTable( object ):
         which case that is checked against the table's columns.  Called again
         whenever the table's type is re-read.
         """
+        # The object maps of the classes inserted, worked out for this type
+        self._type_object_maps = {}
+
         if self._user_insert_type is None:
             self.insert_gpudbrecord_type = self.gpudbrecord_type
             self.insert_record_type      = self.record_type
@@ -44220,6 +46054,45 @@ class GPUdbTable( object ):
     # end flush_data_to_server
 
 
+    def get_errors( self ):
+        """Return the record errors the server has reported for this table's
+        insertions since the last call, multi-head or not: an
+        :class:`InsertionException` for each rejected record, carrying that
+        record.  The server reports them only under the
+        *return_individual_errors* insert option.
+
+        With multi-head ingest, partial batches off, the first error stops the
+        ingest until this has returned it; see
+        :meth:`GPUdbIngestor.insert_record`.
+
+        The errors are kept until read: an application inserting with
+        *return_individual_errors* must call this now and then, or they
+        accumulate for the table's lifetime, without a bound
+        (the warnings likewise, through :meth:`get_warnings`).  Without
+        multi-head ingest, each call's errors are in its response instead,
+        which :meth:`insert_records_response` returns and does not keep here,
+        so an application that reads them there has nothing to drain.
+        """
+        if self._multihead_ingestor:
+            return self._multihead_ingestor.get_errors()
+        errors, self._insert_errors = self._insert_errors, []
+        return errors
+    # end get_errors
+
+
+    def get_warnings( self ):
+        """Return the warnings the server has reported for this table's
+        insertions since the last call, multi-head or not, each as an
+        :class:`InsertionException`.  Kept until read, without a bound, as
+        :meth:`get_errors` describes.
+        """
+        if self._multihead_ingestor:
+            return self._multihead_ingestor.get_warnings()
+        warnings, self._insert_warnings = self._insert_warnings, []
+        return warnings
+    # end get_warnings
+
+
     def __log_debug( self, message ):
         if not self.log.isEnabledFor( logging.DEBUG ):
             # No-op if debug is not enabled.  This is important
@@ -44301,6 +46174,9 @@ class GPUdbTable( object ):
         if self._insert_type_error:
             raise GPUdbException( self._insert_type_error )
 
+        # Objects of a class mapped to the type go as dicts of their values
+        args = self.__objects_as_dicts( args )
+
         encoded_data = []
 
         # Process the input--single record or multiple records (or invalid syntax)?
@@ -44367,6 +46243,28 @@ class GPUdbTable( object ):
         return encoded_data
     # end __encode_data_for_insertion
 
+    def __objects_as_dicts( self, args ):
+        """The records given to insert, with any object of a class mapped to
+        the table's type--a dataclass, or a class with an object map
+        registered with the client (:meth:`GPUdb.add_known_type_object_map`)
+        --as a dict of its column values; a list of records is gone through.
+        """
+        def as_dict( value ):
+            if isinstance( value, (list, tuple, dict, Record, GPUdbRecord, basestring, bytes, int, float, type( None )) ):
+                return value
+            object_class = type( value )
+            if object_class not in self._type_object_maps:
+                self._type_object_maps[ object_class ] = self.db._type_object_map_for( object_class,
+                                                                                       self.insert_gpudbrecord_type )
+            type_object_map = self._type_object_maps[ object_class ]
+            return value if (type_object_map is None) else type_object_map.to_dict( value )
+        # end as_dict
+
+        return tuple( [ as_dict( v ) for v in arg ] if isinstance( arg, list ) else as_dict( arg )
+                      for arg in args )
+    # end __objects_as_dicts
+
+
     @staticmethod
     def convert_special_type_values_in_insert_records(record_type : GPUdbRecordType,
                                                       record: Union[ list, dict]
@@ -44380,46 +46278,30 @@ class GPUdbTable( object ):
         Returns:
             object: the record with converted values
         """
+        # The columns to convert, worked out once for the type
+        by_index, by_name, column_names = record_type._insert_conversion_columns()
+
         if isinstance(record, list):
             if len(record) > len(record_type.columns):
                 raise GPUdbException(f"Too many column values <{len(record)}> given for the target table columns <{len(record_type.columns)}>")
 
-            for index, column_value in enumerate(record):
-                column: GPUdbRecordColumn = record_type.columns[index]
-                column_properties: List[str] = column.column_properties
-                column_type: str = column.column_type
-                if column_value:
-                    if index in record_type.array_type_names_indices or \
-                        index in record_type.json_type_names_indices or \
-                        index in record_type.vector_type_names_indices or \
-                        column_type == 'string' and (GPUdbColumnProperty.TIME in column_properties or
-                                                    column.is_decimal):
-                            # convert the value
-                            converted_value = _Util._convert_value_on_insertion(
-                                column_value, column
-                            )
-                            record[index] = converted_value
+            for index, column in by_index.items():
+                if index < len(record):
+                    column_value = record[index]
+                    if column_value:
+                        # convert the value
+                        record[index] = _Util._convert_value_on_insertion( column_value, column )
         elif isinstance(record, dict):
-            for column_name, column_value in record.items():
-                if column_name not in record_type.column_names:
+            for column_name in record:
+                if column_name not in column_names:
                     raise GPUdbException(f"Column name <{column_name}> not found in target table")
 
-                index: int = record_type.column_names.index(column_name)
-                column: GPUdbRecordColumn = record_type.columns[index]
-                column_properties: List[str] = record_type.column_properties[column_name] \
-                                                if column_name in record_type.column_properties else []
-                column_type: str = record_type.columns[index].column_type
-                if column_value:
-                    if column_name in record_type.array_type_names_values or \
-                        column_name in record_type.json_type_names_values or \
-                        column_name in record_type.vector_type_names_values or \
-                        column_type == 'string' and (GPUdbColumnProperty.TIME in column_properties or
-                                                    column.is_decimal):
-                            # convert the value
-                            converted_value = _Util._convert_value_on_insertion(
-                                column_value, column
-                            )
-                            record[column_name] = converted_value
+            for column_name, column in by_name.items():
+                if column_name in record:
+                    column_value = record[column_name]
+                    if column_value:
+                        # convert the value
+                        record[column_name] = _Util._convert_value_on_insertion( column_value, column )
         return record
 
     @staticmethod
@@ -44442,18 +46324,14 @@ class GPUdbTable( object ):
 
         if isinstance(records, list):
             if all(isinstance(e, Record) for e in records):
-                for record in records:
-                    for column_name, column_value in record.items():
-                        if column_name in record_type.array_type_names_values or \
-                            column_name in record_type.json_type_names_values or \
-                            column_name in record_type.vector_type_names_values:
-                                # convert the value
-                                index = record_type.column_names.index(column_name)
-                                converted_value = _Util._convert_value_on_retrieval(
-                                    column_value, record_type.columns[index]
-                                )
-                                record[column_name] = converted_value
-            elif all(isinstance(e, collections.OrderedDict) for e in records):
+                # A Record holds each value as its column's type, so a list or
+                # dict put in it is turned back into text (Python's repr, not
+                # JSON), and a list into a vector's bytes fails.  Converted
+                # records are returned as GPUdbRecordDicts instead, which take
+                # a column's position as a Record does, as
+                # force_primitive_return_types returns the records it converts.
+                records = [GPUdbRecordDict(record.items(), record_type) for record in records]
+            if all(isinstance(e, collections.OrderedDict) for e in records):
                 # each OrderedDict is a record
                 for record in records:
                     for column_name, column_value in record.items():
@@ -44481,9 +46359,12 @@ class GPUdbTable( object ):
 
         return records
 
-    def __insert_encoded_records( self, encoded_data, options ):
+    def __insert_encoded_records( self, encoded_data, options, keep_errors = True ):
         """Given encoded records and some options, insert the records
-        into the respective table in Kinetica.
+        into the respective table in Kinetica.  Without the multi-head
+        ingestor, the response's record errors and warnings are kept for
+        :meth:`.get_errors` and :meth:`.get_warnings` where `keep_errors`;
+        the multi-head ingestor keeps its own either way.
         """
         # Make the insertion call-- either with the multi-head ingestor or the regular way
         if self._multihead_ingestor:
@@ -44525,6 +46406,16 @@ class GPUdbTable( object ):
                                                record_type = self.insert_record_type )
             if not _Util.is_ok( response ):
                 raise GPUdbException( _Util.get_error_msg( response ) )
+
+            # Keep the record errors and warnings for get_errors() and
+            # get_warnings(), as the multi-head ingestor keeps its own -- for
+            # a caller that cannot see this response; one that can has them
+            if keep_errors:
+                errors, warnings = _insert_errors_and_warnings( response.get( "info" ), encoded_data,
+                                                                self.db.get_url() )
+                self._insert_errors.extend( errors )
+                self._insert_warnings.extend( warnings )
+            # end if
             return response
         # end if-else
     # end __insert_encoded_records
@@ -44579,6 +46470,11 @@ class GPUdbTable( object ):
                 May contain an 'options' keyword arg which will be passed
                 to the database for the insertion operation.
 
+        With the *return_individual_errors* insert option, the record errors
+        and warnings the server reports are kept by this table until
+        :meth:`get_errors` and :meth:`get_warnings` are called; otherwise, the
+        error/warning lists they maintain grow without bound.
+
         Returns:
             A :class:`.GPUdbTable` object with the insert_records()
             response fields converted to attributes and stored within.
@@ -44591,10 +46487,10 @@ class GPUdbTable( object ):
     def insert_records_response( self, *args, **kwargs ):
         """Insert one or more records and return the endpoint response.
 
-        Identical to :meth:`.insert_records` -- same arguments, same encoding, same
-        statistics bookkeeping -- except for what it hands back.  Use this when the
-        caller needs fields off the response itself, e.g. ``response['info']``, rather
-        than the table.
+        Identical to :meth:`.insert_records`, except that it returns the full
+        response and doesn't accumulate errors & warnings that have to be
+        flushed by calling :meth:`.get_errors` & :meth:`.get_warnings`,
+        respectively.
 
         Parameters:
             args
@@ -44606,7 +46502,7 @@ class GPUdbTable( object ):
         Returns:
             The insert_records() response, or None if the insertion produced none.
         """
-        return self.__insert_records_impl( *args, **kwargs )
+        return self.__insert_records_impl( *args, _keep_errors = False, **kwargs )
     # end insert_records_response
 
 
@@ -44626,10 +46522,12 @@ class GPUdbTable( object ):
     # end __update_insert_stats
 
 
-    def __insert_records_impl( self, *args, **kwargs ):
+    def __insert_records_impl( self, *args, _keep_errors = True, **kwargs ):
         """Encode and insert records, updating this table's insert statistics.  The shared
         implementation of :meth:`.insert_records` and :meth:`.insert_records_response`,
-        which differ only in what they return.
+        which differ in what they return and, with that, in whether the record
+        errors and warnings of the response are kept for :meth:`.get_errors`
+        and :meth:`.get_warnings` (`_keep_errors`) to return and flush.
 
         Returns:
             The insert_records() response, or None if the insertion produced none.
@@ -44648,7 +46546,7 @@ class GPUdbTable( object ):
 
         try: # if the first attempt fails, we'll check if the table
             # type has been modified by any chance
-            response = self.__insert_encoded_records( encoded_data, options )
+            response = self.__insert_encoded_records( encoded_data, options, _keep_errors )
             self.__update_insert_stats( response )
             return response
         except GPUdbException as e:
@@ -44658,7 +46556,7 @@ class GPUdbTable( object ):
                 # The table type indeed had been modified; retry insertion
                 # with the current/new type
                 encoded_data = self.__encode_data_for_insertion( *args, **kwargs )
-                response = self.__insert_encoded_records( encoded_data, options )
+                response = self.__insert_encoded_records( encoded_data, options, _keep_errors )
                 self.__update_insert_stats( response )
                 return response
             else:
@@ -44897,18 +46795,20 @@ class GPUdbTable( object ):
 
 
 
-    def get_records_by_key( self, key_values, expression = "", options = None ):
+    def get_records_by_key( self, key_values = None, expression = "", options = None, offset = 0 ):
         """Fetches the record(s) from the appropriate worker rank directly
         (or, if multi-head record retrieval is not set up, then from the
-        head node) that map to the given shard key.
+        head node) that map to the given shard key, and/or match the given
+        expression; see :meth:`RecordRetriever.get_records_by_key`.
 
         Parameters:
 
-            key_values (list or dict)
+            key_values (list or dict or None)
                 Values for the sharding columns of the record to fetch either in
                 a list (then it is assumed to be in the order of the sharding
                 keys in the record type) or a dict.  Must not have any missing
                 sharding/primary column value or any extra column values.
+                None or empty to look up by the expression alone.
 
             expression (str)
                 Optional parameter.  If given, it is passed to /get/records as
@@ -44918,6 +46818,10 @@ class GPUdbTable( object ):
                 Any /get/records options to be passed onto the GPUdb server.  Optional
                 parameter.
 
+            offset (int)
+                Optional parameter.  The first record of the result to return,
+                for paging; default 0.
+
         Returns:
             The decoded records.
         """
@@ -44925,7 +46829,7 @@ class GPUdbTable( object ):
             raise GPUdbException( "Record retrieval by sharding/primary keys "
                                   "is not set up for this table." )
 
-        response = self._multihead_retriever.get_records_by_key( key_values, expression, options )
+        response = self._multihead_retriever.get_records_by_key( key_values, expression, options, offset )
 
         if self._convert_special_types_on_retrieval:
             records = response["data"]
@@ -44935,6 +46839,24 @@ class GPUdbTable( object ):
 
         return response
     # end get_records_by_key
+
+
+    def get_columns_by_key( self, columns, key_values = None, expression = "", options = None, offset = 0 ):
+        """Fetches the given columns of the record(s) that map to the given
+        shard key, and/or match the given expression, routed as
+        :meth:`get_records_by_key` is; see
+        :meth:`RecordRetriever.get_columns_by_key`.
+
+        Returns:
+            The response, with the records -- of the columns asked for, read
+            by column name, as dicts are -- in "data" and "records".
+        """
+        if not self._multihead_retriever:
+            raise GPUdbException( "Record retrieval by sharding/primary keys "
+                                  "is not set up for this table." )
+
+        return self._multihead_retriever.get_columns_by_key( columns, key_values, expression, options, offset )
+    # end get_columns_by_key
 
 
 

@@ -44,7 +44,7 @@ class DataFrameUtils:
     @typechecked
     def sql_to_df(cls, db: GPUdb,
                   sql: str,
-                  sql_params: Optional[list] = None,
+                  sql_params: Optional[Union[list, tuple, str]] = None,
                   batch_size: int = BATCH_SIZE,
                   sql_opts: Optional[dict] = None,
                   show_progress: bool = False) -> Optional[pd.DataFrame]:
@@ -53,7 +53,8 @@ class DataFrameUtils:
         Args:
             db (GPUdb): a :class:`GPUdb` instance
             sql (str): the SQL query
-            sql_params (list): the query parameters. Defaults to None.
+            sql_params (list, tuple or str): the query parameters, or their JSON array as a
+                string, as :meth:`GPUdb.query` takes them. Defaults to None.
             batch_size (int): the batch size for the SQL execution results. Defaults to :attr:`BATCH_SIZE`.
             sql_opts (dict): the SQL options as a dict. Defaults to None.
             show_progress (bool): whether to display progress or not. Defaults to False.

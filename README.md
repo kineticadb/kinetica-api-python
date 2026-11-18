@@ -39,6 +39,35 @@ To install this package, in the root directory of the repo, run:
 Note that due to the in-house compiled C-module dependency, this package must be
 installed, and simply copying `gpudb.py` or having a link to it will not work.
 
+For faster ingest and key lookups, install the `fast` extra.  It adds the C
+murmur hash (`mmh3`) that multi-head records are routed to ranks with; without
+it, a pure-Python hash that gives the same results is used.  It also adds
+`python-snappy`, with which inserts and updates are Snappy-compressed
+(`GPUdb.Options.use_snappy`, on unless turned off); without it, they are sent
+uncompressed:
+
+    pip3 install ".[fast]"
+
+The API logs under the `gpudb` logger of Python's `logging` module, so its
+messages go to whatever handlers the application sets up (`logging.basicConfig()`,
+a file or JSON handler, ...).  Until the application sets up any, they are
+written to stderr.  To set the level of the whole API:
+
+    import gpudb
+    gpudb.set_logging_level("DEBUG")    # TRACE, DEBUG, INFO, WARN, ERROR or OFF
+
+or set it at startup with the `GPUDB_LOG_LEVEL` environment variable
+(`GPUDB_LOG_LEVEL=DEBUG python app.py`).  A `GPUdb` object given a level of its
+own (`GPUdb.Options.logging_level`) keeps it.
+
+The `requests` and `urllib3` libraries the API uses log every connection and
+request at DEBUG, so the API sets their loggers to WARNING as it is imported,
+unless the application has set a level on them, which the API never overrides.
+Raising the root logger to DEBUG does not show their records; setting a level
+on the loggers by name does:
+
+    logging.getLogger("urllib3").setLevel(logging.DEBUG)
+
 There is also an example file in the example directory.
 
 The documentation can be found at https://docs.kinetica.com/7.2/.  

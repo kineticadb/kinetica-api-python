@@ -24,11 +24,14 @@ if (sys.version_info[0] == 3):  # checking the major component
     from gpudb.gpudb import GPUdbRecordColumn
     from gpudb.gpudb import GPUdbRecordType
     from gpudb.gpudb import GPUdbRecord
+    from gpudb.gpudb import GPUdbRecordDict
+    from gpudb.gpudb import TypeObjectMap
     from gpudb.gpudb import GPUdbColumnProperty
     from gpudb.gpudb import GPUdbTable
     from gpudb.gpudb import GPUdbTableIterator
     from gpudb.gpudb import GPUdbTableOptions
     from gpudb.gpudb import FailbackOptions
+    from gpudb.gpudb import set_logging_level
 
     from gpudb.gpudb import AttrDict
     from gpudb.gpudb import _Util
@@ -37,9 +40,12 @@ if (sys.version_info[0] == 3):  # checking the major component
 
     from gpudb.gpudb_table_monitor import GPUdbTableMonitor
     from gpudb.gpudb_file_handler import GPUdbFileHandler, OpMode, MultipartOperation
+    from gpudb.gpudb_file_handler import KifsFileInfo, KifsDirectoryInfo, TransferResult
+    from gpudb.gpudb_file_handler import (IngestOptions, TableCreationOptions, IngestResult,
+                                          FileType, ErrorHandlingMode, TypeInferenceMode, PartitionType)
 
     from gpudb.gpudb import collections
-    from gpudb.gpudb_sql_iterator import GPUdbSqlIterator
+    from gpudb.gpudb_sql_iterator import GPUdbSqlIterator, GPUdbSqlRow
     from gpudb.gpudb_sql_context import GPUdbSamplesClause, GPUdbTableClause, GPUdbSqlContext
     from gpudb.dbapi import *
 
@@ -56,6 +62,8 @@ else:
     from gpudb import GPUdbRecordColumn
     from gpudb import GPUdbRecordType
     from gpudb import GPUdbRecord
+    from gpudb import GPUdbRecordDict
+    from gpudb import TypeObjectMap
     from gpudb import GPUdbColumnProperty
     from gpudb import GPUdbTable
     from gpudb import GPUdbTableIterator

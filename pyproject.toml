@@ -1,6 +1,6 @@
 [project]
 name = "gpudb"
-version = "7.2.3.14"
+version = "7.2.3.15"
 dependencies = [
     'future',
     'pyzmq' ,
@@ -32,6 +32,16 @@ dataframe = [
     "pandas",
     "tqdm",
     "typeguard",
+]
+
+# `pip install gpudb[fast]` adds the C murmur hash, which multi-head ingest and
+# key lookups route records with; without it, a pure-Python one is used, which
+# hashes the same but slower.  It also adds python-snappy, with which inserts
+# and updates are Snappy-compressed (GPUdb.Options.use_snappy, on by default);
+# without it, they are sent uncompressed.
+fast = [
+    "mmh3",
+    "python-snappy",
 ]
 
 # `pip install .[test]` provides everything test/run_tests.sh needs to run the

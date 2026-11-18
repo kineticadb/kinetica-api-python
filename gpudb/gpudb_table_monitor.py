@@ -10,7 +10,7 @@ import queue
 import zmq
 
 from gpudb.protocol import RecordType
-from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbException, GPUdbConnectionException
+from gpudb.gpudb import GPUdb, GPUdbRecord, GPUdbException, GPUdbConnectionException, _ObjectLogger, _CallerPrefix
 
 import gpudb.packages.enum34 as enum
 
@@ -88,20 +88,15 @@ class GPUdbTableMonitor(object):
 
             # self._logger is kept protected since it is also accessed from
             # Client derived classes.
-            self._logger = logging.getLogger(
-                "gpudb_table_monitor.Client_instance_" + self._id)
-
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter("%(asctime)s %(levelname)-8s {%("
-                                          "funcName)s:%(lineno)d} %(message)s",
-                                          "%Y-%m-%d %H:%M:%S")
-            handler.setFormatter(formatter)
-
-            self._logger.addHandler(handler)
-
-            # Prevent logging statements from being duplicated
-            self._logger.propagate = False
-            self._logger.setLevel(logging.INFO)
+            # Its own logger, unregistered so that it goes when the
+            # instance does
+            # Under 'gpudb', so that the API's level applies to it, and its
+            # records go to the application's handlers or the API's default
+            # one; it was outside the API's logging, at INFO
+            self._logger = _ObjectLogger(
+                "gpudb.TableMonitor.Client_instance_" + self._id,
+                "gpudb.TableMonitor")
+            self._logger.addFilter(_CallerPrefix("{{{funcName}:{lineno}}} "))
 
             # check whether the socket connection can be made
             if not self.__zmq_check_connection(self.options):
@@ -198,23 +193,39 @@ class GPUdbTableMonitor(object):
         # End __init__ Client
 
         def __zmq_check_connection(self, options):
-            import zmq.utils, zmq.utils.monitor
+            """Whether the server's table monitor socket can be connected to:
+            up to options.max_retries tries, each waiting at most
+            options.wait_interval seconds (at least one) for the socket to
+            report how it went.
+
+            The socket's events are watched from before it connects, so that
+            a connection made at once is not missed; they used to be watched
+            from after, and a connection made in between left the check
+            waiting, with no time limit, for an event that had already
+            happened.  The socket, its event socket and their context are
+            closed afterwards; the context, and its I/O thread, used to be
+            left open.
+            """
+            import zmq.utils.monitor
 
             zmq_url = f"tcp://{self.db.host}:{options.monitor_port}"
+            wait_ms = max(options.wait_interval, 1) * 1000
+
             context = zmq.Context()
             socket = context.socket(zmq.SUB)
-            socket.connect(zmq_url)
-
-            # Monitor the socket for events
+            socket.setsockopt(zmq.LINGER, 0)
             monitor = socket.get_monitor_socket(
                 zmq.EVENT_CONNECTED | zmq.EVENT_CONNECT_RETRIED | zmq.EVENT_DISCONNECTED)
 
             try:
-                # Listen for monitor events
-                max_retries = options.max_retries
-                num_retries = 0
-                wait_interval = options.wait_interval  # seconds
-                while num_retries < max_retries:
+                socket.connect(zmq_url)
+
+                for _ in range(options.max_retries):
+                    # A host that does not answer reports nothing at all
+                    if not monitor.poll(wait_ms):
+                        self._logger.warning(f"No answer yet from {zmq_url}")
+                        continue
+
                     event = zmq.utils.monitor.recv_monitor_message(monitor)
                     event_id = event["event"]
                     endpoint = event['endpoint'].decode('utf-8')
@@ -222,20 +233,25 @@ class GPUdbTableMonitor(object):
                     if event_id == zmq.EVENT_CONNECTED:
                         self._logger.info(f"Socket connected to {endpoint}")
                         return True
-                    elif event_id == zmq.EVENT_CONNECT_RETRIED:
-                        self._logger.warning(f"Retrying connection to {endpoint}")
                     elif event_id == zmq.EVENT_DISCONNECTED:
                         self._logger.error(f"Socket disconnected from {endpoint}")
                         return False
 
-                    time.sleep(wait_interval)
+                    self._logger.warning(f"Retrying connection to {endpoint}")
+                    time.sleep(options.wait_interval)
 
-                    num_retries += 1
+                return False
             except zmq.ZMQError as e:
                 self._logger.error(f"Error: {e}")
                 return False
             finally:
-                socket.close()
+                try:
+                    socket.disable_monitor()
+                except zmq.ZMQError:
+                    pass # already stopped
+                monitor.close(linger=0)
+                socket.close(linger=0)
+                context.term()
 
         def __get_operation_list_from_callbacks(self):
             """Internal method to retrieve a set of _TableEvent objects which is
@@ -388,7 +404,9 @@ class GPUdbTableMonitor(object):
             This property sets the log level for this class and its derivatives.
 
             Parameters:
-                value (logging.level): Default setting is logging.INFO
+                value (logging.level): Not set by default, so that the API's
+                    level applies (see :func:`gpudb.set_logging_level`); it
+                    used to be logging.INFO
 
             Raises:
                 GPUdbException: If the value passed is not one of logging.INFO
@@ -1150,19 +1168,12 @@ class _BaseTask(threading.Thread):
 
         # self._logger is kept protected since it is also accessed from the
         # _BaseTask derived classes
-        self._logger = logging.getLogger(
-            "gpudb_table_monitor.BaseTask_instance_" + self._id)
-
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter("%(asctime)s %(levelname)-8s {%("
-                                      "funcName)s:%(lineno)d} %(message)s",
-                                      "%Y-%m-%d %H:%M:%S")
-        handler.setFormatter(formatter)
-
-        self._logger.addHandler(handler)
-
-        # Prevent logging statements from being duplicated
-        self._logger.propagate = False
+        # Its own logger, unregistered so that it goes when the
+        # instance does
+        self._logger = _ObjectLogger(
+            "gpudb.TableMonitor.BaseTask_instance_" + self._id,
+            "gpudb.TableMonitor")
+        self._logger.addFilter(_CallerPrefix("{{{funcName}:{lineno}}} "))
 
     # End __init__ _BaseTask
 
@@ -1530,7 +1541,8 @@ class _BaseTask(threading.Thread):
 
         Parameters:
             value (logging.level)
-                Default setting is logging.INFO
+                Not set by default, so that the API's level applies (see
+                :func:`gpudb.set_logging_level`); it used to be logging.INFO
 
         Raises:
             GPUdbException
